@@ -4017,6 +4017,45 @@ impl PiSessionManager {
                                     stats.deduped,
                                     stats.snapshot_hash
                                 );
+                                if let Some(session_file) =
+                                    oqto_pi::session_files::find_session_file_async(
+                                        source_session_id.clone(),
+                                        Some(work_dir.clone()),
+                                    )
+                                    .await
+                                {
+                                    let records = tokio::task::spawn_blocking(move || {
+                                        read_pi_jsonl_message_records_for_import(&session_file)
+                                    })
+                                    .await
+                                    .unwrap_or_default();
+                                    if !records.is_empty() {
+                                        match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+                                            std::path::Path::new(&home),
+                                            &user_id,
+                                            workspace_id,
+                                            &session_id,
+                                            &session_id,
+                                            Some(&source_session_id),
+                                            &source_session_id,
+                                            &records,
+                                        )
+                                        .await
+                                        {
+                                            Ok(replace_stats) => debug!(
+                                                "Pi[{}] oqto-log JSONL tail refresh ok: turns_written={} messages_written={}",
+                                                session_id,
+                                                replace_stats.turns_written,
+                                                replace_stats.messages_written
+                                            ),
+                                            Err(e) => warn!(
+                                                "Pi[{}] oqto-log JSONL tail refresh failed: {:?}",
+                                                session_id, e
+                                            ),
+                                        }
+                                    }
+                                }
+
                                 if let Ok(sess_stats) =
                                     oqto_history::oqto_log::store::read_session_stats(
                                         std::path::Path::new(&home),
@@ -5139,6 +5178,49 @@ struct JsonlSessionInfoEntry {
     name: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct PiJsonlMessageEntryForImport {
+    #[serde(rename = "type")]
+    entry_type: String,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
+    message: Option<AgentMessage>,
+}
+
+fn read_pi_jsonl_message_records_for_import(
+    path: &std::path::Path,
+) -> Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord> {
+    use std::io::BufRead;
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut records = Vec::new();
+    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<PiJsonlMessageEntryForImport>(trimmed) else {
+            continue;
+        };
+        if entry.entry_type != "message" {
+            continue;
+        }
+        if let Some(message) = entry.message {
+            records.push(oqto_history::oqto_log::store::PiJsonlMessageRecord {
+                source_entry_id: entry.id.unwrap_or_else(|| format!("line:{line_idx}")),
+                parent_source_entry_id: entry.parent_id,
+                source_sequence: line_idx as i64,
+                message,
+            });
+        }
+    }
+    records
+}
+
 fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
     use std::io::BufRead;
 
@@ -5744,7 +5826,7 @@ mod tests {
 
     #[test]
     fn duplicate_agent_end_tail_keeps_repeated_user_turn_with_new_client_id() {
-        let prior = vec![
+        let prior = [
             test_agent_message("user", "repeat", Some("client-a")),
             test_agent_message("assistant", "same response", None),
         ];

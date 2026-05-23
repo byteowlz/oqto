@@ -2068,18 +2068,17 @@ async fn handle_get_messages(
         Value::Object(data)
     };
 
-    // Live recovery path: fetch the per-session runner buffer snapshot.
-    // This endpoint is intentionally non-authoritative and is used to repair
-    // dropped websocket deltas during active turns without replacing durable
-    // history. Durable/authoritative reconciliation remains on REST
-    // `/api/chat-history/{id}/messages` (runner source=authoritative).
+    // Resync/history path: fetch the durable oqto-log projection. Pi live
+    // snapshots are lossy and must not be allowed to delete or replace user
+    // prompts after reconnect. Live streaming events remain an overlay in the
+    // frontend; persisted history comes from oqto-log.
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
         runner.get_workspace_chat_session_messages(
             session_id,
             false,
             None,
-            oqto_runner::protocol::WorkspaceChatMessagesSource::Live,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
         ),
     )
     .await

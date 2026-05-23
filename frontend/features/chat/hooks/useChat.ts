@@ -368,9 +368,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								typeof clientId === "string" && clientId.length > 0,
 						),
 				);
+				// When local state is empty (fresh tab/reload/reconnect), we cannot
+				// correlate partial user turns by client_id. In that case, keep server
+				// user rows instead of dropping them, otherwise prompts appear to vanish.
+				const enforceClientIdCorrelation = localUserClientIds.size > 0;
 				incoming = incoming.filter((m) => {
 					const role = (m.role || "").toLowerCase();
 					if (role !== "user" && role !== "human") return true;
+					if (!enforceClientIdCorrelation) return true;
 					const clientId =
 						typeof m.client_id === "string" && m.client_id.length > 0
 							? m.client_id

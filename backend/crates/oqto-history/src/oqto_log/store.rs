@@ -358,6 +358,47 @@ pub async fn append_agent_end_snapshot(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct PiJsonlMessageRecord {
+    pub source_entry_id: String,
+    pub parent_source_entry_id: Option<String>,
+    pub source_sequence: i64,
+    pub message: AgentMessage,
+}
+
+fn message_source_hash(message: &AgentMessage) -> String {
+    use sha2::{Digest, Sha256};
+    let payload = serde_json::to_string(message).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    format!("message:{}", hex::encode(&hasher.finalize()[..16]))
+}
+
+pub async fn replace_session_with_pi_jsonl_records(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+    source_session_id: &str,
+    records: &[PiJsonlMessageRecord],
+) -> Result<AppendStats> {
+    let messages: Vec<AgentMessage> = records.iter().map(|r| r.message.clone()).collect();
+    replace_session_with_snapshot_inner(
+        user_home,
+        user_id,
+        workspace_id,
+        session_id,
+        platform_id,
+        external_id,
+        source_session_id,
+        &messages,
+        Some(records),
+    )
+    .await
+}
+
 pub async fn replace_session_with_snapshot(
     user_home: &Path,
     user_id: &str,
@@ -367,6 +408,31 @@ pub async fn replace_session_with_snapshot(
     external_id: Option<&str>,
     source_session_id: &str,
     messages: &[AgentMessage],
+) -> Result<AppendStats> {
+    replace_session_with_snapshot_inner(
+        user_home,
+        user_id,
+        workspace_id,
+        session_id,
+        platform_id,
+        external_id,
+        source_session_id,
+        messages,
+        None,
+    )
+    .await
+}
+
+async fn replace_session_with_snapshot_inner(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+    source_session_id: &str,
+    messages: &[AgentMessage],
+    records: Option<&[PiJsonlMessageRecord]>,
 ) -> Result<AppendStats> {
     let pool = open_workspace_pool(user_home, workspace_id).await?;
     let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
@@ -413,7 +479,6 @@ pub async fn replace_session_with_snapshot(
         hasher.update(snapshot_json.as_bytes());
         hex::encode(&hasher.finalize()[..16])
     };
-    let snapshot_marker = format!("snapshot:{}", snapshot_hash);
 
     // Clear existing turns and messages for this session, then re-insert
     // from scratch. Temporarily drop FTS triggers to avoid cascading errors
@@ -450,7 +515,18 @@ pub async fn replace_session_with_snapshot(
     for (idx, msg) in messages.iter().enumerate() {
         let role = normalize_role(&msg.role);
         turn_version += 1;
-        let source_entry_id = format!("line:{}", idx);
+        let record = records.and_then(|items| items.get(idx));
+        let source_entry_id = record
+            .map(|r| r.source_entry_id.clone())
+            .unwrap_or_else(|| format!("line:{}", idx));
+        let source_hash = record
+            .map(|r| message_source_hash(&r.message))
+            .unwrap_or_else(|| message_source_hash(msg));
+        let source_kind = if record.is_some() {
+            "pi_jsonl"
+        } else {
+            "pi_jsonl_bootstrap"
+        };
 
         let turn_id = derive_turn_id(&TurnIdInput {
             session_id,
@@ -458,10 +534,10 @@ pub async fn replace_session_with_snapshot(
             parent_turn_id: parent_turn_id.as_deref(),
             turn_version,
             role,
-            source_kind: Some("pi_jsonl_bootstrap"),
+            source_kind: Some(source_kind),
             source_session_id: Some(source_session_id),
             source_entry_id: Some(&source_entry_id),
-            source_hash: Some(&snapshot_marker),
+            source_hash: Some(&source_hash),
         });
 
         let turn_inserted = sqlx::query(
@@ -479,10 +555,10 @@ pub async fn replace_session_with_snapshot(
         .bind(&parent_turn_id)
         .bind(turn_version)
         .bind(role)
-        .bind("pi_jsonl_bootstrap")
+        .bind(source_kind)
         .bind(source_session_id)
         .bind(&source_entry_id)
-        .bind(&snapshot_marker)
+        .bind(&source_hash)
         .bind(msg.timestamp.map(|v| v.to_string()))
         .execute(&mut *tx)
         .await
@@ -507,7 +583,7 @@ pub async fn replace_session_with_snapshot(
             seq: 0,
             kind: "message",
             role: Some(role),
-            source_message_id: None,
+            source_message_id: Some(&source_entry_id),
             content: Some(&text),
         });
 

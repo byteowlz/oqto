@@ -21,6 +21,21 @@ use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
 static PROJECTOR_POOLS: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+fn projected_created_at_ms_sql() -> &'static str {
+    r#"CASE
+        WHEN t.source_timestamp IS NOT NULL
+          AND t.source_timestamp != ''
+          AND t.source_timestamp NOT GLOB '*[^0-9]*'
+          AND CAST(t.source_timestamp AS INTEGER) > 0
+        THEN CASE
+          WHEN CAST(t.source_timestamp AS INTEGER) < 1000000000000
+          THEN CAST(t.source_timestamp AS INTEGER) * 1000
+          ELSE CAST(t.source_timestamp AS INTEGER)
+        END
+        ELSE CAST(strftime('%s', COALESCE(t.committed_at, t.created_at)) * 1000 AS INTEGER)
+    END"#
+}
+
 async fn open_pool_for_workspace(user_home: &Path, workspace_id: &str) -> Result<sqlx::SqlitePool> {
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 
@@ -127,7 +142,7 @@ pub async fn project_session_messages_auto(
             continue;
         }
 
-        let mut rows = sqlx::query(
+        let query = format!(
             r#"
             SELECT
               m.message_id AS message_id,
@@ -135,17 +150,19 @@ pub async fn project_session_messages_auto(
               t.role AS role,
               m.content AS content,
               m.json_payload AS json_payload,
-              CAST(strftime('%s', COALESCE(t.committed_at, t.created_at)) * 1000 AS INTEGER) AS created_at_ms
+              {} AS created_at_ms
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
             WHERE t.session_id = ?
             ORDER BY t.turn_version ASC, m.seq ASC
             "#,
-        )
-        .bind(session_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
+            projected_created_at_ms_sql(),
+        );
+        let mut rows = sqlx::query(&query)
+            .bind(session_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
 
         if let Some(l) = limit
             && rows.len() > l
@@ -293,7 +310,7 @@ pub async fn project_session_messages_for_workspace(
     limit: Option<usize>,
 ) -> Result<Vec<ProjectedChatMessage>> {
     let pool = open_pool_for_workspace(user_home, workspace_id).await?;
-    let mut rows = sqlx::query(
+    let query = format!(
         r#"
         SELECT
           m.message_id AS message_id,
@@ -301,17 +318,19 @@ pub async fn project_session_messages_for_workspace(
           t.role AS role,
           m.content AS content,
           m.json_payload AS json_payload,
-          CAST(strftime('%s', COALESCE(t.committed_at, t.created_at)) * 1000 AS INTEGER) AS created_at_ms
+          {} AS created_at_ms
         FROM oqto_log_turns t
         JOIN oqto_log_messages m ON m.turn_id = t.turn_id
         WHERE t.session_id = ?
         ORDER BY t.turn_version ASC, m.seq ASC
         "#,
-    )
-    .bind(session_id)
-    .fetch_all(&pool)
-    .await
-    .context("query oqto-log projection")?;
+        projected_created_at_ms_sql(),
+    );
+    let mut rows = sqlx::query(&query)
+        .bind(session_id)
+        .fetch_all(&pool)
+        .await
+        .context("query oqto-log projection")?;
 
     if let Some(l) = limit
         && rows.len() > l
@@ -497,7 +516,30 @@ fn row_to_projected_message(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_client_id_from_payload_json;
+    use std::collections::HashMap;
+
+    use oqto_pi::AgentMessage;
+    use serde_json::Value;
+
+    use super::{extract_client_id_from_payload_json, project_session_messages_for_workspace};
+    use crate::oqto_log::store::{PiJsonlMessageRecord, replace_session_with_pi_jsonl_records};
+
+    fn test_message(role: &str, content: &str, timestamp: Option<u64>) -> AgentMessage {
+        AgentMessage {
+            role: role.to_string(),
+            content: Value::String(content.to_string()),
+            timestamp,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: HashMap::new(),
+        }
+    }
 
     #[test]
     fn payload_client_id_extraction_handles_snake_and_camel_case() {
@@ -518,5 +560,50 @@ mod tests {
             extract_client_id_from_payload_json(root).as_deref(),
             Some("cid-root")
         );
+    }
+
+    #[tokio::test]
+    async fn projection_uses_pi_jsonl_source_timestamps() {
+        let temp = tempfile::tempdir().expect("create temp home");
+        let user_home = temp.path();
+        let workspace_id = "/tmp/oqto-source-timestamp-test";
+        let session_id = "session-source-timestamps";
+        let records = vec![
+            PiJsonlMessageRecord {
+                source_entry_id: "entry-user".to_string(),
+                parent_source_entry_id: None,
+                source_sequence: 0,
+                message: test_message("user", "hi", Some(1_779_363_330_601)),
+            },
+            PiJsonlMessageRecord {
+                source_entry_id: "entry-assistant".to_string(),
+                parent_source_entry_id: Some("entry-user".to_string()),
+                source_sequence: 1,
+                message: test_message("assistant", "hello", Some(1_779_363_330_656)),
+            },
+        ];
+
+        replace_session_with_pi_jsonl_records(
+            user_home,
+            "user-1",
+            workspace_id,
+            session_id,
+            "platform-1",
+            Some("external-1"),
+            "external-1",
+            &records,
+        )
+        .await
+        .expect("replace session from Pi JSONL records");
+
+        let projected =
+            project_session_messages_for_workspace(user_home, workspace_id, session_id, None)
+                .await
+                .expect("project session messages");
+
+        assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].created_at, 1_779_363_330_601);
+        assert_eq!(projected[1].created_at, 1_779_363_330_656);
+        assert!(projected[0].created_at < projected[1].created_at);
     }
 }
