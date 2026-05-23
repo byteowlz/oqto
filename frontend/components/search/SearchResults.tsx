@@ -259,7 +259,7 @@ export function SearchResults({
 
 				setResults({ hits: allHits.slice(0, 50) });
 			} catch (err) {
-				setError(err instanceof Error ? err.message : t("search.error"));
+				setError(err instanceof Error ? err.message : "Search failed");
 				setResults(null);
 			} finally {
 				setLoading(false);
@@ -267,7 +267,11 @@ export function SearchResults({
 		}, 300); // 300ms debounce
 
 		return () => clearTimeout(timer);
-	}, [query, agentFilter, t]);
+		// Intentionally do not depend on i18n `t` identity here.
+		// In some environments `t` is not referentially stable and can
+		// retrigger this effect every render, leaving results stuck in
+		// a perpetual loading state.
+	}, [query, agentFilter]);
 
 	const handleMouseEnter = useCallback((index: number) => {
 		if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
