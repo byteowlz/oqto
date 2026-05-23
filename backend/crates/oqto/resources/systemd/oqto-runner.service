@@ -21,8 +21,8 @@
 [Unit]
 Description=Oqto Runner - Process runner for multi-user isolation
 Documentation=https://github.com/byteowlz/oqto
-After=hstry.service mmry.service eavs.service
-Wants=hstry.service mmry.service eavs.service
+After=mmry.service eavs.service
+Wants=mmry.service eavs.service
 
 [Service]
 Type=simple
@@ -32,7 +32,7 @@ ExecStart=/usr/local/bin/oqto-runner
 
 Restart=always
 RestartSec=3
-# Cap restart frequency to avoid runaway loops (e.g. when hstry adapters are broken).
+# Cap restart frequency to avoid runaway loops.
 # systemd resets the counter after StartLimitIntervalSec without a failure.
 StartLimitIntervalSec=120
 StartLimitBurst=10
