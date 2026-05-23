@@ -3560,7 +3560,7 @@ impl Runner {
         // Point at the forked JSONL so the new process resumes from it
         child_config.session_file = Some(fork_session_file.clone());
         child_config.continue_session = None; // session_file takes precedence
-        let child_workspace = child_config.cwd.to_string_lossy().to_string();
+        let _child_workspace = child_config.cwd.to_string_lossy().to_string();
 
         let new_session_id = match self
             .pi_manager
@@ -3583,7 +3583,6 @@ impl Runner {
             fork_result.new_session_file,
             req.session_id
         );
-
 
         RunnerResponse::PiForkResult(PiForkResultResponse {
             session_id: req.session_id,
