@@ -833,17 +833,34 @@ pub async fn get_chat_messages(
     Path(session_id): Path<String>,
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<oqto_protocol::messages::Message>>> {
-    if !is_oqto_session_id(&session_id) {
-        return Err(ApiError::bad_request(format!(
-            "invalid session id '{}': expected oqto-* platform id",
-            session_id
-        )));
+    let mut resolved_session_id = session_id;
+    if !is_oqto_session_id(&resolved_session_id) {
+        let effective_user = state.effective_linux_username(user.id());
+        let user_home = if state.user_isolation_enabled() {
+            std::path::PathBuf::from(format!("/home/{effective_user}"))
+        } else {
+            dirs::home_dir().ok_or_else(|| {
+                ApiError::internal("could not resolve user home for session lookup")
+            })?
+        };
+
+        if let Some(platform_id) =
+            oqto_history::oqto_log::ops::find_platform_by_external(&user_home, &resolved_session_id)
+                .await
+        {
+            tracing::debug!(
+                session_id = %resolved_session_id,
+                platform_id = %platform_id,
+                "resolved legacy external session id to platform id"
+            );
+            resolved_session_id = platform_id;
+        }
     }
 
     let target = resolve_session_target(
         &state,
         user.id(),
-        &session_id,
+        &resolved_session_id,
         query.shared_workspace_id.as_deref(),
         is_multi_user_mode(&state),
     )
@@ -856,7 +873,7 @@ pub async fn get_chat_messages(
 
     let response = runner
         .get_workspace_chat_session_messages(
-            &session_id,
+            &resolved_session_id,
             query.render,
             None,
             oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
@@ -868,7 +885,7 @@ pub async fn get_chat_messages(
 
     info!(
         user_id = %user.id(),
-        session_id = %session_id,
+        session_id = %resolved_session_id,
         shared_workspace_id = ?query.shared_workspace_id,
         count = canonical.len(),
         "Listed chat messages via runner"

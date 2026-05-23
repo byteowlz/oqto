@@ -523,6 +523,35 @@ pub async fn find_external_by_session(
     None
 }
 
+pub async fn find_platform_by_external(user_home: &Path, external_id: &str) -> Option<String> {
+    let dbs = list_db_paths(user_home);
+
+    for db in dbs {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT platform_id FROM oqto_log_sessions WHERE external_id = ? AND platform_id IS NOT NULL AND trim(platform_id) != '' LIMIT 1",
+        )
+        .bind(external_id)
+        .fetch_optional(&pool)
+        .await;
+
+        if let Ok(Some(platform_id)) = row {
+            return Some(platform_id);
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
