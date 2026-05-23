@@ -5,6 +5,18 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 static OQTO_LOG_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations_oqto_log");
 
+#[derive(Debug, Clone)]
+pub struct OqtoLogSessionRow {
+    pub session_id: String,
+    pub platform_id: String,
+    pub external_id: Option<String>,
+    pub user_id: String,
+    pub workspace_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub messages: i64,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct OpsSummary {
     pub databases: usize,
@@ -209,6 +221,207 @@ pub async fn sync_identities_from_hstry(
 
 /// Look up an oqto-log session by its external_id (Pi session ID).
 /// Scans all workspace databases. Returns (session_id, workspace_id) or `None`.
+pub async fn list_sessions(
+    user_home: &Path,
+    workspace: Option<&str>,
+) -> Result<Vec<OqtoLogSessionRow>> {
+    let mut sessions = Vec::new();
+    for db in list_db_paths(user_home) {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+
+        let rows = if let Some(workspace) = workspace {
+            sqlx::query_as::<
+                _,
+                (
+                    String,
+                    String,
+                    Option<String>,
+                    String,
+                    Option<String>,
+                    String,
+                    String,
+                    i64,
+                ),
+            >(
+                r#"
+                SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
+                       s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+                FROM oqto_log_sessions s
+                LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
+                LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+                WHERE s.workspace_id = ?
+                GROUP BY s.session_id
+                ORDER BY s.updated_at DESC
+                "#,
+            )
+            .bind(workspace)
+            .fetch_all(&pool)
+            .await?
+        } else {
+            sqlx::query_as::<
+                _,
+                (
+                    String,
+                    String,
+                    Option<String>,
+                    String,
+                    Option<String>,
+                    String,
+                    String,
+                    i64,
+                ),
+            >(
+                r#"
+                SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
+                       s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+                FROM oqto_log_sessions s
+                LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
+                LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+                GROUP BY s.session_id
+                ORDER BY s.updated_at DESC
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?
+        };
+
+        sessions.extend(rows.into_iter().map(|row| OqtoLogSessionRow {
+            session_id: row.0,
+            platform_id: row.1,
+            external_id: row.2,
+            user_id: row.3,
+            workspace_id: row.4,
+            created_at: row.5,
+            updated_at: row.6,
+            messages: row.7,
+        }));
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(sessions)
+}
+
+pub async fn get_session(
+    user_home: &Path,
+    session_or_platform_id: &str,
+) -> Result<Option<OqtoLogSessionRow>> {
+    for db in list_db_paths(user_home) {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                String,
+                String,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
+                   s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+            FROM oqto_log_sessions s
+            LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
+            LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+            WHERE s.session_id = ? OR s.platform_id = ? OR s.external_id = ?
+            GROUP BY s.session_id
+            LIMIT 1
+            "#,
+        )
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .fetch_optional(&pool)
+        .await?;
+        if let Some(row) = row {
+            return Ok(Some(OqtoLogSessionRow {
+                session_id: row.0,
+                platform_id: row.1,
+                external_id: row.2,
+                user_id: row.3,
+                workspace_id: row.4,
+                created_at: row.5,
+                updated_at: row.6,
+                messages: row.7,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+pub async fn delete_session(user_home: &Path, session_or_platform_id: &str) -> Result<bool> {
+    let mut deleted = false;
+    for db in list_db_paths(user_home) {
+        let options = SqliteConnectOptions::new().filename(&db);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+        let mut tx = pool.begin().await?;
+        let ids = sqlx::query_as::<_, (String,)>(
+            "SELECT session_id FROM oqto_log_sessions WHERE session_id = ? OR platform_id = ? OR external_id = ?",
+        )
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if ids.is_empty() {
+            tx.commit().await?;
+            continue;
+        }
+        sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_ad")
+            .execute(&mut *tx)
+            .await?;
+        for (session_id,) in ids {
+            sqlx::query("DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT turn_id FROM oqto_log_turns WHERE session_id = ?)")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM oqto_log_turns WHERE session_id = ?")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM oqto_log_branches WHERE session_id = ?")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM oqto_log_sessions WHERE session_id = ?")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await?;
+            deleted = true;
+        }
+        sqlx::query("INSERT INTO oqto_log_message_fts(oqto_log_message_fts) VALUES('rebuild')")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    Ok(deleted)
+}
+
 pub async fn find_session_by_external(
     user_home: &Path,
     external_id: &str,
@@ -308,4 +521,86 @@ pub async fn find_external_by_session(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use oqto_pi::AgentMessage;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::oqto_log::store::append_agent_end_snapshot;
+
+    fn msg(content: &str) -> AgentMessage {
+        AgentMessage {
+            role: "user".to_string(),
+            content: Value::String(content.to_string()),
+            timestamp: Some(1_779_363_330_601),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_get_delete_sessions_use_oqto_log_only() {
+        let temp = tempfile::tempdir().expect("temp home");
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            "/tmp/ws",
+            "session-1",
+            "platform-1",
+            Some("external-1"),
+            "external-1",
+            &[msg("hello oqto-log")],
+        )
+        .await
+        .expect("seed oqto-log");
+
+        let all = list_sessions(temp.path(), None).await.expect("list all");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].session_id, "session-1");
+        assert_eq!(all[0].platform_id, "platform-1");
+        assert_eq!(all[0].external_id.as_deref(), Some("external-1"));
+        assert_eq!(all[0].messages, 1);
+
+        let filtered = list_sessions(temp.path(), Some("/tmp/ws"))
+            .await
+            .expect("list workspace");
+        assert_eq!(filtered.len(), 1);
+
+        let by_platform = get_session(temp.path(), "platform-1")
+            .await
+            .expect("get by platform")
+            .expect("session");
+        assert_eq!(by_platform.session_id, "session-1");
+
+        assert_eq!(
+            find_external_by_session(temp.path(), "platform-1")
+                .await
+                .as_deref(),
+            Some("external-1")
+        );
+
+        assert!(
+            delete_session(temp.path(), "platform-1")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            get_session(temp.path(), "platform-1")
+                .await
+                .expect("get after delete")
+                .is_none()
+        );
+    }
 }
