@@ -1,7 +1,6 @@
-//! Chat history module - reads chat sessions from hstry.
+//! Legacy chat history compatibility module.
 //!
-//! This module provides access to chat sessions and messages stored in hstry,
-//! either via gRPC (preferred) or direct SQLite access (runner-side).
+//! New runtime history features should use `oqto_history::oqto_log` instead.
 
 pub mod canon;
 pub mod hstry;
@@ -14,9 +13,6 @@ pub mod service;
 pub use canon::{legacy_message_to_canon, legacy_messages_to_canon};
 pub use models::{ChatMessage, ChatMessagePart, ChatSession};
 #[allow(unused_imports)]
-pub use oqto_history::search::HstrySearchHit;
-
-#[allow(unused_imports)]
 pub use repository::{
     get_session, get_session_from_dir, get_session_from_hstry, get_session_messages_from_dir,
     hstry_db_path, list_sessions_from_dir, list_sessions_from_hstry, project_name_from_path,
@@ -26,7 +22,7 @@ pub use repository::{
 #[allow(unused_imports)]
 pub use service::{
     get_session_messages_rendered_from_dir, get_session_messages_rendered_via_grpc,
-    get_session_messages_via_grpc_cached, search_hstry,
+    get_session_messages_via_grpc_cached,
 };
 
 #[allow(unused_imports)]

@@ -37,8 +37,9 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::GetWorkspaceChatSession(_)
         | RunnerRequest::GetWorkspaceChatSessionMessages(_)
         | RunnerRequest::UpdateWorkspaceChatSession(_)
-        | RunnerRequest::RepairWorkspaceChatHistory(_)
-        | RunnerRequest::SearchHstry(_)) => super::sessions::handle_request(runner, req).await,
+        | RunnerRequest::RepairWorkspaceChatHistory(_)) => {
+            super::sessions::handle_request(runner, req).await
+        }
 
         req @ (RunnerRequest::SearchMemories(_)
         | RunnerRequest::AddMemory(_)

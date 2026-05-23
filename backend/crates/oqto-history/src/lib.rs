@@ -7,5 +7,4 @@
 pub mod hstry;
 pub mod legacy_hstry;
 pub mod oqto_log;
-pub mod search;
 pub mod session;
