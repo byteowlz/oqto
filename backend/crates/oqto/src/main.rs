@@ -2651,39 +2651,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             }
         }
 
-        info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
+        info!("Skipping hstry runtime initialization in multi-user mode");
     } else if ctx.config.hstry.enabled {
-        // Always auto-start hstry daemon and connect.
-        let hstry_config = history::HstryServiceConfig {
-            binary: ctx.config.hstry.binary.clone(),
-            auto_start: true,
-            startup_timeout: std::time::Duration::from_secs(10),
-        };
-        let hstry_manager = history::HstryServiceManager::new(hstry_config);
-
-        // Ensure daemon is running (auto-starts if needed). Even if this
-        // readiness check fails, keep hstry client enabled so runtime calls can
-        // self-heal and reconnect (important during restarts/redeploy races).
-        if let Err(e) = hstry_manager.ensure_running().await {
-            warn!(
-                "Failed to start/verify hstry daemon: {}. Keeping client enabled and retrying lazily.",
-                e
-            );
-        } else {
-            info!("hstry daemon is running");
-        }
-
-        // Create client and connect (best effort).
-        let hstry_client = history::HstryClient::new();
-        if let Err(e) = hstry_client.connect().await {
-            warn!(
-                "Failed to connect to hstry daemon: {}. Will retry on first use.",
-                e
-            );
-        } else {
-            info!("hstry client connected");
-        }
-        state = state.with_hstry(hstry_client);
+        warn!("Ignoring legacy hstry runtime config; Oqto uses oqto-log for history");
     } else {
         debug!("hstry integration disabled");
     }
