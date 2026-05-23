@@ -833,6 +833,13 @@ pub async fn get_chat_messages(
     Path(session_id): Path<String>,
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<oqto_protocol::messages::Message>>> {
+    if !is_oqto_session_id(&session_id) {
+        return Err(ApiError::bad_request(format!(
+            "invalid session id '{}': expected oqto-* platform id",
+            session_id
+        )));
+    }
+
     let target = resolve_session_target(
         &state,
         user.id(),
