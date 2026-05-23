@@ -475,7 +475,7 @@ const AppShell = memo(function AppShell() {
 							: null;
 				if (targetMessageId) setScrollToMessageId(targetMessageId);
 
-				if (hit.agent === "pi_agent") {
+				if (hit.agent === "pi_agent" || hit.agent === "pi") {
 					const sessionId =
 						typeof hit.session_id === "string" ? hit.session_id : "";
 					if (sessionId) {

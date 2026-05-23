@@ -242,7 +242,7 @@ export function useSessionData({
 				return session.title.toLowerCase().includes(query);
 			})
 			.map((session) => ({
-				agent: "pi",
+				agent: "pi_agent",
 				source_path: `title:oc:${session.id}`,
 				session_id: session.id,
 				title: session.title ?? "New Session",
