@@ -50,19 +50,6 @@ export interface SessionDataOutput {
 	sessionTitleHits: SearchHit[];
 }
 
-function normalizePath(value: string): string {
-	return value.replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-function pathMatchesWorkspace(path: string, workspacePath: string): boolean {
-	const normalizedPath = normalizePath(path);
-	const normalizedWorkspace = normalizePath(workspacePath);
-	return (
-		normalizedPath === normalizedWorkspace ||
-		normalizedPath.startsWith(`${normalizedWorkspace}/`)
-	);
-}
-
 export function useSessionData({
 	chatHistory,
 	workspaceDirectories,
@@ -76,32 +63,16 @@ export function useSessionData({
 }: SessionDataInput): SessionDataOutput {
 	const { t } = useTranslation();
 
-	const configuredWorkspacePaths = useMemo(
-		() => workspaceDirectories.map((directory) => directory.path),
-		[workspaceDirectories],
-	);
-
 	const dedupedChatHistory = useMemo(() => {
 		const byId = new Map<string, ChatSession>();
 		for (const session of chatHistory) {
-			if (configuredWorkspacePaths.length > 0) {
-				const workspacePath = session.workspace_path?.trim();
-				if (
-					!workspacePath ||
-					!configuredWorkspacePaths.some((configuredPath) =>
-						pathMatchesWorkspace(workspacePath, configuredPath),
-					)
-				) {
-					continue;
-				}
-			}
 			const existing = byId.get(session.id);
 			if (!existing || session.updated_at >= existing.updated_at) {
 				byId.set(session.id, session);
 			}
 		}
 		return Array.from(byId.values());
-	}, [chatHistory, configuredWorkspacePaths]);
+	}, [chatHistory]);
 
 	// Build hierarchical session structure
 	const sessionHierarchy: SessionHierarchy = useMemo(() => {
