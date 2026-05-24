@@ -1750,6 +1750,14 @@ WantedBy=default.target
                             if deleted > 0 {
                                 println!("oqto-log identity cleanup: deleted_out_of_scope_identity_only_sessions={deleted}");
                             }
+                            let normalized = crate::oqto_log::ops::normalize_session_timestamps_for_workspace(
+                                Path::new(&home),
+                                root,
+                            )
+                            .await?;
+                            if normalized > 0 {
+                                println!("oqto-log identity cleanup: normalized_session_timestamps={normalized}");
+                            }
                         }
                         anyhow::Ok(stats)
                     })?;
