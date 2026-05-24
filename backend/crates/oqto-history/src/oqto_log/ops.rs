@@ -125,6 +125,8 @@ pub struct SessionIdentityInput {
     pub external_id: String,
     pub platform_id: String,
     pub title: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 pub async fn upsert_session_identity(
@@ -254,14 +256,16 @@ pub async fn batch_upsert_session_identities(
         sqlx::query(
             r#"
             INSERT INTO oqto_log_sessions (
-              session_id, platform_id, external_id, user_id, workspace_id, title
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              session_id, platform_id, external_id, user_id, workspace_id, title, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))
             ON CONFLICT(session_id) DO UPDATE SET
               platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
               external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
               user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
               workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
-              title = COALESCE(excluded.title, oqto_log_sessions.title)
+              title = COALESCE(excluded.title, oqto_log_sessions.title),
+              created_at = COALESCE(excluded.created_at, oqto_log_sessions.created_at),
+              updated_at = COALESCE(excluded.updated_at, oqto_log_sessions.updated_at)
             "#,
         )
         .bind(&session_id)
@@ -270,6 +274,8 @@ pub async fn batch_upsert_session_identities(
         .bind(user_id)
         .bind(workspace_id)
         .bind(identity.title.as_deref())
+        .bind(identity.created_at.as_deref())
+        .bind(identity.updated_at.as_deref())
         .execute(&mut *tx)
         .await
         .with_context(|| format!("batch upsert oqto_log session identity: {}", session_id))?;
