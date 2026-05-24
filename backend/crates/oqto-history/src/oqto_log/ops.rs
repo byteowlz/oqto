@@ -542,7 +542,12 @@ pub async fn list_sessions(
                        s.created_at, s.updated_at, s.title, 0 AS messages
                 FROM oqto_log_sessions s
                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)
-                  AND EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM oqto_log_turns t
+                      JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+                      WHERE t.session_id = s.session_id
+                  )
                 ORDER BY s.updated_at DESC
                 "#,
             )
@@ -569,7 +574,12 @@ pub async fn list_sessions(
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
                        s.created_at, s.updated_at, s.title, 0 AS messages
                 FROM oqto_log_sessions s
-                WHERE EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM oqto_log_turns t
+                    JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+                    WHERE t.session_id = s.session_id
+                )
                 ORDER BY s.updated_at DESC
                 "#,
             )

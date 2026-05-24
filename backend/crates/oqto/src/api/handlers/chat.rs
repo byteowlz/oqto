@@ -459,10 +459,6 @@ pub async fn list_chat_history(
         })
         .collect();
 
-    if query.shared_workspace_id.is_none() {
-        sessions.retain(|s| s.id.starts_with("oqto-"));
-    }
-
     sessions = merge_duplicate_sessions(sessions);
 
     if query.shared_workspace_id.is_none() {
@@ -758,10 +754,6 @@ pub async fn list_chat_history_grouped(
             provider: s.provider,
         })
         .collect();
-
-    if query.shared_workspace_id.is_none() {
-        sessions.retain(|s| s.id.starts_with("oqto-"));
-    }
 
     sessions = merge_duplicate_sessions(sessions);
 
