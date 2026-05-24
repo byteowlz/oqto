@@ -119,6 +119,73 @@ pub struct IdentitySyncSummary {
     pub dbs_touched: usize,
 }
 
+pub async fn upsert_session_identity(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: Option<&str>,
+    external_id: Option<&str>,
+) -> Result<()> {
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "open oqto-log db for identity upsert: {}",
+                db_path.display()
+            )
+        })?;
+
+    OQTO_LOG_MIGRATOR.run(&pool).await.with_context(|| {
+        format!(
+            "run oqto-log migrations for identity upsert: {}",
+            db_path.display()
+        )
+    })?;
+
+    let mut tx = pool.begin().await.context("begin oqto-log identity tx")?;
+    sqlx::query(
+        r#"
+        INSERT INTO oqto_log_sessions (
+          session_id, platform_id, external_id, user_id, workspace_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(session_id) DO UPDATE SET
+          platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
+          external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
+          user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
+          workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
+          updated_at = datetime('now')
+        "#,
+    )
+    .bind(session_id)
+    .bind(platform_id)
+    .bind(external_id)
+    .bind(user_id)
+    .bind(workspace_id)
+    .execute(&mut *tx)
+    .await
+    .with_context(|| format!("upsert oqto_log session identity: {}", session_id))?;
+
+    let branch_id = format!("branch:{session_id}:main");
+    sqlx::query("INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)")
+        .bind(branch_id)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("upsert oqto_log main branch identity")?;
+
+    tx.commit().await.context("commit oqto-log identity tx")?;
+    Ok(())
+}
+
 pub async fn sync_identities_from_hstry(
     user_home: &Path,
     user_id: &str,
@@ -594,7 +661,9 @@ mod tests {
         assert_eq!(all[0].session_id, "session-1");
         assert_eq!(all[0].platform_id, "platform-1");
         assert_eq!(all[0].external_id.as_deref(), Some("external-1"));
-        assert_eq!(all[0].messages, 1);
+        // list_sessions is a sidebar hot path and intentionally avoids
+        // message-count joins; callers that need exact counts use get_session.
+        assert_eq!(all[0].messages, 0);
 
         let filtered = list_sessions(temp.path(), Some("/tmp/ws"))
             .await
@@ -606,6 +675,7 @@ mod tests {
             .expect("get by platform")
             .expect("session");
         assert_eq!(by_platform.session_id, "session-1");
+        assert_eq!(by_platform.messages, 1);
 
         assert_eq!(
             find_external_by_session(temp.path(), "platform-1")
