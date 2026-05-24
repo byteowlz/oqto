@@ -161,14 +161,13 @@ pub async fn upsert_session_identity(
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+          session_id, platform_id, external_id, user_id, workspace_id
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-          workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
-          updated_at = datetime('now')
+          workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
         "#,
     )
     .bind(session_id)
@@ -251,14 +250,13 @@ pub async fn batch_upsert_session_identities(
         sqlx::query(
             r#"
             INSERT INTO oqto_log_sessions (
-              session_id, platform_id, external_id, user_id, workspace_id, updated_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+              session_id, platform_id, external_id, user_id, workspace_id
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
               external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
               user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
-              updated_at = datetime('now')
+              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
             "#,
         )
         .bind(&session_id)
@@ -362,14 +360,13 @@ pub async fn sync_identities_from_hstry(
         sqlx::query(
             r#"
             INSERT INTO oqto_log_sessions (
-              session_id, platform_id, external_id, user_id, workspace_id, updated_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+              session_id, platform_id, external_id, user_id, workspace_id
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
               external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
               user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
-              updated_at = datetime('now')
+              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
             "#,
         )
         .bind(&session_id)
@@ -425,6 +422,7 @@ pub async fn list_sessions(
                        s.created_at, s.updated_at, 0 AS messages
                 FROM oqto_log_sessions s
                 WHERE s.workspace_id = ?
+                  AND EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
                 ORDER BY s.updated_at DESC
                 "#,
             )
@@ -449,6 +447,7 @@ pub async fn list_sessions(
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
                        s.created_at, s.updated_at, 0 AS messages
                 FROM oqto_log_sessions s
+                WHERE EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
                 ORDER BY s.updated_at DESC
                 "#,
             )
