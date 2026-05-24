@@ -109,7 +109,7 @@ fn try_main() -> Result<()> {
         Command::Init(cmd) => handle_init(&ctx, cmd),
         Command::Config { command } => handle_config(&ctx, command),
         Command::InviteCodes { command } => async_invite_codes(ctx, command),
-        Command::Runner { command } => handle_runner(command),
+        Command::Runner { command } => handle_runner(&ctx, command),
         Command::Search { command } => async_search(command),
         Command::Completions { shell } => handle_completions(shell),
     }
@@ -314,6 +314,9 @@ struct RunnerMigrateOqtoLogCommand {
     /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
     #[arg(long, default_value = "bootstrap")]
     mode: String,
+    /// Restrict Pi JSONL import/validation to this workspace root.
+    #[arg(long, value_name = "PATH")]
+    workspace_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -1418,7 +1421,7 @@ async fn handle_search(command: SearchCommand) -> Result<()> {
     Ok(())
 }
 
-fn handle_runner(command: RunnerCommand) -> Result<()> {
+fn handle_runner(ctx: &RuntimeContext, command: RunnerCommand) -> Result<()> {
     use std::process::Command as StdCommand;
 
     // Get the socket path
@@ -1533,9 +1536,9 @@ fn handle_runner(command: RunnerCommand) -> Result<()> {
             Ok(())
         }
         RunnerCommand::Restart => {
-            handle_runner(RunnerCommand::Stop)?;
+            handle_runner(ctx, RunnerCommand::Stop)?;
             std::thread::sleep(std::time::Duration::from_millis(500));
-            handle_runner(RunnerCommand::Start)
+            handle_runner(ctx, RunnerCommand::Start)
         }
         RunnerCommand::Status => {
             if is_running() {
@@ -1594,6 +1597,30 @@ WantedBy=default.target
         RunnerCommand::MigrateOqtoLog(cmd) => {
             let home = env::var("HOME").context("HOME not set")?;
             let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let workspace_root = match cmd.workspace_root.clone() {
+                Some(root) => Some(root),
+                None => {
+                    let linux_username = user.clone();
+                    let workspace = if ctx.config.local.single_user {
+                        ctx.config
+                            .local
+                            .workspace_dir
+                            .replace("/{linux_username}", "")
+                            .replace("{linux_username}/", "")
+                            .replace("{linux_username}", "")
+                            .replace("/{user_id}", "")
+                            .replace("{user_id}/", "")
+                            .replace("{user_id}", "")
+                    } else {
+                        ctx.config
+                            .local
+                            .workspace_dir
+                            .replace("{linux_username}", &linux_username)
+                            .replace("{user_id}", &user)
+                    };
+                    Some(expand_str_path(&workspace)?)
+                }
+            };
             let rt = tokio::runtime::Runtime::new()?;
 
             match cmd.mode.as_str() {
@@ -1708,11 +1735,23 @@ WantedBy=default.target
                 }
                 "sync-identities" => {
                     let stats = rt.block_on(async {
-                        crate::oqto_log::importer::fast_import_identities_from_pi_jsonl(
+                        let stats = crate::oqto_log::importer::fast_import_identities_from_pi_jsonl(
                             Path::new(&home),
                             &user,
+                            workspace_root.as_deref(),
                         )
-                        .await
+                        .await?;
+                        if let Some(root) = workspace_root.as_deref() {
+                            let deleted = crate::oqto_log::ops::delete_identity_only_sessions_outside_workspace(
+                                Path::new(&home),
+                                root,
+                            )
+                            .await?;
+                            if deleted > 0 {
+                                println!("oqto-log identity cleanup: deleted_out_of_scope_identity_only_sessions={deleted}");
+                            }
+                        }
+                        anyhow::Ok(stats)
                     })?;
                     println!(
                         "oqto-log identity sync complete: scanned_files={}, imported_sessions={}, skipped_files={}, failed_files={}",
