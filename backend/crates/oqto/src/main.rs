@@ -1707,16 +1707,30 @@ WantedBy=default.target
                     Ok(())
                 }
                 "sync-identities" => {
-                    let summary = rt.block_on(async {
-                        crate::oqto_log::ops::sync_identities_from_hstry(Path::new(&home), &user)
-                            .await
+                    let stats = rt.block_on(async {
+                        crate::oqto_log::importer::fast_import_identities_from_pi_jsonl(
+                            Path::new(&home),
+                            &user,
+                        )
+                        .await
                     })?;
                     println!(
-                        "oqto-log identity sync complete: conversations_scanned={}, sessions_upserted={}, dbs_touched={}",
-                        summary.conversations_scanned,
-                        summary.sessions_upserted,
-                        summary.dbs_touched
+                        "oqto-log identity sync complete: scanned_files={}, imported_sessions={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.skipped_files,
+                        stats.failed_files
                     );
+                    if !stats.failure_samples.is_empty() {
+                        for sample in stats.failure_samples.iter().take(25) {
+                            println!("identity-sync-failure: {}", sample);
+                        }
+                    }
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!(
+                            "oqto-log identity sync had failures (see identity-sync-failure lines)"
+                        ));
+                    }
                     Ok(())
                 }
                 other => Err(anyhow!(

@@ -99,6 +99,11 @@ fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     Some(format!("/{}", core.replace('-', "/")))
 }
 
+fn platform_id_for_external_id(external_id: &str) -> String {
+    const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
+    format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
+}
+
 fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
     let (_, session_id) = stem.rsplit_once('_')?;
@@ -304,6 +309,89 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
         (Some(w), Some(s)) => Some((w, s)),
         _ => None,
     }
+}
+
+pub async fn fast_import_identities_from_pi_jsonl(
+    user_home: &Path,
+    user_id: &str,
+) -> Result<ImportStats> {
+    let mut stats = ImportStats::default();
+    let base = user_home.join(".pi").join("agent").join("sessions");
+    let Ok(workspaces) = std::fs::read_dir(base) else {
+        return Ok(stats);
+    };
+
+    for workspace in workspaces.flatten() {
+        let workspace_dir_path = workspace.path();
+        if !workspace_dir_path.is_dir() {
+            continue;
+        }
+
+        let workspace_id = workspace_dir_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .and_then(decode_workspace_path_from_safe_dirname)
+            .unwrap_or_else(|| "global".to_string());
+
+        let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|v| v.to_str()) != Some("jsonl") {
+                continue;
+            }
+            stats.scanned_files += 1;
+            let Some(external_id) = parse_pi_session_id_from_path(&path) else {
+                stats.skipped_files += 1;
+                continue;
+            };
+
+            let (session_id, platform_id) =
+                match oqto_history::oqto_log::ops::find_session_by_external(user_home, &external_id)
+                    .await
+                {
+                    Some((existing_id, _)) if existing_id.starts_with("oqto-") => {
+                        (existing_id.clone(), existing_id)
+                    }
+                    Some((existing_id, _)) => {
+                        let generated = platform_id_for_external_id(&external_id);
+                        (existing_id, generated)
+                    }
+                    None => {
+                        let generated = platform_id_for_external_id(&external_id);
+                        (generated.clone(), generated)
+                    }
+                };
+
+            if let Err(err) = oqto_history::oqto_log::ops::upsert_session_identity(
+                user_home,
+                user_id,
+                &workspace_id,
+                &session_id,
+                Some(&platform_id),
+                Some(&external_id),
+            )
+            .await
+            {
+                stats.failed_files += 1;
+                if stats.failure_samples.len() < 25 {
+                    stats.failure_samples.push(format!(
+                        "identity_failed file={} workspace={} external_id={} error={}",
+                        path.display(),
+                        workspace_id,
+                        external_id,
+                        err
+                    ));
+                }
+                continue;
+            }
+
+            stats.imported_sessions += 1;
+        }
+    }
+
+    Ok(stats)
 }
 
 pub async fn bootstrap_import_from_pi_jsonl(
