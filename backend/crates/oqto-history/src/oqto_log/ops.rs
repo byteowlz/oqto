@@ -15,6 +15,7 @@ pub struct OqtoLogSessionRow {
     pub created_at: String,
     pub updated_at: String,
     pub messages: i64,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -123,6 +124,7 @@ pub struct IdentitySyncSummary {
 pub struct SessionIdentityInput {
     pub external_id: String,
     pub platform_id: String,
+    pub title: Option<String>,
 }
 
 pub async fn upsert_session_identity(
@@ -161,13 +163,14 @@ pub async fn upsert_session_identity(
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id
-        ) VALUES (?, ?, ?, ?, ?)
+          session_id, platform_id, external_id, user_id, workspace_id, title
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-          workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
+          workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
+          title = COALESCE(excluded.title, oqto_log_sessions.title)
         "#,
     )
     .bind(session_id)
@@ -175,6 +178,7 @@ pub async fn upsert_session_identity(
     .bind(external_id)
     .bind(user_id)
     .bind(workspace_id)
+    .bind(Option::<&str>::None)
     .execute(&mut *tx)
     .await
     .with_context(|| format!("upsert oqto_log session identity: {}", session_id))?;
@@ -250,13 +254,14 @@ pub async fn batch_upsert_session_identities(
         sqlx::query(
             r#"
             INSERT INTO oqto_log_sessions (
-              session_id, platform_id, external_id, user_id, workspace_id
-            ) VALUES (?, ?, ?, ?, ?)
+              session_id, platform_id, external_id, user_id, workspace_id, title
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
               external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
               user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
+              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
+              title = COALESCE(excluded.title, oqto_log_sessions.title)
             "#,
         )
         .bind(&session_id)
@@ -264,6 +269,7 @@ pub async fn batch_upsert_session_identities(
         .bind(&identity.external_id)
         .bind(user_id)
         .bind(workspace_id)
+        .bind(identity.title.as_deref())
         .execute(&mut *tx)
         .await
         .with_context(|| format!("batch upsert oqto_log session identity: {}", session_id))?;
@@ -527,12 +533,13 @@ pub async fn list_sessions(
                     Option<String>,
                     String,
                     String,
+                    Option<String>,
                     i64,
                 ),
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, 0 AS messages
+                       s.created_at, s.updated_at, s.title, 0 AS messages
                 FROM oqto_log_sessions s
                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)
                   AND EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
@@ -554,12 +561,13 @@ pub async fn list_sessions(
                     Option<String>,
                     String,
                     String,
+                    Option<String>,
                     i64,
                 ),
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, 0 AS messages
+                       s.created_at, s.updated_at, s.title, 0 AS messages
                 FROM oqto_log_sessions s
                 WHERE EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
                 ORDER BY s.updated_at DESC
@@ -577,7 +585,8 @@ pub async fn list_sessions(
             workspace_id: row.4,
             created_at: row.5,
             updated_at: row.6,
-            messages: row.7,
+            title: row.7,
+            messages: row.8,
         }));
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -608,12 +617,13 @@ pub async fn get_session(
                 Option<String>,
                 String,
                 String,
+                Option<String>,
                 i64,
             ),
         >(
             r#"
             SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                   s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+                   s.created_at, s.updated_at, s.title, COUNT(m.message_id) AS messages
             FROM oqto_log_sessions s
             LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
             LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
@@ -636,7 +646,8 @@ pub async fn get_session(
                 workspace_id: row.4,
                 created_at: row.5,
                 updated_at: row.6,
-                messages: row.7,
+                title: row.7,
+                messages: row.8,
             }));
         }
     }

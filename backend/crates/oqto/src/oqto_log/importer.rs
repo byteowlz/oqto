@@ -19,6 +19,20 @@ pub struct ImportStats {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct JsonlSessionEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    cwd: Option<String>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct PiJsonlSessionMetadata {
+    cwd: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
@@ -113,6 +127,47 @@ fn path_is_inside_root(path: &str, root: &Path) -> bool {
 fn platform_id_for_external_id(external_id: &str) -> String {
     const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
     format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
+}
+
+fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return PiJsonlSessionMetadata::default();
+    };
+
+    let mut cwd = None;
+    let mut last_name = None;
+    for line in contents.lines() {
+        let Ok(entry) = serde_json::from_str::<JsonlSessionEntry>(line) else {
+            continue;
+        };
+        match entry.entry_type.as_str() {
+            "session" if cwd.is_none() => cwd = entry.cwd,
+            "session_info" => {
+                if let Some(name) = entry.name.map(|name| name.trim().to_string())
+                    && !name.is_empty()
+                {
+                    last_name = Some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let title = last_name.and_then(|name| {
+        let parsed = oqto_pi::session_parser::ParsedTitle::parse(&name);
+        let display = parsed.display_title().trim();
+        if !display.is_empty() {
+            Some(display.to_string())
+        } else {
+            name.split('[')
+                .next()
+                .map(str::trim)
+                .filter(|fallback| !fallback.is_empty())
+                .map(str::to_string)
+        }
+    });
+
+    PiJsonlSessionMetadata { cwd, title }
 }
 
 fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
@@ -344,16 +399,11 @@ pub async fn fast_import_identities_from_pi_jsonl(
             continue;
         }
 
-        let workspace_id = workspace_dir_path
+        let fallback_workspace_id = workspace_dir_path
             .file_name()
             .and_then(|v| v.to_str())
             .and_then(decode_workspace_path_from_safe_dirname)
             .unwrap_or_else(|| "global".to_string());
-        if let Some(root) = workspace_root
-            && !path_is_inside_root(&workspace_id, root)
-        {
-            continue;
-        }
 
         let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
             continue;
@@ -368,10 +418,21 @@ pub async fn fast_import_identities_from_pi_jsonl(
                 stats.skipped_files += 1;
                 continue;
             };
+            let metadata = read_pi_jsonl_session_metadata(&path);
+            let workspace_id = metadata
+                .cwd
+                .unwrap_or_else(|| fallback_workspace_id.clone());
+            if let Some(root) = workspace_root
+                && !path_is_inside_root(&workspace_id, root)
+            {
+                stats.skipped_files += 1;
+                continue;
+            }
             by_workspace.entry(workspace_id.clone()).or_default().push(
                 oqto_history::oqto_log::ops::SessionIdentityInput {
                     platform_id: platform_id_for_external_id(&external_id),
                     external_id,
+                    title: metadata.title,
                 },
             );
         }
