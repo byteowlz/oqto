@@ -119,6 +119,12 @@ pub struct IdentitySyncSummary {
     pub dbs_touched: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionIdentityInput {
+    pub external_id: String,
+    pub platform_id: String,
+}
+
 pub async fn upsert_session_identity(
     user_home: &Path,
     user_id: &str,
@@ -184,6 +190,102 @@ pub async fn upsert_session_identity(
 
     tx.commit().await.context("commit oqto-log identity tx")?;
     Ok(())
+}
+
+pub async fn batch_upsert_session_identities(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    identities: &[SessionIdentityInput],
+) -> Result<usize> {
+    if identities.is_empty() {
+        return Ok(0);
+    }
+
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "open oqto-log db for identity batch upsert: {}",
+                db_path.display()
+            )
+        })?;
+
+    OQTO_LOG_MIGRATOR.run(&pool).await.with_context(|| {
+        format!(
+            "run oqto-log migrations for identity batch upsert: {}",
+            db_path.display()
+        )
+    })?;
+
+    let existing_rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT external_id, session_id, platform_id FROM oqto_log_sessions WHERE external_id IS NOT NULL AND trim(external_id) != ''",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("query existing oqto-log identity map")?;
+    let existing_by_external: std::collections::HashMap<String, (String, String)> = existing_rows
+        .into_iter()
+        .map(|(external, session, platform)| (external, (session, platform)))
+        .collect();
+
+    let mut tx = pool
+        .begin()
+        .await
+        .context("begin oqto-log identity batch tx")?;
+    let mut upserted = 0usize;
+    for identity in identities {
+        let (session_id, platform_id) = existing_by_external
+            .get(&identity.external_id)
+            .cloned()
+            .unwrap_or_else(|| (identity.platform_id.clone(), identity.platform_id.clone()));
+
+        sqlx::query(
+            r#"
+            INSERT INTO oqto_log_sessions (
+              session_id, platform_id, external_id, user_id, workspace_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(session_id) DO UPDATE SET
+              platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
+              external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
+              user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
+              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
+              updated_at = datetime('now')
+            "#,
+        )
+        .bind(&session_id)
+        .bind(&platform_id)
+        .bind(&identity.external_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("batch upsert oqto_log session identity: {}", session_id))?;
+
+        let branch_id = format!("branch:{session_id}:main");
+        sqlx::query(
+            "INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)",
+        )
+        .bind(branch_id)
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await
+        .context("batch upsert oqto_log main branch identity")?;
+        upserted += 1;
+    }
+
+    tx.commit()
+        .await
+        .context("commit oqto-log identity batch tx")?;
+    Ok(upserted)
 }
 
 pub async fn sync_identities_from_hstry(

@@ -321,6 +321,11 @@ pub async fn fast_import_identities_from_pi_jsonl(
         return Ok(stats);
     };
 
+    let mut by_workspace: std::collections::BTreeMap<
+        String,
+        Vec<oqto_history::oqto_log::ops::SessionIdentityInput>,
+    > = std::collections::BTreeMap::new();
+
     for workspace in workspaces.flatten() {
         let workspace_dir_path = workspace.path();
         if !workspace_dir_path.is_dir() {
@@ -346,48 +351,36 @@ pub async fn fast_import_identities_from_pi_jsonl(
                 stats.skipped_files += 1;
                 continue;
             };
+            by_workspace.entry(workspace_id.clone()).or_default().push(
+                oqto_history::oqto_log::ops::SessionIdentityInput {
+                    platform_id: platform_id_for_external_id(&external_id),
+                    external_id,
+                },
+            );
+        }
+    }
 
-            let (session_id, platform_id) =
-                match oqto_history::oqto_log::ops::find_session_by_external(user_home, &external_id)
-                    .await
-                {
-                    Some((existing_id, _)) if existing_id.starts_with("oqto-") => {
-                        (existing_id.clone(), existing_id)
-                    }
-                    Some((existing_id, _)) => {
-                        let generated = platform_id_for_external_id(&external_id);
-                        (existing_id, generated)
-                    }
-                    None => {
-                        let generated = platform_id_for_external_id(&external_id);
-                        (generated.clone(), generated)
-                    }
-                };
-
-            if let Err(err) = oqto_history::oqto_log::ops::upsert_session_identity(
-                user_home,
-                user_id,
-                &workspace_id,
-                &session_id,
-                Some(&platform_id),
-                Some(&external_id),
-            )
-            .await
-            {
-                stats.failed_files += 1;
+    for (workspace_id, identities) in by_workspace {
+        match oqto_history::oqto_log::ops::batch_upsert_session_identities(
+            user_home,
+            user_id,
+            &workspace_id,
+            &identities,
+        )
+        .await
+        {
+            Ok(imported) => stats.imported_sessions += imported,
+            Err(err) => {
+                stats.failed_files += identities.len();
                 if stats.failure_samples.len() < 25 {
                     stats.failure_samples.push(format!(
-                        "identity_failed file={} workspace={} external_id={} error={}",
-                        path.display(),
+                        "identity_batch_failed workspace={} sessions={} error={}",
                         workspace_id,
-                        external_id,
+                        identities.len(),
                         err
                     ));
                 }
-                continue;
             }
-
-            stats.imported_sessions += 1;
         }
     }
 
