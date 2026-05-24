@@ -415,8 +415,22 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    let effective_workspace = if query.shared_workspace_id.is_none() {
+        if let Some(ref ws) = query.workspace {
+            if !is_within_path(ws, &allowed_root) {
+                return Err(ApiError::forbidden("workspace is outside allowed roots"));
+            }
+            Some(ws.clone())
+        } else {
+            Some(allowed_root.to_string_lossy().to_string())
+        }
+    } else {
+        query.workspace.clone()
+    };
+
     let response = runner
-        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .list_workspace_chat_sessions(effective_workspace, query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
@@ -447,20 +461,12 @@ pub async fn list_chat_history(
 
     sessions = merge_duplicate_sessions(sessions);
 
-    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
     if query.shared_workspace_id.is_none() {
         retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
     }
 
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
-
-    if let Some(ref ws) = query.workspace {
-        if query.shared_workspace_id.is_none() && !is_within_path(ws, &allowed_root) {
-            return Err(ApiError::forbidden("workspace is outside allowed roots"));
-        }
-        sessions.retain(|s| s.workspace_path == *ws);
-    }
 
     if !query.include_children {
         sessions.retain(|s| !s.is_child);
@@ -709,8 +715,22 @@ pub async fn list_chat_history_grouped(
     let runner = get_runner_for_user(&state, user.id())
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    let effective_workspace = if query.shared_workspace_id.is_none() {
+        if let Some(ref ws) = query.workspace {
+            if !is_within_path(ws, &allowed_root) {
+                return Err(ApiError::forbidden("workspace is outside allowed roots"));
+            }
+            Some(ws.clone())
+        } else {
+            Some(allowed_root.to_string_lossy().to_string())
+        }
+    } else {
+        query.workspace.clone()
+    };
+
     let response = runner
-        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .list_workspace_chat_sessions(effective_workspace, query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner grouped list failed: {}", e)))?;
 
@@ -737,20 +757,12 @@ pub async fn list_chat_history_grouped(
 
     sessions = merge_duplicate_sessions(sessions);
 
-    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
     if query.shared_workspace_id.is_none() {
         retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
     }
 
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
-
-    if let Some(ref ws) = query.workspace {
-        if query.shared_workspace_id.is_none() && !is_within_path(ws, &allowed_root) {
-            return Err(ApiError::forbidden("workspace is outside allowed roots"));
-        }
-        sessions.retain(|s| s.workspace_path == *ws);
-    }
 
     if !query.include_children {
         sessions.retain(|s| !s.is_child);

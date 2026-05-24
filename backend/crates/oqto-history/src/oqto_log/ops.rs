@@ -286,6 +286,70 @@ pub async fn batch_upsert_session_identities(
     Ok(upserted)
 }
 
+fn path_is_inside_root(path: &str, root: &Path) -> bool {
+    let normalized_path = path.replace('\\', "/").trim_end_matches('/').to_string();
+    let normalized_root = root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    normalized_path == normalized_root
+        || normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
+pub async fn delete_identity_only_sessions_outside_workspace(
+    user_home: &Path,
+    workspace_root: &Path,
+) -> Result<usize> {
+    let mut deleted = 0usize;
+    for db in list_db_paths(user_home) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&db))
+            .await
+            .with_context(|| {
+                format!(
+                    "open db for out-of-scope identity cleanup: {}",
+                    db.display()
+                )
+            })?;
+
+        let candidates = sqlx::query_as::<_, (String, Option<String>)>(
+            r#"
+            SELECT s.session_id, s.workspace_id
+            FROM oqto_log_sessions s
+            WHERE NOT EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .context("query identity-only cleanup candidates")?;
+
+        let mut tx = pool.begin().await.context("begin identity cleanup tx")?;
+        for (session_id, workspace_id) in candidates {
+            let in_scope = workspace_id
+                .as_deref()
+                .is_some_and(|workspace| path_is_inside_root(workspace, workspace_root));
+            if in_scope {
+                continue;
+            }
+            sqlx::query("DELETE FROM oqto_log_branches WHERE session_id = ?")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await
+                .context("delete out-of-scope identity branch")?;
+            sqlx::query("DELETE FROM oqto_log_sessions WHERE session_id = ?")
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await
+                .context("delete out-of-scope identity session")?;
+            deleted += 1;
+        }
+        tx.commit().await.context("commit identity cleanup tx")?;
+    }
+    Ok(deleted)
+}
+
 pub async fn sync_identities_from_hstry(
     user_home: &Path,
     user_id: &str,
@@ -421,12 +485,13 @@ pub async fn list_sessions(
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
                        s.created_at, s.updated_at, 0 AS messages
                 FROM oqto_log_sessions s
-                WHERE s.workspace_id = ?
+                WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)
                   AND EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
                 ORDER BY s.updated_at DESC
                 "#,
             )
-            .bind(workspace)
+            .bind(workspace.trim_end_matches('/'))
+            .bind(format!("{}/%", workspace.trim_end_matches('/')))
             .fetch_all(&pool)
             .await?
         } else {

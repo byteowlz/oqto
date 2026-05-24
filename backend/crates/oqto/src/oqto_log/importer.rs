@@ -99,6 +99,17 @@ fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     Some(format!("/{}", core.replace('-', "/")))
 }
 
+fn path_is_inside_root(path: &str, root: &Path) -> bool {
+    let normalized_path = path.replace('\\', "/").trim_end_matches('/').to_string();
+    let normalized_root = root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    normalized_path == normalized_root
+        || normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
 fn platform_id_for_external_id(external_id: &str) -> String {
     const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
     format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
@@ -314,6 +325,7 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
 pub async fn fast_import_identities_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
+    workspace_root: Option<&Path>,
 ) -> Result<ImportStats> {
     let mut stats = ImportStats::default();
     let base = user_home.join(".pi").join("agent").join("sessions");
@@ -337,6 +349,11 @@ pub async fn fast_import_identities_from_pi_jsonl(
             .and_then(|v| v.to_str())
             .and_then(decode_workspace_path_from_safe_dirname)
             .unwrap_or_else(|| "global".to_string());
+        if let Some(root) = workspace_root
+            && !path_is_inside_root(&workspace_id, root)
+        {
+            continue;
+        }
 
         let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
             continue;
