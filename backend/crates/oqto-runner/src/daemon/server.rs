@@ -2042,7 +2042,7 @@ impl Runner {
             // Titles/readable ids are synced into oqto-log by explicit/background
             // sync paths; blocking the sidebar on per-session file scans makes
             // every workdir show 0 sessions until the full scan completes.
-            let title = None;
+            let title = row.title;
             let readable_id = String::new();
             let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
             sessions.push(WorkspaceChatSessionInfo {
