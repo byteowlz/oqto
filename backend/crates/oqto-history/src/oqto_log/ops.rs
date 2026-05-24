@@ -253,12 +253,9 @@ pub async fn list_sessions(
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+                       s.created_at, s.updated_at, 0 AS messages
                 FROM oqto_log_sessions s
-                LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
-                LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
                 WHERE s.workspace_id = ?
-                GROUP BY s.session_id
                 ORDER BY s.updated_at DESC
                 "#,
             )
@@ -281,11 +278,8 @@ pub async fn list_sessions(
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, COUNT(m.message_id) AS messages
+                       s.created_at, s.updated_at, 0 AS messages
                 FROM oqto_log_sessions s
-                LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
-                LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-                GROUP BY s.session_id
                 ORDER BY s.updated_at DESC
                 "#,
             )

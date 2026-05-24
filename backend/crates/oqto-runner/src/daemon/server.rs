@@ -2038,26 +2038,12 @@ impl Runner {
                 continue;
             }
 
-            let title = row.external_id.as_deref().and_then(|external_id| {
-                oqto_pi::session_files::find_session_file(external_id, None)
-                    .and_then(|path| read_last_session_info_name(&path))
-                    .map(|name| {
-                        oqto_pi::session_parser::ParsedTitle::parse(&name)
-                            .display_title()
-                            .to_string()
-                    })
-            });
-            let readable_id = row
-                .external_id
-                .as_deref()
-                .and_then(|external_id| {
-                    oqto_pi::session_files::find_session_file(external_id, None)
-                        .and_then(|path| read_last_session_info_name(&path))
-                        .and_then(|name| {
-                            oqto_pi::session_parser::ParsedTitle::parse(&name).readable_id
-                        })
-                })
-                .unwrap_or_default();
+            // Keep session listing hot: never scan Pi JSONL files here.
+            // Titles/readable ids are synced into oqto-log by explicit/background
+            // sync paths; blocking the sidebar on per-session file scans makes
+            // every workdir show 0 sessions until the full scan completes.
+            let title = None;
+            let readable_id = String::new();
             let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
             sessions.push(WorkspaceChatSessionInfo {
                 id: if row.platform_id.is_empty() {
@@ -2197,43 +2183,18 @@ impl Runner {
                             );
                             Some(projected_messages)
                         } else {
-                            // Hot path: avoid heavy oqto-log repair work while opening chats.
-                            // If oqto-log is missing this session, return Pi JSONL-derived
-                            // messages directly and let explicit maintenance paths perform
-                            // backfill/repair asynchronously.
-                            let pi_jsonl_records =
-                                load_pi_jsonl_records_for_session(home_path, &req.session_id).await;
-                            let pi_jsonl_agent_messages =
-                                pi_jsonl_records.as_ref().map(|(_external_id, records)| {
-                                    records
-                                        .iter()
-                                        .map(|record| record.message.clone())
-                                        .collect::<Vec<_>>()
-                                });
-                            let jsonl_count = pi_jsonl_records
-                                .as_ref()
-                                .map_or(0, |(_, records)| records.len());
-                            let pi_jsonl_messages =
-                                pi_jsonl_agent_messages.as_ref().map(|messages| {
-                                    pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
-                                });
-                            let (selected, selected_source) =
-                                select_richest_authoritative_messages(None, pi_jsonl_messages);
-                            if selected_source != "oqto-log" && jsonl_count > 0 {
-                                info!(
-                                    "get_workspace_chat_session_messages session={} source={} jsonl_count={}",
-                                    req.session_id, selected_source, jsonl_count
-                                );
-                                let user_id =
-                                    std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                                spawn_oqto_log_repair_from_jsonl(
-                                    home_path.to_path_buf(),
-                                    user_id,
-                                    req.session_id.clone(),
-                                    0,
-                                );
-                            }
-                            selected
+                            // Keep chat opens instant. Missing oqto-log history is
+                            // synced from Pi JSONL in the background; do not parse
+                            // JSONL synchronously on the request path.
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            spawn_oqto_log_repair_from_jsonl(
+                                home_path.to_path_buf(),
+                                user_id,
+                                req.session_id.clone(),
+                                0,
+                            );
+                            None
                         }
                     } else {
                         projected
