@@ -350,6 +350,55 @@ pub async fn delete_identity_only_sessions_outside_workspace(
     Ok(deleted)
 }
 
+pub async fn normalize_session_timestamps_for_workspace(
+    user_home: &Path,
+    workspace_root: &Path,
+) -> Result<usize> {
+    let mut normalized = 0usize;
+    for db in list_db_paths(user_home) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&db))
+            .await
+            .with_context(|| {
+                format!(
+                    "open db for session timestamp normalization: {}",
+                    db.display()
+                )
+            })?;
+
+        let mut tx = pool
+            .begin()
+            .await
+            .context("begin session timestamp normalization tx")?;
+        let result = sqlx::query(
+            r#"
+            UPDATE oqto_log_sessions AS s
+            SET
+              created_at = COALESCE((SELECT MIN(t.created_at) FROM oqto_log_turns t WHERE t.session_id = s.session_id), s.created_at),
+              updated_at = COALESCE((SELECT MAX(t.created_at) FROM oqto_log_turns t WHERE t.session_id = s.session_id), s.updated_at)
+            WHERE s.workspace_id IS NOT NULL
+              AND (s.workspace_id = ? OR s.workspace_id LIKE ?)
+              AND EXISTS (SELECT 1 FROM oqto_log_turns t WHERE t.session_id = s.session_id)
+            "#,
+        )
+        .bind(workspace_root.to_string_lossy().trim_end_matches('/').to_string())
+        .bind(format!(
+            "{}/%",
+            workspace_root.to_string_lossy().trim_end_matches('/')
+        ))
+        .execute(&mut *tx)
+        .await
+        .context("normalize oqto-log session timestamps from turns")?;
+
+        tx.commit()
+            .await
+            .context("commit session timestamp normalization tx")?;
+        normalized += result.rows_affected() as usize;
+    }
+    Ok(normalized)
+}
+
 pub async fn sync_identities_from_hstry(
     user_home: &Path,
     user_id: &str,
