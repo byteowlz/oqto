@@ -28,13 +28,12 @@ MIN_FREE_MB=1024
 # successful activation. `current` and `last-good` are always preserved in
 # addition to this count. Set to 0 to disable pruning.
 KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
-# Convergent oqto-log migration passes during activation.
-# We rerun bootstrap+validate up to this many times so deploy converges on
-# the latest JSONL snapshot even when files change during migration.
-OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-5}"
-# Fast path: when oqto-log migration fingerprint is unchanged from the last
-# successful activation, skip bootstrap and run validate-only.
+# Fast oqto-log activation defaults: sync session identities before service
+# restart so sidebars are instant. Heavy message bootstrap is opt-in because
+# message sync is handled in background and must not dominate deploy time.
+OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-1}"
 OQTO_LOG_FAST_PATH="${OQTO_LOG_FAST_PATH:-true}"
+OQTO_LOG_FULL_BOOTSTRAP="${OQTO_LOG_FULL_BOOTSTRAP:-false}"
 RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
 RELEASES_ROOT="/var/lib/oqto/releases"
@@ -1532,31 +1531,40 @@ activate_host() {
 
     # Run this BEFORE service restarts so migration gets an exclusive window
     # without live writer contention from freshly restarted runners.
-    # Convergent fixed-point loop: run bootstrap+validate repeatedly so deploy
-    # can catch up with JSONL changes that occur during activation.
     local oqto_log_state_dir="\$HOME/.local/share/oqto/oqto-log"
     local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
     local oqto_log_current_fp oqto_log_previous_fp
     oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
     oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f '$oqto_log_state_file' && cat '$oqto_log_state_file' || true" 2>/dev/null || true)"
 
-    local oqto_log_pass=1
-    local oqto_log_converged=false
+    local identity_start identity_end
+    identity_start="$(epoch_ms)"
+    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode sync-identities"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.identity_sync_failed"
+        warn "oqto-log identity sync failed on $name, attempting rollback..."
+        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+        return 1
+    fi
+    identity_end="$(epoch_ms)"
+    log "[$name] oqto-log identity sync took $((identity_end - identity_start))ms"
+
+    local oqto_log_converged=true
     local oqto_log_skip_bootstrap=false
     if [[ "$OQTO_LOG_FAST_PATH" == "true" && -n "$oqto_log_current_fp" && "$oqto_log_current_fp" == "$oqto_log_previous_fp" ]]; then
         oqto_log_skip_bootstrap=true
-        log "[$name] oqto-log fast-path hit (fingerprint unchanged); validate-only"
+        log "[$name] oqto-log fast-path hit (fingerprint unchanged); skipped message bootstrap"
     fi
 
-    while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
-        log "[$name] oqto-log migrate/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
+    if [[ "$OQTO_LOG_FULL_BOOTSTRAP" == "true" && "$oqto_log_skip_bootstrap" != "true" ]]; then
+        oqto_log_converged=false
+        local oqto_log_pass=1
+        while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
+            log "[$name] oqto-log message bootstrap/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
 
-        local bootstrap_output
-        local bootstrap_start bootstrap_end validate_start validate_end
-        if [[ "$oqto_log_skip_bootstrap" != "true" ]]; then
+            local bootstrap_output
+            local bootstrap_start bootstrap_end validate_start validate_end
             bootstrap_start="$(epoch_ms)"
             if ! bootstrap_output=$(host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap" 2>&1); then
-                # Check if this is a corruption error we can auto-heal
                 if echo "$bootstrap_output" | grep -q "replace_failed"; then
                     warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
                     local heal_backup_dir
@@ -1577,40 +1585,30 @@ activate_host() {
             fi
             bootstrap_end="$(epoch_ms)"
             log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
-        fi
 
-        # Ensure session identity mappings are converged from hstry before validation.
-        host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode sync-identities" >/dev/null 2>&1 || true
+            validate_start="$(epoch_ms)"
+            if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate-changed"; then
+                validate_end="$(epoch_ms)"
+                log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
+                oqto_log_converged=true
+                break
+            fi
 
-        validate_start="$(epoch_ms)"
-        # Validation must pass once after a bootstrap pass.
-        local validate_mode="validate"
-        if [[ "$oqto_log_skip_bootstrap" != "true" ]]; then
-            validate_mode="validate-changed"
-        fi
-        if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode ${validate_mode}"; then
             validate_end="$(epoch_ms)"
-            log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
-            oqto_log_converged=true
-            break
-        fi
-
-        validate_end="$(epoch_ms)"
-        log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
-        # fast-path applies only to first pass; retries should re-bootstrap.
-        oqto_log_skip_bootstrap=false
-        if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
-            warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate to converge on latest JSONL"
-            sleep 1
-        fi
-        oqto_log_pass=$((oqto_log_pass + 1))
-    done
+            log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
+            if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
+                warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate"
+                sleep 1
+            fi
+            oqto_log_pass=$((oqto_log_pass + 1))
+        done
+    else
+        log "[$name] oqto-log message bootstrap disabled; background sync will refresh messages"
+    fi
 
     if [[ "$oqto_log_converged" == "true" ]]; then
         host_exec "$is_local" "$ssh_target" "mkdir -p '$oqto_log_state_dir' && printf '%s\n' '$oqto_log_current_fp' > '$oqto_log_state_file'" >/dev/null 2>&1 || true
-    fi
-
-    if [[ "$oqto_log_converged" != "true" ]]; then
+    else
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
         warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name, attempting rollback..."
         rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
