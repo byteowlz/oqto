@@ -3,6 +3,7 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::Path as StdPath;
 
 use axum::{
     Json,
@@ -39,6 +40,21 @@ pub struct ChatHistoryQuery {
 /// as that would read from the backend user's home, not the requesting user's.
 fn is_multi_user_mode(state: &AppState) -> bool {
     state.linux_users.is_some()
+}
+
+fn normalize_path_for_authz(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+fn is_within_path(path: &str, root: &StdPath) -> bool {
+    let normalized_path = normalize_path_for_authz(path);
+    let normalized_root = normalize_path_for_authz(&root.to_string_lossy());
+    normalized_path == normalized_root
+        || normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
+fn retain_sessions_in_allowed_workspace(sessions: &mut Vec<ChatSession>, allowed_root: &StdPath) {
+    sessions.retain(|session| is_within_path(&session.workspace_path, allowed_root));
 }
 
 async fn resolve_session_target(
@@ -431,10 +447,18 @@ pub async fn list_chat_history(
 
     sessions = merge_duplicate_sessions(sessions);
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    if query.shared_workspace_id.is_none() {
+        retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
+    }
+
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
 
     if let Some(ref ws) = query.workspace {
+        if query.shared_workspace_id.is_none() && !is_within_path(ws, &allowed_root) {
+            return Err(ApiError::forbidden("workspace is outside allowed roots"));
+        }
         sessions.retain(|s| s.workspace_path == *ws);
     }
 
@@ -713,10 +737,18 @@ pub async fn list_chat_history_grouped(
 
     sessions = merge_duplicate_sessions(sessions);
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    if query.shared_workspace_id.is_none() {
+        retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
+    }
+
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
 
     if let Some(ref ws) = query.workspace {
+        if query.shared_workspace_id.is_none() && !is_within_path(ws, &allowed_root) {
+            return Err(ApiError::forbidden("workspace is outside allowed roots"));
+        }
         sessions.retain(|s| s.workspace_path == *ws);
     }
 
