@@ -24,12 +24,16 @@ struct JsonlSessionEntry {
     entry_type: String,
     cwd: Option<String>,
     name: Option<String>,
+    timestamp: Option<String>,
+    message: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default)]
 struct PiJsonlSessionMetadata {
     cwd: Option<String>,
     title: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -129,6 +133,18 @@ fn platform_id_for_external_id(external_id: &str) -> String {
     format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
 }
 
+fn parse_pi_jsonl_filename_datetime(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let (timestamp, _) = stem.rsplit_once('_')?;
+    let parsed = chrono::DateTime::parse_from_str(timestamp, "%Y-%m-%dT%H-%M-%S-%3fZ").ok()?;
+    Some(parsed.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+fn millis_to_sqlite_datetime(ms: u64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(ms as i64)
+        .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
 fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return PiJsonlSessionMetadata::default();
@@ -136,12 +152,39 @@ fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
 
     let mut cwd = None;
     let mut last_name = None;
+    let mut first_timestamp = parse_pi_jsonl_filename_datetime(path);
+    let mut last_message_timestamp = None;
     for line in contents.lines() {
         let Ok(entry) = serde_json::from_str::<JsonlSessionEntry>(line) else {
             continue;
         };
         match entry.entry_type.as_str() {
-            "session" if cwd.is_none() => cwd = entry.cwd,
+            "session" => {
+                if cwd.is_none() {
+                    cwd = entry.cwd;
+                }
+                if first_timestamp.is_none() {
+                    first_timestamp = entry.timestamp.and_then(|ts| {
+                        chrono::DateTime::parse_from_rfc3339(&ts)
+                            .ok()
+                            .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+                    });
+                }
+            }
+            "message" => {
+                if let Some(ms) = entry
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.get("timestamp"))
+                    .and_then(|value| {
+                        value
+                            .as_u64()
+                            .or_else(|| value.as_i64().map(|v| v.max(0) as u64))
+                    })
+                {
+                    last_message_timestamp = millis_to_sqlite_datetime(ms);
+                }
+            }
             "session_info" => {
                 if let Some(name) = entry.name.map(|name| name.trim().to_string())
                     && !name.is_empty()
@@ -167,7 +210,12 @@ fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
         }
     });
 
-    PiJsonlSessionMetadata { cwd, title }
+    PiJsonlSessionMetadata {
+        cwd,
+        title,
+        created_at: first_timestamp.clone(),
+        updated_at: last_message_timestamp.or(first_timestamp),
+    }
 }
 
 fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
@@ -433,6 +481,8 @@ pub async fn fast_import_identities_from_pi_jsonl(
                     platform_id: platform_id_for_external_id(&external_id),
                     external_id,
                     title: metadata.title,
+                    created_at: metadata.created_at,
+                    updated_at: metadata.updated_at,
                 },
             );
         }
@@ -737,4 +787,59 @@ pub async fn bootstrap_import_from_pi_jsonl(
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pi_jsonl_metadata_uses_jsonl_cwd_title_and_source_timestamps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("2026-01-16T12-06-53-369Z_session-1.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session","timestamp":"2026-01-16T12:06:53.369Z","cwd":"/home/wismut/.pi/agent/extensions"}"#,
+                "\n",
+                r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}],"timestamp":1770410509191}}"#,
+                "\n",
+                r#"{"type":"session_info","name":"Fix extension loader [owl-123]"}"#,
+                "\n"
+            ),
+        )
+        .expect("write jsonl");
+
+        let metadata = read_pi_jsonl_session_metadata(&path);
+        assert_eq!(
+            metadata.cwd.as_deref(),
+            Some("/home/wismut/.pi/agent/extensions")
+        );
+        assert_eq!(metadata.title.as_deref(), Some("Fix extension loader"));
+        assert_eq!(metadata.created_at.as_deref(), Some("2026-01-16 12:06:53"));
+        assert_eq!(metadata.updated_at.as_deref(), Some("2026-02-06 20:41:49"));
+    }
+
+    #[test]
+    fn safe_dir_decoder_is_only_a_fallback_for_missing_jsonl_cwd() {
+        assert_eq!(
+            decode_workspace_path_from_safe_dirname("--home-wismut-byteowlz-pi-agent-extensions--")
+                .as_deref(),
+            Some("/home/wismut/byteowlz/pi/agent/extensions")
+        );
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("2026-02-06T20-41-29-820Z_session-2.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"session","timestamp":"2026-02-06T20:41:29.820Z","cwd":"/home/wismut/byteowlz/pi-agent-extensions"}"#,
+        )
+        .expect("write jsonl");
+
+        let metadata = read_pi_jsonl_session_metadata(&path);
+        assert_eq!(
+            metadata.cwd.as_deref(),
+            Some("/home/wismut/byteowlz/pi-agent-extensions")
+        );
+    }
 }
