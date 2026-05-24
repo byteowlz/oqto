@@ -147,14 +147,13 @@ pub async fn append_agent_end_snapshot(
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+          session_id, platform_id, external_id, user_id, workspace_id
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = excluded.platform_id,
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = excluded.user_id,
-          workspace_id = excluded.workspace_id,
-          updated_at = datetime('now')
+          workspace_id = excluded.workspace_id
         "#,
     )
     .bind(session_id)
@@ -349,6 +348,30 @@ pub async fn append_agent_end_snapshot(
     .await
     .context("update oqto_log_branches head")?;
 
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_sessions
+        SET
+          created_at = COALESCE((
+            SELECT datetime(MIN(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), created_at),
+          updated_at = COALESCE((
+            SELECT datetime(MAX(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), updated_at)
+        WHERE session_id = ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("update oqto_log_sessions timestamps from source timestamps")?;
+
     tx.commit().await.context("commit oqto-log tx")?;
     Ok(AppendStats {
         turns_written,
@@ -440,14 +463,13 @@ async fn replace_session_with_snapshot_inner(
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+          session_id, platform_id, external_id, user_id, workspace_id
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = excluded.platform_id,
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = excluded.user_id,
-          workspace_id = excluded.workspace_id,
-          updated_at = datetime('now')
+          workspace_id = excluded.workspace_id
         "#,
     )
     .bind(session_id)
@@ -627,6 +649,30 @@ async fn replace_session_with_snapshot_inner(
     .execute(&mut *tx)
     .await
     .context("update oqto_log_branches head (replace)")?;
+
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_sessions
+        SET
+          created_at = COALESCE((
+            SELECT datetime(MIN(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), created_at),
+          updated_at = COALESCE((
+            SELECT datetime(MAX(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), updated_at)
+        WHERE session_id = ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("update oqto_log_sessions timestamps from source timestamps (replace)")?;
 
     // Recreate FTS triggers that were dropped earlier.
     recreate_fts_triggers(&mut tx)
