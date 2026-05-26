@@ -139,6 +139,7 @@ export function useModelSelection(
 	const selectedModelRefRef = useRef(selectedModelRef);
 	selectedModelRefRef.current = selectedModelRef;
 	const lastReasoningDefaultKeyRef = useRef<string | null>(null);
+	const initializedSessionIdRef = useRef<string | null>(null);
 
 	const effectiveSessionId = sessionId;
 	const hookInstanceIdRef = useRef(
@@ -257,8 +258,18 @@ export function useModelSelection(
 		};
 	}, [effectiveSessionId]);
 
-	// Load selected model: session storage > hstry session > workspace default > keep current
+	// Load selected model when the active session changes.
+	// Do not re-apply fallback sources (chat history/runner/workspace defaults)
+	// for the same session once a selection is already present, otherwise
+	// background history refreshes can overwrite the user's active model.
 	useEffect(() => {
+		const isSameSession =
+			initializedSessionIdRef.current === effectiveSessionId;
+		if (isSameSession && selectedModelRefRef.current) {
+			return;
+		}
+		initializedSessionIdRef.current = effectiveSessionId;
+
 		const readStoredRef = (key: string | null) => {
 			if (!key) return null;
 			try {

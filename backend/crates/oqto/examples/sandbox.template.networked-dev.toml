@@ -10,11 +10,25 @@ profile = "development"
 no_new_privs = true
 disable_userns = true
 landlock_mode = "audit"
-seccomp_mode = "audit"
-# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+seccomp_mode = "enforce"
+seccomp_bpf_path = "/usr/local/share/oqto/seccomp/default.bpf"
 
 isolate_network = false
 isolate_pid = true
+
+# Scope Pi session reads/writes to current workspace shard only.
+[[profiles.development.scoped_paths]]
+name = "pi-sessions-workspace-shard"
+base_path = "~/.pi/agent/sessions"
+source = "workspace_path"
+transforms = [
+  { op = "strip_prefix", value = "/" },
+  { op = "replace", from = "/", to = "-" },
+  { op = "wrap", prefix = "--", suffix = "--" }
+]
+target_template = "{base_path}/{value}"
+access = "rw"
+missing = "warn"
 
 # If you need eavs network policy, define a custom profile in this file under:
 # [profiles.<name>.network]

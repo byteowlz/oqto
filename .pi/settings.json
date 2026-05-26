@@ -1,4 +1,4 @@
 {
-  "defaultModel": "Kimi-K2.6-Foundry",
-  "defaultProvider": "Foundry_Kimi"
+  "defaultModel": "gpt-5.3-codex",
+  "defaultProvider": "openai-codex"
 }

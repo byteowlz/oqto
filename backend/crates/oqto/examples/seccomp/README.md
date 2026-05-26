@@ -25,7 +25,7 @@ Set in sandbox config:
 
 ```toml
 seccomp_mode = "enforce"
-seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+seccomp_bpf_path = "/usr/local/share/oqto/seccomp/default.bpf"
 ```
 
 Use `audit` first during rollout.
@@ -38,4 +38,5 @@ sudo ./scripts/sandbox/install-seccomp-policy.sh
 
 This picks the architecture-specific artifact and installs to:
 
-- `/etc/oqto/seccomp/default.bpf`
+- `/usr/local/share/oqto/seccomp/default.bpf`
+- compatibility symlink: `/etc/oqto/seccomp/default.bpf`
