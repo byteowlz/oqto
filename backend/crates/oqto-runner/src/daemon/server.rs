@@ -2436,6 +2436,21 @@ impl Runner {
             }
         }
 
+        let _ = oqto_history::oqto_log::ops::update_session_title(
+            std::path::Path::new(&home),
+            &req.session_id,
+            &title,
+        )
+        .await;
+        if external_session_id != req.session_id {
+            let _ = oqto_history::oqto_log::ops::update_session_title(
+                std::path::Path::new(&home),
+                &external_session_id,
+                &title,
+            )
+            .await;
+        }
+
         match self
             .get_workspace_chat_session(GetWorkspaceChatSessionRequest {
                 session_id: req.session_id.clone(),
