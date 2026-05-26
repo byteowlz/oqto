@@ -2318,6 +2318,11 @@ export function ChatView({
 						<div className="flex items-center gap-2">
 							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
 								{sessionTitle}
+								{sessionMeta?.readable_id?.trim() && (
+									<span className="ml-2 text-sm font-mono text-muted-foreground">
+										[{sessionMeta.readable_id.trim()}]
+									</span>
+								)}
 							</h1>
 							{assistantName && assistantName !== sessionTitle && (
 								<span className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0 bg-primary/70">

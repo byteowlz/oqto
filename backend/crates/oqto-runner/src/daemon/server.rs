@@ -2043,7 +2043,7 @@ impl Runner {
             // sync paths; blocking the sidebar on per-session file scans makes
             // every workdir show 0 sessions until the full scan completes.
             let title = row.title;
-            let readable_id = String::new();
+            let readable_id = row.readable_id.unwrap_or_default();
             let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
             sessions.push(WorkspaceChatSessionInfo {
                 id: if row.platform_id.is_empty() {
