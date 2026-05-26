@@ -12,7 +12,7 @@ numerical order and reports aggregate pass/fail.
   - `oqto-sandbox` on `PATH` (default — covers `just deploy` and `cargo install`)
   - `/var/lib/oqto/releases/current/bin/oqto-sandbox`
   - `backend/target/{release,debug}/oqto-sandbox` (local cargo build)
-- Optional: seccomp BPF installed at `/etc/oqto/seccomp/default.bpf` via
+- Optional: seccomp BPF installed at `/usr/local/share/oqto/seccomp/default.bpf` via
   `scripts/sandbox/generate-seccomp-artifacts.sh` + `scripts/sandbox/install-seccomp-policy.sh`.
 - Optional: Linux kernel with Landlock (`>= 5.13`, ABI 1+).
 
@@ -69,7 +69,7 @@ scripts/sandbox/tests/07-landlock.sh
 |-----|---------|---------|
 | `OQTO_SANDBOX_BIN` | auto-discover | Explicit path to binary; bypasses `PATH` |
 | `OQTO_TEST_RUN_DIR` | `$TMPDIR/oqto-sandbox-tests.$$` | Scratch dir (move off tmpfs if quota-capped) |
-| `OQTO_SECCOMP_BPF` | `/etc/oqto/seccomp/default.bpf` | Seccomp BPF artifact |
+| `OQTO_SECCOMP_BPF` | `/usr/local/share/oqto/seccomp/default.bpf` | Seccomp BPF artifact |
 | `OQTO_TEST_KEEP_DIR` | `0` | Keep scratch dir on exit for post-mortem |
 | `VERBOSE` | unset | Reserved for future `-v` pass-through |
 

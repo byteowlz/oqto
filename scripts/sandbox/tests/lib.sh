@@ -214,7 +214,7 @@ PY
 }
 
 have_seccomp_bpf() {
-  [[ -r "${OQTO_SECCOMP_BPF:-/etc/oqto/seccomp/default.bpf}" ]]
+  [[ -r "${OQTO_SECCOMP_BPF:-/usr/local/share/oqto/seccomp/default.bpf}" ]]
 }
 
 have_bwrap() { command -v bwrap >/dev/null 2>&1; }

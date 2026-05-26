@@ -13,10 +13,10 @@ drop_all_caps = true
 disable_userns = true
 assert_userns_disabled = true
 
-# Rollout-safe defaults: audit first, then switch to enforce after validation.
+# Keep landlock in audit while tuning. Seccomp is enforce by default.
 landlock_mode = "audit"
-seccomp_mode = "audit"
-# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+seccomp_mode = "enforce"
+seccomp_bpf_path = "/usr/local/share/oqto/seccomp/default.bpf"
 
 # The built-in "strict" profile already:
 # - deny_read = ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config", ...]
@@ -30,3 +30,17 @@ deny_read = ["~/.kube"]
 # If you override allow_write, you MUST include ~/.pi for Pi to function.
 # This intersects with the profile's allow_write, so both must allow a path.
 # allow_write = ["/tmp", "~/.pi"]
+
+# Scope Pi session reads/writes to current workspace shard only.
+[[profiles.strict.scoped_paths]]
+name = "pi-sessions-workspace-shard"
+base_path = "~/.pi/agent/sessions"
+source = "workspace_path"
+transforms = [
+  { op = "strip_prefix", value = "/" },
+  { op = "replace", from = "/", to = "-" },
+  { op = "wrap", prefix = "--", suffix = "--" }
+]
+target_template = "{base_path}/{value}"
+access = "rw"
+missing = "warn"

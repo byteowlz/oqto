@@ -10,15 +10,29 @@ profile = "development"
 no_new_privs = true
 disable_userns = true
 
-# Keep seccomp/landlock in audit while you tune workloads.
+# Keep landlock in audit while tuning. Seccomp is enforce by default.
 landlock_mode = "audit"
-seccomp_mode = "audit"
-# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+seccomp_mode = "enforce"
+seccomp_bpf_path = "/usr/local/share/oqto/seccomp/default.bpf"
 
 # Development profile already includes standard toolchain paths in allow_write.
 # Keep network open initially; migrate to proxy mode per repo once host/domain allowlists are defined.
 isolate_network = false
 isolate_pid = true
+
+# Scope Pi session reads/writes to current workspace shard only.
+[[profiles.development.scoped_paths]]
+name = "pi-sessions-workspace-shard"
+base_path = "~/.pi/agent/sessions"
+source = "workspace_path"
+transforms = [
+  { op = "strip_prefix", value = "/" },
+  { op = "replace", from = "/", to = "-" },
+  { op = "wrap", prefix = "--", suffix = "--" }
+]
+target_template = "{base_path}/{value}"
+access = "rw"
+missing = "warn"
 
 # Optional: isolate package/toolchain writes using overlayfs (bwrap --overlay).
 # When enabled, writes to overlay_paths are redirected into per-workspace dirs

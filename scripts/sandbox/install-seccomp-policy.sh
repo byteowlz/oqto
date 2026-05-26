@@ -8,7 +8,7 @@ set -euo pipefail
 #   backend/crates/oqto/examples/seccomp/default-aarch64.bpf
 #
 # Installs to:
-#   /etc/oqto/seccomp/default.bpf
+#   /usr/local/share/oqto/seccomp/default.bpf
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -50,21 +50,20 @@ if [[ ! -f "$SRC" ]]; then
   exit 1
 fi
 
-# Prefer the `oqto` system group (created by `just deploy`); fall back to
-# root:root on single-user dev hosts where that group does not exist.
-if getent group oqto >/dev/null 2>&1; then
-  GROUP=oqto
-  DIR_MODE=750
-  FILE_MODE=640
-else
-  warn "group 'oqto' not found; installing as root:root (dev-host fallback)"
-  GROUP=root
-  DIR_MODE=755
-  FILE_MODE=644
-fi
+# Policy files are not secrets; keep them world-readable so local-user
+# sandboxes can open them without privileged group membership.
+TARGET_DIR="/usr/local/share/oqto/seccomp"
+TARGET_FILE="${TARGET_DIR}/default.bpf"
+LEGACY_DIR="/etc/oqto/seccomp"
+LEGACY_FILE="${LEGACY_DIR}/default.bpf"
 
-install -d -m "$DIR_MODE" -o root -g "$GROUP" /etc/oqto/seccomp
-install -m "$FILE_MODE" -o root -g "$GROUP" "$SRC" /etc/oqto/seccomp/default.bpf
+install -d -m 755 -o root -g root "${TARGET_DIR}"
+install -m 644 -o root -g root "$SRC" "${TARGET_FILE}"
 
-success "Installed seccomp policy: /etc/oqto/seccomp/default.bpf (owner root:$GROUP, mode $FILE_MODE)"
-info "Set in sandbox config: seccomp_mode='enforce' + seccomp_bpf_path='/etc/oqto/seccomp/default.bpf'"
+# Backward compatibility: keep legacy path as symlink for existing configs.
+install -d -m 755 -o root -g root "${LEGACY_DIR}"
+ln -sfn "${TARGET_FILE}" "${LEGACY_FILE}"
+
+success "Installed seccomp policy: ${TARGET_FILE} (owner root:root, mode 644)"
+info "Created legacy symlink: ${LEGACY_FILE} -> ${TARGET_FILE}"
+info "Set in sandbox config: seccomp_mode='enforce' + seccomp_bpf_path='${TARGET_FILE}'"
