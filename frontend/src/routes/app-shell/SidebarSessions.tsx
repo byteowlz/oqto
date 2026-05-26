@@ -1062,6 +1062,18 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			<Copy className="w-4 h-4 mr-2" />
 																			{session.id.slice(0, 16)}...
 																		</ContextMenuItem>
+																		{session.readable_id?.trim() && (
+																			<ContextMenuItem
+																				onClick={() => {
+																					navigator.clipboard.writeText(
+																						session.readable_id?.trim() ?? "",
+																					);
+																				}}
+																			>
+																				<Copy className="w-4 h-4 mr-2" />
+																				{session.readable_id.trim()}
+																			</ContextMenuItem>
+																		)}
 																		<ContextMenuSeparator />
 																		<ContextMenuItem
 																			onClick={() => onPinSession(session.id)}

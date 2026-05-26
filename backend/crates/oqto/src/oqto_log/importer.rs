@@ -32,6 +32,7 @@ struct JsonlSessionEntry {
 struct PiJsonlSessionMetadata {
     cwd: Option<String>,
     title: Option<String>,
+    readable_id: Option<String>,
     created_at: Option<String>,
     updated_at: Option<String>,
 }
@@ -196,23 +197,28 @@ fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
         }
     }
 
-    let title = last_name.and_then(|name| {
-        let parsed = oqto_pi::session_parser::ParsedTitle::parse(&name);
-        let display = parsed.display_title().trim();
-        if !display.is_empty() {
-            Some(display.to_string())
-        } else {
-            name.split('[')
-                .next()
-                .map(str::trim)
-                .filter(|fallback| !fallback.is_empty())
-                .map(str::to_string)
-        }
-    });
+    let (title, readable_id) = last_name
+        .map(|name| {
+            let parsed = oqto_pi::session_parser::ParsedTitle::parse(&name);
+            let readable_id = parsed.get_readable_id().map(ToOwned::to_owned);
+            let display = parsed.display_title().trim();
+            let title = if !display.is_empty() {
+                Some(display.to_string())
+            } else {
+                name.split('[')
+                    .next()
+                    .map(str::trim)
+                    .filter(|fallback| !fallback.is_empty())
+                    .map(str::to_string)
+            };
+            (title, readable_id)
+        })
+        .unwrap_or((None, None));
 
     PiJsonlSessionMetadata {
         cwd,
         title,
+        readable_id,
         created_at: first_timestamp.clone(),
         updated_at: last_message_timestamp.or(first_timestamp),
     }
@@ -481,6 +487,7 @@ pub async fn fast_import_identities_from_pi_jsonl(
                     platform_id: platform_id_for_external_id(&external_id),
                     external_id,
                     title: metadata.title,
+                    readable_id: metadata.readable_id,
                     created_at: metadata.created_at,
                     updated_at: metadata.updated_at,
                 },

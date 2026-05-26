@@ -3437,17 +3437,19 @@ impl PiSessionManager {
                                         .unwrap_or_else(|_| "/tmp".to_string());
                                     let current_external_id =
                                         session_external_id.read().await.clone();
-                                    let _ = oqto_history::oqto_log::ops::update_session_title(
+                                    let _ = oqto_history::oqto_log::ops::update_session_title_and_readable_id(
                                         std::path::Path::new(&home),
                                         &session_id,
                                         &clean_title,
+                                        readable_id.as_deref(),
                                     )
                                     .await;
                                     if current_external_id != session_id {
-                                        let _ = oqto_history::oqto_log::ops::update_session_title(
+                                        let _ = oqto_history::oqto_log::ops::update_session_title_and_readable_id(
                                             std::path::Path::new(&home),
                                             &current_external_id,
                                             &clean_title,
+                                            readable_id.as_deref(),
                                         )
                                         .await;
                                     }

@@ -16,6 +16,7 @@ pub struct OqtoLogSessionRow {
     pub updated_at: String,
     pub messages: i64,
     pub title: Option<String>,
+    pub readable_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -125,6 +126,7 @@ pub struct SessionIdentityInput {
     pub external_id: String,
     pub platform_id: String,
     pub title: Option<String>,
+    pub readable_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -202,6 +204,15 @@ pub async fn update_session_title(
     session_or_platform_id: &str,
     title: &str,
 ) -> Result<bool> {
+    update_session_title_and_readable_id(user_home, session_or_platform_id, title, None).await
+}
+
+pub async fn update_session_title_and_readable_id(
+    user_home: &Path,
+    session_or_platform_id: &str,
+    title: &str,
+    readable_id: Option<&str>,
+) -> Result<bool> {
     let clean_title = title.trim();
     if clean_title.is_empty() {
         return Ok(false);
@@ -219,11 +230,18 @@ pub async fn update_session_title(
         let result = sqlx::query(
             r#"
             UPDATE oqto_log_sessions
-            SET title = ?
+            SET
+              title = ?,
+              extensions_json = CASE
+                WHEN ? IS NOT NULL THEN json_set(COALESCE(extensions_json, '{}'), '$.readable_id', ?)
+                ELSE extensions_json
+              END
             WHERE session_id = ? OR platform_id = ? OR external_id = ?
             "#,
         )
         .bind(clean_title)
+        .bind(readable_id)
+        .bind(readable_id)
         .bind(session_or_platform_id)
         .bind(session_or_platform_id)
         .bind(session_or_platform_id)
@@ -304,6 +322,10 @@ pub async fn batch_upsert_session_identities(
               user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
               workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id),
               title = COALESCE(excluded.title, oqto_log_sessions.title),
+              extensions_json = CASE
+                WHEN ? IS NOT NULL THEN json_set(COALESCE(oqto_log_sessions.extensions_json, '{}'), '$.readable_id', ?)
+                ELSE oqto_log_sessions.extensions_json
+              END,
               created_at = COALESCE(excluded.created_at, oqto_log_sessions.created_at),
               updated_at = COALESCE(excluded.updated_at, oqto_log_sessions.updated_at)
             "#,
@@ -316,6 +338,8 @@ pub async fn batch_upsert_session_identities(
         .bind(identity.title.as_deref())
         .bind(identity.created_at.as_deref())
         .bind(identity.updated_at.as_deref())
+        .bind(identity.readable_id.as_deref())
+        .bind(identity.readable_id.as_deref())
         .execute(&mut *tx)
         .await
         .with_context(|| format!("batch upsert oqto_log session identity: {}", session_id))?;
@@ -580,12 +604,15 @@ pub async fn list_sessions(
                     String,
                     String,
                     Option<String>,
+                    Option<String>,
                     i64,
                 ),
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, s.title, 0 AS messages
+                       s.created_at, s.updated_at, s.title,
+                       json_extract(s.extensions_json, '$.readable_id') AS readable_id,
+                       0 AS messages
                 FROM oqto_log_sessions s
                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)
                   AND EXISTS (
@@ -613,12 +640,15 @@ pub async fn list_sessions(
                     String,
                     String,
                     Option<String>,
+                    Option<String>,
                     i64,
                 ),
             >(
                 r#"
                 SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, s.title, 0 AS messages
+                       s.created_at, s.updated_at, s.title,
+                       json_extract(s.extensions_json, '$.readable_id') AS readable_id,
+                       0 AS messages
                 FROM oqto_log_sessions s
                 WHERE EXISTS (
                     SELECT 1
@@ -642,7 +672,8 @@ pub async fn list_sessions(
             created_at: row.5,
             updated_at: row.6,
             title: row.7,
-            messages: row.8,
+            readable_id: row.8,
+            messages: row.9,
         }));
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -674,12 +705,15 @@ pub async fn get_session(
                 String,
                 String,
                 Option<String>,
+                Option<String>,
                 i64,
             ),
         >(
             r#"
             SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                   s.created_at, s.updated_at, s.title, COUNT(m.message_id) AS messages
+                   s.created_at, s.updated_at, s.title,
+                   json_extract(s.extensions_json, '$.readable_id') AS readable_id,
+                   COUNT(m.message_id) AS messages
             FROM oqto_log_sessions s
             LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
             LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
@@ -703,7 +737,8 @@ pub async fn get_session(
                 created_at: row.5,
                 updated_at: row.6,
                 title: row.7,
-                messages: row.8,
+                readable_id: row.8,
+                messages: row.9,
             }));
         }
     }
