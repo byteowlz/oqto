@@ -197,6 +197,46 @@ pub async fn upsert_session_identity(
     Ok(())
 }
 
+pub async fn update_session_title(
+    user_home: &Path,
+    session_or_platform_id: &str,
+    title: &str,
+) -> Result<bool> {
+    let clean_title = title.trim();
+    if clean_title.is_empty() {
+        return Ok(false);
+    }
+
+    for db in list_db_paths(user_home) {
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&db))
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+        let result = sqlx::query(
+            r#"
+            UPDATE oqto_log_sessions
+            SET title = ?
+            WHERE session_id = ? OR platform_id = ? OR external_id = ?
+            "#,
+        )
+        .bind(clean_title)
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .execute(&pool)
+        .await
+        .with_context(|| format!("update oqto-log title for session {session_or_platform_id}"))?;
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub async fn batch_upsert_session_identities(
     user_home: &Path,
     user_id: &str,

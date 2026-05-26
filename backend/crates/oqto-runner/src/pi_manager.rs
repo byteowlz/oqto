@@ -3433,6 +3433,25 @@ impl PiSessionManager {
 
                                     let readable_id = parsed.readable_id.clone();
 
+                                    let home = std::env::var("HOME")
+                                        .unwrap_or_else(|_| "/tmp".to_string());
+                                    let current_external_id =
+                                        session_external_id.read().await.clone();
+                                    let _ = oqto_history::oqto_log::ops::update_session_title(
+                                        std::path::Path::new(&home),
+                                        &session_id,
+                                        &clean_title,
+                                    )
+                                    .await;
+                                    if current_external_id != session_id {
+                                        let _ = oqto_history::oqto_log::ops::update_session_title(
+                                            std::path::Path::new(&home),
+                                            &current_external_id,
+                                            &clean_title,
+                                        )
+                                        .await;
+                                    }
+
                                     // Broadcast title change to frontend immediately
                                     let title_event = CanonicalEvent {
                                     session_id: session_id.clone(),
