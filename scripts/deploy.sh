@@ -34,6 +34,7 @@ KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
 OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-1}"
 OQTO_LOG_FAST_PATH="${OQTO_LOG_FAST_PATH:-true}"
 OQTO_LOG_FULL_BOOTSTRAP="${OQTO_LOG_FULL_BOOTSTRAP:-false}"
+OQTO_LOG_MULTI_USER_ALL_USERS="${OQTO_LOG_MULTI_USER_ALL_USERS:-true}"
 RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
 RELEASES_ROOT="/var/lib/oqto/releases"
@@ -1225,6 +1226,31 @@ quiesce_oqto_log_writers() {
     done
 }
 
+run_oqto_log_migration_mode() {
+    local is_local="$1" ssh_target="$2" mode="$3" migrate_mode="$4"
+
+    if [[ "$mode" == "multi-user" && "$OQTO_LOG_MULTI_USER_ALL_USERS" == "true" ]]; then
+        host_exec "$is_local" "$ssh_target" "set -euo pipefail
+users=()
+while IFS= read -r u; do
+  [[ -n \"\$u\" ]] && users+=(\"\$u\")
+done < <(ls -1 /home 2>/dev/null | grep -E '^oqto_' || true)
+if [[ \${#users[@]} -eq 0 ]]; then
+  users+=(\"\${USER}\")
+fi
+for u in \"\${users[@]}\"; do
+  echo \"[deploy] oqto-log ${migrate_mode} as user=\$u\"
+  sudo -u \"\$u\" bash -lc 'set -euo pipefail
+    cfg_flag=()
+    if [[ -f /etc/oqto/config.toml ]]; then cfg_flag=(--config /etc/oqto/config.toml); fi
+    oqto \"\${cfg_flag[@]}\" runner migrate-oqto-log --mode ${migrate_mode}
+  '
+done"
+    else
+        host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode ${migrate_mode}"
+    fi
+}
+
 # Extract workspace paths from oqto-log bootstrap error messages.
 # Returns unique workspace paths with corruption indicators.
 extract_corrupted_workspaces_from_error() {
@@ -1539,7 +1565,7 @@ activate_host() {
 
     local identity_start identity_end
     identity_start="$(epoch_ms)"
-    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode sync-identities"; then
+    if ! run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "sync-identities"; then
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.identity_sync_failed"
         warn "oqto-log identity sync failed on $name, attempting rollback..."
         rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
@@ -1564,7 +1590,7 @@ activate_host() {
             local bootstrap_output
             local bootstrap_start bootstrap_end validate_start validate_end
             bootstrap_start="$(epoch_ms)"
-            if ! bootstrap_output=$(host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap" 2>&1); then
+            if ! bootstrap_output=$(run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "bootstrap" 2>&1); then
                 if echo "$bootstrap_output" | grep -q "replace_failed"; then
                     warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
                     local heal_backup_dir
@@ -1587,7 +1613,7 @@ activate_host() {
             log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
 
             validate_start="$(epoch_ms)"
-            if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate-changed"; then
+            if run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "validate-changed"; then
                 validate_end="$(epoch_ms)"
                 log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
                 oqto_log_converged=true
