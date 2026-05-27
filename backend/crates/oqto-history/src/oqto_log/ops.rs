@@ -592,7 +592,42 @@ pub async fn list_sessions(
             Err(_) => continue,
         };
 
+        let has_title_column = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'title'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+        let has_extensions_json_column = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'extensions_json'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+
+        let title_expr = if has_title_column {
+            "s.title"
+        } else {
+            "NULL AS title"
+        };
+        let readable_id_expr = if has_extensions_json_column {
+            "json_extract(s.extensions_json, '$.readable_id') AS readable_id"
+        } else {
+            "NULL AS readable_id"
+        };
+
+        let base_select = format!(
+            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
+            title_expr, readable_id_expr
+        );
+
         let rows = if let Some(workspace) = workspace {
+            let query = format!(
+                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND EXISTS (\n                       SELECT 1\n                       FROM oqto_log_turns t\n                       JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                       WHERE t.session_id = s.session_id\n                   )\n                 ORDER BY s.updated_at DESC",
+                base_select
+            );
             sqlx::query_as::<
                 _,
                 (
@@ -607,28 +642,16 @@ pub async fn list_sessions(
                     Option<String>,
                     i64,
                 ),
-            >(
-                r#"
-                SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, s.title,
-                       json_extract(s.extensions_json, '$.readable_id') AS readable_id,
-                       0 AS messages
-                FROM oqto_log_sessions s
-                WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)
-                  AND EXISTS (
-                      SELECT 1
-                      FROM oqto_log_turns t
-                      JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-                      WHERE t.session_id = s.session_id
-                  )
-                ORDER BY s.updated_at DESC
-                "#,
-            )
+            >(&query)
             .bind(workspace.trim_end_matches('/'))
             .bind(format!("{}/%", workspace.trim_end_matches('/')))
             .fetch_all(&pool)
             .await?
         } else {
+            let query = format!(
+                "{}\n                 WHERE EXISTS (\n                     SELECT 1\n                     FROM oqto_log_turns t\n                     JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                     WHERE t.session_id = s.session_id\n                 )\n                 ORDER BY s.updated_at DESC",
+                base_select
+            );
             sqlx::query_as::<
                 _,
                 (
@@ -643,22 +666,7 @@ pub async fn list_sessions(
                     Option<String>,
                     i64,
                 ),
-            >(
-                r#"
-                SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                       s.created_at, s.updated_at, s.title,
-                       json_extract(s.extensions_json, '$.readable_id') AS readable_id,
-                       0 AS messages
-                FROM oqto_log_sessions s
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM oqto_log_turns t
-                    JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-                    WHERE t.session_id = s.session_id
-                )
-                ORDER BY s.updated_at DESC
-                "#,
-            )
+            >(&query)
             .fetch_all(&pool)
             .await?
         };
@@ -694,6 +702,34 @@ pub async fn get_session(
             Ok(pool) => pool,
             Err(_) => continue,
         };
+        let has_title_column = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'title'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+        let has_extensions_json_column = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'extensions_json'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+        let title_expr = if has_title_column {
+            "s.title"
+        } else {
+            "NULL AS title"
+        };
+        let readable_id_expr = if has_extensions_json_column {
+            "json_extract(s.extensions_json, '$.readable_id') AS readable_id"
+        } else {
+            "NULL AS readable_id"
+        };
+        let query = format!(
+            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    COUNT(m.message_id) AS messages\n             FROM oqto_log_sessions s\n             LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id\n             LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n             WHERE s.session_id = ? OR s.platform_id = ? OR s.external_id = ?\n             GROUP BY s.session_id\n             LIMIT 1",
+            title_expr, readable_id_expr
+        );
         let row = sqlx::query_as::<
             _,
             (
@@ -708,20 +744,7 @@ pub async fn get_session(
                 Option<String>,
                 i64,
             ),
-        >(
-            r#"
-            SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,
-                   s.created_at, s.updated_at, s.title,
-                   json_extract(s.extensions_json, '$.readable_id') AS readable_id,
-                   COUNT(m.message_id) AS messages
-            FROM oqto_log_sessions s
-            LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id
-            LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE s.session_id = ? OR s.platform_id = ? OR s.external_id = ?
-            GROUP BY s.session_id
-            LIMIT 1
-            "#,
-        )
+        >(&query)
         .bind(session_or_platform_id)
         .bind(session_or_platform_id)
         .bind(session_or_platform_id)
