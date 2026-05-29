@@ -55,6 +55,32 @@ fn extract_text(content: &Value) -> String {
     }
 }
 
+pub async fn migrate_db_path(db_path: &Path) -> Result<()> {
+    let connect_options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(30));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(connect_options)
+        .await
+        .with_context(|| {
+            format!(
+                "connecting oqto-log db for migration: {}",
+                db_path.display()
+            )
+        })?;
+
+    OQTO_LOG_MIGRATOR
+        .run(&pool)
+        .await
+        .with_context(|| format!("running oqto-log migrations: {}", db_path.display()))?;
+
+    Ok(())
+}
+
 async fn open_workspace_pool(user_home: &Path, workspace_id: &str) -> Result<sqlx::SqlitePool> {
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 

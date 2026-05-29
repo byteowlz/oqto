@@ -582,6 +582,7 @@ pub async fn list_sessions(
 ) -> Result<Vec<OqtoLogSessionRow>> {
     let mut sessions = Vec::new();
     for db in list_db_paths(user_home) {
+        crate::oqto_log::store::migrate_db_path(&db).await?;
         let options = SqliteConnectOptions::new().filename(&db).read_only(true);
         let pool = match SqlitePoolOptions::new()
             .max_connections(1)
@@ -693,6 +694,7 @@ pub async fn get_session(
     session_or_platform_id: &str,
 ) -> Result<Option<OqtoLogSessionRow>> {
     for db in list_db_paths(user_home) {
+        crate::oqto_log::store::migrate_db_path(&db).await?;
         let options = SqliteConnectOptions::new().filename(&db).read_only(true);
         let pool = match SqlitePoolOptions::new()
             .max_connections(1)
