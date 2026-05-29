@@ -474,7 +474,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
 				{/* Search input with mode dropdown */}
-				<div className="relative mb-2 px-1">
+				<div className={cn("relative mb-2", isMobile ? "px-1" : "pl-1.5")}>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<button
@@ -949,7 +949,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 														return (
 															<div
 																key={session.id}
-																className={isMobile ? "ml-4" : "ml-3"}
+																className={isMobile ? "pl-4" : "pl-3"}
 															>
 																<ContextMenu>
 																	<ContextMenuTrigger className="contents">

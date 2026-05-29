@@ -64,6 +64,8 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export function LoginPage() {
 	const navigate = useNavigate();
+	const authInputClass =
+		"border-sidebar-border bg-sidebar-accent/50 shadow-none focus-visible:ring-0 focus-visible:border-primary/50";
 	const queryClient = useQueryClient();
 	const [searchParams] = useSearchParams();
 	const redirectTo = searchParams.get("redirect") || "/";
@@ -136,6 +138,7 @@ export function LoginPage() {
 											placeholder="Enter your username"
 											autoComplete="username"
 											disabled={isLoading}
+											className={authInputClass}
 											{...field}
 										/>
 									</FormControl>
@@ -156,6 +159,7 @@ export function LoginPage() {
 											placeholder="Enter your password"
 											autoComplete="current-password"
 											disabled={isLoading}
+											className={authInputClass}
 											{...field}
 										/>
 									</FormControl>
@@ -190,6 +194,7 @@ export function LoginPage() {
 														placeholder="https://your-server.com/api"
 														autoComplete="url"
 														disabled={isLoading}
+														className={authInputClass}
 														{...field}
 													/>
 												</FormControl>
