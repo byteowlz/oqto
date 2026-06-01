@@ -843,7 +843,25 @@ pub async fn find_session_by_external(
         };
 
         if let Ok(Some(row)) = sqlx::query_as::<_, (String, String)>(
-            "SELECT session_id, COALESCE(workspace_id, '') FROM oqto_log_sessions WHERE external_id = ? LIMIT 1",
+            r#"
+            SELECT s.session_id, COALESCE(s.workspace_id, '')
+            FROM oqto_log_sessions s
+            LEFT JOIN (
+              SELECT session_id, COUNT(*) AS turn_count
+              FROM oqto_log_turns
+              GROUP BY session_id
+            ) tc ON tc.session_id = s.session_id
+            WHERE s.external_id = ?
+            ORDER BY
+              CASE
+                WHEN s.session_id = s.platform_id AND s.session_id LIKE 'oqto-%' THEN 0
+                WHEN s.session_id = s.platform_id THEN 1
+                ELSE 2
+              END,
+              COALESCE(tc.turn_count, 0) DESC,
+              s.updated_at DESC
+            LIMIT 1
+            "#,
         )
         .bind(external_id)
         .fetch_optional(&pool)
@@ -854,6 +872,118 @@ pub async fn find_session_by_external(
     }
 
     None
+}
+
+pub async fn list_sessions_by_external_in_workspace(
+    user_home: &Path,
+    workspace_id: &str,
+    external_id: &str,
+) -> Result<Vec<String>> {
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .read_only(true),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "open oqto-log db for session listing: {}",
+                db_path.display()
+            )
+        })?;
+
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT s.session_id
+        FROM oqto_log_sessions s
+        LEFT JOIN (
+          SELECT session_id, COUNT(*) AS turn_count
+          FROM oqto_log_turns
+          GROUP BY session_id
+        ) tc ON tc.session_id = s.session_id
+        WHERE s.external_id = ?
+        ORDER BY
+          CASE
+            WHEN s.session_id = s.platform_id AND s.session_id LIKE 'oqto-%' THEN 0
+            WHEN s.session_id = s.platform_id THEN 1
+            ELSE 2
+          END,
+          COALESCE(tc.turn_count, 0) DESC,
+          s.updated_at DESC
+        "#,
+    )
+    .bind(external_id)
+    .fetch_all(&pool)
+    .await
+    .context("list sessions by external_id")?;
+
+    Ok(rows)
+}
+
+pub async fn delete_session_in_workspace(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+) -> Result<bool> {
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(&db_path))
+        .await
+        .with_context(|| format!("open oqto-log db for session delete: {}", db_path.display()))?;
+
+    let mut tx = pool.begin().await.context("begin oqto-log delete tx")?;
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .context("check session exists")?
+            > 0;
+
+    if !exists {
+        tx.commit().await.context("commit noop delete tx")?;
+        return Ok(false);
+    }
+
+    sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_ad")
+        .execute(&mut *tx)
+        .await
+        .context("drop delete trigger")?;
+
+    sqlx::query("DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT turn_id FROM oqto_log_turns WHERE session_id = ?)")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete session messages")?;
+    sqlx::query("DELETE FROM oqto_log_turns WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete session turns")?;
+    sqlx::query("DELETE FROM oqto_log_branches WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete session branches")?;
+    sqlx::query("DELETE FROM oqto_log_sessions WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete session row")?;
+
+    sqlx::query("INSERT INTO oqto_log_message_fts(oqto_log_message_fts) VALUES('rebuild')")
+        .execute(&mut *tx)
+        .await
+        .context("rebuild fts after delete")?;
+
+    tx.commit().await.context("commit session delete")?;
+    Ok(true)
 }
 
 /// Resolve the Pi external_id for a known oqto-log session identifier.
