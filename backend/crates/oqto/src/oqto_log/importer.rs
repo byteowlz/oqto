@@ -431,6 +431,40 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
     }
 }
 
+async fn collapse_duplicate_external_sessions(
+    user_home: &Path,
+    workspace_id: &str,
+    external_id: &str,
+    canonical_session_id: &str,
+) -> Result<usize> {
+    let session_ids = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
+        user_home,
+        workspace_id,
+        external_id,
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut deleted = 0usize;
+    for session_id in session_ids {
+        if session_id == canonical_session_id {
+            continue;
+        }
+        if oqto_history::oqto_log::ops::delete_session_in_workspace(
+            user_home,
+            workspace_id,
+            &session_id,
+        )
+        .await
+        .unwrap_or(false)
+        {
+            deleted += 1;
+        }
+    }
+
+    Ok(deleted)
+}
+
 pub async fn fast_import_identities_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
@@ -683,6 +717,14 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 }
             }
 
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &pi_session_id,
+                &session_id,
+            )
+            .await;
+
             let _ = oqto_history::oqto_log::store::upsert_import_checkpoint(
                 user_home,
                 &workspace_id,
@@ -726,10 +768,33 @@ pub async fn bootstrap_import_from_pi_jsonl(
         && report.sessions_mismatch > 0
     {
         for row in report.mismatches {
-            let Some((workspace_id, session_id)) = parse_mismatch_row(&row) else {
+            let Some((workspace_id, mismatch_session_id)) = parse_mismatch_row(&row) else {
                 continue;
             };
-            let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &session_id) else {
+
+            let resolved =
+                oqto_history::oqto_log::ops::find_session_by_id(user_home, &mismatch_session_id)
+                    .await;
+            let (target_session_id, target_external_id) =
+                if let Some((session_id, _ws, ext)) = resolved {
+                    (
+                        session_id,
+                        ext.unwrap_or_else(|| mismatch_session_id.clone()),
+                    )
+                } else if let Some((session_id, _ws)) =
+                    oqto_history::oqto_log::ops::find_session_by_external(
+                        user_home,
+                        &mismatch_session_id,
+                    )
+                    .await
+                {
+                    (session_id, mismatch_session_id.clone())
+                } else {
+                    (mismatch_session_id.clone(), mismatch_session_id.clone())
+                };
+
+            let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &target_external_id)
+            else {
                 continue;
             };
             let records = read_jsonl_message_records(&path);
@@ -743,10 +808,10 @@ pub async fn bootstrap_import_from_pi_jsonl(
                     user_home,
                     user_id,
                     &workspace_id,
-                    &session_id,
-                    &session_id,
-                    Some(&session_id),
-                    &session_id,
+                    &target_session_id,
+                    &target_session_id,
+                    Some(&target_external_id),
+                    &target_external_id,
                     &records,
                 )
                 .await
@@ -762,6 +827,14 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 }
             }
 
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &target_external_id,
+                &target_session_id,
+            )
+            .await;
+
             if let Some(replaced) = replaced_ok {
                 stats.imported_messages += replaced.messages_written;
             } else {
@@ -771,8 +844,8 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 stats.failed_files += 1;
                 if stats.failure_samples.len() < 25 {
                     stats.failure_samples.push(format!(
-                        "postpass_replace_failed workspace={} session={} error={}",
-                        workspace_id, session_id, err_text
+                        "postpass_replace_failed workspace={} session={} canonical={} external={} error={}",
+                        workspace_id, mismatch_session_id, target_session_id, target_external_id, err_text
                     ));
                 }
             }
