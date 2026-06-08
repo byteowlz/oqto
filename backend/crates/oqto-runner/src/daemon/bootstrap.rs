@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use oqto_sandbox::SandboxConfig;
+use oqto_sandbox::{SandboxConfig, SandboxConfigFile};
 use std::path::{Path, PathBuf};
 
 /// Default socket path pattern.
@@ -27,7 +27,8 @@ pub fn load_sandbox_config(
 
     if let Some(config_path) = sandbox_config_path {
         let contents = std::fs::read_to_string(config_path)?;
-        let mut config: SandboxConfig = toml::from_str(&contents)?;
+        let file: SandboxConfigFile = toml::from_str(&contents)?;
+        let mut config: SandboxConfig = file.into();
         config.enabled = true;
         info!("Loaded sandbox config from {:?}", config_path);
         return Ok(Some(config));
@@ -56,8 +57,9 @@ pub fn load_sandbox_config(
             continue;
         }
         match std::fs::read_to_string(config_path) {
-            Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
-                Ok(config) => {
+            Ok(contents) => match toml::from_str::<SandboxConfigFile>(&contents) {
+                Ok(file) => {
+                    let config: SandboxConfig = file.into();
                     if config.enabled {
                         info!(
                             "Loaded sandbox config from {}, profile='{}'",

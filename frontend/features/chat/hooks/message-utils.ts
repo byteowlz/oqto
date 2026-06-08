@@ -86,6 +86,17 @@ function parseJsonMaybe(value: string): unknown | null {
 	}
 }
 
+function parseCanonicalPartsJsonText(value: string): DisplayPart[] | null {
+	const parsed = parseJsonMaybe(value);
+	if (!Array.isArray(parsed)) return null;
+	const parts = normalizeContentToParts(parsed);
+	if (parts.length === 0) return null;
+	const hasStructuredPart = parts.some(
+		(part) => part.type !== "text" || part.text.trim() !== value.trim(),
+	);
+	return hasStructuredPart ? parts : null;
+}
+
 /** Safely stringify a value for fingerprinting. */
 function safeStringify(value: unknown): string {
 	if (value === null || value === undefined) return "";
@@ -103,6 +114,24 @@ function stableHash(input: string): string {
 		hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
 	}
 	return (hash >>> 0).toString(16);
+}
+
+function normalizeTimestampMs(value: unknown, fallback = Date.now()): number {
+	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+		return value < 1e12 ? value * 1000 : value;
+	}
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (/^\d+$/.test(trimmed)) {
+			const numeric = Number(trimmed);
+			if (Number.isFinite(numeric) && numeric > 0) {
+				return numeric < 1e12 ? numeric * 1000 : numeric;
+			}
+		}
+		const parsed = Date.parse(trimmed);
+		if (Number.isFinite(parsed) && parsed > 0) return parsed;
+	}
+	return fallback;
 }
 
 function fallbackMessageId(
@@ -164,7 +193,12 @@ function coerceToolResult(
  * into a canonical DisplayPart. Returns null if unrecognized.
  */
 function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
-	const blockType = typeof b.type === "string" ? b.type : "";
+	const blockType =
+		typeof b.type === "string"
+			? b.type
+			: typeof b.part_type === "string"
+				? b.part_type
+				: "";
 
 	// --- text ---
 	if (blockType === "text") {
@@ -218,14 +252,21 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 				(typeof b.tool_call_id === "string" && b.tool_call_id) ||
 				(typeof b.id === "string" && b.id) ||
 				"",
-			name: (typeof b.name === "string" && b.name) || "unknown",
+			name:
+				(typeof b.name === "string" && b.name) ||
+				(typeof b.tool_name === "string" && b.tool_name) ||
+				"unknown",
 			input:
 				typeof b.arguments === "object" && b.arguments !== null
 					? b.arguments
-					: b.input,
+					: "tool_input" in b
+						? b.tool_input
+						: b.input,
 			status: (typeof b.status === "string"
 				? b.status
-				: "success") as ToolStatus,
+				: typeof b.tool_status === "string"
+					? b.tool_status
+					: "success") as ToolStatus,
 		};
 	}
 
@@ -242,16 +283,19 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 			name:
 				(typeof b.name === "string" && b.name) ||
 				(typeof b.toolName === "string" && b.toolName) ||
+				(typeof b.tool_name === "string" && b.tool_name) ||
 				undefined,
 			output:
 				"output" in b
 					? b.output
-					: "content" in b
-						? b.content
-						: typeof b.text === "string"
-							? b.text
-							: b,
-			isError: Boolean(b.is_error ?? b.isError),
+					: "tool_output" in b
+						? b.tool_output
+						: "content" in b
+							? b.content
+							: typeof b.text === "string"
+								? b.text
+								: b,
+			isError: Boolean(b.is_error ?? b.isError ?? b.tool_status === "error"),
 		};
 	}
 
@@ -386,12 +430,26 @@ export function normalizeContentToParts(content: unknown): DisplayPart[] {
 	if (Array.isArray(content)) {
 		for (const block of content) {
 			if (typeof block === "string") {
-				parts.push({ type: "text", id: nextPartId(), text: block });
+				const nestedParts = parseCanonicalPartsJsonText(block);
+				if (nestedParts) {
+					parts.push(...nestedParts);
+				} else {
+					parts.push({ type: "text", id: nextPartId(), text: block });
+				}
 				continue;
 			}
 			if (!block || typeof block !== "object") continue;
 			const part = coerceBlockToPart(block as Record<string, unknown>);
-			if (part) parts.push(part);
+			if (part) {
+				if (part.type === "text") {
+					const nestedParts = parseCanonicalPartsJsonText(part.text);
+					if (nestedParts) {
+						parts.push(...nestedParts);
+						continue;
+					}
+				}
+				parts.push(part);
+			}
 		}
 		return parts;
 	}
@@ -432,14 +490,9 @@ export function convertCanonicalMessageToDisplay(
 	);
 	// Normalize timestamp to milliseconds. Some sources (Pi, hstry) may
 	// return seconds. Heuristic: if < 1e12, treat as seconds.
-	const rawTimestamp =
-		typeof msg.created_at === "number" && msg.created_at > 0
-			? msg.created_at
-			: Date.now();
-	const timestamp =
-		rawTimestamp > 0 && rawTimestamp < 1e12
-			? rawTimestamp * 1000
-			: rawTimestamp;
+	const timestamp = normalizeTimestampMs(
+		msg.timestamp ?? msg.created_at ?? msg.created_at_ms ?? msg.createdAtMs,
+	);
 	// Build usage from nested usage object or flat tokens_input/tokens_output fields
 	let usage = msg.usage as DisplayMessage["usage"] | undefined;
 	if (!usage && (msg.tokens_input || msg.tokens_output)) {
@@ -508,17 +561,13 @@ export function normalizeMessages(
 
 	for (const [idx, message] of messages.entries()) {
 		const role = message.role;
-		const rawTs =
+		const timestamp = normalizeTimestampMs(
 			message.timestamp ??
-			message.created_at ??
-			message.created_at_ms ??
-			message.createdAtMs ??
-			0;
-		// Normalize: seconds -> milliseconds (heuristic: < 1e12 = seconds)
-		const timestamp =
-			typeof rawTs === "number" && rawTs > 0 && rawTs < 1e12
-				? rawTs * 1000
-				: rawTs;
+				message.created_at ??
+				message.created_at_ms ??
+				message.createdAtMs,
+			0,
+		);
 		const partsJson =
 			typeof message.parts_json === "string"
 				? message.parts_json
@@ -640,6 +689,8 @@ export function normalizeMessages(
 		}
 		const msgModel = message.model_id ?? message.model ?? null;
 		const msgProvider = message.provider_id ?? message.provider ?? null;
+		const parentId = message.parent_id ?? message.parentId ?? null;
+		const branchId = message.branch_id ?? message.branchId ?? null;
 		// Extract [Name] sender tag from user messages in shared workspaces
 		let sender: Sender | undefined;
 		if (normalizedRole === "user") {
@@ -663,6 +714,8 @@ export function normalizeMessages(
 			timestamp,
 			usage: message.usage,
 			clientId,
+			parentId,
+			branchId,
 			model: msgModel,
 			provider: msgProvider,
 			sender,
@@ -819,6 +872,30 @@ export function messageFingerprint(message: DisplayMessage): string {
 		}
 	});
 	return `${message.role}|${parts.join("|")}`;
+}
+
+function collapseLocalUserEchoes(messages: DisplayMessage[]): DisplayMessage[] {
+	const result: DisplayMessage[] = [];
+	for (const message of messages) {
+		const previous = result.at(-1);
+		if (
+			previous?.role === "user" &&
+			message.role === "user" &&
+			messageFingerprint(previous) === messageFingerprint(message) &&
+			Math.abs((previous.timestamp ?? 0) - (message.timestamp ?? 0)) <= 60_000
+		) {
+			const previousIsLocal = shouldPreserveLocalMessage(previous);
+			const currentIsLocal = shouldPreserveLocalMessage(message);
+			if (previousIsLocal !== currentIsLocal) {
+				// Collapse optimistic echo with its persisted counterpart. Prefer the
+				// persisted row because it has the durable oqto-log/Pi JSONL identity.
+				result[result.length - 1] = previousIsLocal ? message : previous;
+				continue;
+			}
+		}
+		result.push(message);
+	}
+	return result;
 }
 
 function mergeMessageKeepingLocalToolDetails(
@@ -1027,7 +1104,48 @@ export function mergeServerMessages(
 		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
 	});
 
-	// Authoritative mode is strict convergence: return server timeline only.
-	// This prevents stale optimistic user turns from lingering at the tail.
-	return mergedInServerOrder;
+	// Authoritative oqto-log convergence is allowed to supersede optimistic
+	// rows, but it must never silently erase a user prompt already rendered in
+	// this session unless the server provides a matching replacement. Deletes
+	// need an explicit durable tombstone path; absence from a snapshot is not a
+	// delete because Pi/RPC snapshots can be windowed or temporarily stale.
+	const serverIds = new Set(mergedInServerOrder.map((msg) => msg.id));
+	const serverClientIds = new Set(
+		mergedInServerOrder
+			.map((msg) => msg.clientId)
+			.filter((id): id is string => typeof id === "string" && id.length > 0),
+	);
+	const serverTimesByFingerprint = new Map<string, number[]>();
+	for (const serverMsg of mergedInServerOrder) {
+		const fingerprint = messageFingerprint(serverMsg);
+		const times = serverTimesByFingerprint.get(fingerprint) ?? [];
+		times.push(serverMsg.timestamp ?? 0);
+		serverTimesByFingerprint.set(fingerprint, times);
+	}
+	const hasNearbyPersistedMatch = (msg: DisplayMessage): boolean => {
+		const times = serverTimesByFingerprint.get(messageFingerprint(msg));
+		if (!times || times.length === 0) return false;
+		const ts = msg.timestamp ?? 0;
+		// Only use fingerprint matching to collapse frontend-local optimistic
+		// echoes that are temporally close to a persisted row. This avoids
+		// deleting legitimate repeated identical prompts later in the session.
+		return times.some((serverTs) => Math.abs(serverTs - ts) <= 15_000);
+	};
+	const preservedUserPrompts = previous.filter((msg) => {
+		if (msg.role !== "user") return false;
+		if (serverIds.has(msg.id)) return false;
+		if (msg.clientId && serverClientIds.has(msg.clientId)) return false;
+		if (shouldPreserveLocalMessage(msg) && hasNearbyPersistedMatch(msg)) {
+			return false;
+		}
+		return true;
+	});
+	if (preservedUserPrompts.length === 0) {
+		return collapseLocalUserEchoes(mergedInServerOrder);
+	}
+	return collapseLocalUserEchoes(
+		[...mergedInServerOrder, ...preservedUserPrompts].sort(
+			(a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0),
+		),
+	);
 }

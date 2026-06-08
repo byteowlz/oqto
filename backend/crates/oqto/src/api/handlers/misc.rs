@@ -633,7 +633,7 @@ fn default_search_limit() -> usize {
     50
 }
 
-/// A single search hit from hstry.
+/// A single search hit from oqto-log.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchHit {
     /// Agent type (pi_agent, etc.)
@@ -681,7 +681,7 @@ pub struct SearchHit {
     pub source_id: Option<String>,
 }
 
-/// Response from hstry search.
+/// Response from oqto-log search.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub hits: Vec<SearchHit>,
@@ -694,14 +694,13 @@ pub struct SearchResponse {
     pub cursor: Option<String>,
 }
 
-/// Search across coding agent sessions using hstry.
+/// Search across coding agent sessions using oqto-log.
 #[instrument(skip(state))]
 pub async fn search_sessions(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
-    // Don't search empty queries
     if query.q.trim().is_empty() {
         return Ok(Json(SearchResponse {
             hits: vec![],
@@ -711,137 +710,68 @@ pub async fn search_sessions(
         }));
     }
 
-    let pattern = state
-        .runner_socket_pattern
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("runner socket pattern is not configured".to_string()))?;
     let effective_user = state.effective_linux_username(user.id());
-    let runner = oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
-        .map_err(|e| ApiError::internal(format!("runner client unavailable for user: {e}")))?;
+    let user_home = if state.user_isolation_enabled() {
+        std::path::PathBuf::from(format!("/home/{effective_user}"))
+    } else {
+        dirs::home_dir()
+            .ok_or_else(|| ApiError::internal("could not resolve user home for search"))?
+    };
 
-    let hits = runner
-        .search_hstry(query.q.clone(), query.limit.max(1))
-        .await
-        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?
-        .hits;
+    let response = oqto_history::oqto_log::search::search_timeline(
+        &oqto_history::oqto_log::search::TimelineSearchRequest {
+            user_home: &user_home,
+            query: &query.q,
+            scope: oqto_history::oqto_log::search::TimelineSearchScope::All,
+            workspace_id: None,
+            cwd: None,
+            limit: query.limit.max(1),
+        },
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("oqto-log search failed: {e}")))?;
 
-    let allowed_sources = parse_agent_filters(&query.agents);
-    let mut results = Vec::new();
-    for hit in hits {
-        if let Some(ref allowed) = allowed_sources
-            && !allowed.contains(&hit.source_id)
-        {
-            continue;
-        }
-
-        let timestamp = hit
-            .created_at
-            .or(hit.conv_updated_at)
-            .map(|dt| dt.timestamp_millis())
-            .or_else(|| Some(hit.conv_created_at.timestamp_millis()));
-
-        let session_id = hit
-            .external_id
-            .clone()
-            .unwrap_or_else(|| hit.conversation_id.clone());
-
-        let source_path = hit
-            .source_path
-            .clone()
-            .unwrap_or_else(|| format!("hstry:{}:{}", hit.source_id, hit.conversation_id));
-
-        results.push(SearchHit {
-            agent: map_source_id_to_agent(&hit.source_id),
-            source_path,
-            session_id: Some(session_id),
-            workspace: hit.workspace.clone(),
-            message_id: None,
-            line_number: Some((hit.message_idx.max(0) as usize) + 1),
-            snippet: Some(hit.snippet.clone()),
-            score: Some(f64::from(hit.score)),
-            timestamp,
-            role: Some(hit.role.clone()),
-            title: hit.title.clone(),
-            content: Some(hit.content.clone()),
-            match_type: None,
-            origin_kind: Some(hit.source_adapter.clone()),
-            source_id: Some(hit.source_id.clone()),
-        });
-
-        if results.len() >= query.limit {
-            break;
-        }
-    }
+    let hits = response
+        .results
+        .into_iter()
+        .map(oqto_log_result_to_search_hit)
+        .collect::<Vec<_>>();
 
     Ok(Json(SearchResponse {
-        total: Some(results.len()),
-        hits: results,
+        total: Some(hits.len()),
+        hits,
         elapsed_ms: None,
         cursor: None,
     }))
 }
 
-fn parse_agent_filters(agents: &str) -> Option<std::collections::HashSet<String>> {
-    let agents = agents.trim();
-    if agents.is_empty() || agents.eq_ignore_ascii_case("all") {
-        return None;
-    }
-
-    let mut filters = std::collections::HashSet::new();
-    for agent in agents
-        .split(',')
-        .map(|agent| agent.trim())
-        .filter(|agent| !agent.is_empty())
-    {
-        filters.insert(map_agent_filter_to_source_id(agent));
-    }
-
-    if filters.is_empty() {
-        None
+fn oqto_log_result_to_search_hit(
+    hit: oqto_history::oqto_log::search::TimelineSearchResult,
+) -> SearchHit {
+    let session_id = if hit.platform_id.is_empty() {
+        hit.session_id.clone()
     } else {
-        Some(filters)
-    }
-}
-
-fn map_agent_filter_to_source_id(agent: &str) -> String {
-    match agent {
-        "pi_agent" => "pi".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn map_source_id_to_agent(source_id: &str) -> String {
-    match source_id {
-        "pi" => "pi_agent".to_string(),
-        other => other.to_string(),
-    }
-}
-
-#[cfg(test)]
-pub mod hstry_search_tests {
-    use super::{map_agent_filter_to_source_id, parse_agent_filters};
-
-    #[test]
-    fn hstry_filters_skip_all() {
-        assert!(parse_agent_filters("all").is_none());
-    }
-
-    #[test]
-    fn hstry_filters_support_multiple() {
-        let filters = parse_agent_filters("pi_agent,custom_agent").expect("filters");
-        assert!(filters.contains("pi"));
-        assert!(filters.contains("custom_agent"));
-    }
-
-    #[test]
-    fn hstry_filters_trim_tokens() {
-        let filters = parse_agent_filters(" pi_agent , custom_agent , ").expect("filters");
-        assert!(filters.contains("pi"));
-        assert!(filters.contains("custom_agent"));
-    }
-
-    #[test]
-    fn hstry_filter_maps_pi_agent() {
-        assert_eq!(map_agent_filter_to_source_id("pi_agent"), "pi");
+        hit.platform_id.clone()
+    };
+    SearchHit {
+        agent: "pi_agent".to_string(),
+        source_path: format!(
+            "oqto-log:{}:{}",
+            hit.workspace_id.clone().unwrap_or_default(),
+            hit.session_id
+        ),
+        session_id: Some(session_id),
+        workspace: hit.workspace_id,
+        message_id: Some(hit.message_id),
+        line_number: None,
+        snippet: Some(hit.snippet),
+        score: Some(hit.score),
+        timestamp: None,
+        role: Some(hit.role),
+        title: None,
+        content: Some(hit.content),
+        match_type: Some("message".to_string()),
+        origin_kind: Some("oqto_log".to_string()),
+        source_id: Some("oqto_log".to_string()),
     }
 }

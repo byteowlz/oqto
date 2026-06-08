@@ -26,12 +26,13 @@ overlay_paths = ["~/.cargo", "~/.npm", "~/.bun", "~/.local/share/uv", "~/.cache/
 
 When enabled, writes for `overlay_paths` are redirected to per-workspace upperdirs under `overlay_root`, while reads continue from the original paths.
 
-Start with:
+Recommended defaults:
 
-- `seccomp_mode = "audit"`
+- `seccomp_mode = "enforce"`
+- `seccomp_bpf_path = "/usr/local/share/oqto/seccomp/default.bpf"`
 - `landlock_mode = "audit"`
 
-Then move to `"enforce"` per repo after validating workloads.
+Keep landlock in audit first, then move landlock to `"enforce"` per repo after validating workloads.
 
 For seccomp enforce mode, install an architecture-specific BPF artifact:
 

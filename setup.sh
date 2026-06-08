@@ -4,10 +4,11 @@
 # Comprehensive setup and onboarding for the Oqto AI Agent Workspace Platform
 #
 # Supports:
-#   - Linux (primary target, fully supported)
-#   - macOS (experimental, single-user only, some services need manual setup)
+#   - Linux (currently supported)
 #   - Single-user and multi-user modes
 #   - Local (native processes) and container (Docker/Podman) modes
+#
+# Note: macOS setup is currently not supported.
 #
 # Usage:
 #   ./setup.sh                  # Interactive mode

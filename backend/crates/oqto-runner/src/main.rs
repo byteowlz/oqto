@@ -1,10 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use log::{info, warn};
+use log::info;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto_history::hstry::HstryEndpoint;
 use oqto_runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
@@ -103,40 +102,11 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local").join("state")
         });
-    // Resolve hstry endpoint.
-    // Multi-user: each runner runs as the target Linux user. hstry always uses
-    //   a per-user Unix socket, so we resolve service_socket_path() which is
-    //   scoped to that user's XDG_RUNTIME_DIR.
-    // Single-user: same logic -- prefer socket, fall back to Discover which
-    //   probes socket then port-file.
-    let hstry_endpoint = {
-        let socket_path = hstry_core::paths::service_socket_path();
-        if socket_path.exists() {
-            info!("hstry endpoint: Unix socket {:?}", socket_path);
-            HstryEndpoint::UnixSocket(socket_path)
-        } else {
-            info!(
-                "hstry Unix socket not found at {:?}; using auto-discover",
-                socket_path
-            );
-            HstryEndpoint::Discover
-        }
-    };
-
     let pi_config = PiManagerConfig {
         pi_binary: PathBuf::from(&user_config.pi_binary),
         default_cwd: user_config.workspace_dir.clone(),
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
-        hstry_db_path: {
-            let db_path = oqto_history::legacy_hstry::hstry_db_path();
-            match &db_path {
-                Some(p) => info!("hstry DB found: {}", p.display()),
-                None => warn!("hstry DB not found -- chat history persistence disabled"),
-            }
-            db_path
-        },
-        hstry_endpoint,
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),

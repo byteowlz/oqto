@@ -22,8 +22,8 @@ import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import type {
 	ChatSession,
-	HstrySearchHit,
 	ProjectLogo,
+	SearchHit,
 } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
@@ -119,8 +119,8 @@ export interface SidebarSessionsProps {
 	onDeleteProject: (projectKey: string, projectName: string) => void;
 	onBackfillProject?: (directory: string) => void;
 	onShareProject?: (directory: string, projectName: string) => void;
-	onSearchResultClick: (hit: HstrySearchHit) => void;
-	messageSearchExtraHits: HstrySearchHit[];
+	onSearchResultClick: (hit: SearchHit) => void;
+	messageSearchExtraHits: SearchHit[];
 	isMobile?: boolean;
 	/** If true, the outer container owns vertical scrolling. */
 	externalScroll?: boolean;
@@ -474,7 +474,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
 				{/* Search input with mode dropdown */}
-				<div className="relative mb-2 px-1">
+				<div className={cn("relative mb-2", isMobile ? "px-1" : "pl-1.5")}>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<button
@@ -949,7 +949,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 														return (
 															<div
 																key={session.id}
-																className={isMobile ? "ml-4" : "ml-3"}
+																className={isMobile ? "pl-4" : "pl-3"}
 															>
 																<ContextMenu>
 																	<ContextMenuTrigger className="contents">
@@ -1062,6 +1062,18 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			<Copy className="w-4 h-4 mr-2" />
 																			{session.id.slice(0, 16)}...
 																		</ContextMenuItem>
+																		{session.readable_id?.trim() && (
+																			<ContextMenuItem
+																				onClick={() => {
+																					navigator.clipboard.writeText(
+																						session.readable_id?.trim() ?? "",
+																					);
+																				}}
+																			>
+																				<Copy className="w-4 h-4 mr-2" />
+																				{session.readable_id.trim()}
+																			</ContextMenuItem>
+																		)}
 																		<ContextMenuSeparator />
 																		<ContextMenuItem
 																			onClick={() => onPinSession(session.id)}

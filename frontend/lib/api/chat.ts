@@ -1,6 +1,6 @@
 /**
  * Chat History API
- * Reads Pi chat history from disk (from hstry)
+ * Reads Pi chat history from disk (from oqto-log)
  */
 
 import type { Message, Part, Role } from "@/lib/canonical-types";
@@ -17,7 +17,7 @@ const normalizeWorkspacePathValue = (path?: string | null): string | null => {
 };
 
 // ============================================================================
-// Chat History Types (from disk, from hstry)
+// Chat History Types (from disk, from oqto-log)
 // ============================================================================
 
 /** A Pi session read directly from disk */
@@ -44,9 +44,9 @@ export type ChatSession = {
 	is_child: boolean;
 	/** Path to the session JSON file (for loading messages) */
 	source_path: string | null;
-	/** Last used model ID (from hstry conversation) */
+	/** Last used model ID (from oqto-log conversation) */
 	model?: string | null;
-	/** Last used provider ID (from hstry conversation) */
+	/** Last used provider ID (from oqto-log conversation) */
 	provider?: string | null;
 	/** Session stats (tokens, cost) */
 	stats?: {
@@ -92,7 +92,7 @@ export type ChatMessagePart = Part;
 export type ChatMessage = Message;
 
 // ============================================================================
-// Chat History API (reads from disk, from hstry)
+// Chat History API (reads from disk, from oqto-log)
 // ============================================================================
 
 /** List all chat sessions. */

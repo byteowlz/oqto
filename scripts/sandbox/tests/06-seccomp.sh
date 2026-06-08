@@ -2,8 +2,8 @@
 # Scenario 06: seccomp modes.
 #
 # off     -> bwrap args contain no --seccomp; no warning logged.
-# audit   -> with BPF present: --seccomp 3 wired up. without: warning logged, sandbox still runs.
-# enforce -> with BPF present: --seccomp 3 wired. without: build_bwrap_args returns None
+# audit   -> with BPF present: --seccomp 198 wired up. without: warning logged, sandbox still runs.
+# enforce -> with BPF present: --seccomp 198 wired. without: build_bwrap_args returns None
 #            and the CLI aborts. We assert exit != 0.
 #
 # Requires the BPF artifact for the positive enforce path. If missing, we run
@@ -11,6 +11,7 @@
 
 set -euo pipefail
 SCENARIO_NAME="06-seccomp"
+: "${OQTO_TEST_RUN_DIR:=/var/tmp/oqto-sandbox-tests.$$}"
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 trap cleanup_run_dir EXIT
 scenario_header
@@ -18,7 +19,7 @@ require_oqto_sandbox
 have_bwrap || { skip "bwrap missing"; scenario_summary; exit 0; }
 
 ws="$(make_workspace seccomp)"
-bpf="${OQTO_SECCOMP_BPF:-/etc/oqto/seccomp/default.bpf}"
+bpf="${OQTO_SECCOMP_BPF:-/usr/local/share/oqto/seccomp/default.bpf}"
 
 make_cfg() {
   # $1 = seccomp_mode  $2 = include_bpf_path (true|false)
@@ -89,12 +90,12 @@ else
   fail "seccomp=enforce without bpf: CLI unexpectedly succeeded"
 fi
 
-# ----- audit with BPF: --seccomp 3 present -----
+# ----- audit with BPF: --seccomp 198 present -----
 if have_seccomp_bpf; then
   cfg_audit_bpf="$(make_cfg audit true)"
   out_audit_bpf="$(run_sandbox --config "${cfg_audit_bpf}" --workspace "${ws}" --dry-run -- /bin/true 2>&1)"
-  if [[ "${out_audit_bpf}" == *"--seccomp"*" 3"* ]]; then
-    pass "seccomp=audit + bpf: --seccomp 3 wired"
+  if [[ "${out_audit_bpf}" == *"--seccomp"*" 198"* ]]; then
+    pass "seccomp=audit + bpf: --seccomp 198 wired"
   else
     fail "seccomp=audit + bpf: --seccomp not wired (check BPF readability)"
   fi

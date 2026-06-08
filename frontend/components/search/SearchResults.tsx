@@ -1,8 +1,8 @@
 "use client";
 
 import {
-	type HstrySearchHit,
-	type HstrySearchResponse,
+	type SearchHit,
+	type SearchResponse,
 	searchSessions,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
@@ -25,8 +25,8 @@ interface SearchResultsProps {
 	query: string;
 	agentFilter: AgentFilter;
 	locale: "en" | "de";
-	onResultClick: (hit: HstrySearchHit) => void;
-	extraHits?: HstrySearchHit[];
+	onResultClick: (hit: SearchHit) => void;
+	extraHits?: SearchHit[];
 	className?: string;
 }
 
@@ -187,7 +187,7 @@ function ContextPopover({
 	hit,
 	query,
 }: {
-	hit: HstrySearchHit;
+	hit: SearchHit;
 	query: string;
 }) {
 	const context = extractContext(hit.content, hit.snippet);
@@ -227,14 +227,14 @@ export function SearchResults({
 	className,
 }: SearchResultsProps) {
 	const { t } = useTranslation();
-	const [results, setResults] = useState<HstrySearchResponse | null>(null);
+	const [results, setResults] = useState<SearchResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const resultListRef = useRef<HTMLDivElement>(null);
 
-	// Debounced search (hstry-backed)
+	// Debounced search (oqto-log-backed)
 	// useeffect-guardrail: allow - async debounced fetch with cancellation
 	useEffect(() => {
 		if (!query.trim()) {
@@ -259,7 +259,7 @@ export function SearchResults({
 
 				setResults({ hits: allHits.slice(0, 50) });
 			} catch (err) {
-				setError(err instanceof Error ? err.message : t("search.error"));
+				setError(err instanceof Error ? err.message : "Search failed");
 				setResults(null);
 			} finally {
 				setLoading(false);
@@ -267,7 +267,11 @@ export function SearchResults({
 		}, 300); // 300ms debounce
 
 		return () => clearTimeout(timer);
-	}, [query, agentFilter, t]);
+		// Intentionally do not depend on i18n `t` identity here.
+		// In some environments `t` is not referentially stable and can
+		// retrigger this effect every render, leaving results stuck in
+		// a perpetual loading state.
+	}, [query, agentFilter]);
 
 	const handleMouseEnter = useCallback((index: number) => {
 		if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);

@@ -8,7 +8,7 @@ import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { getUserDisplayName } from "@/lib/api/types";
-import type { HstrySearchHit } from "@/lib/control-plane-client";
+import type { SearchHit } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -25,7 +25,7 @@ import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
 import type { SearchMode } from "@/components/search";
-import { triggerChatHistoryBackfill } from "@/lib/api/chat";
+import { type ChatSession, triggerChatHistoryBackfill } from "@/lib/api/chat";
 import {
 	type SharedWorkspaceInfo,
 	convertToSharedWorkspace,
@@ -464,25 +464,89 @@ const AppShell = memo(function AppShell() {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setSelectedProjectKey is stable setState
 	const handleSearchResultClick = useCallback(
-		(hit: HstrySearchHit) => {
-			setSessionSearch("");
-			const targetMessageId =
-				hit.message_id || (hit.line_number ? `line-${hit.line_number}` : null);
-			if (targetMessageId) setScrollToMessageId(targetMessageId);
+		(hit: SearchHit) => {
+			try {
+				setSessionSearch("");
+				const targetMessageId =
+					typeof hit.message_id === "string"
+						? hit.message_id
+						: hit.line_number
+							? `line-${hit.line_number}`
+							: null;
+				if (targetMessageId) setScrollToMessageId(targetMessageId);
 
-			if (hit.agent === "pi_agent") {
-				const sessionId = hit.session_id || "";
-				if (sessionId) {
-					setSelectedChatSessionId(sessionId);
+				if (hit.agent === "pi_agent" || hit.agent === "pi") {
+					const sessionId =
+						typeof hit.session_id === "string" ? hit.session_id : "";
+					if (sessionId) {
+						const existingSession = chatHistory.find((s) => s.id === sessionId);
+						const hitWorkspace =
+							typeof hit.workspace === "string" ? hit.workspace : null;
+						const workspacePath =
+							hitWorkspace ?? existingSession?.workspace_path ?? null;
+						const normalizedWorkspacePath =
+							typeof workspacePath === "string"
+								? workspacePath.replace(/\/$/, "")
+								: null;
+						const sharedWorkspace = normalizedWorkspacePath
+							? sharedWs.sharedWorkspaces.find((ws) => {
+									const sharedPath = ws.path.replace(/\/$/, "");
+									return (
+										normalizedWorkspacePath === sharedPath ||
+										normalizedWorkspacePath.startsWith(`${sharedPath}/`)
+									);
+								})
+							: undefined;
+
+						if (!existingSession || sharedWorkspace) {
+							const now =
+								typeof hit.timestamp === "number" ? hit.timestamp : Date.now();
+							const projectName =
+								typeof workspacePath === "string"
+									? (workspacePath
+											.replace(/\\/g, "/")
+											.split("/")
+											.filter(Boolean)
+											.pop() ?? null)
+									: null;
+							const optimisticSession: ChatSession = existingSession ?? {
+								id: sessionId,
+								readable_id: null,
+								title: typeof hit.title === "string" ? hit.title : null,
+								parent_id: null,
+								workspace_path: workspacePath,
+								project_name: projectName,
+								created_at: now,
+								updated_at: now,
+								version: null,
+								is_child: false,
+								source_path:
+									typeof hit.source_path === "string" ? hit.source_path : null,
+								shared_workspace_id: sharedWorkspace?.id ?? null,
+							};
+							createOptimisticChatSession(
+								sessionId,
+								workspacePath ?? undefined,
+								sharedWorkspace?.id,
+								optimisticSession,
+							);
+						}
+						setSelectedChatSessionId(sessionId);
+					}
+					setSelectedWorkspaceOverviewPath(null);
+					setSelectedProjectKey(null);
+					setActiveAppId("sessions");
+					if (sessionsRoute) navigate(sessionsRoute);
 				}
-				setSelectedWorkspaceOverviewPath(null);
-				setSelectedProjectKey(null);
-				setActiveAppId("sessions");
-				if (sessionsRoute) navigate(sessionsRoute);
+			} catch (err) {
+				console.error("[search] failed to open search result", err, hit);
 			}
 			sidebarState.setMobileMenuOpen(false);
 		},
 		[
+			chatHistory,
+			createOptimisticChatSession,
+			sharedWs.sharedWorkspaces,
 			setActiveAppId,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
@@ -731,7 +795,7 @@ const AppShell = memo(function AppShell() {
 
 				<aside
 					className={cn(
-						"fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex border-r border-transparent dark:border-transparent",
+						"app-chrome fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex border-r border-transparent dark:border-transparent",
 						sidebarState.sidebarCollapsed
 							? "w-[4.5rem] items-center"
 							: "w-[16.25rem] items-center",

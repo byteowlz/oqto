@@ -1,0 +1,1591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>sldr — deck composer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --background: #222624;
+  --panel: #1a1e1c;
+  --panel-strong: #0f1412;
+  --card: #262a28;
+  --card-2: #2c312e;
+  --border: #2e3331;
+  --border-strong: #3a3f3c;
+  --fg: #e6e9e7;
+  --muted-fg: #9aa39e;
+  --dim-fg: #636b66;
+  --primary: #3ba77c;
+  --primary-glow: rgba(59,167,124,0.35);
+  --primary-dim: #2a6d52;
+  --user: #e8b86d;
+  --assistant: #7ad7b4;
+  --intent: #c98bdc;
+  --danger: #d36a6a;
+  --warn: #e0b84a;
+  /* TOML syntax */
+  --tok-key: #7ad7b4;
+  --tok-str: #e8b86d;
+  --tok-num: #c98bdc;
+  --tok-section: #3ba77c;
+  --tok-comment: #636b66;
+  --tok-punct: #9aa39e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--background); color: var(--fg); font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+body { overflow: hidden; }
+button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-strong); padding: 0 10px; cursor: pointer; height: 26px; border-radius: 0; letter-spacing: .02em; }
+button:hover { border-color: var(--primary-dim); color: var(--primary); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.sl-btn-active { border-color: var(--primary); color: var(--primary); background: rgba(59,167,124,0.08); }
+input { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-strong); padding: 0 10px; height: 26px; border-radius: 0; outline: none; }
+input:focus { border-color: var(--primary); }
+kbd { font-family: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--border-strong); color: var(--muted-fg); background: var(--panel); border-radius: 0; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); }
+::-webkit-scrollbar-thumb:hover { background: var(--dim-fg); }
+
+/* ===== Shell ===== */
+.sl-app {
+  height: 100vh; display: grid;
+  grid-template-rows: 40px 1fr 110px;
+  grid-template-columns: 280px 1fr 340px;
+  grid-template-areas:
+    "bar     bar      bar"
+    "browser stage    agent"
+    "strip   strip    strip";
+  background: var(--background);
+}
+
+/* ===== Top bar ===== */
+.sl-bar { grid-area: bar; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--panel-strong); }
+.sl-bar-left { display: flex; align-items: center; gap: 8px; }
+.sl-logo { font-size: 13px; font-weight: 700; letter-spacing: .04em; }
+.sl-crumb { color: var(--muted-fg); font-size: 12px; }
+.sl-crumb-sep { color: var(--dim-fg); }
+.sl-crumb-strong { color: var(--fg); }
+.sl-crumb-edit { color: var(--fg); border-bottom: 1px dashed var(--border-strong); cursor: text; padding: 0 2px; outline: none; }
+.sl-crumb-edit:focus { border-color: var(--primary); }
+.sl-bar-flex { flex: 1; }
+.sl-bar-right { display: flex; align-items: center; gap: 6px; }
+
+.sl-flavor {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  font-size: 11.5px; letter-spacing: .04em;
+  color: var(--muted-fg);
+  cursor: pointer;
+  position: relative;
+}
+.sl-flavor:hover { border-color: var(--primary-dim); color: var(--primary); }
+.sl-flavor-dot { width: 10px; height: 10px; display: inline-block; border: 1px solid var(--border-strong); }
+.sl-flavor-menu {
+  position: absolute; top: 36px; right: 120px; z-index: 100;
+  background: var(--panel-strong); border: 1px solid var(--border-strong);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  min-width: 240px; box-shadow: 0 12px 24px rgba(0,0,0,0.5);
+}
+.sl-flavor-opt {
+  display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center;
+  padding: 6px 8px; cursor: pointer;
+  font-size: 12px; border: 1px solid transparent;
+}
+.sl-flavor-opt:hover { background: var(--card); border-color: var(--border); }
+.sl-flavor-opt-active { border-color: var(--primary-dim); color: var(--primary); }
+.sl-flavor-opt-swatch { width: 14px; height: 14px; border: 1px solid var(--border-strong); }
+.sl-flavor-opt-desc { font-size: 10.5px; color: var(--dim-fg); }
+
+.sl-bar-build {
+  height: 26px; padding: 0 14px;
+  border: 1px solid var(--primary); color: var(--primary);
+  background: rgba(59,167,124,0.08);
+  font-weight: 700; letter-spacing: .06em;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.sl-bar-build:hover { background: rgba(59,167,124,0.18); }
+
+/* ===== Browser panel (left) ===== */
+.sl-browser { grid-area: browser; border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sl-browser-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--border); }
+.sl-browser-tab {
+  padding: 8px 0; text-align: center;
+  font-size: 10px; letter-spacing: .14em; font-weight: 700;
+  color: var(--muted-fg); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+}
+.sl-browser-tab:hover { color: var(--fg); }
+.sl-browser-tab-active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.sl-browser-head { padding: 8px 10px 4px; display: flex; flex-direction: column; gap: 6px; }
+.sl-browser-search { position: relative; }
+.sl-browser-search-ico { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); color: var(--dim-fg); font-size: 11px; }
+.sl-browser-search-input { width: 100%; padding-left: 22px; height: 24px; font-size: 11.5px; }
+
+.sl-browser-path {
+  font-size: 10px; color: var(--dim-fg); letter-spacing: .04em;
+  padding: 0 10px 6px; display: flex; align-items: center; gap: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sl-browser-path-seg { color: var(--muted-fg); }
+.sl-browser-path-seg:hover { color: var(--primary); cursor: pointer; }
+
+.sl-browser-list { flex: 1; overflow-y: auto; padding: 2px 0 10px; }
+
+.sl-row {
+  display: grid;
+  grid-template-columns: 14px 14px 1fr auto;
+  gap: 6px; align-items: center;
+  padding: 3px 10px 3px 0;
+  cursor: pointer; user-select: none;
+  font-size: 11.5px;
+  min-height: 22px;
+}
+.sl-row:hover { background: rgba(255,255,255,0.03); }
+.sl-row-caret {
+  grid-column: 1;
+  color: var(--dim-fg); font-size: 9px;
+  display: grid; place-items: center;
+  transition: transform 120ms;
+}
+.sl-row-caret-open { transform: rotate(90deg); color: var(--muted-fg); }
+.sl-row-ico { grid-column: 2; color: var(--muted-fg); font-size: 11px; text-align: center; }
+.sl-row-ico-folder { color: var(--user); }
+.sl-row-ico-deck { color: var(--primary); }
+.sl-row-ico-slide { color: var(--assistant); }
+.sl-row-ico-intent { color: var(--intent); }
+.sl-row-name { grid-column: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.sl-row-meta { grid-column: 4; font-size: 9.5px; color: var(--dim-fg); letter-spacing: .04em; }
+.sl-row-sub { color: var(--muted-fg); }
+.sl-row-active { background: rgba(59,167,124,0.10) !important; }
+.sl-row-active .sl-row-name { color: var(--primary); }
+.sl-row[draggable="true"] { cursor: grab; }
+.sl-row[draggable="true"]:active { cursor: grabbing; }
+
+.sl-indent-1 { padding-left: 18px; }
+.sl-indent-2 { padding-left: 34px; }
+.sl-indent-3 { padding-left: 50px; }
+.sl-indent-4 { padding-left: 66px; }
+
+.sl-tag-chip {
+  display: inline-block; padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  color: var(--muted-fg); font-size: 9.5px; letter-spacing: .05em;
+  margin-right: 3px;
+}
+
+/* ===== Stage (center) ===== */
+.sl-stage {
+  grid-area: stage;
+  display: grid;
+  grid-template-rows: 28px 1fr auto;
+  min-width: 0; min-height: 0;
+  background: var(--background);
+}
+.sl-stage-head {
+  display: flex; align-items: center; gap: 10px; padding: 0 16px;
+  border-bottom: 1px solid var(--border); background: var(--panel-strong);
+  font-size: 10.5px; color: var(--muted-fg); letter-spacing: .04em;
+}
+.sl-stage-head-path { color: var(--muted-fg); }
+.sl-stage-head-path b { color: var(--fg); font-weight: 500; }
+.sl-stage-head-flex { flex: 1; }
+.sl-stage-head-sync {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; letter-spacing: .08em;
+  color: var(--primary);
+}
+.sl-stage-head-sync-dot { width: 6px; height: 6px; background: var(--primary); box-shadow: 0 0 6px var(--primary-glow); }
+.sl-stage-head-sync-mod { color: var(--warn); }
+.sl-stage-head-sync-mod .sl-stage-head-sync-dot { background: var(--warn); box-shadow: 0 0 6px rgba(224,184,74,0.4); animation: pulse 1.4s infinite; }
+.sl-stage-head-btn { background: transparent; border: 1px solid transparent; padding: 0 8px; height: 20px; font-size: 10.5px; color: var(--muted-fg); }
+.sl-stage-head-btn:hover { color: var(--fg); border-color: var(--border-strong); }
+.sl-stage-head-btn-active { color: var(--primary); border-color: var(--primary-dim); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+
+.sl-stage-viewport {
+  position: relative;
+  display: grid; place-items: center;
+  padding: 20px 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255,255,255,0.015), transparent 60%),
+    var(--background);
+}
+
+/* the slide itself */
+.sl-slide {
+  width: 100%;
+  max-width: 920px;
+  aspect-ratio: 16 / 9;
+  background: var(--flavor-bg, #fff);
+  color: var(--flavor-text, #1f2937);
+  padding: 38px 44px 30px;
+  position: relative;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  border: 1px solid var(--border-strong);
+  font-family: var(--flavor-body, inherit);
+  overflow: hidden;
+}
+.sl-slide-intent { border: 1px dashed var(--intent); }
+
+.sl-slide-num {
+  position: absolute; top: 14px; left: 18px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px; color: var(--dim-fg);
+  background: rgba(15,20,18,0.1);
+  padding: 1px 7px; border: 1px solid currentColor;
+  opacity: .5;
+}
+.sl-slide-badge {
+  position: absolute; top: 14px; right: 18px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; letter-spacing: .1em; font-weight: 700;
+  padding: 2px 8px; border: 1px solid currentColor;
+}
+.sl-slide-badge-ref { color: var(--user); }
+.sl-slide-badge-intent { color: var(--intent); }
+
+.sl-slide-title {
+  font-family: var(--flavor-heading, "JetBrains Mono", monospace);
+  font-weight: 700;
+  font-size: 42px;
+  line-height: 1.1;
+  margin: 40px 0 16px;
+  color: var(--flavor-primary, #3b82f6);
+  outline: none;
+  text-wrap: pretty;
+}
+.sl-slide-title[contenteditable="true"]:focus {
+  background: rgba(59,167,124,0.08);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.sl-slide-bullets { margin: 0; padding-left: 26px; font-size: 18px; line-height: 1.55; }
+.sl-slide-bullet {
+  outline: none; padding: 2px 4px; margin: 0 -4px;
+}
+.sl-slide-bullet[contenteditable="true"]:focus {
+  background: rgba(59,167,124,0.08);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.sl-slide-bullet-field-highlight {
+  background: rgba(122,215,180,0.18);
+  transition: background 180ms;
+}
+
+.sl-slide-footer {
+  position: absolute; left: 44px; right: 44px; bottom: 20px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: "JetBrains Mono", monospace; font-size: 11px;
+  color: var(--dim-fg);
+  opacity: .7;
+}
+.sl-slide-footer-logo {
+  padding: 2px 8px; background: var(--flavor-primary, #3b82f6); color: var(--flavor-bg, #fff);
+  font-weight: 700; letter-spacing: .1em;
+}
+
+/* generating state */
+.sl-slide-gen-prompt { font-size: 16px; color: var(--muted-fg); font-style: italic; margin-top: 12px; }
+.sl-slide-gen-prompt::before { content: "▸ "; color: var(--intent); font-style: normal; }
+.sl-slide-gen-status {
+  position: absolute; bottom: 22px; left: 44px;
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--intent); font-size: 12px; letter-spacing: .06em;
+  font-family: "JetBrains Mono", monospace;
+}
+.sl-gen-dots { display: inline-flex; gap: 3px; }
+.sl-gen-dots span { width: 5px; height: 5px; background: var(--intent); animation: genpulse 900ms infinite; }
+.sl-gen-dots span:nth-child(2) { animation-delay: 150ms; }
+.sl-gen-dots span:nth-child(3) { animation-delay: 300ms; }
+@keyframes genpulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+
+/* ===== Source drawer (bi-directional TOML) ===== */
+.sl-source {
+  background: var(--panel-strong);
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: max-height 200ms ease;
+  overflow: hidden;
+  max-height: 0;
+}
+.sl-source-open { max-height: 340px; }
+.sl-source-head {
+  height: 26px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px; padding: 0 12px;
+  font-size: 10px; letter-spacing: .08em; color: var(--muted-fg);
+  border-bottom: 1px solid var(--border);
+}
+.sl-source-head-title { color: var(--primary); font-weight: 700; letter-spacing: .14em; }
+.sl-source-head-path { color: var(--muted-fg); }
+.sl-source-head-path b { color: var(--fg); font-weight: 500; }
+.sl-source-head-flex { flex: 1; }
+.sl-source-head-sync { color: var(--primary); font-size: 10px; letter-spacing: .06em; }
+.sl-source-head-sync.mod { color: var(--warn); }
+
+.sl-source-body {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: 10px 14px;
+  font-size: 12px; line-height: 1.6;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--fg);
+  white-space: pre;
+  position: relative;
+  outline: none;
+  tab-size: 2;
+}
+.sl-source-body-readonly { opacity: .95; cursor: text; }
+
+.tok-section { color: var(--tok-section); font-weight: 700; }
+.tok-key { color: var(--tok-key); }
+.tok-str { color: var(--tok-str); }
+.tok-num { color: var(--tok-num); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-punct { color: var(--tok-punct); }
+.tok-line-hi { background: rgba(122,215,180,0.10); display: block; margin: 0 -14px; padding: 0 14px; }
+.tok-line-field-hi { background: rgba(232,184,109,0.15); display: block; margin: 0 -14px; padding: 0 14px; outline: 1px solid rgba(232,184,109,0.35); outline-offset: -1px; }
+
+/* ===== Agent panel ===== */
+.sl-agent { grid-area: agent; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sl-agent-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.sl-section-title { color: var(--primary); font-size: 10px; letter-spacing: .14em; font-weight: 700; }
+.sl-agent-status { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted-fg); letter-spacing: .06em; }
+.sl-agent-status-dot { width: 6px; height: 6px; background: var(--primary); box-shadow: 0 0 8px var(--primary-glow); }
+.sl-agent-log { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.sl-agent-msg { position: relative; padding: 4px 0 4px 10px; font-size: 12px; line-height: 1.55; }
+.sl-agent-msg::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--border-strong); }
+.sl-agent-msg-user::before { background: var(--user); }
+.sl-agent-msg-assistant::before { background: var(--assistant); }
+.sl-agent-msg-system::before { background: var(--intent); }
+.sl-agent-msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; font-size: 10px; color: var(--dim-fg); letter-spacing: .06em; text-transform: uppercase; }
+.sl-agent-msg-role-u { color: var(--user); }
+.sl-agent-msg-role-a { color: var(--assistant); }
+.sl-agent-msg-role-s { color: var(--intent); }
+.sl-agent-msg-body { color: var(--fg); white-space: pre-wrap; text-wrap: pretty; }
+.sl-agent-msg-ref { margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; font-size: 10.5px; color: var(--muted-fg); border: 1px solid var(--border-strong); cursor: pointer; }
+.sl-agent-msg-ref:hover { border-color: var(--primary-dim); color: var(--primary); }
+
+.sl-agent-quick { padding: 6px 12px 0; display: flex; flex-direction: column; gap: 4px; }
+.sl-agent-quick-title { font-size: 9.5px; color: var(--dim-fg); letter-spacing: .08em; }
+.sl-agent-quick-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.sl-agent-quick-btn { font-size: 11px; padding: 2px 8px; height: auto; color: var(--muted-fg); }
+.sl-agent-quick-btn:hover { color: var(--primary); }
+
+.sl-agent-input-wrap { padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--panel-strong); }
+.sl-agent-input-head { font-size: 9.5px; color: var(--dim-fg); letter-spacing: .08em; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.sl-agent-input { width: 100%; resize: none; background: var(--card); border: 1px solid var(--border-strong); padding: 8px 10px; min-height: 62px; color: var(--fg); font: inherit; font-size: 12px; outline: none; }
+.sl-agent-input:focus { border-color: var(--primary); }
+.sl-agent-input-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 10px; color: var(--dim-fg); }
+.sl-agent-input-send { color: var(--primary); border-color: var(--primary-dim); font-size: 11px; height: 24px; padding: 0 10px; }
+
+/* ===== Timeline strip ===== */
+.sl-strip { grid-area: strip; border-top: 1px solid var(--border); background: var(--panel-strong); display: flex; flex-direction: column; }
+.sl-strip-head {
+  height: 22px; display: flex; align-items: center; padding: 0 12px; gap: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-fg); font-size: 10px; letter-spacing: .08em;
+}
+.sl-strip-head-title { color: var(--primary); font-weight: 700; letter-spacing: .14em; font-size: 10px; }
+.sl-strip-head-legend { display: flex; gap: 12px; margin-left: auto; color: var(--muted-fg); font-size: 10.5px; }
+.sl-strip-legend-mk { width: 10px; height: 10px; border: 1px solid; display: inline-block; vertical-align: middle; margin-right: 4px; }
+.sl-strip-legend-ref { border-color: var(--user); background: rgba(232,184,109,0.15); }
+.sl-strip-legend-intent { border-color: var(--intent); border-style: dashed; background: rgba(201,139,220,0.1); }
+
+.sl-strip-track { flex: 1; overflow-x: auto; overflow-y: hidden; padding: 6px 12px; display: flex; gap: 8px; align-items: center; min-height: 0; }
+.sl-strip-slot {
+  flex: 0 0 auto;
+  position: relative;
+  width: 92px; height: 52px;
+  border: 1px solid var(--border-strong);
+  background: var(--card);
+  cursor: grab; user-select: none;
+  display: flex; flex-direction: column; padding: 4px 6px;
+  font-size: 9.5px;
+  transition: border-color 120ms;
+}
+.sl-strip-slot:hover { border-color: var(--muted-fg); }
+.sl-strip-slot-active { outline: 2px solid var(--primary); outline-offset: 0; }
+.sl-strip-slot-ref { border-color: var(--user); background: linear-gradient(180deg, rgba(232,184,109,0.08), var(--card)); }
+.sl-strip-slot-intent { border-color: var(--intent); border-style: dashed; background: linear-gradient(180deg, rgba(201,139,220,0.08), var(--card)); }
+.sl-strip-slot-num { color: var(--dim-fg); font-size: 9px; letter-spacing: .06em; }
+.sl-strip-slot-title { color: var(--fg); font-size: 10px; line-height: 1.15; margin-top: auto; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.sl-strip-insert { flex: 0 0 auto; width: 14px; height: 52px; display: grid; place-items: center; color: var(--dim-fg); }
+.sl-strip-insert-active { color: var(--primary); font-weight: 700; }
+.sl-strip-add {
+  flex: 0 0 auto; width: 52px; height: 52px;
+  border: 1px dashed var(--border-strong); color: var(--muted-fg);
+  display: grid; place-items: center; cursor: pointer;
+  font-size: 18px;
+}
+.sl-strip-add:hover { border-color: var(--primary); color: var(--primary); }
+
+/* context menu */
+.sl-ctx { position: fixed; z-index: 200; background: var(--panel-strong); border: 1px solid var(--border-strong); padding: 4px; min-width: 220px; box-shadow: 0 12px 24px rgba(0,0,0,0.5); }
+.sl-ctx-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center; padding: 5px 8px; cursor: pointer; font-size: 12px; }
+.sl-ctx-item:hover { background: var(--card); }
+.sl-ctx-item-kbd { color: var(--dim-fg); font-size: 10px; }
+.sl-ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
+
+.sl-mono { font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em; }
+
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+// ============================================================================
+// Flavors
+// ============================================================================
+const FLAVORS = [
+  { id: "IEM",     name: "IEM",              desc: "Fraunhofer · institute",     primary: "#0a5d8a", bg: "#ffffff", text: "#1a1f2c", heading: '"Inter", sans-serif',       body: '"Inter", sans-serif',       logo: "IEM" },
+  { id: "byteowlz",name: "byteowlz",         desc: "dark · terminal",            primary: "#3ba77c", bg: "#0e1412", text: "#e6e9e7", heading: '"JetBrains Mono", monospace',body: '"JetBrains Mono", monospace',logo: "◧" },
+  { id: "itsowl",  name: "it's_OWL",         desc: "industrial · blue/yellow",   primary: "#f5b800", bg: "#0b2540", text: "#f2f4f7", heading: '"Inter", sans-serif',       body: '"Inter", sans-serif',       logo: "it's OWL" },
+  { id: "LZ",      name: "Leistungszentrum", desc: "OWL · research",             primary: "#d94f2f", bg: "#f7f5f1", text: "#222",    heading: '"Inter", sans-serif',       body: '"Inter", sans-serif',       logo: "LZ" },
+];
+const useFlavorStyle = (flavor) => ({
+  "--flavor-primary": flavor.primary,
+  "--flavor-bg": flavor.bg,
+  "--flavor-text": flavor.text,
+  "--flavor-heading": flavor.heading,
+  "--flavor-body": flavor.body,
+});
+
+// ============================================================================
+// Virtual file system (mock)
+// Each slide file is a TOML doc -> { meta, title, bullets }
+// ============================================================================
+
+const makeToml = (title, bullets, prompt=null, tags=[], flavor="IEM") => {
+  const tagsLine = tags.length ? `tags = [${tags.map(t => `"${t}"`).join(", ")}]` : `tags = []`;
+  const bulletsBlock = bullets.map(b => `  "${b}",`).join("\n");
+  return `[meta]
+flavor = "${flavor}"
+${tagsLine}
+${prompt ? `intent = """${prompt}"""` : `# human-authored`}
+
+[slide]
+title = "${title}"
+bullets = [
+${bulletsBlock}
+]
+`;
+};
+
+// Parse the restricted TOML shape we use into { title, bullets, flavor, tags, prompt }.
+// Robust-enough for this prototype.
+function parseToml(src) {
+  const out = { title: "", bullets: [], flavor: "", tags: [], prompt: null };
+  const lines = src.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) { i++; continue; }
+    // section header
+    if (/^\[[a-z]+\]$/i.test(trimmed)) { i++; continue; }
+    // triple-quoted string (for `intent`)
+    const tripleMatch = line.match(/^\s*([a-z_]+)\s*=\s*"""([\s\S]*?)(?:"""\s*)?$/);
+    if (tripleMatch && !tripleMatch[0].endsWith('"""')) {
+      // multi-line — collect until closing """
+      const key = tripleMatch[1];
+      let body = tripleMatch[2];
+      i++;
+      while (i < lines.length && !lines[i].includes('"""')) { body += "\n" + lines[i]; i++; }
+      if (i < lines.length) body += "\n" + lines[i].replace(/"""/, "");
+      out[key === "intent" ? "prompt" : key] = body.trim();
+      i++; continue;
+    }
+    if (tripleMatch) {
+      const key = tripleMatch[1], body = tripleMatch[2];
+      out[key === "intent" ? "prompt" : key] = body.trim();
+      i++; continue;
+    }
+    // array
+    const arrMatch = line.match(/^\s*([a-z_]+)\s*=\s*\[(.*?)\]\s*$/i);
+    if (arrMatch) {
+      const key = arrMatch[1];
+      const body = arrMatch[2];
+      const items = body.split(",").map(s => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+      if (key === "tags") out.tags = items;
+      if (key === "bullets") out.bullets = items;
+      i++; continue;
+    }
+    // multi-line array (common for bullets)
+    const openArr = line.match(/^\s*([a-z_]+)\s*=\s*\[\s*$/i);
+    if (openArr) {
+      const key = openArr[1];
+      const items = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("]")) {
+        const m = lines[i].match(/^\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/);
+        if (m) items.push(m[1]);
+        i++;
+      }
+      if (key === "tags") out.tags = items;
+      if (key === "bullets") out.bullets = items;
+      i++; continue;
+    }
+    // simple scalar: title = "...", flavor = "..."
+    const scalar = line.match(/^\s*([a-z_]+)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/i);
+    if (scalar) {
+      const key = scalar[1], val = scalar[2];
+      if (key === "title") out.title = val;
+      else if (key === "flavor") out.flavor = val;
+      i++; continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+// TOML syntax-highlight → HTML string
+function highlightToml(src, fieldHighlight) {
+  return src.split("\n").map((line, i) => {
+    let html = line
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // comments
+    html = html.replace(/(#.*$)/, '<span class="tok-comment">$1</span>');
+    // section headers
+    html = html.replace(/^(\s*)(\[[a-z]+\])/i, '$1<span class="tok-section">$2</span>');
+    // key = ...
+    html = html.replace(/^(\s*)([a-z_]+)(\s*=\s*)/i, '$1<span class="tok-key">$2</span><span class="tok-punct">$3</span>');
+    // strings (single + triple)
+    html = html.replace(/("""[^"]*"""|"(?:[^"\\]|\\.)*")/g, '<span class="tok-str">$1</span>');
+    // numbers
+    html = html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
+    // brackets
+    html = html.replace(/([\[\]])/g, '<span class="tok-punct">$1</span>');
+
+    // apply field highlight: match `key = "..."` or bullet string line
+    let cls = "";
+    if (fieldHighlight) {
+      if (fieldHighlight.kind === "title" && /^\s*title\s*=/.test(line)) cls = "tok-line-field-hi";
+      if (fieldHighlight.kind === "bullet" && typeof fieldHighlight.idx === "number") {
+        // bullets block: find which line the idx-th quoted item is on.
+        // Simpler heuristic: highlight the idx-th "..." line within bullets block
+      }
+    }
+    return `<span class="${cls}" data-ln="${i}">${html || " "}</span>`;
+  }).join("\n");
+}
+
+// Compute which bullet line index corresponds to a bullet's ordinal
+function bulletLineNumbers(src) {
+  const lines = src.split("\n");
+  let inBullets = false;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*bullets\s*=\s*\[/.test(l)) { inBullets = true; continue; }
+    if (inBullets) {
+      if (/^\s*\]/.test(l)) { inBullets = false; continue; }
+      if (/^\s*"/.test(l)) out.push(i);
+    }
+  }
+  return out;
+}
+
+// ============================================================================
+// Mock filesystem data
+// ============================================================================
+
+const now = new Date("2026-04-19T10:30:00Z");
+const daysAgo = (d) => new Date(now.getTime() - d * 86400000).toISOString().slice(0, 10);
+const fmtDate = (iso) => iso.slice(5).replace("-", "·"); // "MM·DD"
+
+// Every "slide file" has a stable id and TOML content.
+// Decks are ordered collections of slide ids.
+const SLIDE_FILES = {};
+const F = (id, path, title, bullets, kind="ref", prompt=null, tags=[], flavor="IEM", mtime=daysAgo(2)) => {
+  SLIDE_FILES[id] = { id, path, title, bullets, kind, prompt, tags, flavor, mtime, toml: makeToml(title, bullets, prompt, tags, flavor) };
+  return id;
+};
+
+// keynote library
+F("f001", "~/sldr/keynote/title.toml", "oqto All-Hands", ["Q2 2026", "Paderborn · April 19"], "ref", null, ["keynote","opener"], "IEM", daysAgo(4));
+F("f002", "~/sldr/keynote/agenda.toml", "Agenda", ["Progress", "Roadmap", "Research", "Q&A"], "ref", null, ["keynote","structure"], "IEM", daysAgo(4));
+F("f003", "~/sldr/keynote/thanks.toml", "Q&A — thank you", ["questions@oqto.dev", "slides.oqto.dev/all-hands-q2"], "ref", null, ["keynote","closing"], "IEM", daysAgo(30));
+
+// metrics
+F("f010", "~/sldr/metrics/q4-okr.toml", "Q4 OKR Recap", ["3/5 objectives green", "2 stretch goals landed", "1 rolled forward"], "ref", null, ["metrics","recap"], "IEM", daysAgo(80));
+F("f011", "~/sldr/metrics/pricing.toml", "Pricing Tiers", ["Free · 1k calls/day", "Pro · $49/mo", "Enterprise · contact"], "ref", null, ["metrics","pricing"], "IEM", daysAgo(15));
+F("f012", "~/sldr/metrics/customer-quotes.toml", "What customers say", ["\"saved us two weeks of onboarding\" — @acme", "NPS: 68 (↑12)"], "ref", null, ["metrics","testimonial"], "IEM", daysAgo(9));
+
+// technical
+F("f020", "~/sldr/technical/architecture.toml", "Architecture", ["Control plane", "Data plane", "Edge workers"], "ref", null, ["technical","system"], "IEM", daysAgo(22));
+F("f021", "~/sldr/technical/demo-script.toml", "Demo script", ["90 seconds", "Recovery path if wifi dies"], "ref", null, ["technical","demo"], "IEM", daysAgo(2));
+
+// research
+F("f030", "~/sldr/research/bandits.toml", "Why bandits, why now", ["Offline eval stopped predicting prod", "Sampling → online learning", "Cheap experiments = more bets"], "ref", null, ["research","bandits"], "IEM", daysAgo(6));
+F("f031", "~/sldr/research/ucb-vs-thompson.toml", "UCB1 vs Thompson sampling", ["Synthetic benchmarks", "Production AB results"], "ref", null, ["research","bandits"], "IEM", daysAgo(6));
+
+// roadmap
+F("f040", "~/sldr/roadmap/2026-h1.toml", "H1 2026", ["Ingestion v2", "Observability", "Multi-tenant quotas"], "ref", null, ["roadmap","h1"], "IEM", daysAgo(12));
+F("f041", "~/sldr/roadmap/2026-h2.toml", "H2 2026", ["Reasoning traces", "Evals-as-code", "Agent marketplace"], "ref", null, ["roadmap","h2"], "IEM", daysAgo(12));
+
+// intents (generated for current session)
+F("i100", "~/sldr/_intents/q1-highlights.toml", "Q1 Highlights",
+  ["$4.2M ARR — +38% QoQ", "12 enterprise logos", "p50 latency: 180ms → 92ms", "Team: 24 → 31"],
+  "intent",
+  "a slide summarizing our Q1 wins for executives, 4 numeric highlights",
+  ["intent","metrics"], "IEM", daysAgo(0));
+F("i101", "~/sldr/_intents/embedding-pipeline.toml", "Embedding Pipeline",
+  ["Dynamic batch windows (10–80ms)", "Mixed precision on T4 fleet", "Warm-path cache, 94% hit rate"],
+  "intent",
+  "explain our embedding pipeline for a technical audience, focus on batching strategy",
+  ["intent","technical"], "IEM", daysAgo(0));
+
+// Some extra files to flesh out browsing
+F("f050", "~/sldr/research/scaling-laws.toml", "Scaling laws for our stack", ["Observed kinks at 7B", "Open question: mixture-of-experts"], "ref", null, ["research","scaling"], "IEM", daysAgo(40));
+F("f051", "~/sldr/research/evals-as-code.toml", "Evals as code", ["Pytest-style harness", "1200 checks in CI"], "ref", null, ["research","evals"], "IEM", daysAgo(20));
+F("f052", "~/sldr/metrics/growth-chart.toml", "Growth Chart Q1→Q4", ["ARR curve", "Net expansion 128%"], "ref", null, ["metrics","growth"], "IEM", daysAgo(70));
+
+// Decks
+const DECKS = {
+  "all-hands-q2":  { name: "All-Hands Q2 2026", path: "~/sldr/decks/all-hands-q2.deck.toml",
+                      slideIds: ["f001","f002","i100","f020","i101","f040","f030","f003"], mtime: daysAgo(0) },
+  "board-apr":     { name: "Board deck (April)", path: "~/sldr/decks/board-apr.deck.toml",
+                      slideIds: ["f001","f010","f012","f040","f041","f003"], mtime: daysAgo(5) },
+  "intern-onboard":{ name: "Intern onboarding", path: "~/sldr/decks/intern-onboard.deck.toml",
+                      slideIds: ["f020","f021","f030","f051"], mtime: daysAgo(30) },
+};
+
+// ============================================================================
+// Initial session state
+// ============================================================================
+const INITIAL_DECK_KEY = "all-hands-q2";
+
+// Agent transcript
+const INITIAL_TRANSCRIPT = [
+  { role: "system", text: "Opened deck ~/sldr/decks/all-hands-q2.deck.toml · 8 slides · flavor IEM" },
+  { role: "user",   text: "a slide summarizing our Q1 wins for executives, 4 numeric highlights" },
+  { role: "assistant", text: "Generated ~/sldr/_intents/q1-highlights.toml and inserted as slide 3. Pulled figures from metrics/q4-okr.toml — adjust the ARR if stale.", refSlideId: "i100" },
+  { role: "user",   text: "explain our embedding pipeline for a technical audience, focus on batching strategy" },
+  { role: "assistant", text: "Generated ~/sldr/_intents/embedding-pipeline.toml and inserted as slide 5. Calibrated for eng-lead audience.", refSlideId: "i101" },
+];
+
+// ============================================================================
+// Browser panel: FS / TAGS / RECENT views
+// ============================================================================
+
+function TopBar({ deckName, setDeckName, deckPath, flavor, setFlavor, flavorOpen, setFlavorOpen, showSource, setShowSource }) {
+  return (
+    <header className="sl-bar">
+      <div className="sl-bar-left">
+        <span className="sl-logo">◧ oqto</span>
+        <span className="sl-crumb-sep">/</span>
+        <span className="sl-crumb sl-crumb-strong">sldr</span>
+        <span className="sl-crumb-sep">/</span>
+        <span
+          className="sl-crumb sl-crumb-edit"
+          contentEditable suppressContentEditableWarning
+          onBlur={(e) => setDeckName(e.target.textContent || "untitled")}
+          spellCheck={false}
+          title={deckPath}
+        >{deckName}</span>
+      </div>
+      <span className="sl-bar-flex" />
+      <div className="sl-bar-right">
+        <button
+          className={showSource ? "sl-btn-active" : ""}
+          onClick={() => setShowSource(v => !v)}
+          title="toggle raw TOML source (⌘/)"
+        >{'{ }'} source</button>
+        <button className="sl-flavor" onClick={() => setFlavorOpen(o => !o)} title="flavor">
+          <span className="sl-flavor-dot" style={{ background: flavor.primary }} />
+          <span>flavor · {flavor.name}</span>
+          <span style={{ color: "var(--dim-fg)" }}>▾</span>
+        </button>
+        <button title="preview">preview ↗</button>
+        <button className="sl-bar-build" title="build (⌘B)">▶ build</button>
+      </div>
+      {flavorOpen && (
+        <div className="sl-flavor-menu" onMouseLeave={() => setFlavorOpen(false)}>
+          <div style={{ fontSize: 9.5, color: "var(--dim-fg)", letterSpacing: ".1em", padding: "2px 8px 4px" }}>FLAVORS · ~/.sldr/flavors</div>
+          {FLAVORS.map(f => (
+            <div
+              key={f.id}
+              className={`sl-flavor-opt ${f.id === flavor.id ? "sl-flavor-opt-active" : ""}`}
+              onClick={() => { setFlavor(f); setFlavorOpen(false); }}
+            >
+              <span className="sl-flavor-opt-swatch" style={{ background: f.primary, borderColor: f.text }} />
+              <span>
+                <div>{f.name}</div>
+                <div className="sl-flavor-opt-desc">{f.desc}</div>
+              </span>
+              {f.id === flavor.id && <span className="sl-mono">◆</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </header>
+  );
+}
+
+function BrowserRow({ indent=0, caret=null, icon, iconClass="", name, meta, onClick, onDoubleClick, onDragStart, draggable=false, active=false, title }) {
+  return (
+    <div
+      className={`sl-row sl-indent-${indent} ${active ? "sl-row-active" : ""}`}
+      draggable={draggable}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+      onDragStart={onDragStart}
+      title={title}
+    >
+      <span className={`sl-row-caret ${caret === "open" ? "sl-row-caret-open" : ""}`}>{caret ? "▸" : ""}</span>
+      <span className={`sl-row-ico ${iconClass}`}>{icon}</span>
+      <span className="sl-row-name">{name}</span>
+      <span className="sl-row-meta">{meta}</span>
+    </div>
+  );
+}
+
+function FsView({ query, onOpenDeck, onDragFile, activeDeckKey }) {
+  // Build tree from SLIDE_FILES paths: ~/sldr/<folder>/<file>.toml plus decks at ~/sldr/decks/
+  const tree = useMemo(() => {
+    const root = { name: "~/sldr", kind: "dir", children: {} };
+    const addToTree = (path, node) => {
+      const parts = path.split("/").slice(1); // drop leading "~"
+      // remove initial "sldr"
+      const relParts = parts.slice(1); // e.g. ["keynote","title.toml"]
+      let cur = root;
+      for (let i = 0; i < relParts.length - 1; i++) {
+        const p = relParts[i];
+        if (!cur.children[p]) cur.children[p] = { name: p, kind: "dir", children: {} };
+        cur = cur.children[p];
+      }
+      cur.children[relParts[relParts.length - 1]] = node;
+    };
+    Object.values(SLIDE_FILES).forEach(f => {
+      addToTree(f.path, { name: f.path.split("/").pop(), kind: f.kind === "intent" ? "intent" : "slide", file: f });
+    });
+    Object.entries(DECKS).forEach(([k, d]) => {
+      addToTree(d.path, { name: d.path.split("/").pop(), kind: "deck", deck: { key: k, ...d } });
+    });
+    return root;
+  }, []);
+
+  const [open, setOpen] = useState({ "~/sldr": true, "~/sldr/decks": true, "~/sldr/keynote": true, "~/sldr/_intents": true });
+  const toggle = (p) => setOpen(o => ({ ...o, [p]: !o[p] }));
+
+  const q = query.toLowerCase();
+  const matches = (f) => !q || (f.name.toLowerCase().includes(q) ||
+    (f.file?.title || "").toLowerCase().includes(q) ||
+    (f.deck?.name || "").toLowerCase().includes(q));
+
+  const renderDir = (dir, path, depth) => {
+    const isOpen = open[path] ?? false;
+    const entries = Object.entries(dir.children).sort(([a, av], [b, bv]) => {
+      const orderA = av.kind === "dir" ? 0 : 1;
+      const orderB = bv.kind === "dir" ? 0 : 1;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.localeCompare(b);
+    });
+    const childNodes = [];
+    entries.forEach(([name, node]) => {
+      if (node.kind === "dir") {
+        const childPath = path + "/" + name;
+        const visible = Object.values(node.children).some(c => c.kind === "dir" || matches(c));
+        if (!visible) return;
+        childNodes.push(
+          <BrowserRow
+            key={childPath}
+            indent={depth}
+            caret={open[childPath] ? "open" : "closed"}
+            icon={open[childPath] ? "▾" : "▸"}
+            iconClass="sl-row-ico-folder"
+            name={name + "/"}
+            meta={Object.keys(node.children).length}
+            onClick={() => toggle(childPath)}
+          />
+        );
+        if (open[childPath]) childNodes.push(...renderDir(node, childPath, depth + 1));
+      } else {
+        if (!matches(node)) return;
+        if (node.kind === "deck") {
+          const d = node.deck;
+          childNodes.push(
+            <BrowserRow
+              key={name + depth}
+              indent={depth}
+              icon="▣"
+              iconClass="sl-row-ico-deck"
+              name={d.name}
+              meta={d.mtime.slice(5).replace("-", "·")}
+              active={activeDeckKey === d.key}
+              onDoubleClick={() => onOpenDeck(d.key)}
+              title={d.path + "\n" + d.slideIds.length + " slides · double-click to open"}
+            />
+          );
+        } else {
+          const f = node.file;
+          childNodes.push(
+            <BrowserRow
+              key={f.id + depth}
+              indent={depth}
+              icon={f.kind === "intent" ? "◆" : "▪"}
+              iconClass={f.kind === "intent" ? "sl-row-ico-intent" : "sl-row-ico-slide"}
+              name={f.title}
+              meta={fmtDate(f.mtime)}
+              draggable
+              onDragStart={(e) => { e.dataTransfer.setData("text/plain", "file:" + f.id); e.dataTransfer.effectAllowed = "copy"; onDragFile(f); }}
+              title={f.path + "\n" + f.bullets.slice(0, 2).join(" · ")}
+            />
+          );
+        }
+      }
+    });
+    return childNodes;
+  };
+
+  return (
+    <div className="sl-browser-list">
+      <div className="sl-browser-path">
+        <span className="sl-browser-path-seg">~</span>/<span className="sl-browser-path-seg">sldr</span>/<span className="sl-browser-path-seg">*</span>
+      </div>
+      {renderDir(tree, "~/sldr", 0)}
+    </div>
+  );
+}
+
+function TagsView({ query, onDragFile }) {
+  const byTag = useMemo(() => {
+    const m = {};
+    Object.values(SLIDE_FILES).forEach(f => {
+      f.tags.forEach(t => { (m[t] ||= []).push(f); });
+    });
+    return m;
+  }, []);
+  const sortedTags = Object.keys(byTag).sort((a, b) => byTag[b].length - byTag[a].length);
+  const [open, setOpen] = useState({ metrics: true, research: true, keynote: true });
+  const q = query.toLowerCase();
+  const matches = (f) => !q || f.title.toLowerCase().includes(q);
+
+  return (
+    <div className="sl-browser-list">
+      <div className="sl-browser-path">
+        <span className="sl-browser-path-seg">tags</span> · {sortedTags.length} unique
+      </div>
+      {sortedTags.map(tag => {
+        const files = byTag[tag].filter(matches);
+        if (!files.length) return null;
+        const isOpen = open[tag] ?? false;
+        return (
+          <React.Fragment key={tag}>
+            <BrowserRow
+              indent={0}
+              caret={isOpen ? "open" : "closed"}
+              icon="#"
+              iconClass="sl-row-ico-folder"
+              name={tag}
+              meta={files.length}
+              onClick={() => setOpen(o => ({ ...o, [tag]: !o[tag] }))}
+            />
+            {isOpen && files.map(f => (
+              <BrowserRow
+                key={tag + "-" + f.id}
+                indent={1}
+                icon={f.kind === "intent" ? "◆" : "▪"}
+                iconClass={f.kind === "intent" ? "sl-row-ico-intent" : "sl-row-ico-slide"}
+                name={f.title}
+                meta={fmtDate(f.mtime)}
+                draggable
+                onDragStart={(e) => { e.dataTransfer.setData("text/plain", "file:" + f.id); e.dataTransfer.effectAllowed = "copy"; onDragFile(f); }}
+                title={f.path}
+              />
+            ))}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecentView({ query, onDragFile, onOpenDeck }) {
+  // group by year → month → day
+  const all = [
+    ...Object.values(SLIDE_FILES).map(f => ({ kind: "slide", obj: f, date: f.mtime })),
+    ...Object.entries(DECKS).map(([k, d]) => ({ kind: "deck", obj: { ...d, key: k }, date: d.mtime })),
+  ];
+  all.sort((a, b) => b.date.localeCompare(a.date));
+  const q = query.toLowerCase();
+  const matches = (item) => !q || (item.kind === "slide" ? item.obj.title : item.obj.name).toLowerCase().includes(q);
+
+  const grouped = {};
+  all.forEach(item => {
+    const [y, m, d] = item.date.split("-");
+    (((grouped[y] ||= {})[m] ||= {})[d] ||= []).push(item);
+  });
+
+  const [open, setOpen] = useState({ "2026": true, "2026-04": true });
+  const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
+  const monthName = (m) => ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"][parseInt(m,10)-1];
+
+  return (
+    <div className="sl-browser-list">
+      <div className="sl-browser-path">
+        <span className="sl-browser-path-seg">recent</span> · by date
+      </div>
+      {Object.keys(grouped).sort((a,b)=>b.localeCompare(a)).map(y => {
+        const yOpen = open[y] ?? false;
+        return (
+          <React.Fragment key={y}>
+            <BrowserRow indent={0} caret={yOpen ? "open" : "closed"} icon="◷" iconClass="sl-row-sub" name={y}
+              meta={Object.values(grouped[y]).reduce((acc, m) => acc + Object.values(m).flat().length, 0)}
+              onClick={() => toggle(y)} />
+            {yOpen && Object.keys(grouped[y]).sort((a,b)=>b.localeCompare(a)).map(m => {
+              const mKey = `${y}-${m}`;
+              const mOpen = open[mKey] ?? false;
+              const monthFiles = Object.values(grouped[y][m]).flat();
+              return (
+                <React.Fragment key={mKey}>
+                  <BrowserRow indent={1} caret={mOpen ? "open" : "closed"} icon="▫" iconClass="sl-row-sub"
+                    name={monthName(m)} meta={monthFiles.length} onClick={() => toggle(mKey)} />
+                  {mOpen && Object.keys(grouped[y][m]).sort((a,b)=>b.localeCompare(a)).map(d => {
+                    const dayFiles = grouped[y][m][d].filter(matches);
+                    if (!dayFiles.length) return null;
+                    return (
+                      <React.Fragment key={mKey + "-" + d}>
+                        <BrowserRow indent={2} icon="·" iconClass="sl-row-sub"
+                          name={d} meta={dayFiles.length} />
+                        {dayFiles.map(item => (
+                          item.kind === "deck" ? (
+                            <BrowserRow
+                              key={item.obj.key}
+                              indent={3}
+                              icon="▣"
+                              iconClass="sl-row-ico-deck"
+                              name={item.obj.name}
+                              meta="deck"
+                              onDoubleClick={() => onOpenDeck(item.obj.key)}
+                              title={item.obj.path}
+                            />
+                          ) : (
+                            <BrowserRow
+                              key={item.obj.id + "r"}
+                              indent={3}
+                              icon={item.obj.kind === "intent" ? "◆" : "▪"}
+                              iconClass={item.obj.kind === "intent" ? "sl-row-ico-intent" : "sl-row-ico-slide"}
+                              name={item.obj.title}
+                              meta={item.obj.kind}
+                              draggable
+                              onDragStart={(e) => { e.dataTransfer.setData("text/plain", "file:" + item.obj.id); onDragFile(item.obj); }}
+                              title={item.obj.path}
+                            />
+                          )
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function BrowserPanel({ view, setView, query, setQuery, onOpenDeck, onDragFile, activeDeckKey }) {
+  return (
+    <aside className="sl-browser">
+      <div className="sl-browser-tabs">
+        {["fs","tags","recent"].map(v => (
+          <button
+            key={v}
+            className={`sl-browser-tab ${view === v ? "sl-browser-tab-active" : ""}`}
+            onClick={() => setView(v)}
+          >{v.toUpperCase()}</button>
+        ))}
+      </div>
+      <div className="sl-browser-head">
+        <div className="sl-browser-search">
+          <span className="sl-browser-search-ico">/</span>
+          <input className="sl-browser-search-input" placeholder={`filter ${view}…`}
+            value={query} onChange={e => setQuery(e.target.value)} />
+        </div>
+      </div>
+      {view === "fs" && <FsView query={query} onOpenDeck={onOpenDeck} onDragFile={onDragFile} activeDeckKey={activeDeckKey} />}
+      {view === "tags" && <TagsView query={query} onDragFile={onDragFile} />}
+      {view === "recent" && <RecentView query={query} onDragFile={onDragFile} onOpenDeck={onOpenDeck} />}
+    </aside>
+  );
+}
+
+// ============================================================================
+// Stage (single slide preview with inline edit + TOML source drawer)
+// ============================================================================
+
+function Stage({ slide, slideIdx, total, flavor, showSource, setShowSource, onEdit, tomlSrc, onTomlEdit, syncStatus, fieldFocus, setFieldFocus }) {
+  const [tomlDraft, setTomlDraft] = useState(tomlSrc);
+  const [tomlDirty, setTomlDirty] = useState(false);
+  const tomlRef = useRef(null);
+
+  // keep draft in sync with incoming source (when slide changes or edits land from the rendered side)
+  useEffect(() => {
+    setTomlDraft(tomlSrc);
+    setTomlDirty(false);
+  }, [tomlSrc, slide.id]);
+
+  const commitToml = () => {
+    if (!tomlDirty) return;
+    onTomlEdit(tomlDraft);
+    setTomlDirty(false);
+  };
+
+  const handleTomlInput = (e) => {
+    setTomlDraft(e.currentTarget.innerText);
+    setTomlDirty(true);
+  };
+
+  // field → TOML line highlight
+  const fieldHi = useMemo(() => {
+    if (!fieldFocus) return null;
+    if (fieldFocus.kind === "title") {
+      const lines = tomlDraft.split("\n");
+      const idx = lines.findIndex(l => /^\s*title\s*=/.test(l));
+      return { line: idx };
+    }
+    if (fieldFocus.kind === "bullet") {
+      const lns = bulletLineNumbers(tomlDraft);
+      return { line: lns[fieldFocus.idx] };
+    }
+    return null;
+  }, [fieldFocus, tomlDraft]);
+
+  // build highlighted HTML
+  const tomlHtml = useMemo(() => {
+    const lines = tomlDraft.split("\n");
+    return lines.map((line, i) => {
+      let html = line
+        .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      html = html.replace(/(#.*$)/, '<span class="tok-comment">$1</span>');
+      html = html.replace(/^(\s*)(\[[a-z]+\])/i, '$1<span class="tok-section">$2</span>');
+      html = html.replace(/^(\s*)([a-z_]+)(\s*=\s*)/i, '$1<span class="tok-key">$2</span><span class="tok-punct">$3</span>');
+      html = html.replace(/("""[^"]*"""|"(?:[^"\\]|\\.)*")/g, '<span class="tok-str">$1</span>');
+      html = html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
+      html = html.replace(/([\[\]])/g, '<span class="tok-punct">$1</span>');
+      const isHi = fieldHi && fieldHi.line === i;
+      return `<div class="${isHi ? "tok-line-field-hi" : ""}">${html || "&nbsp;"}</div>`;
+    }).join("");
+  }, [tomlDraft, fieldHi]);
+
+  const onSlideBlur = () => setFieldFocus(null);
+
+  return (
+    <section className="sl-stage">
+      <div className="sl-stage-head">
+        <span className="sl-stage-head-path">
+          <span style={{ color: "var(--dim-fg)" }}>{slideIdx + 1}/{total} · </span>
+          <b>{slide.path}</b>
+        </span>
+        <span className="sl-stage-head-flex" />
+        <span className={`sl-stage-head-sync ${syncStatus === "modified" ? "sl-stage-head-sync-mod" : ""}`}>
+          <span className="sl-stage-head-sync-dot" />
+          {syncStatus === "modified" ? "modified · unsaved" : "synced"}
+        </span>
+        <button
+          className={`sl-stage-head-btn ${showSource ? "sl-stage-head-btn-active" : ""}`}
+          onClick={() => setShowSource(v => !v)}
+          title="toggle source · ⌘/"
+        >{showSource ? "▾" : "▸"} source</button>
+      </div>
+
+      <div className="sl-stage-viewport">
+        {slide.streaming ? (
+          <div className={`sl-slide sl-slide-intent`} style={useFlavorStyle(flavor)}>
+            <span className="sl-slide-num">{String(slideIdx + 1).padStart(2, "0")}</span>
+            <span className="sl-slide-badge sl-slide-badge-intent">◆ INTENT · STREAMING</span>
+            <div className="sl-slide-title" style={{ color: "var(--intent)" }}>generating…</div>
+            <div className="sl-slide-gen-prompt">{slide.prompt}</div>
+            <div className="sl-slide-gen-status">
+              <span className="sl-gen-dots"><span/><span/><span/></span>
+              <span>haiku-4.5 · drafting outline · writing {slide.path}</span>
+            </div>
+          </div>
+        ) : (
+          <div
+            className={`sl-slide ${slide.kind === "intent" ? "sl-slide-intent" : ""}`}
+            style={useFlavorStyle(flavor)}
+            onClick={(e) => { if (e.target === e.currentTarget) setFieldFocus(null); }}
+          >
+            <span className="sl-slide-num">{String(slideIdx + 1).padStart(2, "0")}</span>
+            <span className={`sl-slide-badge ${slide.kind === "ref" ? "sl-slide-badge-ref" : "sl-slide-badge-intent"}`}>
+              {slide.kind === "ref" ? "▪ REF" : "◆ INTENT"}
+            </span>
+            <h1
+              className="sl-slide-title"
+              contentEditable suppressContentEditableWarning
+              onFocus={() => setFieldFocus({ kind: "title" })}
+              onBlur={(e) => { onEdit({ kind: "title", value: e.currentTarget.innerText }); onSlideBlur(); }}
+              onInput={(e) => { /* debounce via blur */ }}
+              spellCheck={false}
+            >{slide.title}</h1>
+            <ul className="sl-slide-bullets">
+              {slide.bullets.map((b, i) => (
+                <li
+                  key={i}
+                  className={`sl-slide-bullet ${fieldFocus?.kind === "bullet" && fieldFocus.idx === i ? "sl-slide-bullet-field-highlight" : ""}`}
+                  contentEditable suppressContentEditableWarning
+                  onFocus={() => setFieldFocus({ kind: "bullet", idx: i })}
+                  onBlur={(e) => { onEdit({ kind: "bullet", idx: i, value: e.currentTarget.innerText }); onSlideBlur(); }}
+                  spellCheck={false}
+                >{b}</li>
+              ))}
+            </ul>
+            <div className="sl-slide-footer">
+              <span>{slide.path.replace(/^~\//,"")}</span>
+              <span className="sl-slide-footer-logo">{flavor.logo}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className={`sl-source ${showSource ? "sl-source-open" : ""}`}>
+        <div className="sl-source-head">
+          <span className="sl-source-head-title">SOURCE</span>
+          <span className="sl-source-head-path">◧ <b>{slide.path}</b></span>
+          <span className="sl-source-head-flex" />
+          <span className={`sl-source-head-sync ${tomlDirty ? "mod" : ""}`}>
+            {tomlDirty ? "⇣ commit on blur · bi-sync" : "⇅ bi-directional · live"}
+          </span>
+        </div>
+        <div
+          className="sl-source-body"
+          ref={tomlRef}
+          contentEditable suppressContentEditableWarning
+          onInput={handleTomlInput}
+          onBlur={commitToml}
+          spellCheck={false}
+          dangerouslySetInnerHTML={{ __html: tomlHtml }}
+        />
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Agent + Strip (same as before, small tweaks)
+// ============================================================================
+
+function Agent({ transcript, input, setInput, onSend, onSelect, busy }) {
+  const logRef = useRef(null);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [transcript]);
+
+  const submit = () => { if (!input.trim()) return; onSend(input.trim()); };
+
+  return (
+    <aside className="sl-agent">
+      <div className="sl-agent-head">
+        <span className="sl-section-title">AGENT</span>
+        <span className="sl-agent-status">
+          <span className="sl-agent-status-dot" />
+          {busy ? "thinking…" : "haiku-4.5 · ready"}
+        </span>
+      </div>
+      <div className="sl-agent-log" ref={logRef}>
+        {transcript.map((m, i) => (
+          <div key={i} className={`sl-agent-msg sl-agent-msg-${m.role}`}>
+            <div className="sl-agent-msg-head">
+              <span className={`sl-agent-msg-role-${m.role[0]}`}>{m.role}</span>
+              <span>·</span>
+              <span>{m.ts || "now"}</span>
+            </div>
+            <div className="sl-agent-msg-body">{m.text}</div>
+            {m.refSlideId && (
+              <button className="sl-agent-msg-ref" onClick={() => onSelect(m.refSlideId)}>
+                ◆ jump to {SLIDE_FILES[m.refSlideId]?.path.split("/").pop() || m.refSlideId}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="sl-agent-quick">
+        <div className="sl-agent-quick-title">SUGGEST</div>
+        <div className="sl-agent-quick-btns">
+          <button className="sl-agent-quick-btn" onClick={() => setInput("rewrite this slide for a technical audience")}>rewrite technical</button>
+          <button className="sl-agent-quick-btn" onClick={() => setInput("add a chart showing quarterly growth")}>add chart</button>
+          <button className="sl-agent-quick-btn" onClick={() => setInput("condense this deck to 5 slides")}>condense → 5</button>
+        </div>
+      </div>
+      <div className="sl-agent-input-wrap">
+        <div className="sl-agent-input-head">
+          <span>INTENT</span>
+          <span><kbd>⏎</kbd> send · <kbd>⇧⏎</kbd> newline</span>
+        </div>
+        <textarea
+          className="sl-agent-input"
+          placeholder="describe a slide to generate, or a revision…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+        />
+        <div className="sl-agent-input-foot">
+          <span>attached: current slide context</span>
+          <button className="sl-agent-input-send" onClick={submit} disabled={!input.trim() || busy}>
+            {busy ? "…" : "generate ↵"}
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Strip({ deck, activeIdx, setActiveIdx, onReorder, onContextMenu, onDropFile, dragOverIdx, setDragOverIdx }) {
+  const [dragIdx, setDragIdx] = useState(null);
+  const handleDropAt = (idx, e) => {
+    e.preventDefault();
+    const payload = e.dataTransfer.getData("text/plain");
+    if (payload && payload.startsWith("file:")) {
+      onDropFile(payload.slice(5), idx);
+    } else if (dragIdx !== null) {
+      onReorder(dragIdx, idx);
+    }
+    setDragIdx(null); setDragOverIdx(null);
+  };
+
+  return (
+    <section className="sl-strip">
+      <div className="sl-strip-head">
+        <span className="sl-strip-head-title">TIMELINE</span>
+        <span>{deck.length} slides · ~{Math.round(deck.length * 1.25)} min</span>
+        <span className="sl-strip-head-legend">
+          <span><span className="sl-strip-legend-mk sl-strip-legend-ref" /> reference</span>
+          <span><span className="sl-strip-legend-mk sl-strip-legend-intent" /> intent</span>
+        </span>
+      </div>
+      <div className="sl-strip-track">
+        <div
+          className={`sl-strip-insert ${dragOverIdx === 0 ? "sl-strip-insert-active" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragOverIdx(0); }}
+          onDrop={(e) => handleDropAt(0, e)}
+        >{dragOverIdx === 0 ? "▸" : " "}</div>
+        {deck.map((slide, i) => (
+          <React.Fragment key={slide.instId}>
+            <div
+              className={`sl-strip-slot ${slide.kind === "ref" ? "sl-strip-slot-ref" : "sl-strip-slot-intent"} ${activeIdx === i ? "sl-strip-slot-active" : ""}`}
+              draggable
+              onDragStart={(e) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "move-" + i); }}
+              onDragEnd={() => setDragIdx(null)}
+              onClick={() => setActiveIdx(i)}
+              onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, slide, i); }}
+              title={slide.title + "\n" + slide.path}
+            >
+              <div className="sl-strip-slot-num">{String(i + 1).padStart(2, "0")} · {slide.kind}</div>
+              <div className="sl-strip-slot-title">{slide.title}</div>
+            </div>
+            <div
+              className={`sl-strip-insert ${dragOverIdx === i + 1 ? "sl-strip-insert-active" : ""}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOverIdx(i + 1); }}
+              onDrop={(e) => handleDropAt(i + 1, e)}
+            >{dragOverIdx === i + 1 ? "▸" : " "}</div>
+          </React.Fragment>
+        ))}
+        <div className="sl-strip-add" title="new blank intent">+</div>
+      </div>
+    </section>
+  );
+}
+
+function ContextMenu({ pos, slide, onClose, onAction }) {
+  useEffect(() => {
+    if (!pos) return;
+    const h = () => onClose();
+    const k = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("click", h);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("click", h); document.removeEventListener("keydown", k); };
+  }, [pos, onClose]);
+  if (!pos || !slide) return null;
+  const isIntent = slide.kind === "intent";
+  return (
+    <div className="sl-ctx" style={{ left: pos.x, top: pos.y }} onClick={(e) => e.stopPropagation()}>
+      <div className="sl-ctx-item" onClick={() => onAction("edit")}><span>✎</span><span>edit source</span><span className="sl-ctx-item-kbd">⌘/</span></div>
+      <div className="sl-ctx-item" onClick={() => onAction("reveal")}><span>⌕</span><span>reveal in browser</span><span className="sl-ctx-item-kbd">R</span></div>
+      {isIntent && <div className="sl-ctx-item" onClick={() => onAction("regen")}><span>↻</span><span>regenerate</span><span className="sl-ctx-item-kbd">⌘R</span></div>}
+      <div className="sl-ctx-item" onClick={() => onAction("duplicate")}><span>⧉</span><span>duplicate</span><span className="sl-ctx-item-kbd">⌘D</span></div>
+      <div className="sl-ctx-sep" />
+      <div className="sl-ctx-item" onClick={() => onAction("remove")} style={{ color: "var(--danger)" }}><span>✕</span><span>remove from deck</span><span className="sl-ctx-item-kbd">⌫</span></div>
+    </div>
+  );
+}
+
+// ============================================================================
+// App
+// ============================================================================
+function App() {
+  // deck instances: each row carries an instId + fileId (points into SLIDE_FILES)
+  const [deckKey, setDeckKey] = useState(INITIAL_DECK_KEY);
+  const [deckName, setDeckName] = useState(DECKS[INITIAL_DECK_KEY].name);
+  const [deckSlides, setDeckSlides] = useState(() =>
+    DECKS[INITIAL_DECK_KEY].slideIds.map((fid, i) => ({ instId: "s" + i + "-" + fid, fileId: fid }))
+  );
+
+  const [activeIdx, setActiveIdx] = useState(2);
+  const [flavor, setFlavor] = useState(FLAVORS[0]);
+  const [flavorOpen, setFlavorOpen] = useState(false);
+  const [showSource, setShowSource] = useState(true);
+  const [browserView, setBrowserView] = useState("fs");
+  const [browserQuery, setBrowserQuery] = useState("");
+  const [transcript, setTranscript] = useState(INITIAL_TRANSCRIPT);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [ctx, setCtx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [fieldFocus, setFieldFocus] = useState(null);
+  const [dirtySlides, setDirtySlides] = useState({}); // fileId -> true
+  // File store (mutable copy of SLIDE_FILES so edits persist per session)
+  const [files, setFiles] = useState(() => JSON.parse(JSON.stringify(SLIDE_FILES)));
+
+  const activeSlide = useMemo(() => {
+    const inst = deckSlides[activeIdx];
+    if (!inst) return null;
+    const f = files[inst.fileId];
+    if (!f) return null;
+    return { ...f, instId: inst.instId, streaming: f.streaming };
+  }, [deckSlides, activeIdx, files]);
+
+  const deckRows = useMemo(() =>
+    deckSlides.map(inst => ({ ...files[inst.fileId], instId: inst.instId })),
+    [deckSlides, files]
+  );
+
+  // ---- Bi-directional edit handlers ----
+
+  // edit from rendered slide → patch file fields + regenerate TOML
+  const handleRenderedEdit = ({ kind, idx, value }) => {
+    if (!activeSlide) return;
+    setFiles(prev => {
+      const f = prev[activeSlide.id];
+      if (!f) return prev;
+      let nf;
+      if (kind === "title") nf = { ...f, title: value };
+      else if (kind === "bullet") {
+        const b = [...f.bullets]; b[idx] = value;
+        nf = { ...f, bullets: b };
+      } else nf = f;
+      nf.toml = makeToml(nf.title, nf.bullets, nf.prompt, nf.tags, nf.flavor);
+      nf.mtime = daysAgo(0);
+      return { ...prev, [f.id]: nf };
+    });
+    setDirtySlides(d => ({ ...d, [activeSlide.id]: true }));
+  };
+
+  // edit from TOML source → parse and patch file fields
+  const handleTomlEdit = (newSrc) => {
+    if (!activeSlide) return;
+    const parsed = parseToml(newSrc);
+    setFiles(prev => {
+      const f = prev[activeSlide.id];
+      if (!f) return prev;
+      const nf = {
+        ...f,
+        title: parsed.title || f.title,
+        bullets: parsed.bullets.length ? parsed.bullets : f.bullets,
+        tags: parsed.tags.length ? parsed.tags : f.tags,
+        prompt: parsed.prompt ?? f.prompt,
+        toml: newSrc,
+        mtime: daysAgo(0),
+      };
+      return { ...prev, [f.id]: nf };
+    });
+    setDirtySlides(d => ({ ...d, [activeSlide.id]: true }));
+  };
+
+  // ---- Deck / library ops ----
+
+  const openDeck = (key) => {
+    const d = DECKS[key];
+    setDeckKey(key);
+    setDeckName(d.name);
+    setDeckSlides(d.slideIds.map((fid, i) => ({ instId: "s" + i + "-" + fid + "-" + Date.now(), fileId: fid })));
+    setActiveIdx(0);
+    setTranscript(t => [...t, { role: "system", text: `Opened ${d.path} · ${d.slideIds.length} slides.` }]);
+  };
+
+  const onDropFile = (fileId, insertIdx) => {
+    const inst = { instId: "s" + Date.now() + "-" + fileId, fileId };
+    setDeckSlides(d => [...d.slice(0, insertIdx), inst, ...d.slice(insertIdx)]);
+    setActiveIdx(insertIdx);
+    const f = files[fileId];
+    if (f) setTranscript(t => [...t, { role: "system", text: `Linked ${f.path} at position ${insertIdx + 1}.` }]);
+  };
+
+  const onReorder = (from, to) => {
+    if (from === to || from === to - 1) return;
+    setDeckSlides(d => {
+      const arr = [...d];
+      const [moved] = arr.splice(from, 1);
+      const adj = to > from ? to - 1 : to;
+      arr.splice(adj, 0, moved);
+      return arr;
+    });
+  };
+
+  // ---- Agent: generate an intent slide file on the fly ----
+  const sendIntent = (prompt) => {
+    setTranscript(t => [...t, { role: "user", text: prompt }]);
+    setAgentInput("");
+    setAgentBusy(true);
+
+    const newId = "i" + Math.floor(Math.random() * 9e5);
+    const slug = prompt.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 32).replace(/^-|-$/g, "");
+    const path = `~/sldr/_intents/${slug || "intent"}.toml`;
+    const stub = {
+      id: newId, path, title: "generating…", bullets: [], kind: "intent", prompt,
+      tags: ["intent"], flavor: flavor.id, mtime: daysAgo(0),
+      toml: makeToml("generating…", [], prompt, ["intent"], flavor.id), streaming: true,
+    };
+    setFiles(prev => ({ ...prev, [newId]: stub }));
+    const inst = { instId: "s" + Date.now() + "-" + newId, fileId: newId };
+    setDeckSlides(d => [...d.slice(0, activeIdx + 1), inst, ...d.slice(activeIdx + 1)]);
+    setActiveIdx(activeIdx + 1);
+
+    setTimeout(() => {
+      const titles = ["Strategic Implications", "Key Takeaways", "What we shipped", "Next steps", "Where we go"];
+      const title = titles[Math.floor(Math.random() * titles.length)];
+      const bullets = ["Primary insight for the narrative", "Supporting evidence from last quarter", "One decision we're asking for"];
+      setFiles(prev => ({
+        ...prev,
+        [newId]: { ...prev[newId], streaming: false, title, bullets,
+                   toml: makeToml(title, bullets, prompt, ["intent"], flavor.id) }
+      }));
+      setTranscript(t => [...t, {
+        role: "assistant",
+        text: `Wrote ${path}\nInserted as slide ${activeIdx + 2}. Double-click the source drawer to tweak.`,
+        refSlideId: newId,
+      }]);
+      setAgentBusy(false);
+    }, 1300);
+  };
+
+  // ---- Context menu actions ----
+  const handleCtxAction = (action) => {
+    if (!ctx?.slide) return;
+    const { slide, index } = ctx;
+    if (action === "remove") {
+      setDeckSlides(d => d.filter((_, i) => i !== index));
+      if (activeIdx >= index && activeIdx > 0) setActiveIdx(activeIdx - 1);
+      setTranscript(t => [...t, { role: "system", text: `Unlinked ${slide.path} from deck (file kept).` }]);
+    } else if (action === "duplicate") {
+      const inst = { instId: "s" + Date.now() + "-" + slide.id, fileId: slide.id };
+      setDeckSlides(d => [...d.slice(0, index + 1), inst, ...d.slice(index + 1)]);
+    } else if (action === "regen" && slide.kind === "intent") {
+      setFiles(prev => ({ ...prev, [slide.id]: { ...prev[slide.id], streaming: true, title: "generating…" } }));
+      setTranscript(t => [...t, { role: "user", text: `regenerate: ${slide.prompt}` }]);
+      setAgentBusy(true);
+      setTimeout(() => {
+        setFiles(prev => ({ ...prev, [slide.id]: {
+          ...prev[slide.id], streaming: false,
+          title: (prev[slide.id].title || "intent") + " (v2)",
+          toml: makeToml((prev[slide.id].title || "intent") + " (v2)", prev[slide.id].bullets, slide.prompt, prev[slide.id].tags, prev[slide.id].flavor),
+        }}));
+        setTranscript(t => [...t, { role: "assistant", text: "Regenerated. Structure preserved, opening tightened.", refSlideId: slide.id }]);
+        setAgentBusy(false);
+      }, 900);
+    } else if (action === "edit") {
+      setShowSource(true);
+    }
+    setCtx(null);
+  };
+
+  // keyboard
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable;
+      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+        e.preventDefault();
+        setShowSource(v => !v);
+        return;
+      }
+      if (inInput) { if (e.key === "Escape") e.target.blur(); return; }
+      if (e.key === "/") { e.preventDefault(); document.querySelector(".sl-browser-search-input")?.focus(); return; }
+      if (e.key === "i") { e.preventDefault(); document.querySelector(".sl-agent-input")?.focus(); return; }
+      if (e.key === "ArrowRight" || e.key === "l") { if (activeIdx < deckSlides.length - 1) setActiveIdx(activeIdx + 1); }
+      if (e.key === "ArrowLeft"  || e.key === "h") { if (activeIdx > 0) setActiveIdx(activeIdx - 1); }
+      if (e.key === "Escape") setCtx(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deckSlides, activeIdx]);
+
+  if (!activeSlide) return <div style={{ padding: 40 }}>empty deck</div>;
+
+  const syncStatus = dirtySlides[activeSlide.id] ? "modified" : "synced";
+  const deckPath = DECKS[deckKey]?.path || "";
+
+  return (
+    <div className="sl-app">
+      <TopBar
+        deckName={deckName} setDeckName={setDeckName} deckPath={deckPath}
+        flavor={flavor} setFlavor={setFlavor}
+        flavorOpen={flavorOpen} setFlavorOpen={setFlavorOpen}
+        showSource={showSource} setShowSource={setShowSource}
+      />
+      <BrowserPanel
+        view={browserView} setView={setBrowserView}
+        query={browserQuery} setQuery={setBrowserQuery}
+        onOpenDeck={openDeck}
+        onDragFile={() => {}}
+        activeDeckKey={deckKey}
+      />
+      <Stage
+        slide={activeSlide}
+        slideIdx={activeIdx}
+        total={deckSlides.length}
+        flavor={flavor}
+        showSource={showSource}
+        setShowSource={setShowSource}
+        onEdit={handleRenderedEdit}
+        tomlSrc={activeSlide.toml}
+        onTomlEdit={handleTomlEdit}
+        syncStatus={syncStatus}
+        fieldFocus={fieldFocus}
+        setFieldFocus={setFieldFocus}
+      />
+      <Agent
+        transcript={transcript}
+        input={agentInput} setInput={setAgentInput}
+        onSend={sendIntent}
+        onSelect={(fid) => {
+          // jump to existing inst, or add if not in deck
+          const i = deckSlides.findIndex(s => s.fileId === fid);
+          if (i >= 0) setActiveIdx(i);
+          else onDropFile(fid, deckSlides.length);
+        }}
+        busy={agentBusy}
+      />
+      <Strip
+        deck={deckRows}
+        activeIdx={activeIdx} setActiveIdx={setActiveIdx}
+        onReorder={onReorder}
+        onContextMenu={(e, slide, index) => setCtx({ pos: { x: e.clientX, y: e.clientY }, slide, index })}
+        onDropFile={onDropFile}
+        dragOverIdx={dragOverIdx} setDragOverIdx={setDragOverIdx}
+      />
+      <ContextMenu pos={ctx?.pos} slide={ctx?.slide} onClose={() => setCtx(null)} onAction={handleCtxAction} />
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>

@@ -2580,7 +2580,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 eprintln!("  - Database record");
                 eprintln!("  - Linux user account");
                 eprintln!("  - Home directory and all files");
-                eprintln!("  - Running services (runner, hstry, mmry)");
+                eprintln!("  - Running services (runner, mmry)");
                 eprint!("\nContinue? [y/N] ");
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;

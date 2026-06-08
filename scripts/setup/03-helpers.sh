@@ -133,9 +133,9 @@ apt_update_once() {
 detect_os() {
   case "$(uname -s)" in
   Darwin)
-    OS="macos"
-    OS_VERSION="$(sw_vers -productVersion)"
-    ARCH="$(uname -m)"
+    log_error "macOS setup is currently not supported."
+    log_error "Please use a Linux host for now."
+    exit 1
     ;;
   Linux)
     OS="linux"

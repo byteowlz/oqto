@@ -76,32 +76,25 @@ pub(super) async fn handle_hstry_command(
         }))
     } else {
         let effective_user = state.effective_linux_username(user_id);
-        let runner_result = if state.user_isolation_enabled() {
-            let Some(pattern) = state.runner_socket_pattern.as_ref() else {
-                return Some(WsEvent::Hstry(HstryWsEvent::Error {
-                    id,
-                    error: "runner socket pattern is not configured".into(),
-                }));
-            };
-            oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+        let user_home = if state.user_isolation_enabled() {
+            std::path::PathBuf::from(format!("/home/{effective_user}"))
         } else {
-            oqto_runner::client::RunnerClient::for_user(&effective_user)
-        };
-        let runner = match runner_result {
-            Ok(client) => client,
-            Err(err) => {
-                return Some(WsEvent::Hstry(HstryWsEvent::Error {
-                    id,
-                    error: format!("runner client unavailable for user: {err}"),
-                }));
-            }
+            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
         };
 
-        let hits = match runner
-            .search_hstry(query, limit.unwrap_or(50) as usize)
-            .await
+        let response = match oqto_history::oqto_log::search::search_timeline(
+            &oqto_history::oqto_log::search::TimelineSearchRequest {
+                user_home: &user_home,
+                query: &query,
+                scope: oqto_history::oqto_log::search::TimelineSearchScope::All,
+                workspace_id: None,
+                cwd: None,
+                limit: limit.unwrap_or(50) as usize,
+            },
+        )
+        .await
         {
-            Ok(response) => response.hits,
+            Ok(response) => response,
             Err(err) => {
                 return Some(WsEvent::Hstry(HstryWsEvent::Error {
                     id,
@@ -109,7 +102,7 @@ pub(super) async fn handle_hstry_command(
                 }));
             }
         };
-        let data = serde_json::to_value(hits).unwrap_or(Value::Null);
+        let data = serde_json::to_value(response.results).unwrap_or(Value::Null);
         Some(WsEvent::Hstry(HstryWsEvent::Result { id, data }))
     }
 }

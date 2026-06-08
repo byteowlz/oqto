@@ -17,6 +17,7 @@ PI_DEFAULT_EXTENSIONS=(
   "pi-custom-context-files"
   "pi-read-image-guard"
   "pi-read-file-guard"
+  "pi-openai-completions-convert-think-tags"
 )
 
 # Clone or update the pi-agent-extensions repo into a cache directory.
@@ -74,6 +75,18 @@ install_pi_extensions() {
 
   local ext_source
   ext_source=$(clone_pi_extensions_repo) || return 1
+
+  # Fail fast if required extensions are missing from the source checkout.
+  local missing=0
+  for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
+    if [[ ! -d "$ext_source/$ext_name" || ! -f "$ext_source/$ext_name/index.ts" ]]; then
+      log_error "Required extension missing from source: $ext_name"
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    return 1
+  fi
 
   # Copy to system-wide location so usermgr can install for new users at
   # registration time (usermgr reads from /usr/share/oqto/pi-agent-extensions/).

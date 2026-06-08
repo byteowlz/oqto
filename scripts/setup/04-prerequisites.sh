@@ -2,8 +2,50 @@
 # Prerequisite Checks
 # ==============================================================================
 
+require_sudo_access() {
+  if [[ "$OS" != "linux" ]]; then
+    return 0
+  fi
+
+  if [[ $EUID -eq 0 ]]; then
+    return 0
+  fi
+
+  if ! command_exists sudo; then
+    log_error "sudo is required on Linux but is not installed."
+    log_error "Install sudo or run setup as root, then re-run ./setup.sh."
+    exit 1
+  fi
+
+  # Already authenticated for sudo in this shell/session.
+  if sudo -n true 2>/dev/null; then
+    return 0
+  fi
+
+  # Non-interactive mode cannot answer sudo prompts.
+  if [[ "${NONINTERACTIVE:-false}" == "true" ]]; then
+    log_error "Setup requires sudo privileges on Linux, but no cached sudo credentials are available."
+    log_error "Run once interactively to authenticate sudo, or run setup as root."
+    exit 1
+  fi
+
+  log_warn "Oqto setup requires sudo privileges on Linux (package install, system files, services)."
+  if ! confirm "Authenticate with sudo now?" "y"; then
+    log_error "Setup cancelled: sudo access is required for installation."
+    exit 1
+  fi
+
+  if ! sudo -v; then
+    log_error "Setup cancelled: sudo authentication failed."
+    log_error "Please run with a user that has sudo rights, or run setup as root."
+    exit 1
+  fi
+}
+
 check_prerequisites() {
   log_step "Checking prerequisites"
+
+  require_sudo_access
 
   local missing=()
 

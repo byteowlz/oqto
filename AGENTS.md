@@ -16,7 +16,7 @@ Oqto is a self-hosted platform for managing AI coding agents.
   - This is not optional and does not depend on task size. "Whenever possible" does not apply.
   - Exception: urgent break/fix hotfixes may start implementation immediately, but the trx item must be created/updated as the very next step after stabilization in the same session.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
-- **Respect the architecture.** Actions go through Runners. History goes through the authoritative store for the runtime mode (`oqto-log` for oqto-runner sessions; hstry for legacy/interop paths during migration). Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
+- **Respect the architecture.** Actions go through Runners. History goes through the authoritative store for the runtime mode (`oqto-log` for oqto-runner sessions). Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
 - **"Let me just..." is ALWAYS wrong.** That phrase is the preamble to a hack. We do not "just" add a quick workaround, "just" hardcode a value, or "just" skip the proper path. Every solution must be designed to scale. If it would not survive 10x users or 10x sessions, it is the wrong approach.
 - **Todo list discipline**: Your todo list is a real-time status bar the user watches. At the start of a task, create todos with `TodoWrite`. As you work, **always** update the list: set tasks to `in_progress` when you start them and `completed` when you finish them. Do not leave completed tasks as `pending`. Rewrite the full list after each significant step.
 - **Fix all failures before done.** We always leave the tree green: if lint/tests/checks fail, fix them regardless of who introduced the failure. No "not my change" exceptions.
@@ -49,6 +49,7 @@ DISPLAY=:0 agent-browser close                           # Close browser
 Enable frontend debug logging: `DISPLAY=:0 agent-browser eval "localStorage.setItem('debug:pi-v2', '1')"`
 
 Retry/error stream tracing helpers:
+
 - `just restart-debug` -- restart with runner stream tracing enabled (`OQTO_TRACE_STREAMS=1`)
 - `just restart-debug-off` -- disable runner stream tracing and restart runner
 - `just trace-retry-e2e` -- automated frontend + runner trace capture across mock retry/error models
@@ -65,9 +66,9 @@ Frontend                          Backend                           Runner (per 
    |                                 |-- Unix/TCP socket ---------------->|
    |                                 |   (runner protocol)                |
    |                                 |                                    |
-   |   {channel:"agent", ...}        |   Canonical Commands              |-- Agent Process A
-   |   {channel:"files", ...}        |   Canonical Events                |-- Agent Process B
-   |   {channel:"terminal", ...}     |                                   |-- hstry (gRPC)
+   |   {channel:"agent", ...}        |   Canonical Commands               |-- Agent Process A
+   |   {channel:"files", ...}        |   Canonical Events                 |-- Agent Process B
+   |   {channel:"terminal", ...}     |                                    |-- oqto-log
 ```
 
 ### Core Components
@@ -96,10 +97,7 @@ A **harness** is an agent runtime that the runner can spawn. The runner translat
 | Harness | Binary | Status |
 |---------|--------|--------|
 | **pi** | `~/.bun/bin/pi` | Primary harness |
-| **opencode** | TBD | Planned |
-| *(custom)* | Any RPC-compatible agent | Extensible |
-
-Each runner advertises which harnesses it supports. The frontend shows a harness picker when creating sessions.
+| *(custom)* | Any acp-compatible harness | Extensible |
 
 ### Runtime Modes
 
@@ -128,6 +126,7 @@ Eavs is the single source of truth for LLM model metadata and the routing layer 
 **Architecture**: `Pi -> eavs (localhost:3033) -> upstream provider APIs`
 
 Key integration points:
+
 - **Model metadata**: `oqto` queries eavs `/providers/detail` to generate Pi's `models.json` (no hardcoded model lists in oqto)
 - **Per-user keys**: Admin API creates eavs virtual keys per user, stored in `eavs.env` files
 - **OAuth routing**: Virtual keys can be bound to OAuth users + account labels for multi-account provider access
@@ -136,6 +135,7 @@ Key integration points:
 - **Quota tracking**: Upstream rate limit headers are parsed and available via `GET /admin/quotas`
 
 Key files:
+
 - `backend/crates/oqto/src/eavs/` -- `EavsClient` (create/revoke keys), `generate_pi_models_json()`
 - `backend/crates/oqto/src/api/handlers/admin.rs` -- `provision_eavs_for_user`, `sync_eavs_models_json`
 - `backend/crates/oqto/src/session/service.rs` -- Injects `EAVS_API_KEY` env var into agent sessions
@@ -366,6 +366,7 @@ just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)]
 **When raw useEffect is unavoidable** (e.g., async data fetch with cancellation), add a `// useeffect-guardrail: allow` comment on the line above to exclude it from the count, and explain why no hook covers the case.
 
 **After adding any useEffect (including via hooks):**
+
 ```bash
 bun run lint:useeffect-guardrail:update  # Update the baseline
 bun run lint                             # Verify everything passes

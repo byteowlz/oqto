@@ -41,7 +41,7 @@ function textMsg(
 describe("disappearing message regression", () => {
 	it("authoritative merge preserves streaming assistant message", () => {
 		// Scenario: user sends message, assistant starts streaming, then
-		// agent.idle triggers an authoritative fetch from hstry/buffer.
+		// agent.idle triggers an authoritative fetch from oqto-log/buffer.
 		// The streaming message must survive.
 		const local = [
 			textMsg("tmp:u1", "user", "hello", { clientId: "c-1" }),

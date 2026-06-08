@@ -28,6 +28,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	CircleDot,
+	Download,
 	FileText,
 	FolderKanban,
 	Globe,
@@ -1084,6 +1085,10 @@ export const SessionScreen = memo(function SessionScreen() {
 		</div>
 	);
 
+	const triggerSessionMarkdownDownload = useCallback(() => {
+		window.dispatchEvent(new CustomEvent("oqto:download-session-markdown"));
+	}, []);
+
 	const chatHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-20">
 			<div className="min-w-0">
@@ -1349,14 +1354,27 @@ export const SessionScreen = memo(function SessionScreen() {
 							</Suspense>
 						)}
 						{activeView === "settings" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<PiSettingsView
-									locale={locale}
-									sessionId={selectedChatSessionId}
-									workspacePath={normalizedWorkspacePath}
-									sharedWorkspaceId={selectedSharedWorkspaceId}
-								/>
-							</Suspense>
+							<div className="h-full flex flex-col">
+								<div className="flex justify-end pb-2">
+									<button
+										type="button"
+										onClick={triggerSessionMarkdownDownload}
+										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+										title="Download this session as markdown"
+										disabled={!selectedChatSessionId}
+									>
+										<Download className="w-4 h-4" />
+									</button>
+								</div>
+								<Suspense fallback={viewLoadingFallback}>
+									<PiSettingsView
+										locale={locale}
+										sessionId={selectedChatSessionId}
+										workspacePath={normalizedWorkspacePath}
+										sharedWorkspaceId={selectedSharedWorkspaceId}
+									/>
+								</Suspense>
+							</div>
 						)}
 					</div>
 				</div>
@@ -1442,6 +1460,15 @@ export const SessionScreen = memo(function SessionScreen() {
 										title={t("sessions.newSession")}
 									>
 										<Plus className="w-4 h-4" />
+									</button>
+									<button
+										type="button"
+										onClick={triggerSessionMarkdownDownload}
+										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+										title="Download this session as markdown"
+										disabled={isOverviewActive || !selectedChatSessionId}
+									>
+										<Download className="w-4 h-4" />
 									</button>
 									<button
 										type="button"

@@ -3,6 +3,7 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::Path as StdPath;
 
 use axum::{
     Json,
@@ -39,6 +40,21 @@ pub struct ChatHistoryQuery {
 /// as that would read from the backend user's home, not the requesting user's.
 fn is_multi_user_mode(state: &AppState) -> bool {
     state.linux_users.is_some()
+}
+
+fn normalize_path_for_authz(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+fn is_within_path(path: &str, root: &StdPath) -> bool {
+    let normalized_path = normalize_path_for_authz(path);
+    let normalized_root = normalize_path_for_authz(&root.to_string_lossy());
+    normalized_path == normalized_root
+        || normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
+fn retain_sessions_in_allowed_workspace(sessions: &mut Vec<ChatSession>, allowed_root: &StdPath) {
+    sessions.retain(|session| is_within_path(&session.workspace_path, allowed_root));
 }
 
 async fn resolve_session_target(
@@ -399,8 +415,22 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    let effective_workspace = if query.shared_workspace_id.is_none() {
+        if let Some(ref ws) = query.workspace {
+            if !is_within_path(ws, &allowed_root) {
+                return Err(ApiError::forbidden("workspace is outside allowed roots"));
+            }
+            Some(ws.clone())
+        } else {
+            Some(allowed_root.to_string_lossy().to_string())
+        }
+    } else {
+        query.workspace.clone()
+    };
+
     let response = runner
-        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .list_workspace_chat_sessions(effective_workspace, query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
@@ -431,12 +461,12 @@ pub async fn list_chat_history(
 
     sessions = merge_duplicate_sessions(sessions);
 
+    if query.shared_workspace_id.is_none() {
+        retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
+    }
+
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
-
-    if let Some(ref ws) = query.workspace {
-        sessions.retain(|s| s.workspace_path == *ws);
-    }
 
     if !query.include_children {
         sessions.retain(|s| !s.is_child);
@@ -685,8 +715,22 @@ pub async fn list_chat_history_grouped(
     let runner = get_runner_for_user(&state, user.id())
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
+    let allowed_root = state.sessions.for_user(user.id()).workspace_root();
+    let effective_workspace = if query.shared_workspace_id.is_none() {
+        if let Some(ref ws) = query.workspace {
+            if !is_within_path(ws, &allowed_root) {
+                return Err(ApiError::forbidden("workspace is outside allowed roots"));
+            }
+            Some(ws.clone())
+        } else {
+            Some(allowed_root.to_string_lossy().to_string())
+        }
+    } else {
+        query.workspace.clone()
+    };
+
     let response = runner
-        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .list_workspace_chat_sessions(effective_workspace, query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner grouped list failed: {}", e)))?;
 
@@ -713,12 +757,12 @@ pub async fn list_chat_history_grouped(
 
     sessions = merge_duplicate_sessions(sessions);
 
+    if query.shared_workspace_id.is_none() {
+        retain_sessions_in_allowed_workspace(&mut sessions, &allowed_root);
+    }
+
     let mut seen = HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
-
-    if let Some(ref ws) = query.workspace {
-        sessions.retain(|s| s.workspace_path == *ws);
-    }
 
     if !query.include_children {
         sessions.retain(|s| !s.is_child);
@@ -803,7 +847,10 @@ fn convert_runner_response(
                     tool_name: p.tool_name,
                     tool_call_id: p.tool_call_id,
                     tool_input: p.tool_input,
-                    tool_output: p.tool_output,
+                    tool_output: p.tool_output.map(|value| match value {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    }),
                     tool_status: p.tool_status,
                     tool_title: p.tool_title,
                 })
@@ -830,10 +877,34 @@ pub async fn get_chat_messages(
     Path(session_id): Path<String>,
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<oqto_protocol::messages::Message>>> {
+    let mut resolved_session_id = session_id;
+    if !is_oqto_session_id(&resolved_session_id) {
+        let effective_user = state.effective_linux_username(user.id());
+        let user_home = if state.user_isolation_enabled() {
+            std::path::PathBuf::from(format!("/home/{effective_user}"))
+        } else {
+            dirs::home_dir().ok_or_else(|| {
+                ApiError::internal("could not resolve user home for session lookup")
+            })?
+        };
+
+        if let Some(platform_id) =
+            oqto_history::oqto_log::ops::find_platform_by_external(&user_home, &resolved_session_id)
+                .await
+        {
+            tracing::debug!(
+                session_id = %resolved_session_id,
+                platform_id = %platform_id,
+                "resolved legacy external session id to platform id"
+            );
+            resolved_session_id = platform_id;
+        }
+    }
+
     let target = resolve_session_target(
         &state,
         user.id(),
-        &session_id,
+        &resolved_session_id,
         query.shared_workspace_id.as_deref(),
         is_multi_user_mode(&state),
     )
@@ -846,7 +917,7 @@ pub async fn get_chat_messages(
 
     let response = runner
         .get_workspace_chat_session_messages(
-            &session_id,
+            &resolved_session_id,
             query.render,
             None,
             oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
@@ -858,7 +929,7 @@ pub async fn get_chat_messages(
 
     info!(
         user_id = %user.id(),
-        session_id = %session_id,
+        session_id = %resolved_session_id,
         shared_workspace_id = ?query.shared_workspace_id,
         count = canonical.len(),
         "Listed chat messages via runner"

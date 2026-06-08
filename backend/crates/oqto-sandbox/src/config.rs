@@ -42,7 +42,7 @@
 //! ```
 
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -232,6 +232,81 @@ fn stricter_landlock_mode(a: LandlockMode, b: LandlockMode) -> LandlockMode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopedPathSource {
+    WorkspacePath,
+    Literal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScopedPathAccess {
+    Ro,
+    Rw,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScopedPathMissing {
+    Ignore,
+    Warn,
+    Fail,
+}
+
+fn default_scoped_target_template() -> String {
+    "{base_path}/{value}".to_string()
+}
+
+fn default_scoped_access() -> ScopedPathAccess {
+    ScopedPathAccess::Rw
+}
+
+fn default_scoped_missing() -> ScopedPathMissing {
+    ScopedPathMissing::Warn
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum ScopedPathTransform {
+    StripPrefix { value: String },
+    Replace { from: String, to: String },
+    Wrap { prefix: String, suffix: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ScopedPathRule {
+    pub name: String,
+    pub base_path: String,
+    pub source: ScopedPathSource,
+    #[serde(default)]
+    pub source_literal: Option<String>,
+    #[serde(default)]
+    pub transforms: Vec<ScopedPathTransform>,
+    #[serde(default = "default_scoped_target_template")]
+    pub target_template: String,
+    #[serde(default = "default_scoped_access")]
+    pub access: ScopedPathAccess,
+    #[serde(default = "default_scoped_missing")]
+    pub missing: ScopedPathMissing,
+}
+
+impl Default for ScopedPathRule {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            base_path: String::new(),
+            source: ScopedPathSource::WorkspacePath,
+            source_literal: None,
+            transforms: Vec::new(),
+            target_template: default_scoped_target_template(),
+            access: default_scoped_access(),
+            missing: default_scoped_missing(),
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[repr(C)]
 struct LandlockRulesetAttr {
@@ -378,6 +453,10 @@ pub struct SandboxProfile {
     #[serde(default)]
     pub overlay_paths: Vec<String>,
 
+    /// Dynamic deny+rebind rules evaluated at spawn time.
+    #[serde(default)]
+    pub scoped_paths: Vec<ScopedPathRule>,
+
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
     #[serde(default)]
@@ -434,6 +513,7 @@ impl SandboxProfile {
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
             overlay_paths: vec![],
+            scoped_paths: vec![],
             guard: None,
             ssh: None,
             network: None,
@@ -506,6 +586,7 @@ impl SandboxProfile {
                 "~/.local/share/uv".to_string(),
                 "~/.cache/uv".to_string(),
             ],
+            scoped_paths: vec![],
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -563,6 +644,7 @@ impl SandboxProfile {
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
             overlay_paths: vec![],
+            scoped_paths: vec![],
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -683,6 +765,10 @@ pub struct SandboxConfig {
     /// Paths to overlay (typically package/toolchain directories).
     pub overlay_paths: Vec<String>,
 
+    /// Dynamic deny+rebind rules evaluated at spawn time.
+    #[serde(default)]
+    pub scoped_paths: Vec<ScopedPathRule>,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -716,6 +802,7 @@ impl Default for SandboxConfig {
             overlay_enabled: profile.overlay_enabled,
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
+            scoped_paths: profile.scoped_paths,
             profiles: HashMap::new(),
         }
     }
@@ -763,6 +850,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             overlay_enabled: profile.overlay_enabled,
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
+            scoped_paths: profile.scoped_paths,
             profiles: file.profiles,
         };
 
@@ -800,6 +888,7 @@ impl SandboxConfig {
             overlay_enabled: profile.overlay_enabled,
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
+            scoped_paths: profile.scoped_paths,
             profiles: HashMap::new(),
         }
     }
@@ -827,6 +916,7 @@ impl SandboxConfig {
             overlay_enabled: profile.overlay_enabled,
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
+            scoped_paths: profile.scoped_paths,
             profiles: HashMap::new(),
         }
     }
@@ -875,6 +965,7 @@ impl SandboxConfig {
             overlay_enabled: profile.overlay_enabled,
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
+            scoped_paths: profile.scoped_paths,
             profiles: custom_profiles.clone(),
         };
 
@@ -987,6 +1078,7 @@ impl SandboxConfig {
                         overlay_enabled: profile.overlay_enabled,
                         overlay_root: profile.overlay_root,
                         overlay_paths: profile.overlay_paths,
+                        scoped_paths: profile.scoped_paths,
                         profiles: merged_profiles,
                     };
 
@@ -1054,6 +1146,10 @@ impl SandboxConfig {
         let mut overlay_paths: HashSet<String> = self.overlay_paths.iter().cloned().collect();
         overlay_paths.extend(workspace_config.overlay_paths.iter().cloned());
 
+        // scoped path rules are additive (workspace can add stricter runtime scopes)
+        let mut scoped_paths = self.scoped_paths.clone();
+        scoped_paths.extend(workspace_config.scoped_paths.clone());
+
         // Merge profiles (workspace can add, global takes precedence for same name)
         let mut profiles = workspace_config.profiles.clone();
         profiles.extend(self.profiles.clone());
@@ -1101,6 +1197,7 @@ impl SandboxConfig {
                 self.overlay_root.clone()
             },
             overlay_paths: overlay_paths.into_iter().collect(),
+            scoped_paths,
             profiles,
         }
     }
@@ -1133,6 +1230,105 @@ impl SandboxConfig {
             }
             None => self.clone(),
         }
+    }
+
+    fn apply_scoped_path_rules(
+        &self,
+        args: &mut Vec<String>,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Result<()> {
+        for rule in &self.scoped_paths {
+            if rule.name.trim().is_empty() {
+                continue;
+            }
+
+            let base = Self::expand_home_for_user(&rule.base_path, username);
+            if base.as_os_str().is_empty() {
+                continue;
+            }
+            let base_str = base.to_string_lossy().to_string();
+
+            if base.exists() {
+                let is_dir = base.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                if is_dir {
+                    args.push("--tmpfs".to_string());
+                    args.push(base_str.clone());
+                } else {
+                    args.push("--bind".to_string());
+                    args.push("/dev/null".to_string());
+                    args.push(base_str.clone());
+                }
+                debug!(
+                    "Scoped path deny base: rule='{}' base='{}'",
+                    rule.name, base_str
+                );
+            }
+
+            let mut value = match rule.source {
+                ScopedPathSource::WorkspacePath => workspace.to_string_lossy().to_string(),
+                ScopedPathSource::Literal => rule.source_literal.clone().unwrap_or_default(),
+            };
+
+            for transform in &rule.transforms {
+                value = match transform {
+                    ScopedPathTransform::StripPrefix { value: prefix } => {
+                        value.strip_prefix(prefix).unwrap_or(&value).to_string()
+                    }
+                    ScopedPathTransform::Replace { from, to } => value.replace(from, to),
+                    ScopedPathTransform::Wrap { prefix, suffix } => {
+                        format!("{}{}{}", prefix, value, suffix)
+                    }
+                };
+            }
+
+            let target_expr = rule
+                .target_template
+                .replace("{base_path}", &base_str)
+                .replace("{value}", &value);
+            let target = Self::expand_home_for_user(&target_expr, username);
+            let target_str = target.to_string_lossy().to_string();
+
+            let target_exists = target.exists();
+            if !target_exists {
+                match rule.missing {
+                    ScopedPathMissing::Ignore => continue,
+                    ScopedPathMissing::Warn => {
+                        warn!(
+                            "Scoped path target missing (rule='{}'): {}",
+                            rule.name, target_str
+                        );
+                        continue;
+                    }
+                    ScopedPathMissing::Fail => {
+                        anyhow::bail!(
+                            "scoped path target missing for rule '{}': {}",
+                            rule.name,
+                            target_str
+                        );
+                    }
+                }
+            }
+
+            match rule.access {
+                ScopedPathAccess::Ro => {
+                    args.push("--ro-bind".to_string());
+                    args.push(target_str.clone());
+                    args.push(target_str.clone());
+                }
+                ScopedPathAccess::Rw => {
+                    args.push("--bind".to_string());
+                    args.push(target_str.clone());
+                    args.push(target_str.clone());
+                }
+            }
+            debug!(
+                "Scoped path rebind: rule='{}' target='{}' access={:?}",
+                rule.name, target_str, rule.access
+            );
+        }
+
+        Ok(())
     }
 
     /// Expand ~ to home directory in a path.
@@ -1417,6 +1613,12 @@ impl SandboxConfig {
             }
         }
 
+        // Apply dynamic scoped deny+rebind rules.
+        if let Err(e) = self.apply_scoped_path_rules(&mut args, workspace, username) {
+            error!("Failed to apply scoped path rules: {}", e);
+            return None;
+        }
+
         // /tmp (usually needed)
         args.push("--tmpfs".to_string());
         args.push("/tmp".to_string());
@@ -1526,31 +1728,58 @@ impl SandboxConfig {
             );
         }
 
-        // Ensure common user toolchain bin paths are in PATH.
-        // Non-interactive shells (systemd, cron) typically don't source
-        // ~/.bashrc/.zshrc, so ~/go/bin, ~/.cargo/bin, etc. are missing.
+        // Construct PATH for the sandboxed process.
+        //
+        // bwrap inherits the launcher's PATH, but that launcher may be a systemd
+        // unit or cron job with a sparse PATH (missing /usr/bin). We bind-mount
+        // /usr, /bin, /sbin above so the binaries are reachable, but with a sparse
+        // PATH bare command names (e.g. `sed`) still fail with ENOENT while
+        // absolute paths work. Guarantee the canonical system bin dirs we already
+        // bind so command resolution never depends on the launcher's environment,
+        // keeping the inherited PATH precedence intact, then add the user's
+        // toolchain bin dirs (non-interactive shells skip ~/.bashrc/.zshrc, so
+        // ~/.cargo/bin, ~/go/bin, etc. would otherwise be missing).
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let mut path_parts: Vec<String> = current_path
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        // Base system bin dirs corresponding to the read-only binds above.
+        let mut ensure: Vec<String> = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // User toolchain bin dirs (only when the target home is known).
         if let Some(ref home) = target_home {
             let home_str = home.to_string_lossy();
-            let extra_paths = [
-                format!("{home_str}/.cargo/bin"),
-                format!("{home_str}/go/bin"),
-                format!("{home_str}/.local/bin"),
-                format!("{home_str}/.bun/bin"),
-                format!("{home_str}/.npm-global/bin"),
-            ];
-            let current_path = std::env::var("PATH").unwrap_or_default();
-            let mut path_parts: Vec<&str> = current_path.split(':').collect();
-            for p in &extra_paths {
-                if !path_parts.contains(&p.as_str()) && Path::new(p).exists() {
-                    path_parts.push(p);
-                }
+            for suffix in [
+                ".cargo/bin",
+                "go/bin",
+                ".local/bin",
+                ".bun/bin",
+                ".npm-global/bin",
+            ] {
+                ensure.push(format!("{home_str}/{suffix}"));
             }
-            let new_path = path_parts.join(":");
-            args.push("--setenv".to_string());
-            args.push("PATH".to_string());
-            args.push(new_path);
-            debug!("Extended PATH with user toolchain bin directories");
         }
+        for p in &ensure {
+            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
+                path_parts.push(p.clone());
+            }
+        }
+        args.push("--setenv".to_string());
+        args.push("PATH".to_string());
+        args.push(path_parts.join(":"));
+        debug!("Set sandbox PATH with base system + user toolchain bin directories");
 
         // Namespace and kernel-surface hardening
         if self.isolate_pid {
@@ -1656,8 +1885,8 @@ impl SandboxConfig {
                 let seccomp_path = self.resolve_seccomp_bpf_path(username);
                 if seccomp_path.as_ref().is_some_and(|p| p.exists()) {
                     args.push("--seccomp".to_string());
-                    args.push("3".to_string());
-                    debug!("Seccomp enabled via bwrap fd 3");
+                    args.push("198".to_string());
+                    debug!("Seccomp enabled via bwrap fd 198");
                 } else if self.seccomp_mode == SeccompMode::Enforce {
                     warn!(
                         "seccomp_mode=enforce but seccomp_bpf_path missing/unreadable: {:?}",
@@ -2271,6 +2500,56 @@ log_requests = true
             Some(value) => unsafe { env::set_var("HOME", value) },
             None => unsafe { env::remove_var("HOME") },
         }
+    }
+
+    /// Regression test for oqto-cktc: a sparse launcher PATH (e.g. a systemd
+    /// unit) must not break bare command resolution inside the sandbox. We
+    /// bind-mount /usr, /bin, /sbin, so the canonical system bin dirs must be
+    /// seeded into the sandbox PATH regardless of what the launcher exported.
+    #[test]
+    fn test_path_seeds_system_bin_dirs_with_sparse_launcher_path() {
+        // Hermetic only where the host actually has /usr/bin to bind.
+        if !Path::new("/usr/bin").exists() {
+            eprintln!("skipping: /usr/bin missing on host");
+            return;
+        }
+
+        let temp = tempdir().unwrap();
+        let ws = temp.path();
+
+        // SAFETY: tests are single-threaded for env mutation; restored below.
+        let original_path = env::var_os("PATH");
+        unsafe { env::set_var("PATH", "/nonexistent-sparse-launcher-bin") };
+
+        let config = SandboxConfig::from_profile("development");
+        let result = config.build_bwrap_args_for_user(ws, None);
+
+        // Restore PATH before any assertion so a failure can't leak the sparse value.
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        let Some(args) = result else {
+            eprintln!("skipping: bwrap unavailable");
+            return;
+        };
+
+        let path_idx = args
+            .windows(2)
+            .position(|w| w[0] == "--setenv" && w[1] == "PATH")
+            .expect("PATH setenv not found");
+        let path_value = &args[path_idx + 2];
+        let entries: Vec<&str> = path_value.split(':').collect();
+
+        assert!(
+            entries.contains(&"/usr/bin"),
+            "sandbox PATH must include /usr/bin even with a sparse launcher PATH: {path_value}"
+        );
+        assert!(
+            entries.contains(&"/bin"),
+            "sandbox PATH must include /bin even with a sparse launcher PATH: {path_value}"
+        );
     }
 
     /// Regression test for oqto-b4za: Landlock shim must be wired even when

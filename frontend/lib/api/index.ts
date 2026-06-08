@@ -231,10 +231,10 @@ export {
 
 // Search
 export type {
-	HstryAgentFilter,
-	HstrySearchQuery,
-	HstrySearchHit,
-	HstrySearchResponse,
+	SearchAgentFilter,
+	SearchQuery,
+	SearchHit,
+	SearchResponse,
 } from "./search";
 export { searchSessions } from "./search";
 

@@ -31,40 +31,57 @@ interface FileNode {
 interface FileMentionPopupProps {
 	query: string;
 	isOpen: boolean;
-	workspacePath: string | null;
+	workspaceDirectory?: string;
 	onSelect: (file: FileAttachment) => void;
 	onClose: () => void;
 	className?: string;
 }
 
-// Simple fuzzy match
 function fuzzyMatch(query: string, text: string): boolean {
 	if (!query) return true;
-	const lowerQuery = query.toLowerCase();
-	const lowerText = text.toLowerCase();
+	const normalizedQuery = query.toLowerCase().trim();
+	const normalizedText = text.toLowerCase();
+	if (!normalizedQuery) return true;
 
-	// Check if all characters appear in order
-	let qi = 0;
-	for (let i = 0; i < lowerText.length && qi < lowerQuery.length; i++) {
-		if (lowerText[i] === lowerQuery[qi]) {
-			qi++;
+	const parts = normalizedQuery.split(/\s+/).filter(Boolean);
+	return parts.every((part) => {
+		if (normalizedText.includes(part)) return true;
+		let qi = 0;
+		for (let i = 0; i < normalizedText.length && qi < part.length; i++) {
+			if (normalizedText[i] === part[qi]) qi++;
 		}
-	}
-	return qi === lowerQuery.length;
+		return qi === part.length;
+	});
 }
 
-// Score a match (higher = better)
-function matchScore(query: string, text: string): number {
+function matchScore(query: string, path: string): number {
 	if (!query) return 0;
-	const lowerQuery = query.toLowerCase();
-	const lowerText = text.toLowerCase();
+	const q = query.toLowerCase().trim();
+	const p = path.toLowerCase();
+	if (!q) return 0;
 
-	// Exact match at start
-	if (lowerText.startsWith(lowerQuery)) return 100;
-	// Contains
-	if (lowerText.includes(lowerQuery)) return 50;
-	// Fuzzy
-	return 10;
+	const fileName = p.split("/").pop() ?? p;
+	let score = 0;
+
+	if (fileName === q) score += 1000;
+	if (fileName.startsWith(q)) score += 650;
+	if (p.startsWith(q)) score += 450;
+	if (fileName.includes(q)) score += 300;
+	if (p.includes(q)) score += 150;
+
+	let qi = 0;
+	let gaps = 0;
+	for (let i = 0; i < p.length && qi < q.length; i++) {
+		if (p[i] === q[qi]) qi++;
+		else if (qi > 0) gaps++;
+	}
+	if (qi === q.length) score += Math.max(0, 120 - gaps * 2);
+
+	if (p.includes(`/${q}`)) score += 120;
+	if (p.includes(`-${q}`) || p.includes(`_${q}`) || p.includes(`.${q}`))
+		score += 90;
+
+	return score;
 }
 
 // Recursively collect all files from a tree
@@ -87,7 +104,7 @@ function collectAllFiles(nodes: FileNode[], prefix = ""): FileNode[] {
 export const FileMentionPopup = memo(function FileMentionPopup({
 	query,
 	isOpen,
-	workspacePath,
+	workspaceDirectory,
 	onSelect,
 	onClose,
 	className,
@@ -98,8 +115,8 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const listRef = useRef<HTMLDivElement>(null);
 	const normalizedWorkspacePath = useMemo(
-		() => normalizeWorkspacePath(workspacePath),
-		[workspacePath],
+		() => normalizeWorkspacePath(workspaceDirectory ?? null),
+		[workspaceDirectory],
 	);
 
 	// Load files when popup opens

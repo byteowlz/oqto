@@ -119,12 +119,12 @@ export function useMessageNavigation(options: UseMessageNavigationOptions) {
 	}, [scrollToMessage]);
 
 	/**
-	 * Find message ID by line number (for hstry search results).
+	 * Find message ID by line number (for oqto-log search results).
 	 * This maps line numbers to message IDs based on message order.
 	 */
 	const findMessageByLineNumber = useCallback(
 		(lineNumber: number): string | null => {
-			// Line numbers from hstry correspond to the JSONL line in the session file.
+			// Line numbers from oqto-log correspond to the JSONL line in the session file.
 			// Messages are typically 1-indexed in the file (after header).
 			// This is a heuristic - exact mapping depends on session format.
 			const messageIndex = Math.max(0, lineNumber - 2); // Account for header line

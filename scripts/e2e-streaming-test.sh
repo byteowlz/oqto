@@ -62,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             echo "Scenarios:"
             echo "  simple_text       -- Basic text streaming"
             echo "  tool_call         -- Tool call + response"
+            echo "  dynamic_tool_call -- Dynamic mock trigger emits harmless tool call"
             echo "  error_mid_stream  -- Error during streaming"
             echo "  rate_limit        -- 429 rate limit error"
             echo "  server_error      -- 500 server error"
@@ -123,7 +124,13 @@ get_token() {
 
 # Generate a unique session ID
 gen_session_id() {
-    echo "e2e-test-$(date +%s)-$(head -c4 /dev/urandom | xxd -p)"
+    local suffix
+    if command -v xxd >/dev/null 2>&1; then
+        suffix=$(head -c4 /dev/urandom | xxd -p)
+    else
+        suffix=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+    fi
+    echo "e2e-test-$(date +%s)-${suffix}"
 }
 
 # Start a WebSocket connection, writing events to EVENTS_FILE.
@@ -226,6 +233,34 @@ ensure_mock_models() {
     warn "Mock models not in models.json -- you may need to run: just admin-eavs --sync-models --all"
 }
 
+mock_provider_field() {
+    local field="$1"
+    jq -r --arg field "$field" '
+        (.providers.mock // .providers["eavs-mock"] // {})[$field] // empty
+    ' "$HOME/.pi/agent/models.json" 2>/dev/null || true
+}
+
+# Dynamic mock responses are configured in EAVS, not Oqto. This check keeps the
+# test deterministic without silently mutating the user's EAVS config.
+has_dynamic_tool_trigger() {
+    local base_url api_key code
+    base_url=$(mock_provider_field baseUrl)
+    api_key=$(mock_provider_field apiKey)
+    if [[ -z "$base_url" || -z "$api_key" ]]; then
+        return 1
+    fi
+
+    code=$(curl -s -o /tmp/oqto-e2e-dynamic-tool-check.json -w '%{http_code}' \
+        "${base_url%/}/chat/completions" \
+        -H "Authorization: Bearer ${api_key}" \
+        -H "Content-Type: application/json" \
+        -d '{"model":"mock/dynamic","messages":[{"role":"user","content":"##oqto_e2e_tool"}],"stream":false}' \
+        --max-time 10 2>/dev/null || true)
+
+    [[ "$code" == "200" ]] && jq -e '.choices[0].message.tool_calls[0].function.name == "oqto_echo_status"' \
+        /tmp/oqto-e2e-dynamic-tool-check.json >/dev/null 2>&1
+}
+
 # ============================================================================
 # Test Scenarios
 # ============================================================================
@@ -284,6 +319,71 @@ test_simple_text() {
         ok "simple_text: correct state transitions (working=$working_events, idle=$idle_events)"
     else
         fail "simple_text: missing state transitions (working=$working_events, idle=$idle_events)"
+    fi
+
+    stop_ws
+}
+
+test_dynamic_tool_call() {
+    log "Scenario: dynamic_tool_call -- dynamic mock trigger emits harmless tool call"
+
+    if ! has_dynamic_tool_trigger; then
+        skip "dynamic_tool_call: missing EAVS [mock_responses.oqto_e2e_tool] dynamic tool trigger"
+        warn "Add this to ~/.config/eavs/config.toml and restart EAVS:"
+        warn "[mock_responses.oqto_e2e_tool]"
+        warn "type = \"tool_call\""
+        warn "name = \"oqto_echo_status\""
+        warn "arguments = '{\"status\":\"ok\",\"source\":\"dynamic-mock-e2e\"}'"
+        return
+    fi
+
+    local token
+    token=$(get_token)
+    if [[ -z "$token" ]]; then
+        fail "dynamic_tool_call: Could not get auth token"
+        return
+    fi
+
+    local session_id
+    session_id=$(gen_session_id)
+    start_ws "$token" || return
+
+    ws_send "{\"channel\":\"agent\",\"cmd\":\"session.create\",\"session_id\":\"${session_id}\",\"id\":\"req-1\",\"config\":{\"harness\":\"pi\",\"cwd\":\"/tmp\",\"model\":\"mock/dynamic\",\"provider\":\"mock\"}}"
+
+    if ! wait_for_event "session.create" 10; then
+        fail "dynamic_tool_call: session.create response not received"
+        stop_ws
+        return
+    fi
+
+    ws_send "{\"channel\":\"agent\",\"cmd\":\"prompt\",\"session_id\":\"${session_id}\",\"message\":\"##oqto_e2e_tool\",\"id\":\"req-2\"}"
+
+    if ! wait_for_event "agent.idle\|agent.error" "$TIMEOUT"; then
+        fail "dynamic_tool_call: terminal event not received within ${TIMEOUT}s"
+        if $VERBOSE; then
+            echo "Events received:"
+            cat "$EVENTS_FILE"
+        fi
+        stop_ws
+        return
+    fi
+
+    local tool_events
+    tool_events=$(session_events "$session_id" | grep -c 'tool\|call_mock_dynamic_001\|oqto_echo_status' 2>/dev/null || true)
+    if (( tool_events > 0 )); then
+        ok "dynamic_tool_call: observed tool lifecycle data ($tool_events matching events)"
+    else
+        fail "dynamic_tool_call: no tool lifecycle data observed"
+        if $VERBOSE; then
+            echo "Events received:"
+            cat "$EVENTS_FILE"
+        fi
+    fi
+
+    if session_events "$session_id" | grep -q 'call_mock_dynamic_001\|oqto_echo_status' 2>/dev/null; then
+        ok "dynamic_tool_call: dynamic tool id/name propagated"
+    else
+        fail "dynamic_tool_call: dynamic tool id/name did not propagate"
     fi
 
     stop_ws
@@ -596,6 +696,7 @@ main() {
         # Run single scenario
         case "$SCENARIO" in
             simple_text) test_simple_text ;;
+            dynamic_tool_call) test_dynamic_tool_call ;;
             error_mid_stream) test_error_mid_stream ;;
             rate_limit) test_rate_limit ;;
             server_error) test_server_error ;;
@@ -605,6 +706,8 @@ main() {
         esac
     elif $RUN_ALL; then
         test_simple_text
+        echo ""
+        test_dynamic_tool_call
         echo ""
         test_agent_state
         echo ""
@@ -618,6 +721,8 @@ main() {
     else
         # Default: run the basic scenarios
         test_simple_text
+        echo ""
+        test_dynamic_tool_call
         echo ""
         test_agent_state
     fi

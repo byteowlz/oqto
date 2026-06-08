@@ -42,6 +42,48 @@ pub struct Runner {
     pi_manager: Arc<PiSessionManager>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct PiJsonlEntryLite {
+    #[serde(rename = "type")]
+    entry_type: Option<String>,
+    id: Option<String>,
+}
+
+fn validate_fork_cutoff(session_file: &std::path::Path, requested_entry_id: &str) -> Result<()> {
+    let raw = std::fs::read_to_string(session_file)
+        .with_context(|| format!("read forked session file {}", session_file.display()))?;
+    let mut ids: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<PiJsonlEntryLite>(line)
+            && entry.entry_type.as_deref() == Some("assistant")
+            && let Some(id) = entry.id
+        {
+            ids.push(id);
+        }
+    }
+
+    if ids.is_empty() {
+        anyhow::bail!("fork validation failed: child session has no assistant entries");
+    }
+    if !ids.iter().any(|id| id == requested_entry_id) {
+        anyhow::bail!(
+            "fork validation failed: requested entry '{}' not present in child session",
+            requested_entry_id
+        );
+    }
+    if ids.last().map(|s| s.as_str()) != Some(requested_entry_id) {
+        anyhow::bail!(
+            "fork validation failed: child tip '{}' != requested entry '{}'",
+            ids.last().cloned().unwrap_or_default(),
+            requested_entry_id
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 struct JsonlSessionMetadata {
     external_id: String,
@@ -78,6 +120,12 @@ fn parse_pi_created_at_ms_from_path(path: &std::path::Path) -> Option<i64> {
     Some(chrono::Utc.from_utc_datetime(&parsed).timestamp_millis())
 }
 
+fn parse_sqlite_datetime_ms(value: &str) -> i64 {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .map(|dt| chrono::Utc.from_utc_datetime(&dt).timestamp_millis())
+        .unwrap_or(0)
+}
+
 fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     let trimmed = dirname.trim();
     let core = trimmed
@@ -100,6 +148,106 @@ fn select_authoritative_workspace_chat_messages(
     (Vec::new(), "empty")
 }
 
+fn select_richest_authoritative_messages(
+    projected: Option<Vec<ChatMessageProto>>,
+    pi_jsonl: Option<Vec<ChatMessageProto>>,
+) -> (Option<Vec<ChatMessageProto>>, &'static str) {
+    match (projected, pi_jsonl) {
+        // oqto-log is the authoritative history surface. Pi JSONL is used to
+        // repair oqto-log before selection, not as a parallel read source with
+        // synthetic IDs. Falling back to raw JSONL is only acceptable when no
+        // projection exists at all.
+        (Some(projected), _) => (Some(projected), "oqto-log"),
+        (None, Some(pi_jsonl)) => (Some(pi_jsonl), "pi-jsonl-fallback"),
+        (None, None) => (None, "empty"),
+    }
+}
+
+async fn repair_oqto_log_from_jsonl_if_richer(
+    user_home: &std::path::Path,
+    user_id: &str,
+    requested_session_id: &str,
+    projected_count: usize,
+    external_id: &str,
+    recovered_messages: &[oqto_pi::AgentMessage],
+    records: Option<&[oqto_history::oqto_log::store::PiJsonlMessageRecord]>,
+) -> Option<Vec<ChatMessageProto>> {
+    if recovered_messages.len() <= projected_count {
+        return None;
+    }
+
+    let (session_id, workspace_id, stored_external_id) = if requested_session_id
+        .starts_with("oqto-")
+    {
+        oqto_history::oqto_log::ops::find_session_by_id(user_home, requested_session_id).await?
+    } else {
+        let (session_id, workspace_id) =
+            oqto_history::oqto_log::ops::find_session_by_external(user_home, requested_session_id)
+                .await?;
+        (
+            session_id,
+            workspace_id,
+            Some(requested_session_id.to_string()),
+        )
+    };
+
+    let external_for_store = stored_external_id.as_deref().or(Some(external_id));
+    let replace_result = if let Some(records) = records {
+        oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+            user_home,
+            user_id,
+            &workspace_id,
+            &session_id,
+            &session_id,
+            external_for_store,
+            external_id,
+            records,
+        )
+        .await
+    } else {
+        oqto_history::oqto_log::store::replace_session_with_snapshot(
+            user_home,
+            user_id,
+            &workspace_id,
+            &session_id,
+            &session_id,
+            external_for_store,
+            external_id,
+            recovered_messages,
+        )
+        .await
+    };
+    if let Err(err) = replace_result {
+        warn!(
+            "oqto-log validation repair failed session={} external_id={} projected_count={} jsonl_count={}: {:?}",
+            requested_session_id,
+            external_id,
+            projected_count,
+            recovered_messages.len(),
+            err
+        );
+        return None;
+    }
+
+    match oqto_history::oqto_log::projector::project_session_messages_auto(
+        user_home,
+        requested_session_id,
+        None,
+    )
+    .await
+    {
+        Ok(Some(messages)) => Some(messages),
+        Ok(None) => None,
+        Err(err) => {
+            warn!(
+                "oqto-log validation repair re-read failed session={} external_id={}: {:?}",
+                requested_session_id, external_id, err
+            );
+            None
+        }
+    }
+}
+
 fn select_live_workspace_chat_messages(
     live_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
@@ -110,59 +258,125 @@ fn select_live_workspace_chat_messages(
     (Vec::new(), "live_buffer")
 }
 
+async fn resolve_external_session_id(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<String> {
+    if !requested_session_id.starts_with("oqto-") {
+        return Some(requested_session_id.to_string());
+    }
+
+    if let Some(id) =
+        oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id).await
+    {
+        return Some(id);
+    }
+
+    // Fallback for legacy/shared sessions where oqto-log identity mapping
+    // is not populated yet but hstry still has external_id/platform_id.
+    let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
+    let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
+        .await
+        .ok()?;
+    let (_conversation_id, resolved_external) =
+        oqto_history::legacy_hstry::resolve_conversation_identity(
+            &pool,
+            requested_session_id,
+            None,
+        )
+        .await
+        .ok()??;
+    resolved_external
+}
+
+fn spawn_oqto_log_repair_from_jsonl(
+    user_home: std::path::PathBuf,
+    user_id: String,
+    requested_session_id: String,
+    projected_count: usize,
+) {
+    tokio::spawn(async move {
+        let Some((external_id, records)) =
+            load_pi_jsonl_records_for_session(&user_home, &requested_session_id).await
+        else {
+            return;
+        };
+        let messages = records
+            .iter()
+            .map(|record| record.message.clone())
+            .collect::<Vec<_>>();
+        let _ = repair_oqto_log_from_jsonl_if_richer(
+            &user_home,
+            &user_id,
+            &requested_session_id,
+            projected_count,
+            &external_id,
+            &messages,
+            Some(&records),
+        )
+        .await;
+    });
+}
+
+async fn load_pi_jsonl_records_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<(
+    String,
+    Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord>,
+)> {
+    let external_id = resolve_external_session_id(user_home, requested_session_id).await?;
+    let session_file =
+        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await?;
+    let records = tokio::task::spawn_blocking(move || read_jsonl_message_records(&session_file))
+        .await
+        .ok()?;
+
+    if records.is_empty() {
+        return None;
+    }
+
+    Some((external_id, records))
+}
+
+async fn load_pi_jsonl_agent_messages_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<(String, Vec<oqto_pi::AgentMessage>)> {
+    let (external_id, records) =
+        load_pi_jsonl_records_for_session(user_home, requested_session_id).await?;
+    Some((
+        external_id,
+        records.into_iter().map(|record| record.message).collect(),
+    ))
+}
+
+fn pi_jsonl_agent_messages_to_proto(
+    requested_session_id: &str,
+    recovered_messages: &[oqto_pi::AgentMessage],
+) -> Vec<ChatMessageProto> {
+    recovered_messages
+        .iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            let mut proto =
+                crate::protocol::agent_msg_to_chat_proto(msg, idx, requested_session_id);
+            proto.id = format!("pi_jsonl_{}", idx);
+            proto
+        })
+        .collect()
+}
+
 async fn load_pi_jsonl_messages_for_session(
     user_home: &std::path::Path,
     requested_session_id: &str,
 ) -> Option<Vec<ChatMessageProto>> {
-    let external_id = if requested_session_id.starts_with("oqto-") {
-        if let Some(id) =
-            oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id)
-                .await
-        {
-            Some(id)
-        } else {
-            // Fallback for legacy/shared sessions where oqto-log identity mapping
-            // is not populated yet but hstry still has external_id/platform_id.
-            let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
-            let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
-                .await
-                .ok()?;
-            let (_conversation_id, resolved_external) =
-                oqto_history::legacy_hstry::resolve_conversation_identity(
-                    &pool,
-                    requested_session_id,
-                    None,
-                )
-                .await
-                .ok()??;
-            resolved_external
-        }
-    } else {
-        Some(requested_session_id.to_string())
-    }?;
-
-    let session_file = oqto_pi::session_files::find_session_file_async(external_id, None).await?;
-    let recovered_messages =
-        tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&session_file))
-            .await
-            .ok()?;
-
-    if recovered_messages.is_empty() {
-        return None;
-    }
-
-    Some(
-        recovered_messages
-            .iter()
-            .enumerate()
-            .map(|(idx, msg)| {
-                let mut proto =
-                    crate::protocol::agent_msg_to_chat_proto(msg, idx, requested_session_id);
-                proto.id = format!("pi_jsonl_{}", idx);
-                proto
-            })
-            .collect(),
-    )
+    let (_external_id, recovered_messages) =
+        load_pi_jsonl_agent_messages_for_session(user_home, requested_session_id).await?;
+    Some(pi_jsonl_agent_messages_to_proto(
+        requested_session_id,
+        &recovered_messages,
+    ))
 }
 
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
@@ -196,6 +410,19 @@ fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     }
 
     last_name
+}
+
+async fn append_session_info_name_for_external_id(external_id: &str, name: &str) -> Result<bool> {
+    let Some(path) =
+        oqto_pi::session_files::find_session_file_async(external_id.to_string(), None).await
+    else {
+        return Ok(false);
+    };
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || append_session_info_name(&path, &name))
+        .await
+        .context("join JSONL session_info append task")??;
+    Ok(true)
 }
 
 fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
@@ -253,10 +480,15 @@ fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
     message: Option<oqto_pi::AgentMessage>,
 }
 
-fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessage> {
+fn read_jsonl_message_records(
+    path: &std::path::Path,
+) -> Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord> {
     use std::io::BufRead;
 
     let file = match std::fs::File::open(path) {
@@ -268,9 +500,9 @@ fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessag
     };
 
     let reader = std::io::BufReader::new(file);
-    let mut messages = Vec::new();
+    let mut records = Vec::new();
 
-    for line in reader.lines().map_while(Result::ok) {
+    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -286,11 +518,23 @@ fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessag
         }
 
         if let Some(message) = entry.message {
-            messages.push(message);
+            records.push(oqto_history::oqto_log::store::PiJsonlMessageRecord {
+                source_entry_id: entry.id.unwrap_or_else(|| format!("line:{line_idx}")),
+                parent_source_entry_id: entry.parent_id,
+                source_sequence: line_idx as i64,
+                message,
+            });
         }
     }
 
-    messages
+    records
+}
+
+fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessage> {
+    read_jsonl_message_records(path)
+        .into_iter()
+        .map(|record| record.message)
+        .collect()
 }
 
 fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
@@ -1762,110 +2006,29 @@ impl Runner {
         &self,
         req: ListWorkspaceChatSessionsRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
-            return RunnerResponse::WorkspaceChatSessionList(WorkspaceChatSessionListResponse {
-                sessions: Vec::new(),
-            });
-        };
-
-        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
-            Ok(pool) => pool,
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let rows = match oqto_history::oqto_log::ops::list_sessions(
+            std::path::Path::new(&home),
+            req.workspace.as_deref(),
+        )
+        .await
+        {
+            Ok(rows) => rows,
             Err(e) => {
-                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
-            }
-        };
-
-        let rows = if let Some(ref workspace) = req.workspace {
-            match sqlx::query(
-                r#"
-                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider,
-                       c.parent_conversation_id, c.fork_type,
-                       p.external_id AS parent_external_id,
-                       p.platform_id AS parent_platform_id
-                FROM conversations c
-                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
-                WHERE c.source_id = 'pi' AND c.workspace = ?
-                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
-                "#,
-            )
-            .bind(workspace)
-            .fetch_all(&pool)
-            .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to query conversations: {e}"),
-                    );
-                }
-            }
-        } else {
-            match sqlx::query(
-                r#"
-                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider,
-                       c.parent_conversation_id, c.fork_type,
-                       p.external_id AS parent_external_id,
-                       p.platform_id AS parent_platform_id
-                FROM conversations c
-                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
-                WHERE c.source_id = 'pi'
-                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
-                "#,
-            )
-            .fetch_all(&pool)
-            .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to query conversations: {e}"),
-                    );
-                }
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to query oqto-log sessions: {e}"),
+                );
             }
         };
 
         let mut sessions = Vec::with_capacity(rows.len());
         for row in rows {
-            let id: String = row.get("id");
-            let external_id: Option<String> = row.get("external_id");
-            let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
-            let readable_id: Option<String> = row.get("readable_id");
-            let title: Option<String> = row.get("title");
-            let created_at: i64 = row.get("created_at");
-            let updated_at: Option<i64> = row.get("updated_at");
-            let workspace: Option<String> = row.get("workspace");
-            let model: Option<String> = row.get("model");
-            let provider: Option<String> = row.get("provider");
-            let parent_external_id: Option<String> =
-                row.try_get("parent_external_id").ok().flatten();
-            let parent_platform_id: Option<String> =
-                row.try_get("parent_platform_id").ok().flatten();
-            let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
-
-            // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
-            let session_id = platform_id
-                .filter(|s| !s.is_empty())
-                .or(external_id.clone())
-                .unwrap_or_else(|| id.clone());
-            let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
-            let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
-            let readable_id = readable_id.unwrap_or_default();
-            let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-            let parent_id = parent_platform_id
-                .filter(|s| !s.is_empty())
-                .or(parent_external_id);
-            let is_child = parent_id.is_some() || fork_type.is_some();
-
-            // SECURITY: In isolated multi-user mode, only return sessions whose
-            // workspace belongs to this Linux user. In single-user mode we allow
-            // any local workspace path under the user's history.
+            let workspace_path = row.workspace_id.unwrap_or_else(|| "global".to_string());
             if self.user_config.linux_users_enabled
                 && !self.user_config.single_user
-                && let Ok(home) = std::env::var("HOME")
-                && !workspace_path.starts_with(&home)
                 && workspace_path != "global"
+                && !workspace_path.starts_with(&home)
             {
                 tracing::warn!(
                     workspace = %workspace_path,
@@ -1875,19 +2038,30 @@ impl Runner {
                 continue;
             }
 
+            // Keep session listing hot: never scan Pi JSONL files here.
+            // Titles/readable ids are synced into oqto-log by explicit/background
+            // sync paths; blocking the sidebar on per-session file scans makes
+            // every workdir show 0 sessions until the full scan completes.
+            let title = row.title;
+            let readable_id = row.readable_id.unwrap_or_default();
+            let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
             sessions.push(WorkspaceChatSessionInfo {
-                id: session_id,
+                id: if row.platform_id.is_empty() {
+                    row.session_id
+                } else {
+                    row.platform_id
+                },
                 readable_id,
                 title,
-                parent_id,
+                parent_id: None,
                 workspace_path,
                 project_name,
-                created_at: created_at * 1000,
-                updated_at: updated_at_ms,
-                version: None,
-                is_child,
-                model,
-                provider,
+                created_at: parse_sqlite_datetime_ms(&row.created_at),
+                updated_at: parse_sqlite_datetime_ms(&row.updated_at),
+                version: Some(row.messages.max(0).to_string()),
+                is_child: false,
+                model: None,
+                provider: None,
             });
         }
 
@@ -1902,117 +2076,61 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
-            return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
-                session: None,
-            });
-        };
-
-        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
-            Ok(pool) => pool,
-            Err(e) => {
-                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
-            }
-        };
-
-        let (conversation_id, _resolved_external_id) =
-            match oqto_history::legacy_hstry::resolve_conversation_identity(
-                &pool,
-                &req.session_id,
-                None,
-            )
-            .await
-            {
-                Ok(Some(identity)) => identity,
-                Ok(None) => {
-                    return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
-                        session: None,
-                    });
-                }
-                Err(e) => {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to resolve conversation: {e}"),
-                    );
-                }
-            };
-
-        let row = match sqlx::query(
-            r#"
-            SELECT
-                c.id,
-                c.external_id,
-                c.platform_id,
-                c.readable_id,
-                c.title,
-                c.created_at,
-                c.updated_at,
-                c.workspace,
-                c.model,
-                c.provider,
-                c.parent_conversation_id,
-                c.fork_type,
-                p.external_id AS parent_external_id,
-                p.platform_id AS parent_platform_id
-            FROM conversations c
-            LEFT JOIN conversations p ON c.parent_conversation_id = p.id
-            WHERE c.id = ?
-            LIMIT 1
-            "#,
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let row = match oqto_history::oqto_log::ops::get_session(
+            std::path::Path::new(&home),
+            &req.session_id,
         )
-        .bind(&conversation_id)
-        .fetch_one(&pool)
         .await
         {
-            Ok(row) => row,
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+                    session: None,
+                });
+            }
             Err(e) => {
                 return error_response(
                     ErrorCode::IoError,
-                    format!("Failed to load conversation: {e}"),
+                    format!("Failed to load oqto-log session: {e}"),
                 );
             }
         };
 
-        let id: String = row.get("id");
-        let external_id: Option<String> = row.get("external_id");
-        let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
-        let readable_id: Option<String> = row.get("readable_id");
-        let title: Option<String> = row.get("title");
-        let created_at: i64 = row.get("created_at");
-        let updated_at: Option<i64> = row.get("updated_at");
-        let workspace: Option<String> = row.get("workspace");
-        let model: Option<String> = row.get("model");
-        let provider: Option<String> = row.get("provider");
-        let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
-        let parent_platform_id: Option<String> = row.try_get("parent_platform_id").ok().flatten();
-        let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
-
-        let session_id = platform_id
-            .filter(|s| !s.is_empty())
-            .or(external_id.clone())
-            .unwrap_or_else(|| id.clone());
-        let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
+        let workspace_path = row.workspace_id.unwrap_or_else(|| "global".to_string());
+        let session_info_name = row
+            .external_id
+            .as_deref()
+            .and_then(|external_id| oqto_pi::session_files::find_session_file(external_id, None))
+            .and_then(|path| read_last_session_info_name(&path));
+        let parsed_title = session_info_name
+            .as_deref()
+            .map(oqto_pi::session_parser::ParsedTitle::parse);
+        let title = parsed_title
+            .as_ref()
+            .map(|parsed| parsed.display_title().to_string())
+            .filter(|title| !title.is_empty());
+        let readable_id = parsed_title
+            .and_then(|parsed| parsed.readable_id)
+            .unwrap_or_default();
         let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
-        let readable_id = readable_id.unwrap_or_default();
-        let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-        let parent_id = parent_platform_id
-            .filter(|s| !s.is_empty())
-            .or(parent_external_id);
-        let is_child = parent_id.is_some() || fork_type.is_some();
-
         let session = WorkspaceChatSessionInfo {
-            id: session_id,
+            id: if row.platform_id.is_empty() {
+                row.session_id
+            } else {
+                row.platform_id
+            },
             readable_id,
             title,
-            parent_id,
+            parent_id: None,
             workspace_path,
             project_name,
-            created_at: created_at * 1000,
-            updated_at: updated_at_ms,
-            version: None,
-            is_child,
-            model,
-            provider,
+            created_at: parse_sqlite_datetime_ms(&row.created_at),
+            updated_at: parse_sqlite_datetime_ms(&row.updated_at),
+            version: Some(row.messages.max(0).to_string()),
+            is_child: false,
+            model: None,
+            provider: None,
         };
 
         RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
@@ -2030,39 +2148,53 @@ impl Runner {
             WorkspaceChatMessagesSource::Authoritative => {
                 let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
                     let home_path = std::path::Path::new(&home);
-                    let projected = match crate::oqto_log_projector::project_session_messages_auto(
-                        home_path,
-                        &req.session_id,
-                        req.limit,
-                    )
-                    .await
-                    {
-                        Ok(messages) => messages,
-                        Err(err) => {
-                            debug!(
-                                "get_workspace_chat_session_messages session={} source=oqto-log error={}",
-                                req.session_id, err
-                            );
-                            None
-                        }
-                    };
+                    let projected =
+                        match oqto_history::oqto_log::projector::project_session_messages_auto(
+                            home_path,
+                            &req.session_id,
+                            req.limit,
+                        )
+                        .await
+                        {
+                            Ok(messages) => messages,
+                            Err(err) => {
+                                debug!(
+                                    "get_workspace_chat_session_messages session={} source=oqto-log error={}",
+                                    req.session_id, err
+                                );
+                                None
+                            }
+                        };
 
                     if req.limit.is_none() {
-                        match projected {
-                            Some(messages) if !messages.is_empty() => Some(messages),
-                            _ => {
-                                let pi_jsonl_messages =
-                                    load_pi_jsonl_messages_for_session(home_path, &req.session_id)
-                                        .await;
-                                if let Some(messages) = &pi_jsonl_messages {
-                                    info!(
-                                        "get_workspace_chat_session_messages session={} source=pi-jsonl-fallback projected_count=0 jsonl_count={}",
-                                        req.session_id,
-                                        messages.len()
-                                    );
-                                }
-                                pi_jsonl_messages
-                            }
+                        if let Some(projected_messages) =
+                            projected.filter(|messages| !messages.is_empty())
+                        {
+                            // Keep chat opens instant, but still pull newer Pi JSONL
+                            // content into oqto-log in the background.
+                            let projected_count = projected_messages.len();
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            spawn_oqto_log_repair_from_jsonl(
+                                home_path.to_path_buf(),
+                                user_id,
+                                req.session_id.clone(),
+                                projected_count,
+                            );
+                            Some(projected_messages)
+                        } else {
+                            // Keep chat opens instant. Missing oqto-log history is
+                            // synced from Pi JSONL in the background; do not parse
+                            // JSONL synchronously on the request path.
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            spawn_oqto_log_repair_from_jsonl(
+                                home_path.to_path_buf(),
+                                user_id,
+                                req.session_id.clone(),
+                                0,
+                            );
+                            None
                         }
                     } else {
                         projected
@@ -2134,12 +2266,26 @@ impl Runner {
 
     async fn trx_list(&self, req: TrxListRequest) -> RunnerResponse {
         match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<TrxIssueData>> {
-            let store = open_or_init_trx_store(&req.workspace_path)?;
-            Ok(store
+            let requested_path = req.workspace_path.clone();
+            let resolved_root =
+                find_trx_root(&requested_path).unwrap_or_else(|| requested_path.clone());
+            tracing::info!(
+                requested_workspace = %requested_path.display(),
+                resolved_trx_root = %resolved_root.display(),
+                "runner trx_list resolving store"
+            );
+            let store = open_or_init_trx_store(&requested_path)?;
+            let issues: Vec<TrxIssueData> = store
                 .list(false)
                 .into_iter()
                 .map(trx_issue_to_data)
-                .collect())
+                .collect();
+            tracing::info!(
+                requested_workspace = %requested_path.display(),
+                issue_count = issues.len(),
+                "runner trx_list loaded issues"
+            );
+            Ok(issues)
         })
         .await
         {
@@ -2243,7 +2389,11 @@ impl Runner {
         }
     }
 
-    /// Update a workspace chat session (e.g., rename title) via hstry gRPC.
+    /// Update a workspace chat session title.
+    ///
+    /// Pi JSONL remains the source of truth for harness session metadata, so a
+    /// manual rename must reach Pi or append a `session_info` entry before any
+    /// compatibility projection is updated.
     async fn update_workspace_chat_session(
         &self,
         req: UpdateWorkspaceChatSessionRequest,
@@ -2252,149 +2402,85 @@ impl Runner {
             return error_response(ErrorCode::InvalidRequest, "No update fields provided");
         };
 
-        let Some(client) = self.pi_manager.hstry_client() else {
-            return error_response(ErrorCode::Internal, "hstry client not available");
-        };
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let external_session_id = oqto_history::oqto_log::ops::find_external_by_session(
+            std::path::Path::new(&home),
+            &req.session_id,
+        )
+        .await
+        .unwrap_or_else(|| req.session_id.clone());
 
-        // Update title via hstry gRPC (partial update -- only title is set)
-        if let Err(e) = client
-            .update_conversation(
-                &req.session_id,
-                Some(title.clone()),
-                None, // workspace unchanged
-                None, // model unchanged
-                None, // provider unchanged
-                None, // metadata unchanged
-                None, // readable_id unchanged
-                None, // harness unchanged
-                None, // platform_id unchanged
-            )
-            .await
-        {
-            return error_response(
-                ErrorCode::Internal,
-                format!("Failed to update session title: {e}"),
-            );
-        }
-
-        // Keep Pi JSONL in sync with manual rename.
-        // If the session is currently live, prefer sending SetSessionName to Pi.
-        // For inactive sessions, append a session_info entry directly to JSONL.
-        let mut live_set_name_applied = false;
-        if self
+        let live_set_name_applied = self
             .pi_manager
             .set_session_name(&req.session_id, &title)
             .await
-            .is_ok()
-        {
-            live_set_name_applied = true;
+            .is_ok();
+        if !live_set_name_applied {
+            match append_session_info_name_for_external_id(&external_session_id, &title).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return error_response(
+                        ErrorCode::SessionNotFound,
+                        format!(
+                            "Session {} not found in live runner or Pi JSONL",
+                            req.session_id
+                        ),
+                    );
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to append session rename to Pi JSONL: {e}"),
+                    );
+                }
+            }
         }
 
-        // Fetch updated session to return
-        match client.get_conversation(&req.session_id, None).await {
-            Ok(Some(conv)) => {
-                let workspace_path = conv
-                    .workspace
-                    .clone()
-                    .unwrap_or_else(|| "global".to_string());
-                let project_name =
-                    oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
+        let _ = oqto_history::oqto_log::ops::update_session_title(
+            std::path::Path::new(&home),
+            &req.session_id,
+            &title,
+        )
+        .await;
+        if external_session_id != req.session_id {
+            let _ = oqto_history::oqto_log::ops::update_session_title(
+                std::path::Path::new(&home),
+                &external_session_id,
+                &title,
+            )
+            .await;
+        }
 
-                // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
-                // to stay consistent with list_workspace_chat_sessions. The frontend
-                // routes everything by the Oqto UUID; returning the Pi native ID here
-                // causes manuallyRenamedRef to be keyed under the wrong ID and the
-                // rename gets reverted on the next refreshChatHistory cycle.
-                let session_id = conv
-                    .platform_id
-                    .as_ref()
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        if conv.external_id.is_empty() {
-                            req.session_id.clone()
-                        } else {
-                            conv.external_id.clone()
-                        }
-                    });
-
-                if !live_set_name_applied {
-                    let external_id = conv.external_id.clone();
-                    let jsonl_title = conv.title.clone().unwrap_or_else(|| title.clone());
-                    tokio::spawn(async move {
-                        let Some(path) = oqto_pi::session_files::find_session_file_async(
-                            external_id.clone(),
-                            None,
-                        )
-                        .await
-                        else {
-                            debug!(
-                                "No JSONL session file found for external_id={} while applying rename fallback",
-                                external_id
-                            );
-                            return;
-                        };
-
-                        let path_for_log = path.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            append_session_info_name(&path, &jsonl_title)
-                        })
-                        .await
-                        {
-                            Ok(Ok(())) => {
-                                debug!(
-                                    "Appended session_info rename fallback to {}",
-                                    path_for_log.display()
-                                );
-                            }
-                            Ok(Err(err)) => {
-                                warn!(
-                                    "Failed to append session_info rename fallback to {}: {}",
-                                    path_for_log.display(),
-                                    err
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    "rename fallback task failed for {}: {}",
-                                    path_for_log.display(),
-                                    err
-                                );
-                            }
-                        }
-                    });
-                }
-
-                // parent_conversation_id is an internal UUID; we pass it as-is
-                // (the frontend will match by parent_id if it knows this session)
-                let parent_id = conv.parent_conversation_id.clone();
-                let is_child = parent_id.is_some() || conv.fork_type.is_some();
-
+        match self
+            .get_workspace_chat_session(GetWorkspaceChatSessionRequest {
+                session_id: req.session_id.clone(),
+            })
+            .await
+        {
+            RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+                session: Some(mut session),
+            }) => {
+                session.title = Some(title);
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
-                    session: WorkspaceChatSessionInfo {
-                        id: session_id,
-                        readable_id: conv.readable_id.clone().unwrap_or_default(),
-                        title: conv.title.clone(),
-                        parent_id,
-                        workspace_path,
-                        project_name,
-                        created_at: conv.created_at_ms,
-                        updated_at: conv.updated_at_ms.unwrap_or(conv.created_at_ms),
-                        version: None,
-                        is_child,
-                        model: conv.model.clone(),
-                        provider: conv.provider.clone(),
-                    },
+                    session,
                 })
             }
-            Ok(None) => error_response(
-                ErrorCode::SessionNotFound,
-                format!("Session {} not found", req.session_id),
-            ),
-            Err(e) => error_response(
-                ErrorCode::Internal,
-                format!("Failed to fetch updated session: {e}"),
-            ),
+            _ => RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
+                session: WorkspaceChatSessionInfo {
+                    id: req.session_id,
+                    readable_id: String::new(),
+                    title: Some(title),
+                    parent_id: None,
+                    workspace_path: "global".to_string(),
+                    project_name: "global".to_string(),
+                    created_at: 0,
+                    updated_at: chrono::Utc::now().timestamp_millis(),
+                    version: None,
+                    is_child: false,
+                    model: None,
+                    provider: None,
+                },
+            }),
         }
     }
 
@@ -2441,7 +2527,11 @@ impl Runner {
                 }
             }
 
-            let recovered_messages = read_jsonl_agent_messages(&session.session_file);
+            let records = read_jsonl_message_records(&session.session_file);
+            let recovered_messages: Vec<_> = records
+                .iter()
+                .map(|record| record.message.clone())
+                .collect();
             if recovered_messages.is_empty() {
                 skipped += 1;
                 continue;
@@ -2488,7 +2578,7 @@ impl Runner {
                     .await
                         && sess_stats.messages < recovered_messages.len()
                     {
-                        match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                        match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                             home_path,
                             &user_id,
                             workspace_id,
@@ -2496,7 +2586,7 @@ impl Runner {
                             &oqto_session_id,
                             Some(&session.external_id),
                             &session.external_id,
-                            &recovered_messages,
+                            &records,
                         )
                         .await
                         {
@@ -2547,27 +2637,6 @@ impl Runner {
             skipped_files: skipped,
             failed_files: failed,
         })
-    }
-
-    /// Search chat history via hstry in the runner user's context.
-    async fn search_hstry(&self, req: SearchHstryRequest) -> RunnerResponse {
-        let query = req.query.trim();
-        if query.is_empty() {
-            return RunnerResponse::HstrySearchResults(HstrySearchResultsResponse {
-                query: req.query,
-                hits: Vec::new(),
-                total: 0,
-            });
-        }
-
-        match oqto_history::search::search_hstry(query, req.limit).await {
-            Ok(hits) => RunnerResponse::HstrySearchResults(HstrySearchResultsResponse {
-                query: query.to_string(),
-                total: hits.len(),
-                hits,
-            }),
-            Err(err) => error_response(ErrorCode::Internal, format!("hstry search failed: {err}")),
-        }
     }
 
     // Pi Session Management Operations
@@ -2763,75 +2832,48 @@ impl Runner {
         }
     }
 
-    /// Delete a Pi session: close the process, remove from hstry, and delete the JSONL file.
+    /// Delete a Pi session: close the process, remove from oqto-log, and delete the JSONL file.
     async fn pi_delete_session(&self, req: PiDeleteSessionRequest) -> RunnerResponse {
         info!("pi_delete_session: session_id={}", req.session_id);
 
-        // Resolve the hstry external_id before closing (the session knows its Pi native ID).
-        let hstry_external_id = self.pi_manager.hstry_external_id(&req.session_id).await;
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let external_id = oqto_history::oqto_log::ops::find_external_by_session(
+            std::path::Path::new(&home),
+            &req.session_id,
+        )
+        .await
+        .unwrap_or_else(|| req.session_id.clone());
 
-        // Close the Pi process (best-effort; may not be running).
         let _ = self.pi_manager.close_session(&req.session_id).await;
 
-        // Delete from hstry via gRPC.
-        if let Some(hstry_client) = self.pi_manager.hstry_client()
-            && let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await
+        if let Err(e) = oqto_history::oqto_log::ops::delete_session(
+            std::path::Path::new(&home),
+            &req.session_id,
+        )
+        .await
         {
             warn!(
-                "Failed to delete conversation from hstry for session {}: {}",
+                "Failed to delete oqto-log session {}: {}",
                 req.session_id, e
             );
         }
 
-        // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
-        // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path()
-            && let Ok(pool) = oqto_history::legacy_hstry::open_hstry_pool(&db_path).await
-        {
-            // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
-            let _ = sqlx::query(
-                "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
-            )
-            .bind(&hstry_external_id)
-            .bind(&req.session_id)
-            .bind(&hstry_external_id)
-            .execute(&pool)
-            .await;
-
-            // Also try with the oqto session ID as external_id (in case it was stored that way)
-            if hstry_external_id != req.session_id {
-                let _ = sqlx::query(
-                    "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
-                )
-                .bind(&req.session_id)
-                .bind(&hstry_external_id)
-                .execute(&pool)
-                .await;
-            }
-        }
-
-        // Delete the Pi JSONL session file.
-        // Pi session files are at: ~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl
-        // We search for files matching the Pi native session ID.
         let sessions_dir = dirs::home_dir()
             .unwrap_or_default()
             .join(".pi/agent/sessions");
         if sessions_dir.is_dir() {
-            // The hstry_external_id is the Pi native session ID (UUID).
-            // Session files may be named like: {timestamp}_{session_id}.jsonl
             if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if !path.is_dir() {
                         continue;
                     }
-                    // Each subdirectory is a workspace-scoped session dir.
                     if let Ok(files) = std::fs::read_dir(&path) {
                         for file in files.flatten() {
                             let fname = file.file_name();
                             let fname_str = fname.to_string_lossy();
                             if fname_str.ends_with(".jsonl")
-                                && (fname_str.contains(&hstry_external_id)
+                                && (fname_str.contains(&external_id)
                                     || fname_str.contains(&req.session_id))
                             {
                                 info!("Deleting Pi session file: {}", file.path().display());
@@ -2901,9 +2943,7 @@ impl Runner {
         if let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
             && !buffer.is_empty()
         {
-            // Convert ChatMessageProto back to AgentMessage for protocol compat.
-            // This is temporary until we migrate ws_multiplexed to use
-            // ChatMessageProto directly (scope 5 completion).
+            // Convert projected chat messages back to AgentMessage for legacy protocol compat.
             let agent_msgs: Vec<oqto_pi::AgentMessage> = buffer
                 .into_iter()
                 .map(crate::protocol::chat_proto_to_agent_msg)
@@ -3460,11 +3500,18 @@ impl Runner {
             );
         };
 
+        if let Err(e) = validate_fork_cutoff(&fork_session_file, &req.entry_id) {
+            return error_response(
+                ErrorCode::PiSessionInvalidState,
+                format!("Fork cutoff verification failed: {}", e),
+            );
+        }
+
         let mut child_config = old_config;
         // Point at the forked JSONL so the new process resumes from it
         child_config.session_file = Some(fork_session_file.clone());
         child_config.continue_session = None; // session_file takes precedence
-        let child_workspace = child_config.cwd.to_string_lossy().to_string();
+        let _child_workspace = child_config.cwd.to_string_lossy().to_string();
 
         let new_session_id = match self
             .pi_manager
@@ -3487,37 +3534,6 @@ impl Runner {
             fork_result.new_session_file,
             req.session_id
         );
-
-        // Write child conversation to hstry with parent linkage and platform_id.
-        if let Some(client) = self.pi_manager.hstry_client() {
-            let pi_id = fork_result
-                .new_session_id
-                .as_deref()
-                .unwrap_or(&new_session_id);
-            let parent_external_id = self.pi_manager.hstry_external_id(&req.session_id).await;
-            if let Err(e) = client
-                .update_conversation_full(
-                    pi_id,
-                    None,
-                    Some(child_workspace.clone()),
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some("pi".to_string()),
-                    Some(new_session_id.clone()),
-                    Some(parent_external_id),
-                    None,
-                    Some("fork".to_string()),
-                )
-                .await
-            {
-                warn!(
-                    "Failed to persist fork parent/platform linkage in hstry: {}",
-                    e
-                );
-            }
-        }
 
         RunnerResponse::PiForkResult(PiForkResultResponse {
             session_id: req.session_id,
@@ -4152,46 +4168,33 @@ fn sd_notify_ready() {
 /// via `trx init --prefix X` before any oqto-side trx call.
 const TRX_DEFAULT_PREFIX: &str = "trx";
 
-/// Open the trx store at `root`, auto-initializing a fresh V2 (CRDT) store
-/// if `.trx` does not yet exist. Mirrors the auto-init UX that the legacy
-/// `trx list` shell-out provided.
-fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::UnifiedStore> {
-    let root_buf = root.to_path_buf();
-    match trx_core::UnifiedStore::open_at(root_buf.clone()) {
+/// Open the trx store at `root`, auto-initializing when not yet initialized.
+fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::Store> {
+    let store_root = find_trx_root(root).unwrap_or_else(|| root.to_path_buf());
+    match trx_core::Store::open_at(store_root.clone()) {
         Ok(store) => Ok(store),
         Err(trx_core::Error::NotInitialized) => {
-            init_trx_store_v2(root)?;
-            trx_core::UnifiedStore::open_at(root_buf)
-                .map_err(|e| anyhow::anyhow!("trx open after init failed: {e}"))
+            let current = std::env::current_dir().context("reading current dir")?;
+            std::env::set_current_dir(&store_root)
+                .with_context(|| format!("setting cwd to {}", store_root.display()))?;
+            let init_result = trx_core::Store::init(TRX_DEFAULT_PREFIX);
+            let _ = std::env::set_current_dir(current);
+            init_result.map_err(|e| anyhow::anyhow!("trx init failed: {e}"))
         }
         Err(e) => Err(anyhow::anyhow!("trx open failed: {e}")),
     }
 }
 
-/// Create a fresh V2 (CRDT) trx store layout at `root` (`.trx/crdt/`,
-/// `.trx/config.toml`, `.trx/ISSUES.md`). Hardcodes the on-disk layout
-/// since trx-core does not expose its layout constants publicly.
-fn init_trx_store_v2(root: &std::path::Path) -> anyhow::Result<()> {
-    let trx_dir = root.join(".trx");
-    let crdt_dir = trx_dir.join("crdt");
-    std::fs::create_dir_all(&crdt_dir)
-        .with_context(|| format!("creating {}", crdt_dir.display()))?;
-
-    let config = trx_core::Config {
-        storage_version: trx_core::StorageVersion::V2,
-        prefix: TRX_DEFAULT_PREFIX.to_string(),
-        ..trx_core::Config::default()
-    };
-    config
-        .save(&trx_dir.join("config.toml"))
-        .map_err(|e| anyhow::anyhow!("writing trx config: {e}"))?;
-
-    let issues_md = trx_dir.join("ISSUES.md");
-    if !issues_md.exists() {
-        std::fs::write(&issues_md, "# Issues\n\nNo issues yet.\n")
-            .with_context(|| format!("writing {}", issues_md.display()))?;
+fn find_trx_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".trx").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
     }
-    Ok(())
 }
 
 /// Convert a trx-core `Issue` into the wire-format `TrxIssueData` that
@@ -4277,6 +4280,32 @@ mod tests {
     }
 
     #[test]
+    fn pi_jsonl_record_reader_preserves_entry_ids_and_parents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"session","version":3,"id":"pi-session","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}
+{"type":"message","id":"aaaa1111","parentId":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"hello","timestamp":1770000000000}}
+{"type":"message","id":"bbbb2222","parentId":"aaaa1111","timestamp":"2026-01-01T00:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"timestamp":1770000001000}}
+"#,
+        )
+        .expect("write jsonl");
+
+        let records = read_jsonl_message_records(&path);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].source_entry_id, "aaaa1111");
+        assert_eq!(records[0].parent_source_entry_id, None);
+        assert_eq!(records[0].source_sequence, 1);
+        assert_eq!(records[1].source_entry_id, "bbbb2222");
+        assert_eq!(
+            records[1].parent_source_entry_id.as_deref(),
+            Some("aaaa1111")
+        );
+        assert_eq!(records[1].source_sequence, 2);
+    }
+
+    #[test]
     fn persistence_contracts_authoritative_path_uses_only_persisted_history() {
         let authoritative = vec![
             proto("hist-u1", "user", 1_000),
@@ -4290,6 +4319,41 @@ mod tests {
         assert_eq!(selected.len(), authoritative.len());
         assert_eq!(selected[0].id, "hist-u1");
         assert_eq!(selected[1].id, "hist-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_authoritative_path_keeps_oqto_log_even_when_jsonl_is_richer() {
+        let projected = vec![proto("hist-a1", "assistant", 2_000)];
+        let jsonl = vec![
+            proto("jsonl-u1", "user", 1_000),
+            proto("jsonl-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_richest_authoritative_messages(Some(projected), Some(jsonl));
+
+        assert_eq!(source, "oqto-log");
+        let selected = selected.expect("selected messages");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "hist-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_authoritative_path_keeps_oqto_log_when_counts_match() {
+        let projected = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 2_000),
+        ];
+        let jsonl = vec![
+            proto("jsonl-u1", "user", 1_000),
+            proto("jsonl-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_richest_authoritative_messages(Some(projected), Some(jsonl));
+
+        assert_eq!(source, "oqto-log");
+        assert_eq!(selected.expect("selected messages")[0].id, "hist-u1");
     }
 
     #[test]

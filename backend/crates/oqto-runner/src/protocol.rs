@@ -128,9 +128,6 @@ pub enum RunnerRequest {
     /// Repair missing workspace chat session metadata by scanning Pi JSONL session files.
     RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest),
 
-    /// Search chat history via hstry in the runner user's context.
-    SearchHstry(SearchHstryRequest),
-
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -407,9 +404,6 @@ pub enum RunnerResponse {
 
     /// Workspace chat history repair result.
     WorkspaceChatHistoryRepaired(WorkspaceChatHistoryRepairResponse),
-
-    /// hstry search results.
-    HstrySearchResults(HstrySearchResultsResponse),
 
     // ========================================================================
     // Memory Responses
@@ -805,20 +799,6 @@ pub struct RepairWorkspaceChatHistoryRequest {
     /// workspace path matches this prefix are repaired.
     #[serde(default)]
     pub workspace: Option<String>,
-}
-
-/// Request to search hstry chat history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchHstryRequest {
-    /// Search query.
-    pub query: String,
-    /// Maximum results to return.
-    #[serde(default = "default_hstry_limit")]
-    pub limit: usize,
-}
-
-fn default_hstry_limit() -> usize {
-    50
 }
 
 // ============================================================================
@@ -1666,79 +1646,17 @@ pub struct WorkspaceChatHistoryRepairResponse {
     pub failed_files: usize,
 }
 
-/// Response with hstry search results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HstrySearchResultsResponse {
-    /// Search query.
-    pub query: String,
-    /// Matching search hits.
-    pub hits: Vec<oqto_history::search::HstrySearchHit>,
-    /// Total matches available.
-    pub total: usize,
-}
+/// Chat message part protocol shape for runner communication.
+///
+/// This is a compatibility alias to the neutral projection DTO so chat/history
+/// shapes are owned by `oqto-protocol`, not the runner runtime crate.
+pub type ChatMessagePartProto = oqto_protocol::projection::ProjectedChatMessagePart;
 
-/// Chat message part (protocol type for runner communication).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessagePartProto {
-    /// Part ID.
-    pub id: String,
-    /// Part type: "text", "tool", etc.
-    pub part_type: String,
-    /// Text content (for text parts).
-    pub text: Option<String>,
-    /// Pre-rendered HTML (if render=true was requested).
-    pub text_html: Option<String>,
-    /// Tool name (for tool parts).
-    pub tool_name: Option<String>,
-    /// Tool call ID linking tool_call to tool_result (for tool parts).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    /// Tool input (for tool parts).
-    pub tool_input: Option<serde_json::Value>,
-    /// Tool output (for tool parts).
-    pub tool_output: Option<String>,
-    /// Tool status (for tool parts).
-    pub tool_status: Option<String>,
-    /// Tool title/summary (for tool parts).
-    pub tool_title: Option<String>,
-}
-
-/// Chat message (protocol type for runner communication).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessageProto {
-    /// Message ID.
-    pub id: String,
-    /// Session ID.
-    pub session_id: String,
-    /// Role: user, assistant.
-    pub role: String,
-    /// Created timestamp (ms since epoch).
-    pub created_at: i64,
-    /// Completed timestamp (ms since epoch).
-    pub completed_at: Option<i64>,
-    /// Parent message ID.
-    pub parent_id: Option<String>,
-    /// Model ID.
-    pub model_id: Option<String>,
-    /// Provider ID.
-    pub provider_id: Option<String>,
-    /// Agent name.
-    pub agent: Option<String>,
-    /// Summary title.
-    pub summary_title: Option<String>,
-    /// Input tokens.
-    pub tokens_input: Option<i64>,
-    /// Output tokens.
-    pub tokens_output: Option<i64>,
-    /// Reasoning tokens.
-    pub tokens_reasoning: Option<i64>,
-    /// Cost in USD.
-    pub cost: Option<f64>,
-    /// Client-generated correlation ID for optimistic user message reconciliation.
-    pub client_id: Option<String>,
-    /// Message parts.
-    pub parts: Vec<ChatMessagePartProto>,
-}
+/// Chat message protocol shape for runner communication.
+///
+/// This is a compatibility alias to the neutral projection DTO so chat/history
+/// shapes are owned by `oqto-protocol`, not the runner runtime crate.
+pub type ChatMessageProto = oqto_protocol::projection::ProjectedChatMessage;
 
 // ============================================================================
 // AgentMessage -> ChatMessageProto conversion
@@ -1799,7 +1717,7 @@ pub fn hstry_proto_to_chat_proto(
                                 .and_then(|v| v.as_str())
                                 .map(String::from),
                             tool_input: None,
-                            tool_output: part.get("output").map(|v| v.to_string()),
+                            tool_output: part.get("output").cloned(),
                             tool_status: Some(
                                 if part
                                     .get("is_error")
@@ -1978,7 +1896,7 @@ fn decode_agent_message_parts(
             tool_name: msg.tool_name.clone(),
             tool_call_id: msg.tool_call_id.clone(),
             tool_input: None,
-            tool_output: text,
+            tool_output: text.map(serde_json::Value::String),
             tool_status: Some(
                 if msg.is_error.unwrap_or(false) {
                     "error"
@@ -2105,7 +2023,7 @@ fn decode_agent_message_parts(
                         tool_name: obj.get("name").and_then(|v| v.as_str()).map(String::from),
                         tool_call_id: Some(tool_call_id),
                         tool_input: None,
-                        tool_output: output_text,
+                        tool_output: output_text.map(serde_json::Value::String),
                         tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
                         tool_title: None,
                     });
@@ -2164,7 +2082,13 @@ pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> oqto_pi::AgentMessage
     let (content, tool_call_id, tool_name, is_error) =
         if proto.parts.len() == 1 && (proto.parts[0].part_type == "tool_result") {
             let p = &proto.parts[0];
-            let output = p.tool_output.as_deref().unwrap_or("").to_string();
+            let output = p
+                .tool_output
+                .as_ref()
+                .map_or_else(String::new, |value| match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                });
             let err = p.tool_status.as_deref().is_some_and(|s| s == "error");
             (
                 serde_json::Value::String(output),

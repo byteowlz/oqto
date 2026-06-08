@@ -92,6 +92,11 @@ async fn async_invite_codes(ctx: RuntimeContext, cmd: InviteCodesCommand) -> Res
     handle_invite_codes(&ctx, cmd).await
 }
 
+#[tokio::main]
+async fn async_search(cmd: SearchCommand) -> Result<()> {
+    handle_search(cmd).await
+}
+
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -104,7 +109,8 @@ fn try_main() -> Result<()> {
         Command::Init(cmd) => handle_init(&ctx, cmd),
         Command::Config { command } => handle_config(&ctx, command),
         Command::InviteCodes { command } => async_invite_codes(ctx, command),
-        Command::Runner { command } => handle_runner(command),
+        Command::Runner { command } => handle_runner(&ctx, command),
+        Command::Search { command } => async_search(command),
         Command::Completions { shell } => handle_completions(shell),
     }
 }
@@ -200,6 +206,11 @@ enum Command {
         #[command(subcommand)]
         command: RunnerCommand,
     },
+    /// Search Oqto data stores
+    Search {
+        #[command(subcommand)]
+        command: SearchCommand,
+    },
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -260,6 +271,27 @@ enum InviteCodesCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum SearchCommand {
+    /// Search canonical oqto-log timeline messages
+    Timeline(SearchTimelineCommand),
+}
+
+#[derive(Debug, Clone, Args)]
+struct SearchTimelineCommand {
+    /// Query string to search for
+    query: String,
+    /// Search scope: workdir | workspace | all
+    #[arg(long, default_value = "workdir")]
+    scope: String,
+    /// Workspace id/path to search. Defaults to current directory for workdir scope.
+    #[arg(long = "workspace-id")]
+    workspace_id: Option<String>,
+    /// Maximum number of results
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+}
+
+#[derive(Debug, Subcommand)]
 enum RunnerCommand {
     /// Start the oqto-runner daemon
     Start,
@@ -282,6 +314,9 @@ struct RunnerMigrateOqtoLogCommand {
     /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
     #[arg(long, default_value = "bootstrap")]
     mode: String,
+    /// Restrict Pi JSONL import/validation to this workspace root.
+    #[arg(long, value_name = "PATH")]
+    workspace_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -1345,7 +1380,48 @@ fn handle_completions(shell: Shell) -> Result<()> {
     Ok(())
 }
 
-fn handle_runner(command: RunnerCommand) -> Result<()> {
+async fn handle_search(command: SearchCommand) -> Result<()> {
+    match command {
+        SearchCommand::Timeline(cmd) => {
+            let user_home =
+                dirs::home_dir().context("could not resolve HOME for oqto-log search")?;
+            let cwd = std::env::current_dir().context("resolve current directory")?;
+            let scope = match cmd.scope.as_str() {
+                "workdir" => oqto_history::oqto_log::search::TimelineSearchScope::Workdir,
+                "workspace" => oqto_history::oqto_log::search::TimelineSearchScope::Workspace,
+                "all" => oqto_history::oqto_log::search::TimelineSearchScope::All,
+                other => anyhow::bail!(
+                    "unsupported timeline search scope '{other}'; expected workdir|workspace|all"
+                ),
+            };
+            let workspace_id_owned = match (scope, cmd.workspace_id) {
+                (oqto_history::oqto_log::search::TimelineSearchScope::Workdir, Some(id))
+                | (oqto_history::oqto_log::search::TimelineSearchScope::Workspace, Some(id)) => {
+                    Some(id)
+                }
+                (oqto_history::oqto_log::search::TimelineSearchScope::Workspace, None) => {
+                    Some(cwd.to_string_lossy().to_string())
+                }
+                _ => None,
+            };
+            let response = oqto_history::oqto_log::search::search_timeline(
+                &oqto_history::oqto_log::search::TimelineSearchRequest {
+                    user_home: &user_home,
+                    query: &cmd.query,
+                    scope,
+                    workspace_id: workspace_id_owned.as_deref(),
+                    cwd: Some(&cwd),
+                    limit: cmd.limit,
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+    }
+    Ok(())
+}
+
+fn handle_runner(ctx: &RuntimeContext, command: RunnerCommand) -> Result<()> {
     use std::process::Command as StdCommand;
 
     // Get the socket path
@@ -1460,9 +1536,9 @@ fn handle_runner(command: RunnerCommand) -> Result<()> {
             Ok(())
         }
         RunnerCommand::Restart => {
-            handle_runner(RunnerCommand::Stop)?;
+            handle_runner(ctx, RunnerCommand::Stop)?;
             std::thread::sleep(std::time::Duration::from_millis(500));
-            handle_runner(RunnerCommand::Start)
+            handle_runner(ctx, RunnerCommand::Start)
         }
         RunnerCommand::Status => {
             if is_running() {
@@ -1521,6 +1597,30 @@ WantedBy=default.target
         RunnerCommand::MigrateOqtoLog(cmd) => {
             let home = env::var("HOME").context("HOME not set")?;
             let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let workspace_root = match cmd.workspace_root.clone() {
+                Some(root) => Some(root),
+                None => {
+                    let linux_username = user.clone();
+                    let workspace = if ctx.config.local.single_user {
+                        ctx.config
+                            .local
+                            .workspace_dir
+                            .replace("/{linux_username}", "")
+                            .replace("{linux_username}/", "")
+                            .replace("{linux_username}", "")
+                            .replace("/{user_id}", "")
+                            .replace("{user_id}/", "")
+                            .replace("{user_id}", "")
+                    } else {
+                        ctx.config
+                            .local
+                            .workspace_dir
+                            .replace("{linux_username}", &linux_username)
+                            .replace("{user_id}", &user)
+                    };
+                    Some(expand_str_path(&workspace)?)
+                }
+            };
             let rt = tokio::runtime::Runtime::new()?;
 
             match cmd.mode.as_str() {
@@ -1580,6 +1680,35 @@ WantedBy=default.target
                     }
                     Ok(())
                 }
+                "validate-changed" => {
+                    let report = rt.block_on(async {
+                        crate::oqto_log::validator::validate_bootstrap_import_changed(Path::new(
+                            &home,
+                        ))
+                        .await
+                    })?;
+
+                    println!(
+                        "oqto-log validation (changed): sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        report.sessions_checked,
+                        report.sessions_ok,
+                        report.sessions_mismatch,
+                        report.jsonl_messages_total,
+                        report.oqto_log_messages_total
+                    );
+                    if !report.mismatches.is_empty() {
+                        for mismatch in report.mismatches.iter().take(20) {
+                            println!("mismatch: {}", mismatch);
+                        }
+                    }
+                    if report.sessions_mismatch > 0 {
+                        return Err(anyhow!(
+                            "oqto-log validation failed: {} session mismatch(es)",
+                            report.sessions_mismatch
+                        ));
+                    }
+                    Ok(())
+                }
                 "diagnostics" => {
                     let summary = rt.block_on(async {
                         crate::oqto_log::ops::diagnostics(Path::new(&home)).await
@@ -1605,20 +1734,54 @@ WantedBy=default.target
                     Ok(())
                 }
                 "sync-identities" => {
-                    let summary = rt.block_on(async {
-                        crate::oqto_log::ops::sync_identities_from_hstry(Path::new(&home), &user)
-                            .await
+                    let stats = rt.block_on(async {
+                        let stats = crate::oqto_log::importer::fast_import_identities_from_pi_jsonl(
+                            Path::new(&home),
+                            &user,
+                            workspace_root.as_deref(),
+                        )
+                        .await?;
+                        if let Some(root) = workspace_root.as_deref() {
+                            let deleted = crate::oqto_log::ops::delete_identity_only_sessions_outside_workspace(
+                                Path::new(&home),
+                                root,
+                            )
+                            .await?;
+                            if deleted > 0 {
+                                println!("oqto-log identity cleanup: deleted_out_of_scope_identity_only_sessions={deleted}");
+                            }
+                            let normalized = crate::oqto_log::ops::normalize_session_timestamps_for_workspace(
+                                Path::new(&home),
+                                root,
+                            )
+                            .await?;
+                            if normalized > 0 {
+                                println!("oqto-log identity cleanup: normalized_session_timestamps={normalized}");
+                            }
+                        }
+                        anyhow::Ok(stats)
                     })?;
                     println!(
-                        "oqto-log identity sync complete: conversations_scanned={}, sessions_upserted={}, dbs_touched={}",
-                        summary.conversations_scanned,
-                        summary.sessions_upserted,
-                        summary.dbs_touched
+                        "oqto-log identity sync complete: scanned_files={}, imported_sessions={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.skipped_files,
+                        stats.failed_files
                     );
+                    if !stats.failure_samples.is_empty() {
+                        for sample in stats.failure_samples.iter().take(25) {
+                            println!("identity-sync-failure: {}", sample);
+                        }
+                    }
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!(
+                            "oqto-log identity sync had failures (see identity-sync-failure lines)"
+                        ));
+                    }
                     Ok(())
                 }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex|sync-identities",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|sync-identities",
                     other
                 )),
             }
@@ -2549,39 +2712,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             }
         }
 
-        info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
+        info!("Skipping hstry runtime initialization in multi-user mode");
     } else if ctx.config.hstry.enabled {
-        // Always auto-start hstry daemon and connect.
-        let hstry_config = history::HstryServiceConfig {
-            binary: ctx.config.hstry.binary.clone(),
-            auto_start: true,
-            startup_timeout: std::time::Duration::from_secs(10),
-        };
-        let hstry_manager = history::HstryServiceManager::new(hstry_config);
-
-        // Ensure daemon is running (auto-starts if needed). Even if this
-        // readiness check fails, keep hstry client enabled so runtime calls can
-        // self-heal and reconnect (important during restarts/redeploy races).
-        if let Err(e) = hstry_manager.ensure_running().await {
-            warn!(
-                "Failed to start/verify hstry daemon: {}. Keeping client enabled and retrying lazily.",
-                e
-            );
-        } else {
-            info!("hstry daemon is running");
-        }
-
-        // Create client and connect (best effort).
-        let hstry_client = history::HstryClient::new();
-        if let Err(e) = hstry_client.connect().await {
-            warn!(
-                "Failed to connect to hstry daemon: {}. Will retry on first use.",
-                e
-            );
-        } else {
-            info!("hstry client connected");
-        }
-        state = state.with_hstry(hstry_client);
+        warn!("Ignoring legacy hstry runtime config; Oqto uses oqto-log for history");
     } else {
         debug!("hstry integration disabled");
     }
@@ -3525,10 +3658,15 @@ mod tests {
 
     #[test]
     fn local_runtime_wiring_sets_runner_pattern_in_single_user_mode() {
-        let mut local = LocalModeConfig::default();
-        local.single_user = true;
-        local.linux_users.enabled = false;
-        local.runner_socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+        let local = LocalModeConfig {
+            single_user: true,
+            linux_users: LinuxUsersConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            runner_socket_pattern: Some("/run/user/{uid}/oqto-runner.sock".to_string()),
+            ..Default::default()
+        };
 
         let (linux_users, pattern) =
             resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());

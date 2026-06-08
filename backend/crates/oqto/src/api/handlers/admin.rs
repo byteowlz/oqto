@@ -697,7 +697,7 @@ pub async fn update_user(
 /// Delete a user (admin only).
 ///
 /// In multi-user mode, also deletes the Linux user via oqto-usermgr.
-/// This stops user services (runner, hstry, mmry), disables linger,
+/// This stops user services (runner, mmry), disables linger,
 /// removes the home directory, and cleans up the runner socket.
 #[instrument(skip(state, _user))]
 pub async fn delete_user(

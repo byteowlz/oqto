@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Oqto Backup Encryption Strategy</title>
+<style>
+  :root { --bg:#0d1117; --fg:#c9d1d9; --accent:#58a6ff; --border:#30363d; --ok:#238636; --warn:#d29922; --bad:#da3633; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg); line-height:1.6; }
+  h1 { font-size:1.6rem; margin-bottom:0.5rem; }
+  h2 { font-size:1.1rem; color:var(--accent); margin-top:2rem; border-bottom:1px solid var(--border); padding-bottom:0.3rem; }
+  .subtitle { color:#8b949e; font-size:0.9rem; margin-bottom:2rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:1.2rem; }
+  .card { border:1px solid var(--border); border-radius:8px; padding:1.2rem; background:#161b22; }
+  .card.recommended { border-color:var(--ok); }
+  .card .badge { display:inline-block; font-size:0.7rem; font-weight:700; text-transform:uppercase; padding:2px 8px; border-radius:999px; margin-bottom:0.6rem; }
+  .badge-reject { background:var(--bad); color:#fff; }
+  .badge-rec { background:var(--ok); color:#fff; }
+  .badge-opt { background:var(--warn); color:#000; }
+  .card h3 { margin:0 0 0.6rem 0; font-size:1.05rem; }
+  .card p { font-size:0.88rem; margin:0 0 0.8rem 0; }
+  table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+  td,th { border:1px solid var(--border); padding:6px 8px; vertical-align:top; }
+  th { background:#21262d; text-align:left; }
+  .pros { color:#7ee787; }
+  .cons { color:#ffa198; }
+  .verdict { font-weight:700; margin-top:0.8rem; }
+  .diagram { white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,monospace; font-size:0.78rem; background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:1rem; overflow-x:auto; margin-top:1rem; }
+</style>
+</head>
+<body>
+<h1>Oqto Backup &amp; Data Encryption Strategy</h1>
+<div class="subtitle">How much should we encrypt? Options A through D compared.</div>
+
+<div class="grid">
+
+<div class="card">
+  <span class="badge badge-reject">Reject</span>
+  <h3>A. Encrypt secrets only</h3>
+  <p>Encrypt obvious secret files (<code>auth.json</code>, <code>eavs.env</code>, <code>keys.db</code>, <code>setup-state.env</code>) in backups. Leave history DBs, session JSONL, and workspace code as cleartext.</p>
+  <table><tr><th>Pros</th><th>Cons</th></tr><tr><td class="pros">+ Simplest to implement<br>+ Fastest restore</td><td class="cons">&ndash; Chat logs / prompts exposed on backup theft<br>&ndash; Workspace code exposed<br>&ndash; Inconsistent mental model</td></tr></table>
+  <div class="verdict">Verdict: <span class="cons">Reject</span> &mdash; chat logs contain sensitive business logic and personal data. Treating them as "non-secret" is a classification error.</div>
+</div>
+
+<div class="card recommended">
+  <span class="badge badge-rec">Recommended baseline</span>
+  <h3>B. Encrypt everything in backups</h3>
+  <p>Encrypt every backup archive with a per-user symmetric key. Contents are decrypted only at restore time on the target host.</p>
+  <table><tr><th>Pros</th><th>Cons</th></tr><tr><td class="pros">+ Uniform policy: backed up &rarr; encrypted<br>+ Single key per user (easy rotation)<br>+ Safe on any untrusted object store</td><td class="cons">&ndash; Key escrow problem<br>&ndash; Granular restore decrypts whole archive</td></tr></table>
+  <div class="verdict">Verdict: <span class="pros">Accepted</span> &mdash; highest impact, lowest operational cost. Defends the most likely threat (backup theft).</div>
+</div>
+
+<div class="card">
+  <span class="badge badge-opt">Opt-in hardening</span>
+  <h3>C. Encrypt all data at rest + backups</h3>
+  <p>Use SQLCipher for every SQLite DB. Encrypt config files individually. Backups are encrypted archives of already-encrypted files.</p>
+  <table><tr><th>Pros</th><th>Cons</th></tr><tr><td class="pros">+ Defense in depth (disk + backup)<br>+ Per-database passphrases possible<br>+ Compliance friendly</td><td class="cons">&ndash; SQLCipher compile-time dep change<br>&ndash; ~5-15% SQLite perf hit<br>&ndash; Key management explosion</td></tr></table>
+  <div class="verdict">Verdict: <span class="pros">Opt-in</span> &mdash; enable via feature flag for compliance-sensitive multi-user deployments.</div>
+</div>
+
+<div class="card">
+  <span class="badge badge-opt">Out of scope</span>
+  <h3>D. End-to-end fortress</h3>
+  <p>Strictest: SQLCipher at-rest + encrypted backups + mTLS everywhere + short-lived keys + HSM.</p>
+  <table><tr><th>Pros</th><th>Cons</th></tr><tr><td class="pros">+ Maximum security posture<br>+ Audit-friendly</td><td class="cons">&ndash; High implementation cost<br>&ndash; Operational complexity<br>&ndash; Overkill for self-hosted</td></tr></table>
+  <div class="verdict">Verdict: <span class="cons">Defer</span> &mdash; only justified for multi-tenant SaaS or regulated enterprise. Can add later without breaking B/C.</div>
+</div>
+
+</div>
+
+<h2>Proposed Architecture: B + Optional C</h2>
+<div class="diagram">
+&#9500;&#9472;&#9472; Oqto Host
+&#9474;
+&#9474;   Live data (cleartext by default)
+&#9474;   &#9500;&#9472; oqto-log.sqlite
+&#9474;   &#9500;&#9472; hstry.db
+&#9474;   &#9500;&#9472; eavs keys.db / providers.db
+&#9474;   &#9492;&#9472; Pi session JSONL files
+&#9474;
+&#9474;   oqto-backup daemon:
+&#9474;   1. sqlite3 .backup  &#8594; /tmp/snapshots/&lt;db&gt;.bak
+&#9474;   2. tar + age        &#8594; /tmp/snapshots/&lt;user&gt;.tar.age
+&#9474;   3. upload to object store
+&#9474;
+&#9474;   Encrypted backup archive (.tar.age)
+&#9474;   &#9500;&#9472; Envelope: DEK encrypted by user master key
+&#9474;   &#9492;&#9472; Inner: snapshot manifest + checksums + files
+&#9474;
+&#9474;              |
+&#9474;              &#9660;
+&#9474;      &#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; Object Store (untrusted) &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</div>
+
+<h2>Key Model</h2>
+<div class="diagram">
+Per user: one master backup key (256-bit, age or AES-GCM)
+           stored in systemd-creds or password manager.
+
+Per backup: random data-encryption key (DEK)
+            DEK encrypted by master key &#8594; envelope in manifest
+
+Benefits of envelope encryption:
+&#8226; Rotate master key without re-encrypting all historical backups
+&#8226; Unique DEK per backup &#8594; compromise isolation
+&#8226; Platform backups use separate platform master key
+</div>
+
+</body>
+</html>

@@ -2,17 +2,15 @@
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::env;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use once_cell::sync::Lazy;
 use tokio::sync::RwLock;
 
 use crate::markdown;
 
-use super::models::{ChatMessage, HstryJsonResponse, HstrySearchHit};
+use super::models::ChatMessage;
 use super::repository::{
     default_legacy_data_dir, get_session_messages_from_dir, get_session_messages_from_hstry,
     get_session_messages_parallel, get_session_messages_via_grpc, hstry_db_path,
@@ -23,68 +21,6 @@ static MESSAGE_CACHE: Lazy<Arc<RwLock<HashMap<String, (Vec<ChatMessage>, std::ti
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const CACHE_TTL_SECS: u64 = 30; // Cache messages for 30 seconds
-
-fn resolve_hstry_path() -> String {
-    if let Ok(path) = env::var("HSTRY_PATH") {
-        return path;
-    }
-    if let Ok(home) = env::var("HOME") {
-        let local_bin = PathBuf::from(&home).join(".local/bin/hstry");
-        if local_bin.exists() {
-            return local_bin.to_string_lossy().to_string();
-        }
-    }
-    "hstry".to_string()
-}
-
-/// Run a fast hstry search via the CLI (prefers the hstry service if enabled).
-pub async fn search_hstry(query: &str, limit: usize) -> Result<Vec<HstrySearchHit>> {
-    let query = query.trim();
-    if query.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let limit = limit.max(1);
-    let hstry_path = resolve_hstry_path();
-    let output = tokio::process::Command::new(&hstry_path)
-        .arg("search")
-        .arg(query)
-        .arg("--limit")
-        .arg(limit.to_string())
-        .arg("--scope")
-        .arg("local")
-        .arg("--json")
-        .env("HOME", env::var("HOME").unwrap_or_default())
-        .output()
-        .await
-        .with_context(|| format!("Failed to execute hstry at '{hstry_path}'"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let message = if stderr.trim().is_empty() {
-            "hstry search failed".to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        anyhow::bail!("{message}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let response: HstryJsonResponse<Vec<HstrySearchHit>> =
-        serde_json::from_str(&stdout).context("Failed to parse hstry search output")?;
-    if !response.ok {
-        let error = response
-            .error
-            .unwrap_or_else(|| "hstry search failed".to_string());
-        anyhow::bail!(error);
-    }
-
-    Ok(response.result.unwrap_or_default())
-}
 
 /// Get all messages for a session (async version with caching).
 pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMessage>> {

@@ -45,6 +45,8 @@ import {
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
 import type { Features, PiModelInfo } from "@/features/chat/api";
+import { InstructionsPinnedMessage } from "@/features/chat/components/InstructionsPinnedMessage";
+import { TimelineTreeView } from "@/features/chat/components/TimelineTreeView";
 import {
 	buildLegacyDraftStorageKey,
 	buildSessionDraftStorageKey,
@@ -55,6 +57,7 @@ import {
 } from "@/features/chat/utils/session-stats";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
+import { useWorkspaceInstructions } from "@/hooks/use-workspace-instructions";
 import {
 	type DisplayMessage,
 	type DisplayPart,
@@ -185,6 +188,25 @@ function dedentMarkdown(text: string): string {
 		.join("\n");
 }
 
+function stringifyForMarkdown(value: unknown): string {
+	if (typeof value === "string") return stripAnsiSequences(value);
+	if (value === null || value === undefined) return "";
+	try {
+		return stripAnsiSequences(JSON.stringify(value, null, 2));
+	} catch {
+		return stripAnsiSequences(String(value));
+	}
+}
+
+function safeFileStem(value: string): string {
+	const stem = value
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return stem || "session";
+}
+
 /** Todo item structure (matching todowrite tool) */
 export interface TodoItem {
 	id: string;
@@ -290,6 +312,7 @@ export function ChatView({
 		() => normalizeWorkspacePath(workspacePath),
 		[workspacePath],
 	);
+	const instructionsContent = useWorkspaceInstructions(normalizedWorkspacePath);
 
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
@@ -913,6 +936,9 @@ export function ChatView({
 
 	const displayError = commandError ?? error;
 	const showSkeleton = messages.length === 0 && !displayError && historyLoading;
+	const showTimelineTreePreview =
+		typeof window !== "undefined" &&
+		window.localStorage.getItem("oqto:timeline-tree-preview") === "1";
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -2195,14 +2221,108 @@ export function ChatView({
 		? t("chat.working_label")
 		: t("chat.idle_label");
 
+	const handleDownloadSessionMarkdown = useCallback(() => {
+		if (messages.length === 0) {
+			toast.info("No messages to download yet.");
+			return;
+		}
+
+		const markdown = [
+			`# ${sessionTitle}`,
+			"",
+			`- Exported: ${new Date().toISOString()}`,
+			workspacePath ? `- Workspace: ${workspacePath}` : null,
+			selectedSessionId ? `- Session ID: ${selectedSessionId}` : null,
+			"",
+			...messages.flatMap((message) => {
+				const heading = `## ${message.role.toUpperCase()} · ${new Date(message.timestamp).toISOString()}`;
+				const partLines = message.parts.flatMap((part) => {
+					switch (part.type) {
+						case "text":
+							return [stripAnsiSequences(part.text ?? "")];
+						case "thinking":
+							return ["### Thinking", "", stripAnsiSequences(part.text ?? "")];
+						case "tool_call":
+							return [
+								`### Tool call: ${part.name}`,
+								"",
+								"```json",
+								stringifyForMarkdown(part.input),
+								"```",
+							];
+						case "tool_result":
+							return [
+								`### Tool result${part.name ? `: ${part.name}` : ""}${part.isError ? " (error)" : ""}`,
+								"",
+								"```",
+								stringifyForMarkdown(part.output),
+								"```",
+							];
+						case "file_ref":
+							return [`- File: ${part.label ?? part.uri}`];
+						case "image":
+							return [`- Image: ${part.alt ?? "(no alt text)"}`];
+						case "compaction":
+							return [
+								"### Compaction",
+								"",
+								stripAnsiSequences(part.text ?? ""),
+							];
+						case "error":
+							return ["### Error", "", stripAnsiSequences(part.text ?? "")];
+						default:
+							return [
+								`- [${part.type}] ${stringifyForMarkdown((part as Record<string, unknown>).payload ?? part)}`,
+							];
+					}
+				});
+				return [heading, "", ...partLines, ""];
+			}),
+		]
+			.filter((line): line is string => line !== null)
+			.join("\n");
+
+		const fileName = `${safeFileStem(sessionTitle)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+		const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = fileName;
+		document.body.append(link);
+		link.click();
+		link.remove();
+		URL.revokeObjectURL(url);
+	}, [messages, selectedSessionId, sessionTitle, workspacePath]);
+
+	// useeffect-guardrail: allow - listens for SessionScreen header action to trigger export inside ChatView
+	useEffect(() => {
+		const onDownloadSessionMarkdown = () => {
+			handleDownloadSessionMarkdown();
+		};
+		window.addEventListener(
+			"oqto:download-session-markdown",
+			onDownloadSessionMarkdown,
+		);
+		return () =>
+			window.removeEventListener(
+				"oqto:download-session-markdown",
+				onDownloadSessionMarkdown,
+			);
+	}, [handleDownloadSessionMarkdown]);
+
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
-			<div className="flex items-center justify-between">
+			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-3 min-w-0 flex-1">
 					<div className="min-w-0 flex-1">
 						<div className="flex items-center gap-2">
 							<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
 								{sessionTitle}
+								{sessionMeta?.readable_id?.trim() && (
+									<span className="ml-2 text-sm font-mono text-muted-foreground">
+										[{sessionMeta.readable_id.trim()}]
+									</span>
+								)}
 							</h1>
 							{assistantName && assistantName !== sessionTitle && (
 								<span className="text-xs px-1.5 py-0.5 rounded-full text-white flex-shrink-0 bg-primary/70">
@@ -2237,6 +2357,16 @@ export function ChatView({
 						</div>
 					</div>
 				</div>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={handleDownloadSessionMarkdown}
+					className="shrink-0"
+					title="Download this session as markdown"
+				>
+					<Download className="h-4 w-4" />
+				</Button>
 			</div>
 			<div className="mt-2">
 				<ContextWindowGauge
@@ -2264,6 +2394,23 @@ export function ChatView({
 
 				{/* Messages area */}
 				<div className="relative flex-1 min-h-0">
+					{showTimelineTreePreview && messages.length > 0 && (
+						<div className="absolute inset-0 z-10 bg-background">
+							<TimelineTreeView
+								messages={messages}
+								currentHeadId={messages.at(-1)?.id ?? null}
+								onSelectMessage={(messageId) => {
+									const target = messagesContainerRef.current?.querySelector(
+										`[data-message-id="${CSS.escape(messageId)}"]`,
+									);
+									target?.scrollIntoView({
+										behavior: "smooth",
+										block: "center",
+									});
+								}}
+							/>
+						</div>
+					)}
 					<div
 						ref={messagesContainerRef}
 						onScroll={handleScroll}
@@ -2272,6 +2419,16 @@ export function ChatView({
 					>
 						<div>
 							{showSkeleton && ChatSkeleton}
+
+							{!showSkeleton && instructionsContent && (
+								<div className="mb-4 sm:mb-6">
+									<InstructionsPinnedMessage
+										key={normalizedWorkspacePath ?? "default"}
+										content={instructionsContent}
+										workspacePath={normalizedWorkspacePath}
+									/>
+								</div>
+							)}
 
 							{!showSkeleton &&
 								historyHydrated &&
@@ -2326,6 +2483,13 @@ export function ChatView({
 														onForkHere={
 															group.role === "user"
 																? () => {
+																		if (
+																			groupMessageId &&
+																			!groupMessageId.startsWith("history-")
+																		) {
+																			void handleForkAtEntry(groupMessageId);
+																			return;
+																		}
 																		setForkListOpen(true);
 																		void loadForkPoints();
 																	}
@@ -3293,7 +3457,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	// Flatten parts in order, preserve message-array ordering.
 	// The primary sort key is the message index (msgIndex), NOT the wall-clock
-	// timestamp.  Timestamps from hstry (created_at) can be non-monotonic when
+	// timestamp.  Timestamps from oqto-log (created_at) can be non-monotonic when
 	// messages are persisted out of chronological order (e.g. batched writes).
 	// Using them as a sort key reorders messages incorrectly.
 	type TimedPart = {

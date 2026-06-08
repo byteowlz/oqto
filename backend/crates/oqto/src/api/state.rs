@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::history::HstryClient;
 use crate::local::UserSldrManager;
 
 use super::a2ui::PendingA2uiRequests;
@@ -322,8 +321,6 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
-    /// hstry client for unified chat history persistence.
-    pub hstry: Option<HstryClient>,
     /// Audit logger for user-facing events.
     pub audit_logger: Option<Arc<crate::audit::AuditLogger>>,
     /// Feedback configuration.
@@ -409,7 +406,6 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             session_targets: Arc::new(session_targets),
-            hstry: None,
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
             eavs_client: None,
@@ -506,12 +502,6 @@ impl AppState {
     /// Set the per-user sldr manager.
     pub fn with_sldr_users(mut self, manager: UserSldrManager) -> Self {
         self.sldr_users = Some(Arc::new(manager));
-        self
-    }
-
-    /// Set the hstry client for unified chat history persistence.
-    pub fn with_hstry(mut self, client: HstryClient) -> Self {
-        self.hstry = Some(client);
         self
     }
 

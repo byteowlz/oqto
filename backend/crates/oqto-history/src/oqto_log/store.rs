@@ -55,6 +55,32 @@ fn extract_text(content: &Value) -> String {
     }
 }
 
+pub async fn migrate_db_path(db_path: &Path) -> Result<()> {
+    let connect_options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(30));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(connect_options)
+        .await
+        .with_context(|| {
+            format!(
+                "connecting oqto-log db for migration: {}",
+                db_path.display()
+            )
+        })?;
+
+    OQTO_LOG_MIGRATOR
+        .run(&pool)
+        .await
+        .with_context(|| format!("running oqto-log migrations: {}", db_path.display()))?;
+
+    Ok(())
+}
+
 async fn open_workspace_pool(user_home: &Path, workspace_id: &str) -> Result<sqlx::SqlitePool> {
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 
@@ -147,14 +173,13 @@ pub async fn append_agent_end_snapshot(
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+          session_id, platform_id, external_id, user_id, workspace_id
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = excluded.platform_id,
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = excluded.user_id,
-          workspace_id = excluded.workspace_id,
-          updated_at = datetime('now')
+          workspace_id = excluded.workspace_id
         "#,
     )
     .bind(session_id)
@@ -349,6 +374,30 @@ pub async fn append_agent_end_snapshot(
     .await
     .context("update oqto_log_branches head")?;
 
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_sessions
+        SET
+          created_at = COALESCE((
+            SELECT datetime(MIN(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), created_at),
+          updated_at = COALESCE((
+            SELECT datetime(MAX(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), updated_at)
+        WHERE session_id = ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("update oqto_log_sessions timestamps from source timestamps")?;
+
     tx.commit().await.context("commit oqto-log tx")?;
     Ok(AppendStats {
         turns_written,
@@ -356,6 +405,47 @@ pub async fn append_agent_end_snapshot(
         deduped: turns_written == 0,
         snapshot_hash,
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct PiJsonlMessageRecord {
+    pub source_entry_id: String,
+    pub parent_source_entry_id: Option<String>,
+    pub source_sequence: i64,
+    pub message: AgentMessage,
+}
+
+fn message_source_hash(message: &AgentMessage) -> String {
+    use sha2::{Digest, Sha256};
+    let payload = serde_json::to_string(message).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    format!("message:{}", hex::encode(&hasher.finalize()[..16]))
+}
+
+pub async fn replace_session_with_pi_jsonl_records(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+    source_session_id: &str,
+    records: &[PiJsonlMessageRecord],
+) -> Result<AppendStats> {
+    let messages: Vec<AgentMessage> = records.iter().map(|r| r.message.clone()).collect();
+    replace_session_with_snapshot_inner(
+        user_home,
+        user_id,
+        workspace_id,
+        session_id,
+        platform_id,
+        external_id,
+        source_session_id,
+        &messages,
+        Some(records),
+    )
+    .await
 }
 
 pub async fn replace_session_with_snapshot(
@@ -368,20 +458,44 @@ pub async fn replace_session_with_snapshot(
     source_session_id: &str,
     messages: &[AgentMessage],
 ) -> Result<AppendStats> {
+    replace_session_with_snapshot_inner(
+        user_home,
+        user_id,
+        workspace_id,
+        session_id,
+        platform_id,
+        external_id,
+        source_session_id,
+        messages,
+        None,
+    )
+    .await
+}
+
+async fn replace_session_with_snapshot_inner(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+    source_session_id: &str,
+    messages: &[AgentMessage],
+    records: Option<&[PiJsonlMessageRecord]>,
+) -> Result<AppendStats> {
     let pool = open_workspace_pool(user_home, workspace_id).await?;
     let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
 
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
-          session_id, platform_id, external_id, user_id, workspace_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+          session_id, platform_id, external_id, user_id, workspace_id
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           platform_id = excluded.platform_id,
           external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
           user_id = excluded.user_id,
-          workspace_id = excluded.workspace_id,
-          updated_at = datetime('now')
+          workspace_id = excluded.workspace_id
         "#,
     )
     .bind(session_id)
@@ -413,7 +527,6 @@ pub async fn replace_session_with_snapshot(
         hasher.update(snapshot_json.as_bytes());
         hex::encode(&hasher.finalize()[..16])
     };
-    let snapshot_marker = format!("snapshot:{}", snapshot_hash);
 
     // Clear existing turns and messages for this session, then re-insert
     // from scratch. Temporarily drop FTS triggers to avoid cascading errors
@@ -450,7 +563,18 @@ pub async fn replace_session_with_snapshot(
     for (idx, msg) in messages.iter().enumerate() {
         let role = normalize_role(&msg.role);
         turn_version += 1;
-        let source_entry_id = format!("line:{}", idx);
+        let record = records.and_then(|items| items.get(idx));
+        let source_entry_id = record
+            .map(|r| r.source_entry_id.clone())
+            .unwrap_or_else(|| format!("line:{}", idx));
+        let source_hash = record
+            .map(|r| message_source_hash(&r.message))
+            .unwrap_or_else(|| message_source_hash(msg));
+        let source_kind = if record.is_some() {
+            "pi_jsonl"
+        } else {
+            "pi_jsonl_bootstrap"
+        };
 
         let turn_id = derive_turn_id(&TurnIdInput {
             session_id,
@@ -458,10 +582,10 @@ pub async fn replace_session_with_snapshot(
             parent_turn_id: parent_turn_id.as_deref(),
             turn_version,
             role,
-            source_kind: Some("pi_jsonl_bootstrap"),
+            source_kind: Some(source_kind),
             source_session_id: Some(source_session_id),
             source_entry_id: Some(&source_entry_id),
-            source_hash: Some(&snapshot_marker),
+            source_hash: Some(&source_hash),
         });
 
         let turn_inserted = sqlx::query(
@@ -479,10 +603,10 @@ pub async fn replace_session_with_snapshot(
         .bind(&parent_turn_id)
         .bind(turn_version)
         .bind(role)
-        .bind("pi_jsonl_bootstrap")
+        .bind(source_kind)
         .bind(source_session_id)
         .bind(&source_entry_id)
-        .bind(&snapshot_marker)
+        .bind(&source_hash)
         .bind(msg.timestamp.map(|v| v.to_string()))
         .execute(&mut *tx)
         .await
@@ -507,7 +631,7 @@ pub async fn replace_session_with_snapshot(
             seq: 0,
             kind: "message",
             role: Some(role),
-            source_message_id: None,
+            source_message_id: Some(&source_entry_id),
             content: Some(&text),
         });
 
@@ -551,6 +675,30 @@ pub async fn replace_session_with_snapshot(
     .execute(&mut *tx)
     .await
     .context("update oqto_log_branches head (replace)")?;
+
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_sessions
+        SET
+          created_at = COALESCE((
+            SELECT datetime(MIN(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), created_at),
+          updated_at = COALESCE((
+            SELECT datetime(MAX(CAST(source_timestamp AS INTEGER)) / 1000, 'unixepoch')
+            FROM oqto_log_turns
+            WHERE session_id = ? AND source_timestamp IS NOT NULL AND trim(source_timestamp) != ''
+          ), updated_at)
+        WHERE session_id = ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("update oqto_log_sessions timestamps from source timestamps (replace)")?;
 
     // Recreate FTS triggers that were dropped earlier.
     recreate_fts_triggers(&mut tx)

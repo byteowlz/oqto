@@ -1,7 +1,7 @@
 import type {
 	ChatSession,
-	HstrySearchHit,
 	ProjectLogo,
+	SearchHit,
 } from "@/lib/control-plane-client";
 import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
 import Fuse from "fuse.js";
@@ -47,7 +47,7 @@ export interface SessionDataOutput {
 			| ChatSession
 			| { directory?: string | null; projectID?: string | null },
 	) => string;
-	sessionTitleHits: HstrySearchHit[];
+	sessionTitleHits: SearchHit[];
 }
 
 export function useSessionData({
@@ -242,7 +242,7 @@ export function useSessionData({
 				return session.title.toLowerCase().includes(query);
 			})
 			.map((session) => ({
-				agent: "pi",
+				agent: "pi_agent",
 				source_path: `title:oc:${session.id}`,
 				session_id: session.id,
 				title: session.title ?? "New Session",

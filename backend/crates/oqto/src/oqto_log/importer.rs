@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -5,6 +6,7 @@ use anyhow::Result;
 use crate::pi::AgentMessage;
 
 use super::store::append_agent_end_snapshot;
+use oqto_history::oqto_log::store::PiJsonlMessageRecord;
 
 #[derive(Debug, Default, Clone)]
 pub struct ImportStats {
@@ -17,10 +19,91 @@ pub struct ImportStats {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct JsonlSessionEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    cwd: Option<String>,
+    name: Option<String>,
+    timestamp: Option<String>,
+    message: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Default)]
+struct PiJsonlSessionMetadata {
+    cwd: Option<String>,
+    title: Option<String>,
+    readable_id: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
     message: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct ImporterState {
+    files: HashMap<String, FileFingerprint>,
+    last_imported_sessions: Vec<ImportedSession>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ImportedSession {
+    workspace_id: String,
+    session_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct FileFingerprint {
+    mtime_secs: u64,
+    size: u64,
+}
+
+fn importer_state_path(user_home: &Path) -> PathBuf {
+    user_home
+        .join(".local")
+        .join("share")
+        .join("oqto")
+        .join("oqto-log")
+        .join("importer-state.json")
+}
+
+fn load_importer_state(user_home: &Path) -> ImporterState {
+    let path = importer_state_path(user_home);
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        serde_json::from_str::<ImporterState>(&raw).unwrap_or_default()
+    } else {
+        ImporterState::default()
+    }
+}
+
+fn save_importer_state(user_home: &Path, state: &ImporterState) {
+    let path = importer_state_path(user_home);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(serialized) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, serialized);
+    }
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let mtime_secs = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(FileFingerprint {
+        mtime_secs,
+        size: meta.len(),
+    })
 }
 
 fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
@@ -33,6 +116,112 @@ fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
         return None;
     }
     Some(format!("/{}", core.replace('-', "/")))
+}
+
+fn path_is_inside_root(path: &str, root: &Path) -> bool {
+    let normalized_path = path.replace('\\', "/").trim_end_matches('/').to_string();
+    let normalized_root = root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    normalized_path == normalized_root
+        || normalized_path.starts_with(&format!("{normalized_root}/"))
+}
+
+fn platform_id_for_external_id(external_id: &str) -> String {
+    const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
+    format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
+}
+
+fn parse_pi_jsonl_filename_datetime(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let (timestamp, _) = stem.rsplit_once('_')?;
+    let parsed = chrono::DateTime::parse_from_str(timestamp, "%Y-%m-%dT%H-%M-%S-%3fZ").ok()?;
+    Some(parsed.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+fn millis_to_sqlite_datetime(ms: u64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(ms as i64)
+        .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+fn read_pi_jsonl_session_metadata(path: &Path) -> PiJsonlSessionMetadata {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return PiJsonlSessionMetadata::default();
+    };
+
+    let mut cwd = None;
+    let mut last_name = None;
+    let mut first_timestamp = parse_pi_jsonl_filename_datetime(path);
+    let mut last_message_timestamp = None;
+    for line in contents.lines() {
+        let Ok(entry) = serde_json::from_str::<JsonlSessionEntry>(line) else {
+            continue;
+        };
+        match entry.entry_type.as_str() {
+            "session" => {
+                if cwd.is_none() {
+                    cwd = entry.cwd;
+                }
+                if first_timestamp.is_none() {
+                    first_timestamp = entry.timestamp.and_then(|ts| {
+                        chrono::DateTime::parse_from_rfc3339(&ts)
+                            .ok()
+                            .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+                    });
+                }
+            }
+            "message" => {
+                if let Some(ms) = entry
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.get("timestamp"))
+                    .and_then(|value| {
+                        value
+                            .as_u64()
+                            .or_else(|| value.as_i64().map(|v| v.max(0) as u64))
+                    })
+                {
+                    last_message_timestamp = millis_to_sqlite_datetime(ms);
+                }
+            }
+            "session_info" => {
+                if let Some(name) = entry.name.map(|name| name.trim().to_string())
+                    && !name.is_empty()
+                {
+                    last_name = Some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (title, readable_id) = last_name
+        .map(|name| {
+            let parsed = oqto_pi::session_parser::ParsedTitle::parse(&name);
+            let readable_id = parsed.get_readable_id().map(ToOwned::to_owned);
+            let display = parsed.display_title().trim();
+            let title = if !display.is_empty() {
+                Some(display.to_string())
+            } else {
+                name.split('[')
+                    .next()
+                    .map(str::trim)
+                    .filter(|fallback| !fallback.is_empty())
+                    .map(str::to_string)
+            };
+            (title, readable_id)
+        })
+        .unwrap_or((None, None));
+
+    PiJsonlSessionMetadata {
+        cwd,
+        title,
+        readable_id,
+        created_at: first_timestamp.clone(),
+        updated_at: last_message_timestamp.or(first_timestamp),
+    }
 }
 
 fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
@@ -110,6 +299,44 @@ fn parse_agent_message(value: serde_json::Value) -> Option<AgentMessage> {
             .map(|s| s.to_string()),
         extra: std::collections::HashMap::new(),
     })
+}
+
+fn read_jsonl_message_records(path: &Path) -> Vec<PiJsonlMessageRecord> {
+    use std::io::BufRead;
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+
+    let reader = std::io::BufReader::new(file);
+    let mut records = Vec::new();
+
+    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(entry) = serde_json::from_str::<JsonlMessageEntry>(trimmed) else {
+            continue;
+        };
+        if entry.entry_type != "message" {
+            continue;
+        }
+        if let Some(message_value) = entry.message
+            && let Some(message) = parse_agent_message(message_value)
+        {
+            records.push(PiJsonlMessageRecord {
+                source_entry_id: entry.id.unwrap_or_else(|| format!("line:{line_idx}")),
+                parent_source_entry_id: entry.parent_id,
+                source_sequence: line_idx as i64,
+                message,
+            });
+        }
+    }
+
+    records
 }
 
 fn read_jsonl_agent_messages(path: &Path) -> Vec<AgentMessage> {
@@ -204,11 +431,137 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
     }
 }
 
+async fn collapse_duplicate_external_sessions(
+    user_home: &Path,
+    workspace_id: &str,
+    external_id: &str,
+    canonical_session_id: &str,
+) -> Result<usize> {
+    let session_ids = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
+        user_home,
+        workspace_id,
+        external_id,
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut deleted = 0usize;
+    for session_id in session_ids {
+        if session_id == canonical_session_id {
+            continue;
+        }
+        if oqto_history::oqto_log::ops::delete_session_in_workspace(
+            user_home,
+            workspace_id,
+            &session_id,
+        )
+        .await
+        .unwrap_or(false)
+        {
+            deleted += 1;
+        }
+    }
+
+    Ok(deleted)
+}
+
+pub async fn fast_import_identities_from_pi_jsonl(
+    user_home: &Path,
+    user_id: &str,
+    workspace_root: Option<&Path>,
+) -> Result<ImportStats> {
+    let mut stats = ImportStats::default();
+    let base = user_home.join(".pi").join("agent").join("sessions");
+    let Ok(workspaces) = std::fs::read_dir(base) else {
+        return Ok(stats);
+    };
+
+    let mut by_workspace: std::collections::BTreeMap<
+        String,
+        Vec<oqto_history::oqto_log::ops::SessionIdentityInput>,
+    > = std::collections::BTreeMap::new();
+
+    for workspace in workspaces.flatten() {
+        let workspace_dir_path = workspace.path();
+        if !workspace_dir_path.is_dir() {
+            continue;
+        }
+
+        let fallback_workspace_id = workspace_dir_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .and_then(decode_workspace_path_from_safe_dirname)
+            .unwrap_or_else(|| "global".to_string());
+
+        let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|v| v.to_str()) != Some("jsonl") {
+                continue;
+            }
+            stats.scanned_files += 1;
+            let Some(external_id) = parse_pi_session_id_from_path(&path) else {
+                stats.skipped_files += 1;
+                continue;
+            };
+            let metadata = read_pi_jsonl_session_metadata(&path);
+            let workspace_id = metadata
+                .cwd
+                .unwrap_or_else(|| fallback_workspace_id.clone());
+            if let Some(root) = workspace_root
+                && !path_is_inside_root(&workspace_id, root)
+            {
+                stats.skipped_files += 1;
+                continue;
+            }
+            by_workspace.entry(workspace_id.clone()).or_default().push(
+                oqto_history::oqto_log::ops::SessionIdentityInput {
+                    platform_id: platform_id_for_external_id(&external_id),
+                    external_id,
+                    title: metadata.title,
+                    readable_id: metadata.readable_id,
+                    created_at: metadata.created_at,
+                    updated_at: metadata.updated_at,
+                },
+            );
+        }
+    }
+
+    for (workspace_id, identities) in by_workspace {
+        match oqto_history::oqto_log::ops::batch_upsert_session_identities(
+            user_home,
+            user_id,
+            &workspace_id,
+            &identities,
+        )
+        .await
+        {
+            Ok(imported) => stats.imported_sessions += imported,
+            Err(err) => {
+                stats.failed_files += identities.len();
+                if stats.failure_samples.len() < 25 {
+                    stats.failure_samples.push(format!(
+                        "identity_batch_failed workspace={} sessions={} error={}",
+                        workspace_id,
+                        identities.len(),
+                        err
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
 pub async fn bootstrap_import_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
 ) -> Result<ImportStats> {
     let mut stats = ImportStats::default();
+    let mut importer_state = load_importer_state(user_home);
 
     let base = user_home.join(".pi").join("agent").join("sessions");
     let Ok(workspaces) = std::fs::read_dir(base) else {
@@ -241,14 +594,28 @@ pub async fn bootstrap_import_from_pi_jsonl(
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
+    let mut imported_sessions_this_run: Vec<ImportedSession> = Vec::new();
+
     for (path, workspace_id) in files {
         stats.scanned_files += 1;
+        let path_key = path.to_string_lossy().to_string();
+        let current_fp = file_fingerprint(&path);
+        if let (Some(current), Some(previous)) =
+            (current_fp.as_ref(), importer_state.files.get(&path_key))
+            && current.mtime_secs == previous.mtime_secs
+            && current.size == previous.size
+        {
+            stats.skipped_files += 1;
+            continue;
+        }
+
         let Some(pi_session_id) = parse_pi_session_id_from_path(&path) else {
             stats.skipped_files += 1;
             continue;
         };
 
-        let messages = read_jsonl_agent_messages(&path);
+        let records = read_jsonl_message_records(&path);
+        let messages: Vec<AgentMessage> = records.iter().map(|r| r.message.clone()).collect();
         if messages.is_empty() {
             stats.skipped_files += 1;
             continue;
@@ -311,7 +678,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 let mut replaced_ok = None;
                 let mut replace_err: Option<anyhow::Error> = None;
                 for _attempt in 0..3 {
-                    match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                    match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                         user_home,
                         user_id,
                         &workspace_id,
@@ -319,7 +686,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                         &session_id,
                         Some(&pi_session_id),
                         &pi_session_id,
-                        &messages,
+                        &records,
                     )
                     .await
                     {
@@ -350,6 +717,14 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 }
             }
 
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &pi_session_id,
+                &session_id,
+            )
+            .await;
+
             let _ = oqto_history::oqto_log::store::upsert_import_checkpoint(
                 user_home,
                 &workspace_id,
@@ -361,6 +736,13 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 Some(&append_stats.snapshot_hash),
             )
             .await;
+            if let Some(fp) = current_fp.clone() {
+                importer_state.files.insert(path_key, fp);
+            }
+            imported_sessions_this_run.push(ImportedSession {
+                workspace_id: workspace_id.clone(),
+                session_id: session_id.clone(),
+            });
             stats.imported_sessions += 1;
             stats.imported_messages += append_stats.messages_written;
         } else {
@@ -386,28 +768,51 @@ pub async fn bootstrap_import_from_pi_jsonl(
         && report.sessions_mismatch > 0
     {
         for row in report.mismatches {
-            let Some((workspace_id, session_id)) = parse_mismatch_row(&row) else {
+            let Some((workspace_id, mismatch_session_id)) = parse_mismatch_row(&row) else {
                 continue;
             };
-            let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &session_id) else {
+
+            let resolved =
+                oqto_history::oqto_log::ops::find_session_by_id(user_home, &mismatch_session_id)
+                    .await;
+            let (target_session_id, target_external_id) =
+                if let Some((session_id, _ws, ext)) = resolved {
+                    (
+                        session_id,
+                        ext.unwrap_or_else(|| mismatch_session_id.clone()),
+                    )
+                } else if let Some((session_id, _ws)) =
+                    oqto_history::oqto_log::ops::find_session_by_external(
+                        user_home,
+                        &mismatch_session_id,
+                    )
+                    .await
+                {
+                    (session_id, mismatch_session_id.clone())
+                } else {
+                    (mismatch_session_id.clone(), mismatch_session_id.clone())
+                };
+
+            let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &target_external_id)
+            else {
                 continue;
             };
-            let messages = read_jsonl_agent_messages(&path);
-            if messages.is_empty() {
+            let records = read_jsonl_message_records(&path);
+            if records.is_empty() {
                 continue;
             }
             let mut replaced_ok = None;
             let mut replace_err: Option<anyhow::Error> = None;
             for _attempt in 0..3 {
-                match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                     user_home,
                     user_id,
                     &workspace_id,
-                    &session_id,
-                    &session_id,
-                    Some(&session_id),
-                    &session_id,
-                    &messages,
+                    &target_session_id,
+                    &target_session_id,
+                    Some(&target_external_id),
+                    &target_external_id,
+                    &records,
                 )
                 .await
                 {
@@ -422,6 +827,14 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 }
             }
 
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &target_external_id,
+                &target_session_id,
+            )
+            .await;
+
             if let Some(replaced) = replaced_ok {
                 stats.imported_messages += replaced.messages_written;
             } else {
@@ -431,13 +844,16 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 stats.failed_files += 1;
                 if stats.failure_samples.len() < 25 {
                     stats.failure_samples.push(format!(
-                        "postpass_replace_failed workspace={} session={} error={}",
-                        workspace_id, session_id, err_text
+                        "postpass_replace_failed workspace={} session={} canonical={} external={} error={}",
+                        workspace_id, mismatch_session_id, target_session_id, target_external_id, err_text
                     ));
                 }
             }
         }
     }
+
+    importer_state.last_imported_sessions = imported_sessions_this_run;
+    save_importer_state(user_home, &importer_state);
 
     if stats
         .failure_samples
@@ -451,4 +867,59 @@ pub async fn bootstrap_import_from_pi_jsonl(
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pi_jsonl_metadata_uses_jsonl_cwd_title_and_source_timestamps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("2026-01-16T12-06-53-369Z_session-1.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session","timestamp":"2026-01-16T12:06:53.369Z","cwd":"/home/wismut/.pi/agent/extensions"}"#,
+                "\n",
+                r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}],"timestamp":1770410509191}}"#,
+                "\n",
+                r#"{"type":"session_info","name":"Fix extension loader [owl-123]"}"#,
+                "\n"
+            ),
+        )
+        .expect("write jsonl");
+
+        let metadata = read_pi_jsonl_session_metadata(&path);
+        assert_eq!(
+            metadata.cwd.as_deref(),
+            Some("/home/wismut/.pi/agent/extensions")
+        );
+        assert_eq!(metadata.title.as_deref(), Some("Fix extension loader"));
+        assert_eq!(metadata.created_at.as_deref(), Some("2026-01-16 12:06:53"));
+        assert_eq!(metadata.updated_at.as_deref(), Some("2026-02-06 20:41:49"));
+    }
+
+    #[test]
+    fn safe_dir_decoder_is_only_a_fallback_for_missing_jsonl_cwd() {
+        assert_eq!(
+            decode_workspace_path_from_safe_dirname("--home-wismut-byteowlz-pi-agent-extensions--")
+                .as_deref(),
+            Some("/home/wismut/byteowlz/pi/agent/extensions")
+        );
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("2026-02-06T20-41-29-820Z_session-2.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"session","timestamp":"2026-02-06T20:41:29.820Z","cwd":"/home/wismut/byteowlz/pi-agent-extensions"}"#,
+        )
+        .expect("write jsonl");
+
+        let metadata = read_pi_jsonl_session_metadata(&path);
+        assert_eq!(
+            metadata.cwd.as_deref(),
+            Some("/home/wismut/byteowlz/pi-agent-extensions")
+        );
+    }
 }

@@ -124,7 +124,7 @@ async fn clear_client_ids_for_session(session_id: &str) {
 }
 
 fn workspace_chat_messages_to_json(
-    messages: Vec<oqto_runner::protocol::ChatMessageProto>,
+    messages: Vec<oqto_protocol::projection::ProjectedChatMessage>,
 ) -> serde_json::Value {
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
@@ -156,7 +156,7 @@ fn workspace_chat_messages_to_json(
                         part.insert("input".to_string(), tool_input);
                     }
                     if let Some(tool_output) = p.tool_output {
-                        part.insert("output".to_string(), serde_json::Value::String(tool_output));
+                        part.insert("output".to_string(), tool_output);
                     }
                     if let Some(tool_status) = p.tool_status {
                         part.insert("status".to_string(), serde_json::Value::String(tool_status));
@@ -910,7 +910,10 @@ pub async fn ws_multiplexed_handler(
     let user_id = user.id().to_string();
     let is_admin = user.is_admin();
 
-    Ok(ws.on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
+    Ok(ws
+        .max_message_size(256 * 1024 * 1024)
+        .max_frame_size(256 * 1024 * 1024)
+        .on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
 }
 
 /// Create a runner client for a user if multi-user mode is enabled.
@@ -2065,18 +2068,17 @@ async fn handle_get_messages(
         Value::Object(data)
     };
 
-    // Live recovery path: fetch the per-session runner buffer snapshot.
-    // This endpoint is intentionally non-authoritative and is used to repair
-    // dropped websocket deltas during active turns without replacing durable
-    // history. Durable/authoritative reconciliation remains on REST
-    // `/api/chat-history/{id}/messages` (runner source=authoritative).
+    // Resync/history path: fetch the durable oqto-log projection. Pi live
+    // snapshots are lossy and must not be allowed to delete or replace user
+    // prompts after reconnect. Live streaming events remain an overlay in the
+    // frontend; persisted history comes from oqto-log.
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
         runner.get_workspace_chat_session_messages(
             session_id,
             false,
             None,
-            oqto_runner::protocol::WorkspaceChatMessagesSource::Live,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
         ),
     )
     .await

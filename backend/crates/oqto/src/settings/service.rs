@@ -472,7 +472,7 @@ mod tests {
         let json = json!({
             "string": "hello",
             "number": 42,
-            "float": 3.14,
+            "float": 1.25,
             "bool": true,
             "nested": {
                 "value": "inner"

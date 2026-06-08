@@ -10,20 +10,20 @@ description = "Main platform (this repo)"
 [byteowlz]
 # Core backend services
 eavs = "0.6.2"
-hstry = "0.5.15"
-mmry = "0.10.3"
-trx = "0.4.1"
+hstry = "0.5.19"
+mmry = "0.11.0"
+trx = "0.6.1"
 agntz = "0.3.0"
 mailz = "0.1.0"
 sx = "2.4.0"
 scrpr = "1.1.0"
 tmpltr = "0.3.0"
-sldr = "0.4.0"
-skdlr = "0.2.3"
+sldr = "0.3.0"
+skdlr = "0.2.6"
 ignr = "0.1.1"
 
 # Optional: Voice mode
-eaRS = "0.3.3"
+eaRS = "0.4.8"
 kokorox = "0.2.3"
 
 [external]
