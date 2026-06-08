@@ -54,6 +54,14 @@ For non-interactive installation:
 OQTO_USER_MODE=single OQTO_BACKEND_MODE=local ./setup.sh --non-interactive
 ```
 
+To uninstall oqto-managed services and binaries later:
+
+```bash
+./scripts/uninstall.sh
+# Optional full cleanup (data + config):
+./scripts/uninstall.sh --purge-data
+```
+
 ### Option 2: Setup Script with Server Hardening (Production)
 
 For production deployment with built-in server hardening (Linux only):

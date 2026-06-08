@@ -90,6 +90,14 @@ This setup script has primarily been tested on an Ubuntu 24.04 VPS and currently
 
 The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. On Linux, setup currently requires sudo-capable accounts and exits early if sudo auth is unavailable. See [SETUP.md](./SETUP.md) for full details.
 
+To uninstall oqto-managed services and binaries:
+
+```bash
+./scripts/uninstall.sh
+# Optional full cleanup (data + config):
+./scripts/uninstall.sh --purge-data
+```
+
 ### Known setup limitations
 
 - Linux host required (macOS setup currently unsupported)
