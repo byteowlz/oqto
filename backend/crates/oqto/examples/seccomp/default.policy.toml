@@ -4,6 +4,13 @@
 # BPF artifacts (e.g. default-x86_64.bpf, default-aarch64.bpf).
 #
 # NOTE: This file is NOT consumed directly by bwrap. bwrap requires compiled BPF.
+# Regenerate artifacts after editing: scripts/sandbox/generate-seccomp-artifacts.sh
+#
+# The allowlist is a curated subset of the syscalls a general userspace workload
+# needs. Additions must stay within the unconditional default-allow set of the
+# upstream Docker/containerd seccomp profile; anything requiring a capability
+# there (e.g. ptrace, mount, kexec, module loading) stays denied via
+# default_action=errno and the explicit_deny list below.
 
 [policy]
 name = "oqto-default"
@@ -28,6 +35,11 @@ name = "io_basic"
 syscalls = [
   "read", "write", "close", "lseek",
   "readv", "writev", "pread64", "pwrite64",
+  # stat/lstat are the legacy stat-family syscalls. glibc usually routes
+  # stat()/lstat() to newfstatat/statx, but vendored C libraries (notably
+  # libgit2 via the git2 crate) invoke the raw stat/lstat syscalls directly,
+  # so omitting them breaks `cargo` operations on git dependencies with EPERM.
+  "stat", "lstat",
   "fstat", "newfstatat", "statx", "access", "faccessat", "faccessat2",
   "fcntl", "ioctl", "fsync", "fdatasync", "sync_file_range",
   "pipe", "pipe2", "dup", "dup2", "dup3"
@@ -39,13 +51,15 @@ syscalls = [
   "mmap", "mprotect", "munmap", "brk", "madvise", "mremap", "msync",
   "mlock", "munlock", "mincore",
   "futex", "futex_waitv", "set_robust_list", "get_robust_list",
+  "mlock2", "membarrier", "restart_syscall",
   "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "rt_sigsuspend",
   "rt_sigpending", "rt_sigtimedwait", "rt_sigqueueinfo", "rt_tgsigqueueinfo",
   "kill", "tkill", "tgkill",
   "clone", "clone3", "fork", "vfork",
   "getpid", "gettid",
   "sched_yield", "sched_getaffinity", "sched_setaffinity",
-  "sched_getparam", "sched_getscheduler"
+  "sched_getparam", "sched_setparam", "sched_getscheduler", "sched_setscheduler",
+  "sched_get_priority_max", "sched_get_priority_min", "sched_rr_get_interval"
 ]
 
 [[policy.classes]]
@@ -80,6 +94,9 @@ syscalls = [
   "exit", "exit_group",
   "prlimit64", "getrlimit", "setrlimit",
   "getpgid", "setpgid", "getsid", "setsid",
+  "getpriority", "setpriority",
+  "pidfd_open", "pidfd_send_signal",
+  "sysinfo",
   "capget", "capset"
 ]
 
@@ -88,6 +105,10 @@ name = "time_random"
 syscalls = [
   "clock_gettime", "clock_getres", "clock_nanosleep",
   "nanosleep", "gettimeofday", "time",
+  # POSIX interval timers (distinct from timerfd_*). glibc's timer_* and tools
+  # like coreutils `timeout` use these; omitting them yields EPERM.
+  "timer_create", "timer_settime", "timer_gettime", "timer_getoverrun", "timer_delete",
+  "getcpu",
   "getrandom"
 ]
 
