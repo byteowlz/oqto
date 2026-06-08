@@ -1728,31 +1728,58 @@ impl SandboxConfig {
             );
         }
 
-        // Ensure common user toolchain bin paths are in PATH.
-        // Non-interactive shells (systemd, cron) typically don't source
-        // ~/.bashrc/.zshrc, so ~/go/bin, ~/.cargo/bin, etc. are missing.
+        // Construct PATH for the sandboxed process.
+        //
+        // bwrap inherits the launcher's PATH, but that launcher may be a systemd
+        // unit or cron job with a sparse PATH (missing /usr/bin). We bind-mount
+        // /usr, /bin, /sbin above so the binaries are reachable, but with a sparse
+        // PATH bare command names (e.g. `sed`) still fail with ENOENT while
+        // absolute paths work. Guarantee the canonical system bin dirs we already
+        // bind so command resolution never depends on the launcher's environment,
+        // keeping the inherited PATH precedence intact, then add the user's
+        // toolchain bin dirs (non-interactive shells skip ~/.bashrc/.zshrc, so
+        // ~/.cargo/bin, ~/go/bin, etc. would otherwise be missing).
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let mut path_parts: Vec<String> = current_path
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        // Base system bin dirs corresponding to the read-only binds above.
+        let mut ensure: Vec<String> = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // User toolchain bin dirs (only when the target home is known).
         if let Some(ref home) = target_home {
             let home_str = home.to_string_lossy();
-            let extra_paths = [
-                format!("{home_str}/.cargo/bin"),
-                format!("{home_str}/go/bin"),
-                format!("{home_str}/.local/bin"),
-                format!("{home_str}/.bun/bin"),
-                format!("{home_str}/.npm-global/bin"),
-            ];
-            let current_path = std::env::var("PATH").unwrap_or_default();
-            let mut path_parts: Vec<&str> = current_path.split(':').collect();
-            for p in &extra_paths {
-                if !path_parts.contains(&p.as_str()) && Path::new(p).exists() {
-                    path_parts.push(p);
-                }
+            for suffix in [
+                ".cargo/bin",
+                "go/bin",
+                ".local/bin",
+                ".bun/bin",
+                ".npm-global/bin",
+            ] {
+                ensure.push(format!("{home_str}/{suffix}"));
             }
-            let new_path = path_parts.join(":");
-            args.push("--setenv".to_string());
-            args.push("PATH".to_string());
-            args.push(new_path);
-            debug!("Extended PATH with user toolchain bin directories");
         }
+        for p in &ensure {
+            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
+                path_parts.push(p.clone());
+            }
+        }
+        args.push("--setenv".to_string());
+        args.push("PATH".to_string());
+        args.push(path_parts.join(":"));
+        debug!("Set sandbox PATH with base system + user toolchain bin directories");
 
         // Namespace and kernel-surface hardening
         if self.isolate_pid {
@@ -2473,6 +2500,56 @@ log_requests = true
             Some(value) => unsafe { env::set_var("HOME", value) },
             None => unsafe { env::remove_var("HOME") },
         }
+    }
+
+    /// Regression test for oqto-cktc: a sparse launcher PATH (e.g. a systemd
+    /// unit) must not break bare command resolution inside the sandbox. We
+    /// bind-mount /usr, /bin, /sbin, so the canonical system bin dirs must be
+    /// seeded into the sandbox PATH regardless of what the launcher exported.
+    #[test]
+    fn test_path_seeds_system_bin_dirs_with_sparse_launcher_path() {
+        // Hermetic only where the host actually has /usr/bin to bind.
+        if !Path::new("/usr/bin").exists() {
+            eprintln!("skipping: /usr/bin missing on host");
+            return;
+        }
+
+        let temp = tempdir().unwrap();
+        let ws = temp.path();
+
+        // SAFETY: tests are single-threaded for env mutation; restored below.
+        let original_path = env::var_os("PATH");
+        unsafe { env::set_var("PATH", "/nonexistent-sparse-launcher-bin") };
+
+        let config = SandboxConfig::from_profile("development");
+        let result = config.build_bwrap_args_for_user(ws, None);
+
+        // Restore PATH before any assertion so a failure can't leak the sparse value.
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        let Some(args) = result else {
+            eprintln!("skipping: bwrap unavailable");
+            return;
+        };
+
+        let path_idx = args
+            .windows(2)
+            .position(|w| w[0] == "--setenv" && w[1] == "PATH")
+            .expect("PATH setenv not found");
+        let path_value = &args[path_idx + 2];
+        let entries: Vec<&str> = path_value.split(':').collect();
+
+        assert!(
+            entries.contains(&"/usr/bin"),
+            "sandbox PATH must include /usr/bin even with a sparse launcher PATH: {path_value}"
+        );
+        assert!(
+            entries.contains(&"/bin"),
+            "sandbox PATH must include /bin even with a sparse launcher PATH: {path_value}"
+        );
     }
 
     /// Regression test for oqto-b4za: Landlock shim must be wired even when

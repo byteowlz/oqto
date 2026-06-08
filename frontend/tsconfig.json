@@ -20,6 +20,7 @@
 	},
 	"include": [
 		"src",
+		"mini-apps",
 		"tests",
 		"vite-env.d.ts",
 		"vite.config.ts",

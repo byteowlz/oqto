@@ -47,6 +47,15 @@ export default defineConfig(({ mode }) => {
 				"@": path.resolve(__dirname, "./"),
 			},
 		},
+		build: {
+			rollupOptions: {
+				input: {
+					main: path.resolve(__dirname, "index.html"),
+					// Standalone mini-app workbench (open /workbench.html in dev).
+					workbench: path.resolve(__dirname, "workbench.html"),
+				},
+			},
+		},
 		optimizeDeps: {
 			include: [
 				"react",
