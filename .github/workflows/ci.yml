@@ -41,7 +41,7 @@ jobs:
       - name: Install native deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler libseccomp-dev
 
       - name: Check
         working-directory: backend
@@ -79,7 +79,7 @@ jobs:
       - name: Install native deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler libseccomp-dev
 
       - name: Test
         working-directory: backend
