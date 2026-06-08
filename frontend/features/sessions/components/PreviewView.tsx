@@ -22,9 +22,18 @@ import {
 	ZoomIn,
 	ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	Suspense,
+	lazy,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+
+const MarkdownWysiwygEditor = lazy(() => import("./MarkdownWysiwygEditor"));
 
 interface PreviewViewProps {
 	filePath?: string | null;
@@ -297,6 +306,9 @@ export function PreviewView({
 	const [isEditing, setIsEditing] = useState(false);
 	const [isDarkMode, setIsDarkMode] = useState(false);
 	const [showMarkdownView, setShowMarkdownView] = useState(true);
+	const [markdownEditMode, setMarkdownEditMode] = useState<
+		"wysiwyg" | "source"
+	>("wysiwyg");
 	const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
 	const [binaryLoading, setBinaryLoading] = useState(false);
 	const [mediaError, setMediaError] = useState<string>("");
@@ -554,6 +566,7 @@ export function PreviewView({
 			savedScrollTopRef.current = scrollContainerRef.current.scrollTop;
 		}
 		setEditedContent(content);
+		setMarkdownEditMode("wysiwyg");
 		setIsEditing(true);
 	}, [content]);
 
@@ -999,6 +1012,32 @@ export function PreviewView({
 					<div className="flex items-center gap-0.5 ml-2">
 						{isEditing ? (
 							<>
+								{isMarkdownFile && (
+									<div className="flex items-center gap-0.5 mr-1">
+										<Button
+											type="button"
+											variant={
+												markdownEditMode === "wysiwyg" ? "secondary" : "ghost"
+											}
+											size="sm"
+											onClick={() => setMarkdownEditMode("wysiwyg")}
+											className="h-6 px-1.5 text-xs"
+										>
+											Rendered
+										</Button>
+										<Button
+											type="button"
+											variant={
+												markdownEditMode === "source" ? "secondary" : "ghost"
+											}
+											size="sm"
+											onClick={() => setMarkdownEditMode("source")}
+											className="h-6 px-1.5 text-xs"
+										>
+											Code
+										</Button>
+									</div>
+								)}
 								<Button
 									type="button"
 									variant="ghost"
@@ -1093,25 +1132,43 @@ export function PreviewView({
 			{/* Content */}
 			<div ref={scrollContainerRef} className="flex-1 overflow-auto">
 				{isEditing ? (
-					<textarea
-						value={editedContent}
-						onChange={(e) => setEditedContent(e.target.value)}
-						spellCheck={false}
-						autoComplete="off"
-						autoCorrect="off"
-						autoCapitalize="off"
-						className="w-full h-full resize-none outline-none"
-						style={{
-							fontSize: 12,
-							fontFamily:
-								"ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
-							minHeight: "100%",
-							padding: 12,
-							backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-							color: isDarkMode ? "#d4d4d4" : "#1e1e1e",
-							border: "none",
-						}}
-					/>
+					isMarkdownFile && markdownEditMode === "wysiwyg" ? (
+						<div className="h-full">
+							<Suspense
+								fallback={
+									<div className="h-full bg-background p-4 text-xs text-muted-foreground">
+										Loading markdown editor...
+									</div>
+								}
+							>
+								<MarkdownWysiwygEditor
+									markdown={editedContent}
+									onChange={setEditedContent}
+									className="h-full"
+								/>
+							</Suspense>
+						</div>
+					) : (
+						<textarea
+							value={editedContent}
+							onChange={(e) => setEditedContent(e.target.value)}
+							spellCheck={false}
+							autoComplete="off"
+							autoCorrect="off"
+							autoCapitalize="off"
+							className="w-full h-full resize-none outline-none"
+							style={{
+								fontSize: 12,
+								fontFamily:
+									"ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace",
+								minHeight: "100%",
+								padding: 12,
+								backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
+								color: isDarkMode ? "#d4d4d4" : "#1e1e1e",
+								border: "none",
+							}}
+						/>
+					)
 				) : content ? (
 					isMarkdownFile && showMarkdownView ? (
 						<div className="p-4" style={{ minHeight: "100%" }}>
