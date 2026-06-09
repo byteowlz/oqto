@@ -23,14 +23,23 @@
 //!   exhaustively unit-testable without privileges;
 //! - `apply`/`teardown` execute those commands and require `CAP_NET_ADMIN`.
 
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
+use std::os::unix::io::AsRawFd;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use log::{debug, info, warn};
 
 use crate::config::{NetworkConfig, NetworkMode};
+
+/// Directory where `iproute2` exposes named network namespaces.
+const NETNS_DIR: &str = "/var/run/netns";
+
+/// Lock file serializing subnet-index allocation across concurrent spawns so
+/// two sessions never pick the same `/30` block between scan and create.
+const ALLOC_LOCK: &str = "/run/oqto-egress-alloc.lock";
 
 /// Base of the address pool: `10.0.0.0/8`, tiled into `/30` point-to-point links.
 const EGRESS_BASE: u32 = 0x0A00_0000;
@@ -224,6 +233,11 @@ impl EgressPlan {
     /// Wrap an inner command (e.g. the full `bwrap ...` argv) so it executes
     /// inside the namespace. The agent must NOT additionally `--unshare-net`,
     /// which would replace this configured namespace with an empty one.
+    ///
+    /// Prefer joining via `setns` in a pre-exec hook (see
+    /// [`crate::configure_bwrap_pre_exec`]) over this wrapper: the wrapper adds
+    /// an `ip` process layer and risks dropping inherited fds (e.g. the seccomp
+    /// policy fd). This is kept for callers that cannot use pre-exec.
     pub fn wrap_command(&self, inner: &[String]) -> Vec<String> {
         let mut out = vec![
             "ip".to_string(),
@@ -233,6 +247,11 @@ impl EgressPlan {
         ];
         out.extend_from_slice(inner);
         out
+    }
+
+    /// Filesystem path of the namespace handle, for `setns(open(path), CLONE_NEWNET)`.
+    pub fn netns_path(&self) -> String {
+        format!("{NETNS_DIR}/{}", self.netns)
     }
 
     /// Create and configure the namespace. Requires `CAP_NET_ADMIN`.
@@ -323,6 +342,128 @@ fn run(argv: &[String], stdin: Option<&[u8]>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// RAII handle for a live egress namespace. Dropping it tears the namespace
+/// down, so the owner only needs to hold the guard for the spawned process's
+/// lifetime -- no namespace bookkeeping leaks into the caller.
+///
+/// An inert guard (`plan() == None`) is returned for `Open`/`Isolated`, so
+/// callers can treat all modes uniformly.
+#[derive(Debug, Default)]
+pub struct EgressGuard {
+    plan: Option<EgressPlan>,
+}
+
+impl EgressGuard {
+    /// Inert guard: no namespace, Drop is a no-op.
+    pub fn inert() -> Self {
+        Self { plan: None }
+    }
+
+    /// The applied plan, if proxy mode created a namespace. Pass this to
+    /// [`crate::configure_bwrap_pre_exec`] so the child joins the same namespace.
+    pub fn plan(&self) -> Option<&EgressPlan> {
+        self.plan.as_ref()
+    }
+}
+
+impl Drop for EgressGuard {
+    fn drop(&mut self) {
+        if let Some(plan) = &self.plan {
+            plan.teardown();
+        }
+    }
+}
+
+/// Prepare network egress for a spawn from a resolved network policy.
+///
+/// - `Open`/`Isolated`/`None`: returns an inert guard (no namespace).
+/// - `Proxy`: allocates a free `/30` block, creates and configures the
+///   namespace, and returns a guard whose `Drop` tears it down. Fails closed
+///   (returns `Err`, never an inert guard) without `CAP_NET_ADMIN` or a proxy
+///   port, so a misconfigured proxy mode can never silently run open.
+///
+/// This is the single ownership point for egress mechanism: both the runner
+/// and the standalone `oqto-sandbox` CLI call it, so isolation is self-contained
+/// in this crate regardless of who spawns.
+pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
+    let Some(cfg) = cfg else {
+        return Ok(EgressGuard::inert());
+    };
+    if cfg.mode != NetworkMode::Proxy {
+        return Ok(EgressGuard::inert());
+    }
+    if !privileged() {
+        bail!(
+            "NetworkMode::Proxy requires CAP_NET_ADMIN to build the egress namespace; \
+             refusing to launch (fail-closed)"
+        );
+    }
+
+    // Serialize allocation so two concurrent spawns can't pick the same block
+    // between scanning for a free index and creating the namespace.
+    let _lock = AllocLock::acquire()?;
+    let index = allocate_free_index()?;
+    let plan = EgressPlan::from_network_config(cfg, index)?
+        .context("proxy mode yielded no egress plan")?;
+    plan.apply()?;
+    Ok(EgressGuard { plan: Some(plan) })
+}
+
+/// Lowest `/30` block index not currently backed by a live `oqto-egr-*`
+/// namespace. Reusing a live index would collide; holding [`AllocLock`] across
+/// scan+create makes the choice race-free.
+fn allocate_free_index() -> Result<u32> {
+    let mut used = std::collections::BTreeSet::new();
+    if let Ok(entries) = fs::read_dir(NETNS_DIR) {
+        for entry in entries.flatten() {
+            if let Some(idx) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.strip_prefix("oqto-egr-"))
+                .and_then(|n| n.parse::<u32>().ok())
+            {
+                used.insert(idx);
+            }
+        }
+    }
+    first_free_index(&used)
+}
+
+/// Lowest index in `0..=MAX_INDEX` absent from `used`. Pure, for testability.
+fn first_free_index(used: &std::collections::BTreeSet<u32>) -> Result<u32> {
+    for index in 0..=MAX_INDEX {
+        if !used.contains(&index) {
+            return Ok(index);
+        }
+    }
+    bail!(
+        "egress subnet pool exhausted ({} blocks in use)",
+        used.len()
+    )
+}
+
+/// flock-based mutual exclusion around index allocation. Released on drop
+/// (the fd close releases the advisory lock).
+struct AllocLock {
+    _file: std::fs::File,
+}
+
+impl AllocLock {
+    fn acquire() -> Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(ALLOC_LOCK)
+            .with_context(|| format!("opening egress alloc lock {ALLOC_LOCK}"))?;
+        // SAFETY: flock on a valid fd; LOCK_EX blocks until exclusive.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error()).context("flock egress alloc lock");
+        }
+        Ok(Self { _file: file })
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +624,56 @@ mod tests {
     }
 
     #[test]
+    fn netns_path_points_at_iproute2_dir() {
+        let plan = EgressPlan::new(7, proxy(), vec![]).unwrap();
+        assert_eq!(plan.netns_path(), "/var/run/netns/oqto-egr-7");
+    }
+
+    #[test]
+    fn first_free_index_picks_lowest_gap() {
+        use std::collections::BTreeSet;
+        assert_eq!(first_free_index(&BTreeSet::new()).unwrap(), 0);
+        let used: BTreeSet<u32> = [0, 1, 3].into_iter().collect();
+        assert_eq!(first_free_index(&used).unwrap(), 2);
+        let contiguous: BTreeSet<u32> = [0, 1, 2].into_iter().collect();
+        assert_eq!(first_free_index(&contiguous).unwrap(), 3);
+    }
+
+    #[test]
+    fn inert_guard_has_no_plan_and_drops_cleanly() {
+        let guard = EgressGuard::inert();
+        assert!(guard.plan().is_none());
+        drop(guard); // must not touch the network / must not panic
+    }
+
+    #[test]
+    fn prepare_open_and_none_are_inert() {
+        assert!(prepare(None).unwrap().plan().is_none());
+        let open = NetworkConfig {
+            mode: NetworkMode::Open,
+            ..Default::default()
+        };
+        assert!(prepare(Some(&open)).unwrap().plan().is_none());
+    }
+
+    #[test]
+    fn prepare_proxy_without_privilege_fails_closed() {
+        // The normal (unprivileged) test runner must not be able to arm proxy
+        // mode; it has to fail closed rather than return an inert guard.
+        if privileged() {
+            eprintln!("skipping: running as root");
+            return;
+        }
+        let proxy_cfg = NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: Some(8443),
+            ..Default::default()
+        };
+        let err = prepare(Some(&proxy_cfg)).unwrap_err();
+        assert!(format!("{err:#}").contains("fail-closed"));
+    }
+
+    #[test]
     fn wrap_command_prefixes_netns_exec_without_unshare_net() {
         let plan = EgressPlan::new(1, proxy(), vec![]).unwrap();
         let inner = vec![
@@ -525,5 +716,42 @@ mod tests {
         plan.teardown();
         let after = Command::new("ip").args(["netns", "list"]).output().unwrap();
         assert!(!String::from_utf8_lossy(&after.stdout).contains(&plan.netns));
+    }
+
+    /// End-to-end check that the pre-exec `setns` join actually places a spawned
+    /// process inside the egress namespace (not the host net namespace). Spawns
+    /// `ip addr` via [`crate::configure_bwrap_pre_exec`] with the plan and
+    /// asserts it sees the namespace's guest veth/address rather than the host's
+    /// interfaces. Requires root (named netns); run with
+    /// `cargo test -p oqto-sandbox -- --ignored egress_setns_join`.
+    #[test]
+    #[ignore = "requires root (named netns); run on a privileged host"]
+    fn egress_setns_join_places_process_in_namespace() {
+        use crate::SandboxConfig;
+
+        let plan = EgressPlan::new(4_000_002, proxy(), vec![]).unwrap();
+        plan.teardown();
+        plan.apply().expect("apply egress namespace");
+
+        // Minimal config: seccomp off, so the pre-exec hook only performs the
+        // setns join (plus no_new_privs, which is harmless for `ip`).
+        let cfg = SandboxConfig::default();
+        let mut cmd = Command::new("ip");
+        cmd.args(["-o", "addr", "show"]);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        crate::configure_bwrap_pre_exec(&mut cmd, &cfg, std::path::Path::new("/"), Some(&plan))
+            .expect("configure pre-exec");
+
+        let out = cmd.output().expect("spawn ip in egress ns");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        // Inside the egress ns we must see its guest veth / address, and must
+        // NOT see typical host interfaces like a default-route eth/en device.
+        assert!(
+            stdout.contains(&plan.guest_veth) || stdout.contains(&plan.guest_ip.to_string()),
+            "process did not join egress namespace; ip addr showed:\n{stdout}"
+        );
+
+        plan.teardown();
     }
 }

@@ -5,9 +5,10 @@
 //! `cargo run -p oqto-sandbox --example egress_emit -- ruleset`
 //! `cargo run -p oqto-sandbox --example egress_emit -- setup`
 
+use anyhow::Result;
 use oqto_sandbox::{EgressPlan, EgressProxy};
 
-fn main() {
+fn main() -> Result<()> {
     let plan = EgressPlan::new(
         7,
         EgressProxy {
@@ -15,8 +16,7 @@ fn main() {
             dns_port: 5353,
         },
         vec!["api.github.com".to_string()],
-    )
-    .expect("plan");
+    )?;
 
     match std::env::args().nth(1).as_deref() {
         Some("ruleset") => print!("{}", plan.nft_ruleset()),
@@ -30,4 +30,5 @@ fn main() {
             std::process::exit(2);
         }
     }
+    Ok(())
 }

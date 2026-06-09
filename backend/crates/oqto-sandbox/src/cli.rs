@@ -153,12 +153,28 @@ fn exec_sandboxed(
         return Ok(());
     }
 
+    // Set up network egress (proxy mode creates a namespace; open/isolated are
+    // inert). The guard tears the namespace down on drop, so it must outlive the
+    // sandboxed process -- which means we cannot `exec()` it away in proxy mode.
+    let egress = config.prepare_egress()?;
+
     debug!("Executing: bwrap {:?}", full_args);
     let mut cmd = Command::new("bwrap");
     cmd.args(&full_args);
 
-    configure_bwrap_pre_exec(&mut cmd, config, workspace)?;
+    configure_bwrap_pre_exec(&mut cmd, config, workspace, egress.plan())?;
 
+    if egress.plan().is_some() {
+        // Proxy mode: supervise rather than exec, so the egress guard's Drop
+        // runs teardown after the child exits. Mirror the child's exit code.
+        let status = cmd
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to spawn bwrap: {e}"))?;
+        drop(egress); // tear down the egress namespace before exiting
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    // No egress namespace to clean up: exec-replace as before.
     let err = cmd.exec();
 
     error!("Failed to exec bwrap: {:?}", err);

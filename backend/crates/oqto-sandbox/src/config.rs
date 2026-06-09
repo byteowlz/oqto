@@ -2082,8 +2082,9 @@ impl SandboxConfig {
 
     /// Build the egress namespace plan for proxy mode, given an allocated
     /// `/30` subnet index. Returns `Ok(None)` for `Open`/`Isolated`; fails
-    /// closed for `Proxy` without a configured proxy port. The caller (runner)
-    /// applies the plan, then wraps the spawn with [`crate::egress::EgressPlan::wrap_command`].
+    /// closed for `Proxy` without a configured proxy port. Most callers should
+    /// use [`SandboxConfig::prepare_egress`] instead, which allocates the index,
+    /// applies the namespace, and returns an RAII teardown guard.
     pub fn egress_plan(
         &self,
         subnet_index: u32,
@@ -2092,6 +2093,20 @@ impl SandboxConfig {
             Some(cfg) => crate::egress::EgressPlan::from_network_config(cfg, subnet_index),
             None => Ok(None),
         }
+    }
+
+    /// Prepare network egress for a spawn: for `Proxy` mode this allocates a
+    /// free subnet, creates and configures the egress namespace, and returns a
+    /// guard whose `Drop` tears it down; for `Open`/`Isolated`/unset it returns
+    /// an inert guard. Pass `guard.plan()` to [`crate::configure_bwrap_pre_exec`]
+    /// so the child joins the same namespace, and hold the guard for the
+    /// spawned process's lifetime. Fails closed (never an inert guard) when
+    /// proxy mode lacks privilege or a proxy port.
+    ///
+    /// This is the single ownership point for egress mechanism, shared by the
+    /// runner and the standalone CLI, so isolation stays self-contained here.
+    pub fn prepare_egress(&self) -> anyhow::Result<crate::egress::EgressGuard> {
+        crate::egress::prepare(self.network.as_ref())
     }
 
     /// Resolve seccomp policy path from config.

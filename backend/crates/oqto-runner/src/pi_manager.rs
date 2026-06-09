@@ -29,7 +29,7 @@ use crate::pi_translator::PiTranslator;
 use crate::protocol::{ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto};
 use oqto_pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
-use oqto_sandbox::{SandboxConfig, configure_bwrap_pre_exec};
+use oqto_sandbox::{EgressGuard, SandboxConfig, configure_bwrap_pre_exec};
 
 // ============================================================================
 // Configuration
@@ -433,6 +433,10 @@ struct PiSession {
     active_model: Arc<RwLock<Option<String>>>,
     /// Child process.
     process: Child,
+    /// Egress namespace guard (proxy mode). Held for the session lifetime so
+    /// its `Drop` tears the namespace down when the session ends; inert for
+    /// open/isolated modes. The runner never touches the namespace directly.
+    _egress_guard: EgressGuard,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
     /// The Pi external_id for this session.
@@ -639,6 +643,9 @@ impl PiSessionManager {
         }
         // Build command - either direct or via bwrap sandbox
         let mut bwrap_pre_exec_config: Option<SandboxConfig> = None;
+        // Egress namespace guard; replaced with a live one for proxy mode below.
+        // Held in the session so teardown runs when the session ends.
+        let mut egress_guard = EgressGuard::inert();
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
@@ -670,6 +677,13 @@ impl PiSessionManager {
                         }
 
                         bwrap_pre_exec_config = Some(effective_config.clone());
+
+                        // Proxy mode: create the egress namespace now (the child
+                        // joins it via setns in the pre-exec hook below). Inert
+                        // for open/isolated. Fail-closed propagates here.
+                        egress_guard = effective_config
+                            .prepare_egress()
+                            .context("Failed to prepare network egress namespace")?;
 
                         info!(
                             "Sandboxing Pi session '{}' with profile '{}' ({} bwrap args)",
@@ -737,8 +751,13 @@ impl PiSessionManager {
         cmd.stderr(std::process::Stdio::piped());
 
         if let Some(pre_exec_cfg) = bwrap_pre_exec_config.as_ref() {
-            configure_bwrap_pre_exec(cmd.as_std_mut(), pre_exec_cfg, &config.cwd)
-                .context("Failed to configure bwrap pre-exec hooks")?;
+            configure_bwrap_pre_exec(
+                cmd.as_std_mut(),
+                pre_exec_cfg,
+                &config.cwd,
+                egress_guard.plan(),
+            )
+            .context("Failed to configure bwrap pre-exec hooks")?;
         }
 
         // Spawn the process
@@ -865,6 +884,7 @@ impl PiSessionManager {
             id: session_id.clone(),
             config,
             process: child,
+            _egress_guard: egress_guard,
             state: Arc::clone(&state),
             session_external_id,
             active_provider,
