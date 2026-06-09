@@ -104,11 +104,32 @@ prompt_unknown = true
 log_connections = true
 
 # --- Network (eavs integration) ---
-# "open" = no restrictions, "isolated" = no network, "proxy" = via eavs
+# mode: "open" = no restrictions, "isolated" = no network (--unshare-net),
+#       "proxy" = run the agent in a captured egress namespace (see below)
 [profiles.my-custom.network]
 mode = "open"
 allow_domains = []
 log_requests = false
+
+# --- Proxy egress mode (level-2 capture) ---
+# WARNING: do NOT set mode = "proxy" yet. The arg-builder half is wired
+# (proxy mode is fail-closed and suppresses --unshare-net), but the runner
+# does not yet create/apply the egress namespace, so an agent would run with
+# NO network isolation. Proxy mode goes live with the runner egress wiring
+# (oqto-h6hr part 2). Schema for when it lands:
+#
+#   [profiles.my-custom.network]
+#   mode = "proxy"
+#   proxy_tcp_port = 8443        # REQUIRED; host-side transparent proxy port
+#   proxy_dns_port = 5353        # optional; defaults to proxy_tcp_port
+#   allow_domains = ["api.github.com", "*.anthropic.com"]
+#
+# When mode = "proxy", the agent runs inside a dedicated network namespace
+# whose only reachable peer is the host veth where the transparent proxy
+# listens; all TCP is DNAT-redirected to it, DNS is forced to the resolver,
+# and everything else is dropped. Fail-closed: proxy without proxy_tcp_port
+# refuses to launch. Workspace overrides may only tighten (open < proxy <
+# isolated).
 
 # --- Prompt delivery ---
 [profiles.my-custom.prompts]
