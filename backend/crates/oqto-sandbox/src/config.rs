@@ -165,6 +165,16 @@ pub struct NetworkConfig {
     /// Used to configure eavs filtering rules.
     pub allow_domains: Vec<String>,
 
+    /// Host-side port of the transparent TCP proxy that captures agent egress
+    /// when mode is "proxy". Required for proxy mode (fail-closed if absent).
+    #[serde(default)]
+    pub proxy_tcp_port: Option<u16>,
+
+    /// Host-side port of the DNS resolver for proxy mode. Defaults to
+    /// `proxy_tcp_port` when unset.
+    #[serde(default)]
+    pub proxy_dns_port: Option<u16>,
+
     /// Log all network requests.
     #[serde(default)]
     pub log_requests: bool,
@@ -229,6 +239,38 @@ fn stricter_landlock_mode(a: LandlockMode, b: LandlockMode) -> LandlockMode {
         (Enforce, _) | (_, Enforce) => Enforce,
         (Audit, _) | (_, Audit) => Audit,
         _ => Off,
+    }
+}
+
+/// Restrictiveness rank for network modes; higher is stricter.
+/// `Open` (0) allows everything, `Proxy` (1) confines egress to the proxy,
+/// `Isolated` (2) removes the network entirely.
+fn network_restrictiveness(mode: &NetworkMode) -> u8 {
+    match mode {
+        NetworkMode::Open => 0,
+        NetworkMode::Proxy => 1,
+        NetworkMode::Isolated => 2,
+    }
+}
+
+/// Merge two network policies so a workspace override can only tighten, never
+/// loosen, the global policy. On equal restrictiveness the workspace wins (it
+/// may, e.g., point proxy mode at its own ports).
+fn merge_network(
+    global: &Option<NetworkConfig>,
+    workspace: &Option<NetworkConfig>,
+) -> Option<NetworkConfig> {
+    match (global, workspace) {
+        (None, None) => None,
+        (Some(g), None) => Some(g.clone()),
+        (None, Some(w)) => Some(w.clone()),
+        (Some(g), Some(w)) => {
+            if network_restrictiveness(&w.mode) >= network_restrictiveness(&g.mode) {
+                Some(w.clone())
+            } else {
+                Some(g.clone())
+            }
+        }
     }
 }
 
@@ -599,6 +641,8 @@ impl SandboxProfile {
             network: Some(NetworkConfig {
                 mode: NetworkMode::Open,
                 allow_domains: vec![],
+                proxy_tcp_port: None,
+                proxy_dns_port: None,
                 log_requests: false,
             }),
             prompts: Some(PromptConfig {
@@ -653,6 +697,8 @@ impl SandboxProfile {
             network: Some(NetworkConfig {
                 mode: NetworkMode::Isolated,
                 allow_domains: vec![],
+                proxy_tcp_port: None,
+                proxy_dns_port: None,
                 log_requests: false,
             }),
             prompts: None,
@@ -769,6 +815,11 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub scoped_paths: Vec<ScopedPathRule>,
 
+    /// Network access control (mode + proxy ports). Carried from the profile so
+    /// `NetworkMode::Proxy` can drive `egress` namespace setup at spawn time.
+    #[serde(default)]
+    pub network: Option<NetworkConfig>,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -803,6 +854,7 @@ impl Default for SandboxConfig {
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
+            network: profile.network,
             profiles: HashMap::new(),
         }
     }
@@ -851,6 +903,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
+            network: profile.network,
             profiles: file.profiles,
         };
 
@@ -889,6 +942,7 @@ impl SandboxConfig {
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
+            network: profile.network,
             profiles: HashMap::new(),
         }
     }
@@ -917,6 +971,7 @@ impl SandboxConfig {
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
+            network: profile.network,
             profiles: HashMap::new(),
         }
     }
@@ -966,6 +1021,7 @@ impl SandboxConfig {
             overlay_root: profile.overlay_root,
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
+            network: profile.network,
             profiles: custom_profiles.clone(),
         };
 
@@ -1079,6 +1135,7 @@ impl SandboxConfig {
                         overlay_root: profile.overlay_root,
                         overlay_paths: profile.overlay_paths,
                         scoped_paths: profile.scoped_paths,
+                        network: profile.network,
                         profiles: merged_profiles,
                     };
 
@@ -1198,6 +1255,8 @@ impl SandboxConfig {
             },
             overlay_paths: overlay_paths.into_iter().collect(),
             scoped_paths,
+            // Network policy: workspace may only tighten (Open < Proxy < Isolated).
+            network: merge_network(&self.network, &workspace_config.network),
             profiles,
         }
     }
@@ -1787,9 +1846,29 @@ impl SandboxConfig {
             debug!("PID namespace isolation enabled");
         }
 
-        if self.isolate_network {
+        let net_mode = self.network_mode();
+        if net_mode == NetworkMode::Proxy {
+            // Proxy mode runs the agent inside a pre-configured egress namespace
+            // (see the `egress` module), applied by the launcher via
+            // `ip netns exec`. bwrap must NOT create its own empty netns here, or
+            // it would sever the configured one. Fail closed if no proxy port is
+            // set, rather than silently dropping isolation.
+            if self
+                .network
+                .as_ref()
+                .and_then(|n| n.proxy_tcp_port)
+                .is_none()
+            {
+                warn!(
+                    "NetworkMode::Proxy requires network.proxy_tcp_port; refusing to build \
+                     sandbox args (fail-closed)"
+                );
+                return None;
+            }
+            debug!("Network: proxy mode - egress namespace applied by launcher, not --unshare-net");
+        } else if self.isolate_network || net_mode == NetworkMode::Isolated {
             args.push("--unshare-net".to_string());
-            debug!("Network namespace isolation enabled");
+            debug!("Network namespace isolation enabled (--unshare-net)");
         }
 
         if self.drop_all_caps {
@@ -1991,6 +2070,28 @@ impl SandboxConfig {
         debug!("Full bwrap args: {:?}", args);
 
         Some(args)
+    }
+
+    /// Effective network mode, defaulting to `Open` when no policy is set.
+    pub fn network_mode(&self) -> NetworkMode {
+        self.network
+            .as_ref()
+            .map(|n| n.mode.clone())
+            .unwrap_or(NetworkMode::Open)
+    }
+
+    /// Build the egress namespace plan for proxy mode, given an allocated
+    /// `/30` subnet index. Returns `Ok(None)` for `Open`/`Isolated`; fails
+    /// closed for `Proxy` without a configured proxy port. The caller (runner)
+    /// applies the plan, then wraps the spawn with [`crate::egress::EgressPlan::wrap_command`].
+    pub fn egress_plan(
+        &self,
+        subnet_index: u32,
+    ) -> anyhow::Result<Option<crate::egress::EgressPlan>> {
+        match &self.network {
+            Some(cfg) => crate::egress::EgressPlan::from_network_config(cfg, subnet_index),
+            None => Ok(None),
+        }
     }
 
     /// Resolve seccomp policy path from config.
@@ -2207,7 +2308,18 @@ impl SandboxConfig {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    /// Serializes tests that mutate process-global env vars (HOME/PATH/shim
+    /// override). Without this, parallel test threads race on the shared env
+    /// and intermittently observe each other's HOME. Poison-tolerant: a panic
+    /// while held must not wedge the rest of the suite.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_default_config() {
@@ -2465,12 +2577,13 @@ log_requests = true
 
     #[test]
     fn test_deny_read_after_workspace_bind_when_workspace_is_home() {
+        let _env = env_guard();
         let temp = tempdir().unwrap();
         let home = temp.path();
         std::fs::create_dir_all(home.join(".ssh")).unwrap();
 
         let original_home = env::var_os("HOME");
-        // SAFETY: This test runs single-threaded and restores the value after
+        // SAFETY: serialized by env_guard; value restored after.
         unsafe { env::set_var("HOME", home) };
 
         let config = SandboxConfig::from_profile("development");
@@ -2517,7 +2630,8 @@ log_requests = true
         let temp = tempdir().unwrap();
         let ws = temp.path();
 
-        // SAFETY: tests are single-threaded for env mutation; restored below.
+        let _env = env_guard();
+        // SAFETY: serialized by env_guard; restored below.
         let original_path = env::var_os("PATH");
         unsafe { env::set_var("PATH", "/nonexistent-sparse-launcher-bin") };
 
@@ -2567,7 +2681,8 @@ log_requests = true
         // hermetic. The shim path doesn't need to be a real oqto-sandbox here
         // — we only assert the wire-up, not execution.
         let fake_shim = std::env::current_exe().expect("current_exe");
-        // SAFETY: test is single-threaded; we restore after the assertions.
+        let _env = env_guard();
+        // SAFETY: serialized by env_guard; we restore after the assertions.
         let prev = env::var_os(crate::shim::SHIM_BIN_OVERRIDE_ENV);
         unsafe { env::set_var(crate::shim::SHIM_BIN_OVERRIDE_ENV, &fake_shim) };
 
@@ -2658,5 +2773,149 @@ log_requests = true
         std::fs::write(&outside_file, b"ok")
             .expect("audit mode must not restrict writes; got EACCES (regression of oqto-2eev)");
         let _ = std::fs::remove_file(&outside_file);
+    }
+
+    // ---- NetworkMode::Proxy wiring (oqto-h6hr) ----
+
+    fn config_with_network(net: NetworkConfig) -> SandboxConfig {
+        let mut cfg = SandboxConfig::from_profile("development");
+        cfg.network = Some(net);
+        cfg
+    }
+
+    /// Builds bwrap args for `cfg` against a fresh HOME, or returns `None` when
+    /// the builder refuses. Skips (returns `Some(vec![])`) when bwrap is absent.
+    fn args_for(cfg: &SandboxConfig) -> Option<Vec<String>> {
+        if !SandboxConfig::is_bwrap_available() {
+            eprintln!("skipping: bwrap not available");
+            return Some(vec![]);
+        }
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", temp.path()) };
+        let result = cfg.build_bwrap_args_for_user(temp.path(), None);
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        result
+    }
+
+    #[test]
+    fn proxy_mode_suppresses_unshare_net() {
+        let cfg = config_with_network(NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: Some(8443),
+            ..Default::default()
+        });
+        let args = args_for(&cfg).expect("proxy mode with a port must build args");
+        assert!(
+            !args.iter().any(|a| a == "--unshare-net"),
+            "proxy mode must run in a pre-configured netns, not --unshare-net: {args:?}"
+        );
+    }
+
+    #[test]
+    fn proxy_mode_without_port_fails_closed() {
+        if !SandboxConfig::is_bwrap_available() {
+            eprintln!("skipping: bwrap not available");
+            return;
+        }
+        let cfg = config_with_network(NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: None,
+            ..Default::default()
+        });
+        assert!(
+            args_for(&cfg).is_none(),
+            "proxy mode without a proxy port must refuse to build args (fail-closed)"
+        );
+    }
+
+    #[test]
+    fn isolated_mode_emits_unshare_net() {
+        let cfg = config_with_network(NetworkConfig {
+            mode: NetworkMode::Isolated,
+            ..Default::default()
+        });
+        let args = args_for(&cfg).expect("isolated mode builds args");
+        if !args.is_empty() {
+            assert!(
+                args.iter().any(|a| a == "--unshare-net"),
+                "isolated mode must --unshare-net: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_mode_has_no_network_isolation() {
+        let cfg = config_with_network(NetworkConfig {
+            mode: NetworkMode::Open,
+            ..Default::default()
+        });
+        let args = args_for(&cfg).expect("open mode builds args");
+        assert!(!args.iter().any(|a| a == "--unshare-net"));
+    }
+
+    #[test]
+    fn network_mode_defaults_to_open_when_unset() {
+        let mut cfg = SandboxConfig::from_profile("development");
+        cfg.network = None;
+        assert_eq!(cfg.network_mode(), NetworkMode::Open);
+    }
+
+    #[test]
+    fn egress_plan_only_for_proxy() {
+        let open = config_with_network(NetworkConfig {
+            mode: NetworkMode::Open,
+            ..Default::default()
+        });
+        assert!(open.egress_plan(0).unwrap().is_none());
+
+        let proxy = config_with_network(NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: Some(8443),
+            ..Default::default()
+        });
+        let plan = proxy.egress_plan(2).unwrap().expect("proxy yields a plan");
+        assert_eq!(plan.proxy.tcp_port, 8443);
+        assert_eq!(plan.netns, "oqto-egr-2");
+    }
+
+    #[test]
+    fn merge_network_workspace_can_only_tighten() {
+        let open = Some(NetworkConfig {
+            mode: NetworkMode::Open,
+            ..Default::default()
+        });
+        let proxy = Some(NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: Some(8443),
+            ..Default::default()
+        });
+        let isolated = Some(NetworkConfig {
+            mode: NetworkMode::Isolated,
+            ..Default::default()
+        });
+
+        // Workspace tightens Open -> Proxy.
+        assert_eq!(
+            merge_network(&open, &proxy).unwrap().mode,
+            NetworkMode::Proxy
+        );
+        // Workspace cannot loosen Isolated -> Proxy; global Isolated wins.
+        assert_eq!(
+            merge_network(&isolated, &proxy).unwrap().mode,
+            NetworkMode::Isolated
+        );
+        // Workspace can tighten Proxy -> Isolated.
+        assert_eq!(
+            merge_network(&proxy, &isolated).unwrap().mode,
+            NetworkMode::Isolated
+        );
+        // None on both sides stays None.
+        assert!(merge_network(&None, &None).is_none());
     }
 }
