@@ -394,34 +394,7 @@ pub async fn sync_user_configs(
                     }
                 }
 
-                if state.mmry.enabled && !state.mmry.single_user {
-                    let mmry_port = state
-                        .users
-                        .ensure_mmry_port(
-                            &user.id,
-                            state.mmry.user_base_port,
-                            state.mmry.user_port_range,
-                        )
-                        .await
-                        .ok()
-                        .map(|p| p as u16);
-                    match linux_users.ensure_mmry_config_for_user(
-                        &linux_username,
-                        uid,
-                        &state.mmry.host_service_url,
-                        state.mmry.host_api_key.as_deref(),
-                        &state.mmry.default_model,
-                        state.mmry.dimension,
-                        mmry_port,
-                    ) {
-                        Ok(()) => {
-                            result.mmry_configured = true;
-                        }
-                        Err(err) => {
-                            result.error = Some(format!("mmry config update failed: {err}"));
-                        }
-                    }
-                }
+                let _ = uid;
 
                 // Sync EAVS: provision virtual key if missing, then regenerate models.json.
                 if let Some(ref eavs_client) = state.eavs_client {
@@ -560,33 +533,6 @@ pub async fn create_user(
                     );
                 }
 
-                if state.mmry.enabled && !state.mmry.single_user {
-                    let mmry_port = state
-                        .users
-                        .ensure_mmry_port(
-                            &user.id,
-                            state.mmry.user_base_port,
-                            state.mmry.user_port_range,
-                        )
-                        .await
-                        .ok()
-                        .map(|p| p as u16);
-                    if let Err(e) = linux_users.ensure_mmry_config_for_user(
-                        &actual_linux_username,
-                        uid,
-                        &state.mmry.host_service_url,
-                        state.mmry.host_api_key.as_deref(),
-                        &state.mmry.default_model,
-                        state.mmry.dimension,
-                        mmry_port,
-                    ) {
-                        warn!(
-                            user_id = %user.id,
-                            error = %e,
-                            "Failed to update mmry config for user"
-                        );
-                    }
-                }
 
                 // Provision shell dotfiles (zsh + starship)
                 if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
@@ -628,21 +574,6 @@ pub async fn create_user(
                 )));
             }
         }
-    }
-
-    // Allocate a stable per-user mmry port in local multi-user mode.
-    if state.mmry.enabled
-        && !state.mmry.single_user
-        && let Err(e) = state
-            .users
-            .ensure_mmry_port(
-                &user.id,
-                state.mmry.user_base_port,
-                state.mmry.user_port_range,
-            )
-            .await
-    {
-        warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
     }
 
     // Provision EAVS virtual key and write Pi models.json if eavs client is available

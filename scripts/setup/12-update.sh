@@ -43,6 +43,11 @@ update_octo() {
   # Regenerate models.json (picks up new eavs providers/models)
   update_models_json
 
+  # Migrate legacy mmry SQLite stores to workspace-local JSONL memories.
+  if [[ -x "$SCRIPT_DIR/scripts/migrate-mmry-jsonl.sh" ]]; then
+    "$SCRIPT_DIR/scripts/migrate-mmry-jsonl.sh" --mode auto --quiet || log_warn "mmry JSONL migration failed (continuing)"
+  fi
+
   # Restart services
   log_info "Restarting services..."
   if sudo systemctl is-active --quiet eavs 2>/dev/null; then

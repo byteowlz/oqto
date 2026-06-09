@@ -22,6 +22,15 @@ Usage: $0 [OPTIONS]
 Options:
   --help                Show this help message
   --non-interactive     Run without prompts (uses defaults/env vars)
+  --personal            Select personal/single-user local profile
+  --team                Select team/multi-user local profile
+  --plan                Print the selected setup contract and exit without changes
+  --doctor              Evaluate setup contract drift and exit without changes
+  --apply               With --doctor, apply safe remediations
+  --apply-runners       With --doctor --apply, also reprovision per-user runner services
+  --apply-services      With --doctor --apply, also enable/start declared system services
+  --strict              With --doctor, exit non-zero on error-severity drift
+  --json                With --plan/--doctor, output machine-readable JSON
   
   --production, --prod  Production mode with ALL hardening enabled:
                         - Disables dev mode (requires real auth)
@@ -119,11 +128,26 @@ Pi Extensions (from github.com/byteowlz/pi-agent-extensions):
 For detailed documentation on all prerequisites and components, see SETUP.md
 
 Examples:
-  # Interactive setup (recommended for first-time)
-  ./setup.sh
+  # Preview the personal setup contract without changing the host
+  ./setup.sh --personal --plan
 
-  # Quick development setup (no prompts)
-  ./setup.sh --dev
+  # Diagnose team setup drift without changing the host
+  ./setup.sh --team --doctor
+
+  # CI/preflight gate: fail on error-severity setup drift
+  ./setup.sh --team --doctor --strict
+
+  # Apply scoped safe remediations
+  sudo ./setup.sh --team --doctor --apply --apply-runners
+
+  # Interactive setup (recommended for first-time)
+  ./setup.sh --personal
+
+  # Quick personal development setup (no prompts)
+  ./setup.sh --personal --dev
+
+  # Team/multi-user production setup on Linux
+  ./setup.sh --team --production --domain oqto.example.com
 
   # Full production setup with all hardening (RECOMMENDED for servers)
   ./setup.sh --production --domain oqto.example.com
@@ -137,17 +161,120 @@ Examples:
   # Deploy from a pre-configured oqto.dev/setup URL
   ./setup.sh --from-url 'https://oqto.dev/setup#WyRzY2hlbWEi...'
 
-  # Multi-user container setup on Linux
-  OQTO_USER_MODE=multi OQTO_BACKEND_MODE=container ./setup.sh --production
-
   # Environment variable style (equivalent to --production)
   OQTO_DEV_MODE=false OQTO_HARDEN_SERVER=yes ./setup.sh --non-interactive
 EOF
 }
 
+print_setup_summary() {
+  local profile="personal"
+  if [[ "${SELECTED_USER_MODE:-$OQTO_USER_MODE}" == "multi" ]]; then
+    profile="team"
+  fi
+
+  log_step "Setup profile summary"
+  echo "Profile:        $profile"
+  echo "User mode:      ${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
+  echo "Backend mode:   ${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+  echo "Auth mode:      $(if [[ "$OQTO_DEV_MODE" == "true" ]]; then echo "development"; else echo "production/real auth"; fi)"
+  echo "Hardening:      ${OQTO_HARDEN_SERVER:-prompt}"
+  echo "Services:       ${OQTO_INSTALL_SERVICE:-yes}"
+  echo
+  echo "Preview this exact contract any time with: ./setup.sh --${profile} --plan"
+  echo
+
+  if ! confirm "Continue with this setup profile?" "y"; then
+    log_info "Setup cancelled. No changes made after profile confirmation."
+    exit 0
+  fi
+}
+
+selected_setup_profile() {
+  if [[ "${SELECTED_USER_MODE:-$OQTO_USER_MODE}" == "multi" ]]; then
+    echo "team"
+  else
+    echo "personal"
+  fi
+}
+
+run_setup_doctor() {
+  local profile
+  profile="$(selected_setup_profile)"
+  local json_args=()
+  local strict_args=()
+  local apply_args=()
+  local apply_runner_args=()
+  local apply_service_args=()
+  if [[ "${PLAN_JSON:-false}" == "true" ]]; then
+    json_args+=(--json)
+  fi
+  if [[ "${DOCTOR_STRICT:-false}" == "true" ]]; then
+    strict_args+=(--strict)
+  fi
+  if [[ "${DOCTOR_APPLY:-false}" == "true" ]]; then
+    apply_args+=(--apply)
+  fi
+  if [[ "${DOCTOR_APPLY_RUNNERS:-false}" == "true" || "${DOCTOR_APPLY_SERVICES:-false}" == "true" ]]; then
+    if [[ "${DOCTOR_APPLY:-false}" != "true" ]]; then
+      log_error "--apply-runners/--apply-services require --apply"
+      return 1
+    fi
+  fi
+  if [[ "${DOCTOR_APPLY_RUNNERS:-false}" == "true" ]]; then
+    apply_runner_args+=(--apply-runners)
+  fi
+  if [[ "${DOCTOR_APPLY_SERVICES:-false}" == "true" ]]; then
+    apply_service_args+=(--apply-services)
+  fi
+
+  if [[ -d "$SCRIPT_DIR/backend/crates/oqtoctl" ]]; then
+    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqtoctl -- doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}")
+    return $?
+  fi
+
+  if command_exists oqtoctl && oqtoctl doctor --help 2>/dev/null | grep -q -- '--contract'; then
+    oqtoctl doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}"
+    return $?
+  fi
+
+  log_error "oqtoctl with doctor --contract is not installed and backend source is unavailable; cannot run setup doctor"
+  return 1
+}
+
+run_setup_plan() {
+  local profile="personal"
+  local json_args=()
+  if [[ "${SELECTED_USER_MODE:-$OQTO_USER_MODE}" == "multi" ]]; then
+    profile="team"
+  fi
+  if [[ "${PLAN_JSON:-false}" == "true" ]]; then
+    json_args+=(--json)
+  fi
+
+  if [[ -d "$SCRIPT_DIR/backend/crates/oqto-setup" ]]; then
+    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqto-setup -- plan --profile "$profile" "${json_args[@]}")
+    return $?
+  fi
+
+  if command_exists oqto-setup && oqto-setup --help 2>/dev/null | grep -q 'plan'; then
+    oqto-setup plan --profile "$profile" "${json_args[@]}"
+    return $?
+  fi
+
+  log_error "oqto-setup is not installed and backend source is unavailable; cannot render setup plan"
+  return 1
+}
+
 main() {
   NONINTERACTIVE="false"
   FRESH_SETUP="false"
+  PLAN_ONLY="false"
+  DOCTOR_ONLY="false"
+  DOCTOR_APPLY="false"
+  DOCTOR_APPLY_RUNNERS="false"
+  DOCTOR_APPLY_SERVICES="false"
+  DOCTOR_STRICT="false"
+  PLAN_JSON="false"
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -186,6 +313,48 @@ main() {
       ;;
     --non-interactive)
       NONINTERACTIVE="true"
+      shift
+      ;;
+    --plan)
+      PLAN_ONLY="true"
+      shift
+      ;;
+    --doctor)
+      DOCTOR_ONLY="true"
+      shift
+      ;;
+    --apply)
+      DOCTOR_APPLY="true"
+      shift
+      ;;
+    --apply-runners)
+      DOCTOR_APPLY_RUNNERS="true"
+      shift
+      ;;
+    --apply-services)
+      DOCTOR_APPLY_SERVICES="true"
+      shift
+      ;;
+    --strict)
+      DOCTOR_STRICT="true"
+      shift
+      ;;
+    --json)
+      PLAN_JSON="true"
+      shift
+      ;;
+    --personal)
+      OQTO_USER_MODE="single"
+      OQTO_BACKEND_MODE="local"
+      SELECTED_USER_MODE="single"
+      SELECTED_BACKEND_MODE="local"
+      shift
+      ;;
+    --team)
+      OQTO_USER_MODE="multi"
+      OQTO_BACKEND_MODE="local"
+      SELECTED_USER_MODE="multi"
+      SELECTED_BACKEND_MODE="local"
       shift
       ;;
     --production | --prod)
@@ -334,6 +503,23 @@ main() {
     fi
   fi
 
+  if [[ "$PLAN_ONLY" == "true" || "$DOCTOR_ONLY" == "true" ]]; then
+    SELECTED_USER_MODE="${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
+    SELECTED_BACKEND_MODE="${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+    if [[ "${SELECTED_BACKEND_MODE}" == "container" ]]; then
+      SELECTED_BACKEND_MODE="local"
+      if [[ "$PLAN_JSON" != "true" ]]; then
+        log_warn "Container backend is currently disabled; showing local setup plan"
+      fi
+    fi
+    if [[ "$DOCTOR_ONLY" == "true" ]]; then
+      run_setup_doctor
+    else
+      run_setup_plan
+    fi
+    return $?
+  fi
+
   echo
   echo -e "${BOLD}${CYAN}"
   cat <<'BANNER'
@@ -353,9 +539,6 @@ BANNER
   echo -e "${YELLOW}Preflight:${NC} Linux host required, sudo-capable user required, container backend currently disabled (setup forces local mode)."
   echo
 
-  # Save state on exit (including failures) so re-runs can pick up where we left off
-  trap save_setup_state EXIT
-
   # Initialize
   detect_os
 
@@ -364,6 +547,10 @@ BANNER
     update_octo
     return 0
   fi
+
+  # Save state on exit (including failures) so re-runs can pick up where we left off.
+  # Plan mode exits before this point and remains read-only.
+  trap save_setup_state EXIT
 
   # Load previous setup state (if available and not --fresh)
   local use_saved_state="false"
@@ -411,6 +598,8 @@ BANNER
       PRODUCTION_MODE="$([[ "$OQTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
     fi
   fi
+
+  print_setup_summary
 
   # Prerequisites
   check_prerequisites
@@ -544,6 +733,12 @@ BANNER
 
   # Start all services
   start_all_services
+
+  # Final setup doctor pass: keep setup transparent by showing remaining drift
+  # and concrete remediation hints before the summary. This is intentionally
+  # non-strict so first installs can still complete while surfacing exact fixes.
+  log_step "Post-setup doctor"
+  run_setup_doctor || log_warn "Post-setup doctor could not run; use ./setup.sh --$(selected_setup_profile) --doctor after setup"
 
   # Summary
   print_summary

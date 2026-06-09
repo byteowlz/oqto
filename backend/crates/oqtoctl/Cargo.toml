@@ -25,6 +25,7 @@ hyperlocal.workspace = true
 libc.workspace = true
 nanoid.workspace = true
 oqto-eavs = { path = "../oqto-eavs" }
+oqto-provisioning = { path = "../oqto-provisioning" }
 reqwest.workspace = true
 reqwest-eventsource.workspace = true
 serde.workspace = true

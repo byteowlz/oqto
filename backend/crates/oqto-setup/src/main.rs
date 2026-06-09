@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(
     name = "oqto-setup",
-    about = "Hydrate Oqto config files from an install config"
+    about = "Plan and hydrate Oqto setup from typed install contracts"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -17,6 +17,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print the expected provisioning contract for an install profile.
+    Plan {
+        /// Install profile to plan: personal or team.
+        #[arg(long, default_value = "personal")]
+        profile: SetupProfile,
+        /// Output machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     Hydrate {
         /// Path to the install config (oqto.install.toml)
         #[arg(long, default_value = "oqto.install.toml")]
@@ -32,6 +41,21 @@ enum Command {
 enum HydrateMode {
     Merge,
     Overwrite,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SetupProfile {
+    Personal,
+    Team,
+}
+
+impl From<SetupProfile> for oqto_provisioning::InstallProfile {
+    fn from(value: SetupProfile) -> Self {
+        match value {
+            SetupProfile::Personal => Self::Personal,
+            SetupProfile::Team => Self::Team,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -60,11 +84,48 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Plan { profile, json } => print_plan(profile, json),
         Command::Hydrate {
             install_config,
             mode,
         } => hydrate_configs(&install_config, mode),
     }
+}
+
+fn print_plan(profile: SetupProfile, json: bool) -> Result<()> {
+    let manifest = oqto_provisioning::manifest(profile.into());
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&manifest)?);
+        return Ok(());
+    }
+
+    println!("Oqto setup plan: {}", manifest.summary);
+    println!("Runner socket: {}", manifest.runner_socket.pattern);
+    println!("\nPaths:");
+    for path in &manifest.paths {
+        println!(
+            "- {} owner={} group={} mode={} -- {}",
+            path.path, path.owner, path.group, path.mode, path.purpose
+        );
+    }
+    println!("\nServices:");
+    for service in &manifest.services {
+        let user = service.user.as_deref().unwrap_or("root/system");
+        println!(
+            "- {} user={} enabled={} active={} -- {}",
+            service.name, user, service.enabled, service.active, service.purpose
+        );
+    }
+    println!("\nChecks:");
+    for check in &manifest.checks {
+        println!(
+            "- {:?}: {} -- remediation: {}",
+            check.severity, check.description, check.remediation
+        );
+    }
+
+    Ok(())
 }
 
 fn hydrate_configs(install_path: &Path, mode_override: Option<HydrateMode>) -> Result<()> {

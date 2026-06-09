@@ -877,9 +877,20 @@ print('true' if any(n in text for n in needle) else 'false')
 PY
 ")"
         if [[ "$seccomp_enforced" == "true" ]]; then
-            if ! host_exec_sudo "$is_local" "$ssh_target" "test -r /etc/oqto/seccomp/default.bpf"; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "seccomp.bpf.missing"
-                err "seccomp enforce configured but /etc/oqto/seccomp/default.bpf missing on $name"
+            # deploy installs the BPF during activation (see install_seccomp_bpf),
+            # so gate on whether we can supply the policy for this host's arch
+            # rather than requiring it to pre-exist (avoids first-deploy deadlock).
+            local sc_arch
+            sc_arch="$(host_exec "$is_local" "$ssh_target" "uname -m")"
+            case "$sc_arch" in
+                x86_64|amd64) sc_arch="x86_64" ;;
+                aarch64|arm64) sc_arch="aarch64" ;;
+                *) sc_arch="" ;;
+            esac
+            local sc_src="$ROOT_DIR/backend/crates/oqto/examples/seccomp/default-${sc_arch}.bpf"
+            if [[ -z "$sc_arch" || ! -f "$sc_src" ]]; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "seccomp.bpf.source_missing"
+                err "seccomp enforce configured but source BPF missing for arch '$sc_arch' ($sc_src). Run scripts/sandbox/generate-seccomp-artifacts.sh"
                 return 1
             fi
         fi
@@ -903,7 +914,7 @@ prepare_host() {
         fi
     fi
 
-    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/bin' '$release_dir/meta'"
+    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/bin' '$release_dir/meta/migrations'"
 
     if [[ "$SKIP_BACKEND" != "true" ]]; then
         local bin artifact_dir
@@ -920,6 +931,49 @@ prepare_host() {
                     scp -q "$src" "$ssh_target:$tmp_remote"
                     host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_remote' '$release_dir/bin/$bin' && rm -f '$tmp_remote'"
                 fi
+            fi
+        done
+    fi
+
+    # Stage migration scripts needed during activation (legacy mmry -> JSONL)
+    local mig_shell_src="$ROOT_DIR/scripts/migrate-mmry-jsonl.sh"
+    local mig_py_src="$ROOT_DIR/scripts/migrate_legacy_mmry_to_jsonl.py"
+    if [[ -f "$mig_shell_src" && -f "$mig_py_src" ]]; then
+        if [[ "$is_local" == "true" ]]; then
+            host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$mig_shell_src' '$release_dir/meta/migrations/migrate-mmry-jsonl.sh'"
+            host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$mig_py_src' '$release_dir/meta/migrations/migrate_legacy_mmry_to_jsonl.py'"
+        else
+            if [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "${YELLOW}  [dry-run]${NC} scp $mig_shell_src $ssh_target:/tmp/oqto-migrate-mmry-${RELEASE_ID}.sh"
+                echo -e "${YELLOW}  [dry-run]${NC} scp $mig_py_src $ssh_target:/tmp/oqto-migrate-mmry-${RELEASE_ID}.py"
+            else
+                local tmp_mig_sh="/tmp/oqto-migrate-mmry-${RELEASE_ID}.sh"
+                local tmp_mig_py="/tmp/oqto-migrate-mmry-${RELEASE_ID}.py"
+                scp -q "$mig_shell_src" "$ssh_target:$tmp_mig_sh"
+                scp -q "$mig_py_src" "$ssh_target:$tmp_mig_py"
+                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_mig_sh' '$release_dir/meta/migrations/migrate-mmry-jsonl.sh' && rm -f '$tmp_mig_sh'"
+                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_mig_py' '$release_dir/meta/migrations/migrate_legacy_mmry_to_jsonl.py' && rm -f '$tmp_mig_py'"
+            fi
+        fi
+    fi
+
+    # Stage seccomp BPF artifacts (both arches); install_seccomp_bpf picks the
+    # host's arch at activation time. Shipping both keeps cross-arch fleets safe.
+    local seccomp_src_dir="$ROOT_DIR/backend/crates/oqto/examples/seccomp"
+    if [[ -f "$seccomp_src_dir/default-x86_64.bpf" || -f "$seccomp_src_dir/default-aarch64.bpf" ]]; then
+        host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/seccomp'"
+        local sc_arch sc_src
+        for sc_arch in x86_64 aarch64; do
+            sc_src="$seccomp_src_dir/default-${sc_arch}.bpf"
+            [[ -f "$sc_src" ]] || continue
+            if [[ "$is_local" == "true" ]]; then
+                host_exec_sudo "$is_local" "$ssh_target" "install -m 0644 '$sc_src' '$release_dir/seccomp/default-${sc_arch}.bpf'"
+            elif [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "${YELLOW}  [dry-run]${NC} scp $sc_src $ssh_target:/tmp/oqto-seccomp-${sc_arch}-${RELEASE_ID}.bpf"
+            else
+                local tmp_sc="/tmp/oqto-seccomp-${sc_arch}-${RELEASE_ID}.bpf"
+                scp -q "$sc_src" "$ssh_target:$tmp_sc"
+                host_exec_sudo "$is_local" "$ssh_target" "install -m 0644 '$tmp_sc' '$release_dir/seccomp/default-${sc_arch}.bpf' && rm -f '$tmp_sc'"
             fi
         done
     fi
@@ -1181,6 +1235,29 @@ restart_services_ordered() {
             fi
             host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
         done
+    fi
+}
+
+run_mmry_jsonl_migration() {
+    local is_local="$1" ssh_target="$2" mode="$3"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    local migrate_mode="auto"
+    if [[ "$mode" == "single-user" ]]; then
+        migrate_mode="single"
+    elif [[ "$mode" == "multi-user" ]]; then
+        migrate_mode="multi"
+    fi
+
+    local migrate_script="$RELEASES_ROOT/current/meta/migrations/migrate-mmry-jsonl.sh"
+    local migrate_py="$RELEASES_ROOT/current/meta/migrations/migrate_legacy_mmry_to_jsonl.py"
+    local cmd="if [[ -x '$migrate_script' ]]; then MMRY_MIGRATE_SCRIPT='$migrate_py' '$migrate_script' --mode $migrate_mode --quiet; else echo '[deploy] mmry migration script missing in release: $migrate_script'; fi"
+
+    if ! host_exec "$is_local" "$ssh_target" "$cmd"; then
+        warn "mmry JSONL migration step failed on target (continuing)"
     fi
 }
 
@@ -1482,6 +1559,44 @@ PRUNE_EOF
     fi
 }
 
+# Install the staged seccomp BPF for the host's architecture into the canonical
+# location, atomically as part of (de)activation. Mirrors the standalone
+# scripts/sandbox/install-seccomp-policy.sh so deploy converges the active policy
+# to the release being made current (and restores it on rollback). Reads from a
+# release's staged seccomp/ dir; older releases without it are skipped.
+install_seccomp_bpf() {
+    local is_local="$1" ssh_target="$2" name="$3" release_dir="$4"
+    local staged="$release_dir/seccomp"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} install $staged/default-<arch>.bpf -> /usr/local/share/oqto/seccomp/default.bpf (+/etc/oqto/seccomp symlink)"
+        return 0
+    fi
+
+    if ! host_exec_sudo "$is_local" "$ssh_target" "test -d '$staged'"; then
+        return 0
+    fi
+
+    local host_arch
+    host_arch="$(host_exec "$is_local" "$ssh_target" "uname -m")"
+    case "$host_arch" in
+        x86_64|amd64) host_arch="x86_64" ;;
+        aarch64|arm64) host_arch="aarch64" ;;
+        *) warn "Unsupported arch '$host_arch' for seccomp install on $name; skipping"; return 0 ;;
+    esac
+
+    local artifact="$staged/default-${host_arch}.bpf"
+    if ! host_exec_sudo "$is_local" "$ssh_target" "test -f '$artifact'"; then
+        warn "No staged seccomp BPF for arch $host_arch on $name; skipping"
+        return 0
+    fi
+
+    # Policy is not a secret: keep world-readable so local-user sandboxes can
+    # open it without privileged group membership.
+    host_exec_sudo "$is_local" "$ssh_target" "install -d -m 0755 /usr/local/share/oqto/seccomp && install -m 0644 '$artifact' /usr/local/share/oqto/seccomp/default.bpf && install -d -m 0755 /etc/oqto/seccomp && ln -sfn /usr/local/share/oqto/seccomp/default.bpf /etc/oqto/seccomp/default.bpf"
+    ok "Installed seccomp BPF ($host_arch) on $name"
+}
+
 rollback_host() {
     local name="$1" ssh_target="$2" is_local="$3" binaries="$4" mode="$5" services="$6"
     local previous_release="$7"
@@ -1499,6 +1614,7 @@ rollback_host() {
 
     host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/current'"
     install_current_symlinks "$is_local" "$ssh_target" "$binaries"
+    install_seccomp_bpf "$is_local" "$ssh_target" "$name" "$RELEASES_ROOT/$previous_release"
     restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
 
     if health_check_host "$is_local" "$ssh_target" "$mode"; then
@@ -1541,6 +1657,7 @@ activate_host() {
 
     host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/current'"
     install_current_symlinks "$is_local" "$ssh_target" "$binaries"
+    install_seccomp_bpf "$is_local" "$ssh_target" "$name" "$release_dir"
 
     if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
         host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
@@ -1640,6 +1757,9 @@ activate_host() {
         rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
         return 1
     fi
+
+    # Migrate legacy mmry SQLite stores to workspace-local JSONL before restart.
+    run_mmry_jsonl_migration "$is_local" "$ssh_target" "$mode"
 
     restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
 

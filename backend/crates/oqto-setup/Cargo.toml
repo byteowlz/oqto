@@ -8,7 +8,9 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+oqto-provisioning = { path = "../oqto-provisioning" }
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 shellexpand.workspace = true
 dirs.workspace = true

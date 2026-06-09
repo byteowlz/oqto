@@ -400,25 +400,8 @@ fn create_router_with_config_and_auth(
             "/chat-history/{session_id}/messages",
             get(handlers::get_chat_messages),
         )
-        // Mmry (memory service) proxy routes
-        .route(
-            "/session/{session_id}/memories",
-            get(proxy::proxy_mmry_list).post(proxy::proxy_mmry_add),
-        )
-        .route(
-            "/session/{session_id}/memories/search",
-            post(proxy::proxy_mmry_search),
-        )
-        .route(
-            "/session/{session_id}/memories/stores",
-            get(proxy::proxy_mmry_stores),
-        )
-        .route(
-            "/session/{session_id}/memories/{memory_id}",
-            get(proxy::proxy_mmry_memory)
-                .put(proxy::proxy_mmry_memory)
-                .delete(proxy::proxy_mmry_memory),
-        )
+        // Session memory routes removed. Use workspace-scoped memory endpoints:
+        // /workspace/memories*
         // Settings routes
         .route("/settings/schema", get(handlers::get_settings_schema))
         .route(

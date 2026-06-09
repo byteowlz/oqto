@@ -55,14 +55,16 @@ For each host, deploy executes these phases:
      - If hstry DB exists, `conversations.parent_conversation_id` and `conversations.fork_type` must exist (session-tree schema guard).
    - Multi-user security gates:
      - `/etc/oqto/sandbox.toml` must exist, be readable, owner `root:root`, perms `<= 0644`
-     - If seccomp enforce is configured in sandbox config, `/etc/oqto/seccomp/default.bpf` must exist
+     - If seccomp enforce is configured in sandbox config, a source BPF artifact for the host's architecture (`backend/crates/oqto/examples/seccomp/default-<arch>.bpf`) must exist to install. Regenerate with `scripts/sandbox/generate-seccomp-artifacts.sh`. The artifact no longer needs to pre-exist on the host -- activation installs it.
 
 2. `deploy.prepare.start` / `deploy.prepare.pass|fail`
    - Stage binaries and frontend under: `/var/lib/oqto/releases/<release-id>/`
+   - Stage seccomp BPF artifacts (both arches) under `<release-id>/seccomp/`
    - Write `.prepared` marker (idempotent)
 
 3. `deploy.activate.start` / `deploy.activate.pass|fail`
    - Atomic symlink switch: `/var/lib/oqto/releases/current -> <release-id>`
+   - Install host-arch seccomp BPF: `/usr/local/share/oqto/seccomp/default.bpf` (+ legacy symlink `/etc/oqto/seccomp/default.bpf`); restored to the previous release's policy on rollback
    - `/usr/local/bin/*` relinked to `current/bin/*`
    - Ordered restarts: runner → control plane (`oqto`) → dependent services
    - In single-user hosts without `systemd --user`, deploy now auto-restarts `oqto-runner`

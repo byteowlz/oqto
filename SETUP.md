@@ -11,7 +11,7 @@ Comprehensive setup and installation guide for self-hosting Oqto on your own inf
 | **pi** | Agent Runtime | Yes | Main chat/LLM interface (primary harness) |
 | **ttyd** | Agent Runtime | Yes (local mode) | Web terminal for browser access |
 | **opencode** | Agent Runtime | No (TBD) | Planned future agent runtime |
-| **docker/podman** | Runtime | Yes (container mode) | Container runtime for isolation |
+| **docker/podman** | Runtime | No (container setup disabled) | Planned container runtime for isolation |
 | **agntz** | Tool | Recommended | Agent operations (memory, issues, mail, reservations) |
 | **mmry** | Tool | Optional | Memory system (integrated with Oqto API) |
 | **trx** | Tool | Optional | Task tracking (integrated with Oqto API) |
@@ -19,7 +19,7 @@ Comprehensive setup and installation guide for self-hosting Oqto on your own inf
 
 ## Overview
 
-Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisites and installation for Linux deployments (local/native and container modes).
+Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisites and installation for Linux local/native deployments. Container setup is currently disabled in `setup.sh` until it is fully finished and tested.
 
 > Note: macOS setup is currently not supported.
 
@@ -30,17 +30,39 @@ Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisit
 For development or single-machine setup:
 
 ```bash
-./setup.sh
+./setup.sh --personal
 ```
 
 The script will:
 1. Detect your OS and system configuration
-2. Prompt for user mode (single-user or multi-user)
-3. Prompt for backend mode (local processes or containers)
-4. Install all required dependencies
-5. Build Oqto components
-6. Generate configuration files
-7. Install system services (optional)
+2. Prompt for user mode (single-user or multi-user) unless `--personal` or `--team` was provided
+3. Configure the local/native backend mode (container setup is currently disabled)
+4. Show a setup profile summary before mutating the host
+5. Install all required dependencies
+6. Build Oqto components
+7. Generate configuration files
+8. Install system services (optional)
+9. Run a non-strict post-setup doctor pass with remaining drift and remediation hints
+
+Preview the expected setup contract before changing the host (see also [docs/reference/install-contract.md](./docs/reference/install-contract.md)):
+
+```bash
+./setup.sh --personal --plan
+./setup.sh --team --plan
+./setup.sh --team --plan --json
+# Evaluate setup drift without changing the host, with summary + remediation commands:
+./setup.sh --team --doctor
+# Apply safe non-disruptive remediations (runner socket directory):
+./setup.sh --team --doctor --apply
+# Also reprovision per-user runners with socket drift (--apply required):
+./setup.sh --team --doctor --apply --apply-runners
+# Also enable/start declared system services (--apply required):
+./setup.sh --team --doctor --apply --apply-services
+# CI/preflight gate: fail on error-severity drift:
+./setup.sh --team --doctor --strict
+# Native setup CLI also supports JSON output:
+oqto-setup plan --profile team --json
+```
 
 If you have a portable install config, hydrate configs directly:
 
@@ -51,7 +73,13 @@ oqto-setup hydrate --install-config oqto.install.toml
 For non-interactive installation:
 
 ```bash
-OQTO_USER_MODE=single OQTO_BACKEND_MODE=local ./setup.sh --non-interactive
+./setup.sh --personal --non-interactive
+```
+
+For team/multi-user Linux setup:
+
+```bash
+./setup.sh --team --production --domain oqto.example.com
 ```
 
 To uninstall oqto-managed services and binaries later:
@@ -138,14 +166,9 @@ See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
 | **Rust** | Toolchain for building components | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y` |
 | **Bun** | JavaScript runtime for frontend | `curl -fsSL https://bun.sh/install \| bash` |
 
-### Container Runtime (Container Mode Only)
+### Container Runtime
 
-Required only if using container mode:
-
-| Tool | Purpose | Installation |
-|------|---------|--------------|
-| **docker** | Container runtime (Linux) | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| **podman** | Container runtime (Linux production) | `apt install podman` / `dnf install podman` |
+Container setup is currently disabled in `setup.sh`; Docker/Podman are not required for the supported personal or team local/native install paths.
 
 **Note**: macOS installation is currently unsupported.
 
@@ -834,6 +857,26 @@ open http://localhost:3000
 
 ## Troubleshooting
 
+### First command to run: setup doctor
+
+For multi-user deployments, start with the setup/provisioning doctor. It checks global paths/permissions, system services, database-to-Linux identity mapping, Linux user existence/UID drift, canonical runner socket paths, and split-routing symptoms.
+
+```bash
+# Human-readable drift report with summary, findings, and command hints:
+./setup.sh --team --doctor
+
+# Machine-readable report for automation:
+./setup.sh --team --doctor --json
+
+# CI/preflight gate: exit non-zero on error-severity drift:
+./setup.sh --team --doctor --strict
+
+# Apply scoped remediations:
+sudo ./setup.sh --team --doctor --apply                  # runner socket directory only
+sudo ./setup.sh --team --doctor --apply --apply-runners  # also reprovision runner units
+sudo ./setup.sh --team --doctor --apply --apply-services # also enable/start system services
+```
+
 ### Container image not found
 
 Error: `Failed to find container image`
@@ -884,17 +927,7 @@ Solution: For user-level services, use `systemctl --user`. For system services, 
 
 ### Container runtime not found
 
-Error: `No container runtime found`
-
-Solution: Install Docker or Podman:
-```bash
-# Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
-
-# Podman (Linux)
-apt install podman
-```
+Container setup is currently disabled in `setup.sh`. Docker/Podman are not required for the supported personal or team local/native install paths.
 
 ## Additional Resources
 

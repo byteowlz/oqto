@@ -109,6 +109,7 @@ prost = "0.14"
 # External crates
 hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
 trx-core = { git = "https://github.com/byteowlz/trx", branch = "master" }
+mmry-core = { path = "../../mmry/crates/mmry-core" }
 
 [profile.release]
 lto = true

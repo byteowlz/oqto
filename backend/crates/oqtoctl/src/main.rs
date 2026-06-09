@@ -54,6 +54,28 @@ async fn try_main() -> Result<()> {
         Command::Local { command } => handle_local(&client, command, cli.json).await,
         Command::Sandbox { command } => handle_sandbox(command, cli.json).await,
         Command::User { command } => handle_user(&client, command, cli.json).await,
+        Command::Doctor {
+            user,
+            apply,
+            contract,
+            profile,
+            strict,
+            apply_services,
+            apply_runners,
+        } => {
+            handle_doctor(
+                user.as_deref(),
+                apply,
+                contract,
+                &profile,
+                strict,
+                apply_services,
+                apply_runners,
+                cli.config.as_deref(),
+                cli.json,
+            )
+            .await
+        }
         Command::HashPassword { password, cost } => handle_hash_password(password, cost),
     }
 }
@@ -153,6 +175,36 @@ enum Command {
     Sandbox {
         #[command(subcommand)]
         command: SandboxCommand,
+    },
+
+    /// Diagnose setup/provisioning drift
+    ///
+    /// Checks the setup contract: global paths/permissions, system services,
+    /// database user identity, Linux user existence/UID, canonical runner socket
+    /// paths, and split-routing symptoms. Safe remediations require --apply;
+    /// use --strict to turn error-severity drift into a non-zero preflight gate.
+    Doctor {
+        /// Optional username or user ID to scope the check.
+        #[arg(long)]
+        user: Option<String>,
+        /// Apply safe remediation in-place (default is dry-run report).
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Print the provisioning contract instead of probing the host.
+        #[arg(long, default_value_t = false)]
+        contract: bool,
+        /// Install profile for --contract: auto, personal, or team.
+        #[arg(long, default_value = "auto")]
+        profile: String,
+        /// Exit non-zero when contract evaluation finds error-severity drift.
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+        /// With --apply, also reprovision per-user runner services with socket drift.
+        #[arg(long, default_value_t = false)]
+        apply_runners: bool,
+        /// With --apply, also enable/start declared system services.
+        #[arg(long, default_value_t = false)]
+        apply_services: bool,
     },
 
     /// Manage users and runner provisioning
@@ -3165,6 +3217,785 @@ struct IdentityDoctorSummary {
     apply_mode: bool,
 }
 
+fn collect_contract_host_facts(
+    manifest: &oqto_provisioning::ProvisioningManifest,
+    config_path: Option<&str>,
+) -> oqto_provisioning::HostFacts {
+    let mut facts = oqto_provisioning::HostFacts {
+        runner_socket_pattern: read_runner_socket_pattern(config_path),
+        ..oqto_provisioning::HostFacts::default()
+    };
+
+    for desired in &manifest.paths {
+        if desired.path.contains('{') || desired.path.contains('$') {
+            continue;
+        }
+        facts
+            .paths
+            .insert(desired.path.clone(), inspect_path(&desired.path));
+    }
+
+    for service in &manifest.services {
+        let observed = match service.scope {
+            oqto_provisioning::ServiceScope::System => oqto_provisioning::ObservedService {
+                enabled: systemctl_bool("is-enabled", &service.name),
+                active: systemctl_bool("is-active", &service.name),
+            },
+            oqto_provisioning::ServiceScope::User => {
+                // Only inspect concrete current-user services. Template users
+                // like {linux_username} are expanded by per-user checks.
+                if service
+                    .user
+                    .as_deref()
+                    .is_some_and(|user| user.contains('{'))
+                {
+                    continue;
+                }
+                oqto_provisioning::ObservedService {
+                    enabled: systemctl_user_bool("is-enabled", &service.name),
+                    active: systemctl_user_bool("is-active", &service.name),
+                }
+            }
+        };
+        facts.services.insert(service.name.clone(), observed);
+    }
+
+    facts
+}
+
+fn inspect_path(path: &str) -> oqto_provisioning::ObservedPath {
+    let output = std::process::Command::new("stat")
+        .args(["-c", "%U\t%G\t%a", path])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut parts = text.trim().split('\t');
+            oqto_provisioning::ObservedPath {
+                exists: true,
+                owner: parts.next().map(ToString::to_string),
+                group: parts.next().map(ToString::to_string),
+                mode: parts.next().map(|mode| {
+                    if mode.len() == 4 {
+                        mode.to_string()
+                    } else {
+                        format!("0{mode}")
+                    }
+                }),
+            }
+        }
+        _ => oqto_provisioning::ObservedPath {
+            exists: false,
+            owner: None,
+            group: None,
+            mode: None,
+        },
+    }
+}
+
+fn systemctl_bool(action: &str, service: &str) -> Option<bool> {
+    let output = std::process::Command::new("systemctl")
+        .args([action, service])
+        .output()
+        .ok()?;
+    Some(output.status.success())
+}
+
+fn systemctl_user_bool(action: &str, service: &str) -> Option<bool> {
+    let output = std::process::Command::new("systemctl")
+        .args(["--user", action, service])
+        .output()
+        .ok()?;
+    Some(output.status.success())
+}
+
+fn append_sudoers_findings(
+    manifest: &oqto_provisioning::ProvisioningManifest,
+    findings: &mut Vec<oqto_provisioning::ContractFinding>,
+) {
+    if !manifest
+        .checks
+        .iter()
+        .any(|check| check.id == "team.sudoers.valid")
+    {
+        return;
+    }
+
+    match validate_sudoers_file("/etc/sudoers.d/oqto-multiuser") {
+        Some(true) => {}
+        Some(false) => findings.push(oqto_provisioning::ContractFinding {
+            id: "team.sudoers.valid".to_string(),
+            severity: oqto_provisioning::CheckSeverity::Error,
+            expected: "visudo validation succeeds".to_string(),
+            observed: "visudo validation failed".to_string(),
+            remediation: "regenerate Linux user isolation sudoers rules".to_string(),
+        }),
+        None => findings.push(oqto_provisioning::ContractFinding {
+            id: "team.sudoers.valid".to_string(),
+            severity: oqto_provisioning::CheckSeverity::Warning,
+            expected: "visudo validation succeeds".to_string(),
+            observed: "visudo not available or insufficient permission to validate".to_string(),
+            remediation: "run sudo oqtoctl doctor --contract --profile team".to_string(),
+        }),
+    }
+}
+
+fn validate_sudoers_file(path: &str) -> Option<bool> {
+    if !std::path::Path::new(path).exists() {
+        return Some(false);
+    }
+
+    let output = std::process::Command::new("visudo")
+        .args(["-c", "-f", path])
+        .output()
+        .ok()?;
+    Some(output.status.success())
+}
+
+async fn append_team_user_runner_findings(
+    manifest: &oqto_provisioning::ProvisioningManifest,
+    target_user: Option<&str>,
+    findings: &mut Vec<oqto_provisioning::ContractFinding>,
+) {
+    if manifest.runner_socket.pattern != "/run/oqto/runner-sockets/{user}/oqto-runner.sock" {
+        return;
+    }
+
+    if let Err(err) = append_team_user_runner_findings_inner(target_user, findings).await {
+        findings.push(oqto_provisioning::ContractFinding {
+            id: "team.users.inspect".to_string(),
+            severity: oqto_provisioning::CheckSeverity::Warning,
+            expected: "active users inspected for Linux identity and runner socket drift"
+                .to_string(),
+            observed: format!("could not inspect users: {err:#}"),
+            remediation:
+                "ensure the Oqto database is reachable or run oqtoctl user doctor-identity"
+                    .to_string(),
+        });
+    }
+}
+
+async fn append_team_user_runner_findings_inner(
+    target_user: Option<&str>,
+    findings: &mut Vec<oqto_provisioning::ContractFinding>,
+) -> Result<()> {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let db_path = get_database_path()?;
+    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await
+        .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+    let rows: Vec<(String, String, Option<String>, Option<i64>, i64)> =
+        if let Some(user) = target_user {
+            sqlx::query_as(
+                r#"SELECT id, username, linux_username, linux_uid, is_active
+               FROM users
+               WHERE id = ?1 OR username = ?1
+               ORDER BY username"#,
+            )
+            .bind(user)
+            .fetch_all(&pool)
+            .await?
+        } else {
+            sqlx::query_as(
+                r#"SELECT id, username, linux_username, linux_uid, is_active
+               FROM users
+               ORDER BY username"#,
+            )
+            .fetch_all(&pool)
+            .await?
+        };
+
+    for (user_id, username, linux_username, linux_uid, is_active) in rows {
+        if is_active == 0 {
+            continue;
+        }
+        let Some(linux_username) = linux_username else {
+            findings.push(team_user_finding(
+                &user_id,
+                &username,
+                "identity.linux_username",
+                oqto_provisioning::CheckSeverity::Error,
+                "linux_username is set",
+                "missing",
+                "run oqtoctl doctor --apply or reprovision this user",
+            ));
+            continue;
+        };
+
+        let actual_uid = linux_uid_for_user(&linux_username);
+        match actual_uid {
+            Some(uid) => {
+                if linux_uid != Some(uid) {
+                    findings.push(team_user_finding(
+                        &user_id,
+                        &username,
+                        "identity.linux_uid",
+                        oqto_provisioning::CheckSeverity::Error,
+                        &format!("linux_uid={uid}"),
+                        &format!("db={linux_uid:?}"),
+                        "run oqtoctl doctor --apply to sync linux_uid",
+                    ));
+                }
+                let shared_sock =
+                    format!("/run/oqto/runner-sockets/{linux_username}/oqto-runner.sock");
+                let user_runtime_sock = format!("/run/user/{uid}/oqto-runner.sock");
+                let shared_exists = std::path::Path::new(&shared_sock).exists();
+                let user_runtime_exists = std::path::Path::new(&user_runtime_sock).exists();
+                if !shared_exists {
+                    findings.push(team_user_finding(
+                        &user_id,
+                        &username,
+                        "runner.socket.canonical",
+                        oqto_provisioning::CheckSeverity::Error,
+                        &shared_sock,
+                        "missing",
+                        "restart/reprovision the per-user oqto-runner service",
+                    ));
+                }
+                if shared_exists && user_runtime_exists {
+                    findings.push(team_user_finding(
+                        &user_id,
+                        &username,
+                        "runner.socket.split-routing",
+                        oqto_provisioning::CheckSeverity::Warning,
+                        "only canonical shared socket exists",
+                        &format!("also found {user_runtime_sock}"),
+                        "remove stale user-runtime runner service or align socket pattern",
+                    ));
+                }
+            }
+            None => findings.push(team_user_finding(
+                &user_id,
+                &username,
+                "identity.linux_user",
+                oqto_provisioning::CheckSeverity::Error,
+                &format!("OS user {linux_username} exists"),
+                "missing",
+                "create/reprovision the Linux user",
+            )),
+        }
+    }
+
+    Ok(())
+}
+
+fn linux_uid_for_user(username: &str) -> Option<i64> {
+    let output = std::process::Command::new("id")
+        .args(["-u", username])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+fn team_user_finding(
+    user_id: &str,
+    username: &str,
+    suffix: &str,
+    severity: oqto_provisioning::CheckSeverity,
+    expected: &str,
+    observed: &str,
+    remediation: &str,
+) -> oqto_provisioning::ContractFinding {
+    oqto_provisioning::ContractFinding {
+        id: format!("team.user.{username}.{suffix}"),
+        severity,
+        expected: format!("{expected} (user_id={user_id})"),
+        observed: observed.to_string(),
+        remediation: remediation.to_string(),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ContractFindingSummary {
+    errors: usize,
+    warnings: usize,
+    info: usize,
+}
+
+fn contract_finding_summary(
+    findings: &[oqto_provisioning::ContractFinding],
+) -> ContractFindingSummary {
+    let mut summary = ContractFindingSummary {
+        errors: 0,
+        warnings: 0,
+        info: 0,
+    };
+    for finding in findings {
+        match finding.severity {
+            oqto_provisioning::CheckSeverity::Error => summary.errors += 1,
+            oqto_provisioning::CheckSeverity::Warning => summary.warnings += 1,
+            oqto_provisioning::CheckSeverity::Info => summary.info += 1,
+        }
+    }
+    summary
+}
+
+fn apply_safe_contract_fixes(
+    findings: &[oqto_provisioning::ContractFinding],
+    apply_services: bool,
+    apply_runners: bool,
+) -> Result<Vec<String>> {
+    let mut applied = Vec::new();
+    let needs_runner_socket_dir_fix = findings.iter().any(|finding| {
+        finding.id.starts_with("path./run/oqto/runner-sockets.")
+            || finding.id == "path./run/oqto/runner-sockets.missing"
+    });
+
+    if needs_runner_socket_dir_fix {
+        run_privileged_command(
+            "install",
+            &[
+                "-d",
+                "-m",
+                "2770",
+                "-o",
+                "root",
+                "-g",
+                "oqto",
+                "/run/oqto/runner-sockets",
+            ],
+        )
+        .context("failed to repair /run/oqto/runner-sockets")?;
+        applied.push(
+            "repaired /run/oqto/runner-sockets owner/group/mode (root:oqto 2770)".to_string(),
+        );
+    }
+
+    if apply_runners {
+        for username in runner_apply_usernames(findings) {
+            setup_runner_for_user(&username, true)
+                .with_context(|| format!("failed to reprovision runner for {username}"))?;
+            applied.push(format!("reprovisioned oqto-runner for {username}"));
+        }
+    }
+
+    if apply_services {
+        for finding in findings {
+            if let Some(service) = finding
+                .id
+                .strip_prefix("service.")
+                .and_then(|rest| rest.strip_suffix(".enabled"))
+            {
+                run_privileged_command("systemctl", &["enable", service])
+                    .with_context(|| format!("failed to enable {service}"))?;
+                applied.push(format!("enabled system service {service}"));
+            } else if let Some(service) = finding
+                .id
+                .strip_prefix("service.")
+                .and_then(|rest| rest.strip_suffix(".active"))
+            {
+                run_privileged_command("systemctl", &["start", service])
+                    .with_context(|| format!("failed to start {service}"))?;
+                applied.push(format!("started system service {service}"));
+            }
+        }
+    }
+
+    applied.sort();
+    applied.dedup();
+    Ok(applied)
+}
+
+fn runner_apply_usernames(findings: &[oqto_provisioning::ContractFinding]) -> Vec<String> {
+    let mut usernames = Vec::new();
+    for finding in findings {
+        let Some(rest) = finding.id.strip_prefix("team.user.") else {
+            continue;
+        };
+        let Some(username) = rest
+            .strip_suffix(".runner.socket.canonical")
+            .or_else(|| rest.strip_suffix(".runner.socket.split-routing"))
+        else {
+            continue;
+        };
+        if !usernames.iter().any(|existing| existing == username) {
+            usernames.push(username.to_string());
+        }
+    }
+    usernames
+}
+
+fn run_privileged_command(program: &str, args: &[&str]) -> Result<()> {
+    let is_root = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false);
+
+    let status = if is_root {
+        std::process::Command::new(program).args(args).status()
+    } else {
+        let mut sudo_args = Vec::with_capacity(args.len() + 1);
+        sudo_args.push(program);
+        sudo_args.extend_from_slice(args);
+        std::process::Command::new("sudo").args(sudo_args).status()
+    }
+    .with_context(|| format!("failed to run privileged command: {program}"))?;
+
+    if !status.success() {
+        anyhow::bail!("privileged command failed: {} {}", program, args.join(" "));
+    }
+    Ok(())
+}
+
+fn suggested_contract_commands(findings: &[oqto_provisioning::ContractFinding]) -> Vec<String> {
+    let mut commands = Vec::new();
+    for finding in findings {
+        let command = if finding.id.starts_with("path./run/oqto/runner-sockets.") {
+            Some("sudo install -d -m 2770 -o root -g oqto /run/oqto/runner-sockets".to_string())
+        } else if finding.id == "path./etc/sudoers.d/oqto-multiuser.missing"
+            || finding.id == "team.sudoers.valid"
+        {
+            Some("./setup.sh --team --redo linux_user_isolation".to_string())
+        } else if let Some(service) = finding
+            .id
+            .strip_prefix("service.")
+            .and_then(|rest| rest.strip_suffix(".enabled"))
+        {
+            Some(format!("sudo systemctl enable {service}"))
+        } else if let Some(service) = finding
+            .id
+            .strip_prefix("service.")
+            .and_then(|rest| rest.strip_suffix(".active"))
+        {
+            Some(format!("sudo systemctl start {service}"))
+        } else if let Some(rest) = finding.id.strip_prefix("team.user.") {
+            rest.strip_suffix(".runner.socket.canonical")
+                .or_else(|| rest.strip_suffix(".runner.socket.split-routing"))
+                .map(|username| format!("sudo oqtoctl user setup-runner {username} --force"))
+        } else if finding.id.contains("identity.linux_uid")
+            || finding.id.contains("identity.linux_username")
+        {
+            Some("sudo oqtoctl doctor --apply".to_string())
+        } else {
+            None
+        };
+
+        if let Some(command) = command
+            && !commands.contains(&command)
+        {
+            commands.push(command);
+        }
+    }
+    commands
+}
+
+#[cfg(test)]
+mod setup_doctor_tests {
+    use super::*;
+
+    fn finding(id: &str) -> oqto_provisioning::ContractFinding {
+        finding_with_severity(id, oqto_provisioning::CheckSeverity::Error)
+    }
+
+    fn finding_with_severity(
+        id: &str,
+        severity: oqto_provisioning::CheckSeverity,
+    ) -> oqto_provisioning::ContractFinding {
+        oqto_provisioning::ContractFinding {
+            id: id.to_string(),
+            severity,
+            expected: "expected".to_string(),
+            observed: "observed".to_string(),
+            remediation: "remediation".to_string(),
+        }
+    }
+
+    #[test]
+    fn suggested_commands_are_deduplicated_and_cover_common_setup_drift() {
+        let commands = suggested_contract_commands(&[
+            finding("path./run/oqto/runner-sockets.group"),
+            finding("path./run/oqto/runner-sockets.mode"),
+            finding("path./etc/sudoers.d/oqto-multiuser.missing"),
+            finding("service.oqto.service.enabled"),
+            finding("service.oqto.service.active"),
+            finding("team.user.alice.runner.socket.canonical"),
+        ]);
+
+        assert_eq!(
+            commands,
+            vec![
+                "sudo install -d -m 2770 -o root -g oqto /run/oqto/runner-sockets",
+                "./setup.sh --team --redo linux_user_isolation",
+                "sudo systemctl enable oqto.service",
+                "sudo systemctl start oqto.service",
+                "sudo oqtoctl user setup-runner alice --force",
+            ]
+        );
+    }
+
+    #[test]
+    fn runner_apply_usernames_only_extracts_runner_socket_findings_once() {
+        let usernames = runner_apply_usernames(&[
+            finding("team.user.alice.runner.socket.canonical"),
+            finding("team.user.alice.runner.socket.split-routing"),
+            finding("team.user.bob.runner.socket.canonical"),
+            finding("team.user.carol.identity.linux_uid"),
+        ]);
+
+        assert_eq!(usernames, vec!["alice".to_string(), "bob".to_string()]);
+    }
+
+    #[test]
+    fn contract_finding_summary_counts_all_severities() {
+        let summary = contract_finding_summary(&[
+            finding("service.oqto.service.active"),
+            finding_with_severity(
+                "team.user.alice.runner.socket.split-routing",
+                oqto_provisioning::CheckSeverity::Warning,
+            ),
+            finding_with_severity("note", oqto_provisioning::CheckSeverity::Info),
+        ]);
+
+        assert_eq!(summary.errors, 1);
+        assert_eq!(summary.warnings, 1);
+        assert_eq!(summary.info, 1);
+    }
+
+    #[test]
+    fn detect_profile_from_config_value_maps_single_user_and_multi_user() {
+        let personal_cfg: toml::Value =
+            toml::from_str("[local]\nsingle_user = true\n").expect("valid toml");
+        let team_cfg: toml::Value =
+            toml::from_str("[local]\nsingle_user = false\n").expect("valid toml");
+
+        assert_eq!(
+            detect_profile_from_config_value(&personal_cfg),
+            Some(oqto_provisioning::InstallProfile::Personal)
+        );
+        assert_eq!(
+            detect_profile_from_config_value(&team_cfg),
+            Some(oqto_provisioning::InstallProfile::Team)
+        );
+    }
+}
+
+fn read_runner_socket_pattern(config_path: Option<&str>) -> Option<String> {
+    let path = config_path
+        .map(std::path::PathBuf::from)
+        .or_else(default_oqto_config_path)?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    let value: toml::Value = toml::from_str(&contents).ok()?;
+
+    value
+        .get("backend")
+        .and_then(|backend| backend.get("runner"))
+        .and_then(|runner| runner.get("socket_pattern"))
+        .and_then(toml::Value::as_str)
+        .or_else(|| {
+            value
+                .get("local")
+                .and_then(|local| local.get("runner_socket_pattern"))
+                .and_then(toml::Value::as_str)
+        })
+        .map(ToString::to_string)
+}
+
+fn default_oqto_config_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("OQTO_CONFIG")
+        && !path.trim().is_empty()
+    {
+        return Some(PathBuf::from(path));
+    }
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(config_home).join("oqto/config.toml"));
+    }
+    dirs::home_dir().map(|home| home.join(".config/oqto/config.toml"))
+}
+
+fn resolve_install_profile(
+    profile_arg: &str,
+    config_path: Option<&str>,
+) -> Result<oqto_provisioning::InstallProfile> {
+    match profile_arg {
+        "personal" | "single" | "single-user" => Ok(oqto_provisioning::InstallProfile::Personal),
+        "team" | "multi" | "multi-user" => Ok(oqto_provisioning::InstallProfile::Team),
+        "auto" => {
+            if let Some(profile) = detect_profile_from_config(config_path)? {
+                Ok(profile)
+            } else if let Ok(user_mode) = std::env::var("OQTO_USER_MODE") {
+                if matches!(user_mode.as_str(), "multi" | "team") {
+                    Ok(oqto_provisioning::InstallProfile::Team)
+                } else {
+                    Ok(oqto_provisioning::InstallProfile::Personal)
+                }
+            } else {
+                Ok(oqto_provisioning::InstallProfile::Personal)
+            }
+        }
+        other => anyhow::bail!(
+            "unknown install profile '{other}'. Expected 'auto', 'personal' or 'team'"
+        ),
+    }
+}
+
+fn detect_profile_from_config(
+    config_path: Option<&str>,
+) -> Result<Option<oqto_provisioning::InstallProfile>> {
+    let Some(path) = config_path
+        .map(PathBuf::from)
+        .or_else(default_oqto_config_path)
+    else {
+        return Ok(None);
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read config at {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&contents)
+        .with_context(|| format!("Failed to parse config at {}", path.display()))?;
+
+    Ok(detect_profile_from_config_value(&value))
+}
+
+fn detect_profile_from_config_value(
+    value: &toml::Value,
+) -> Option<oqto_provisioning::InstallProfile> {
+    let single_user = value
+        .get("local")
+        .and_then(|local| local.get("single_user"))
+        .and_then(toml::Value::as_bool)?;
+
+    if single_user {
+        Some(oqto_provisioning::InstallProfile::Personal)
+    } else {
+        Some(oqto_provisioning::InstallProfile::Team)
+    }
+}
+
+async fn handle_doctor(
+    target_user: Option<&str>,
+    apply: bool,
+    contract: bool,
+    profile: &str,
+    strict: bool,
+    apply_services: bool,
+    apply_runners: bool,
+    config_path: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    if contract {
+        if (apply_services || apply_runners) && !apply {
+            anyhow::bail!("--apply-services/--apply-runners require --apply");
+        }
+
+        let profile = resolve_install_profile(profile, config_path)?;
+        let manifest = oqto_provisioning::manifest(profile);
+        let mut facts = collect_contract_host_facts(&manifest, config_path);
+        let mut findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
+        append_sudoers_findings(&manifest, &mut findings);
+        append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
+        let mut applied_fixes = Vec::new();
+        if apply {
+            applied_fixes = apply_safe_contract_fixes(&findings, apply_services, apply_runners)?;
+            if !applied_fixes.is_empty() {
+                facts = collect_contract_host_facts(&manifest, config_path);
+                findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
+                append_sudoers_findings(&manifest, &mut findings);
+                append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
+            }
+        }
+        let summary = contract_finding_summary(&findings);
+        let suggested_commands = suggested_contract_commands(&findings);
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "manifest": manifest,
+                    "facts": facts,
+                    "findings": findings,
+                    "summary": summary,
+                    "applied_fixes": applied_fixes,
+                    "suggested_commands": suggested_commands,
+                }))?
+            );
+        } else {
+            println!("Provisioning contract: {}", manifest.summary);
+            println!("Runner socket: {}", manifest.runner_socket.pattern);
+            println!("\nRequired paths:");
+            for path in &manifest.paths {
+                println!(
+                    "- {} [{:?}] owner={} group={} mode={} -- {}",
+                    path.path, path.kind, path.owner, path.group, path.mode, path.purpose
+                );
+            }
+            println!("\nRequired services:");
+            for service in &manifest.services {
+                let user = service.user.as_deref().unwrap_or("root/system");
+                println!(
+                    "- {} [{:?}] user={} enabled={} active={} -- {}",
+                    service.name,
+                    service.scope,
+                    user,
+                    service.enabled,
+                    service.active,
+                    service.purpose
+                );
+            }
+            println!("\nChecks:");
+            for check in &manifest.checks {
+                println!(
+                    "- [{:?}] {} -- remediation: {}",
+                    check.severity, check.description, check.remediation
+                );
+            }
+            println!(
+                "\nContract finding summary: {} error(s), {} warning(s), {} info",
+                summary.errors, summary.warnings, summary.info
+            );
+            println!("\nContract findings from host facts:");
+            if findings.is_empty() {
+                println!("No inspected contract drift detected.");
+            } else {
+                for finding in &findings {
+                    println!(
+                        "- [{:?}] {} expected={} observed={} remediation={}",
+                        finding.severity,
+                        finding.id,
+                        finding.expected,
+                        finding.observed,
+                        finding.remediation
+                    );
+                }
+            }
+            if !applied_fixes.is_empty() {
+                println!("\nApplied safe remediation(s):");
+                for fix in &applied_fixes {
+                    println!("- {fix}");
+                }
+            }
+            if !suggested_commands.is_empty() {
+                println!("\nSuggested remediation commands:");
+                for command in &suggested_commands {
+                    println!("- {command}");
+                }
+            }
+        }
+        if strict
+            && findings
+                .iter()
+                .any(|finding| finding.severity == oqto_provisioning::CheckSeverity::Error)
+        {
+            anyhow::bail!("setup contract drift detected");
+        }
+        return Ok(());
+    }
+
+    doctor_identity(target_user, apply, json).await
+}
+
 async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -3300,33 +4131,50 @@ async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> 
                     }
 
                     if let Some(uid) = actual_uid {
-                        let user_sock =
+                        let user_runtime_sock =
                             std::path::PathBuf::from(format!("/run/user/{uid}/oqto-runner.sock"));
-                        let legacy_sock = std::path::PathBuf::from(format!(
+                        let shared_sock = std::path::PathBuf::from(format!(
                             "/run/oqto/runner-sockets/{}/oqto-runner.sock",
                             lu
                         ));
-                        if !user_sock.exists() && legacy_sock.exists() {
+
+                        if !shared_sock.exists() && !user_runtime_sock.exists() {
+                            issues.push(IdentityDoctorIssue {
+                                user_id: user_id.clone(),
+                                username: username.clone(),
+                                severity: "error".to_string(),
+                                message: format!(
+                                    "runner socket missing at canonical path {} and user-runtime path {}",
+                                    shared_sock.display(),
+                                    user_runtime_sock.display()
+                                ),
+                                remediation: Some(
+                                    "start/reprovision oqto-runner for this Linux user and verify lingering/service status".to_string(),
+                                ),
+                            });
+                        }
+                        if !shared_sock.exists() && user_runtime_sock.exists() {
                             issues.push(IdentityDoctorIssue {
                                 user_id: user_id.clone(),
                                 username: username.clone(),
                                 severity: "warning".to_string(),
                                 message: format!(
-                                    "runner socket present only at legacy path {}",
-                                    legacy_sock.display()
+                                    "runner socket present only at user-runtime path {}; canonical shared path {} is missing",
+                                    user_runtime_sock.display(),
+                                    shared_sock.display()
                                 ),
                                 remediation: Some(
-                                    "verify backend.runner.socket_pattern and runner unit wiring"
+                                    "reinstall/restart oqto-runner with --socket /run/oqto/runner-sockets/{linux_username}/oqto-runner.sock or update backend runner_socket_pattern consistently"
                                         .to_string(),
                                 ),
                             });
                         }
-                        if user_sock.exists() && legacy_sock.exists() {
+                        if shared_sock.exists() && user_runtime_sock.exists() {
                             issues.push(IdentityDoctorIssue {
                                 user_id: user_id.clone(),
                                 username: username.clone(),
                                 severity: "warning".to_string(),
-                                message: "both legacy and user-runtime runner sockets are present".to_string(),
+                                message: "both canonical shared and user-runtime runner sockets are present".to_string(),
                                 remediation: Some("disable conflicting runner service/socket pattern to avoid split routing".to_string()),
                             });
                         }

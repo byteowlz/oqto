@@ -468,7 +468,7 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
     let mut warnings: Vec<String> = Vec::new();
 
     // 1. Stop user services (best-effort, they might not exist)
-    for svc in ["oqto-runner.service", "mmry.service"] {
+    for svc in ["oqto-runner.service"] {
         if let Err(e) = run_user_systemctl(&["stop", svc]) {
             warnings.push(format!("stop {svc}: {e}"));
         }
@@ -777,8 +777,6 @@ WantedBy=default.target
     let runner_service = format!(
         r#"[Unit]
 Description=Oqto Runner - Process isolation daemon
-Wants=mmry.service
-After=mmry.service
 
 [Service]
 Type=notify
@@ -806,86 +804,15 @@ WantedBy=default.target
         return Response::error(format!("mkdir {service_dir}: {e}"));
     }
 
-    // 2. Write all service files
-    let services = [
-        ("mmry.service", mmry_service),
-        ("oqto-runner.service", runner_service),
-    ];
+    // 2. Write service files (runner only; memory runs in-process via runner backend)
+    let _ = mmry_service; // legacy variable intentionally unused during transition
+    let services = [("oqto-runner.service", runner_service)];
     for (name, content) in &services {
         let path = format!("{service_dir}/{name}");
         if let Err(e) = std::fs::write(&path, content) {
             return Response::error(format!("writing {path}: {e}"));
         }
     }
-
-    // 2b. Ensure mmry config exists with remote embeddings.
-    //     Per-user mmry connects to the central embeddings server (port 8091)
-    //     instead of loading the model locally. service.enabled = true so the
-    //     gRPC service stays running for the runner.
-    //     External API port = 48000 + (uid - 2000) so the backend can find it.
-    let mmry_config_dir = format!("{home}/.config/mmry");
-    let _ = std::fs::create_dir_all(&mmry_config_dir);
-    let mmry_config_path = format!("{mmry_config_dir}/config.toml");
-    let mmry_data_dir = format!("{home}/.local/share/mmry");
-    let _ = std::fs::create_dir_all(format!("{mmry_data_dir}/stores"));
-    // mmry-service writes PID/port files to the state dir
-    let mmry_state_dir = format!("{home}/.local/state/mmry");
-    let _ = std::fs::create_dir_all(&mmry_state_dir);
-    let mmry_api_port = 48000 + (uid - 2000);
-    if !std::path::Path::new(&mmry_config_path).exists() {
-        let mmry_config = format!(
-            "[database]\n\
-             path = \"{mmry_data_dir}/memories.db\"\n\
-             \n\
-             [stores]\n\
-             directory = \"{mmry_data_dir}/stores\"\n\
-             default = \"default\"\n\
-             \n\
-             [embeddings]\n\
-             enabled = false\n\
-             model = \"Xenova/all-MiniLM-L6-v2\"\n\
-             backend = \"fastembed\"\n\
-             dimension = 384\n\
-             batch_size = 32\n\
-             \n\
-             [embeddings.remote]\n\
-             base_url = \"http://127.0.0.1:8091\"\n\
-             request_timeout_seconds = 30\n\
-             max_batch_size = 64\n\
-             required = true\n\
-             \n\
-             [service]\n\
-             enabled = true\n\
-             auto_start = true\n\
-             idle_timeout_seconds = 0\n\
-             preload_models = false\n\
-             \n\
-             [external_api]\n\
-             enable = true\n\
-             host = \"127.0.0.1\"\n\
-             port = {mmry_api_port}\n\
-             \n\
-             [search]\n\
-             default_limit = 10\n\
-             similarity_threshold = 0.7\n\
-             mode = \"hybrid\"\n\
-             rerank_enabled = false\n\
-             \n\
-             [memory]\n\
-             default_category = \"default\"\n\
-             auto_dedupe = true\n"
-        );
-        let _ = std::fs::write(&mmry_config_path, mmry_config);
-    }
-    // Chown mmry data and state dirs
-    let _ = run_cmd(
-        "/usr/bin/chown",
-        &["-R", &format!("{username}:{group}"), &mmry_data_dir],
-    );
-    let _ = run_cmd(
-        "/usr/bin/chown",
-        &["-R", &format!("{username}:{group}"), &mmry_state_dir],
-    );
 
     // 3. Set ownership of .config and .local trees
     let config_dir = format!("{home}/.config");
@@ -1026,7 +953,7 @@ WantedBy=default.target
     }
 
     // Enable managed user services.
-    for svc in ["mmry.service", "oqto-runner.service"] {
+    for svc in ["oqto-runner.service"] {
         if let Err(e) = run_user_systemctl(&["enable", svc]) {
             eprintln!("oqto-usermgr: enable {svc} failed: {e}");
         }
@@ -1059,62 +986,7 @@ WantedBy=default.target
                 i * 500
             );
 
-            // Verify critical services are actually running for this user.
-            // Services like mmry may fail on first start (port conflicts,
-            // TIME_WAIT from previous instances) and need systemd's Restart=
-            // to recover. We retry with backoff to accommodate RestartSec=3.
-            for svc in ["mmry"] {
-                let svc_unit = format!("{svc}.service");
-                let max_attempts = 5;
-                let mut healthy = false;
-                for attempt in 1..=max_attempts {
-                    match run_user_systemctl(&["is-active", &svc_unit]) {
-                        Ok(_) => {
-                            eprintln!(
-                                "oqto-usermgr: {svc} confirmed active for {username} (attempt {attempt})"
-                            );
-                            healthy = true;
-                            break;
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "oqto-usermgr: {svc} not active for {username} (attempt {attempt}/{max_attempts}): {e}"
-                            );
-                            if attempt == 1 {
-                                // First failure: try explicit start
-                                let _ = run_user_systemctl(&["start", &svc_unit]);
-                            }
-                            if attempt < max_attempts {
-                                // Wait for systemd restart cycle (RestartSec=3)
-                                std::thread::sleep(std::time::Duration::from_secs(4));
-                            }
-                        }
-                    }
-                }
-                if !healthy {
-                    // All attempts exhausted -- collect diagnostics
-                    let logs = run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
-                        .unwrap_or_default();
-                    let journal = Command::new("/sbin/runuser")
-                        .args(["-u", username, "--"])
-                        .arg("env")
-                        .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
-                        .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
-                        .arg("journalctl")
-                        .args(["--user", "-u", &svc_unit, "-n", "20", "--no-pager"])
-                        .output()
-                        .ok()
-                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                        .unwrap_or_default();
-                    eprintln!(
-                        "oqto-usermgr: {svc} failed after {max_attempts} attempts for {username}:\n{logs}\n--- journal ---\n{journal}"
-                    );
-                    return Response::error(format!(
-                        "{svc} failed to start for {username} after {max_attempts} attempts\n--- status ---\n{logs}\n--- journal ---\n{journal}"
-                    ));
-                }
-            }
-
+            // Runner socket is available; service considered healthy.
             return Response::success();
         }
         std::thread::sleep(std::time::Duration::from_millis(500));

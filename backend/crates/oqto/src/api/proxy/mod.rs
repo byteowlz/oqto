@@ -14,9 +14,8 @@ pub use handlers::{
     proxy_sldr, proxy_sldr_root, proxy_voice_stt_ws, proxy_voice_tts_ws,
 };
 pub use mmry::{
-    proxy_mmry_add, proxy_mmry_add_for_workspace, proxy_mmry_list, proxy_mmry_list_for_workspace,
-    proxy_mmry_memory, proxy_mmry_memory_for_workspace, proxy_mmry_search,
-    proxy_mmry_search_for_workspace, proxy_mmry_stores,
+    proxy_mmry_add_for_workspace, proxy_mmry_list_for_workspace,
+    proxy_mmry_memory_for_workspace, proxy_mmry_search_for_workspace,
 };
 
 // Re-export tests module

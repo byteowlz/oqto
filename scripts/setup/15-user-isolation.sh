@@ -127,16 +127,33 @@ ${server_user} ALL=(root) NOPASSWD: OQTO_START_USER, OQTO_LINGER
 SUDOERS_EOF
   )
 
-  # Write sudoers file (use visudo -c to validate)
-  echo "$sudoers_content" | sudo tee "$sudoers_file" >/dev/null
-  sudo chmod 440 "$sudoers_file"
+  # Write sudoers transactionally:
+  # 1) stage candidate in a temp file
+  # 2) validate candidate with visudo
+  # 3) atomically install to target with root:root 0440
+  local sudoers_tmp
+  sudoers_tmp="$(mktemp /tmp/oqto-multiuser.sudoers.XXXXXX)"
+  echo "$sudoers_content" >"$sudoers_tmp"
 
-  # Validate the sudoers file
+  if ! sudo visudo -c -f "$sudoers_tmp" &>/dev/null; then
+    log_error "Invalid generated sudoers candidate; refusing to install"
+    rm -f "$sudoers_tmp"
+    return 1
+  fi
+
+  if ! sudo install -o root -g root -m 440 "$sudoers_tmp" "$sudoers_file"; then
+    log_error "Failed to install sudoers file: $sudoers_file"
+    rm -f "$sudoers_tmp"
+    return 1
+  fi
+
+  rm -f "$sudoers_tmp"
+
+  # Post-install validation (defense in depth)
   if sudo visudo -c -f "$sudoers_file" &>/dev/null; then
-    log_success "Sudoers file created: $sudoers_file"
+    log_success "Sudoers file installed and validated: $sudoers_file"
   else
-    log_error "Invalid sudoers file - removing it"
-    sudo rm -f "$sudoers_file"
+    log_error "Installed sudoers file failed validation: $sudoers_file"
     return 1
   fi
 

@@ -10,7 +10,7 @@ Oqto is a self-hosted platform for managing AI coding agents.
 
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
-- Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
+- Document your work: Use trx for feature and bug tracking. Deployment-only operational work should be tracked in trx only when it reveals a real bug that needs fixing. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
 - **TRX-first workflow (MANDATORY)**: Before making any code/config/docs change, you must first check/create/update trx.
   - Required start-of-task flow: `trx ready` (or `trx list`) -> find existing issue or `trx create` -> `trx update <id> --status in_progress` -> then implement.
   - This is not optional and does not depend on task size. "Whenever possible" does not apply.
@@ -484,6 +484,8 @@ For a complete list, see `dependencies.toml`.
 ## Issue Tracking (trx)
 
 ### Mandatory workflow gate (apply at task start)
+
+Scope note: trx is for feature and bug tracking. Do not create trx items for deployment-only operations unless you identify an actual bug.
 
 1. Run `trx ready` (or `trx list`) before implementation.
 2. Reuse an existing issue when possible; otherwise create one.

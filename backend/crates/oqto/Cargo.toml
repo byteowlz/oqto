@@ -124,6 +124,7 @@ hstry-core.workspace = true
 
 # Issue tracking (in-process, replaces trx CLI shell-out)
 trx-core.workspace = true
+mmry-core.workspace = true
 
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }

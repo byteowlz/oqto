@@ -14,21 +14,8 @@ pub async fn bootstrap_new_user_environment(
     user: &User,
     resolved_linux_username: Option<&str>,
 ) {
-    // Allocate a stable per-user mmry port in local multi-user mode.
-    if state.mmry.enabled
-        && !state.mmry.single_user
-        && let Err(e) = state
-            .users
-            .ensure_mmry_port(
-                &user.id,
-                state.mmry.user_base_port,
-                state.mmry.user_port_range,
-            )
-            .await
-    {
-        warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
-    }
-
+    // Workspace memory now uses mmry-core JSONL files via runner/backend paths.
+    // No per-user mmry service port allocation is required.
     // Provision EAVS virtual key and write Pi models.json + settings.json.
     // Track whether settings.json was written so we can fall back to config defaults.
     let mut pi_settings_written = false;
