@@ -41,6 +41,45 @@ mode = "0755"
 profiles = ["personal", "team"]
 
 [[assets]]
+id = "bin-oqto-sandbox"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-sandbox"
+stage_path = "bin/oqto-sandbox"
+install_path = "/usr/local/bin/oqto-sandbox"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqto-usermgr"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-usermgr"
+stage_path = "bin/oqto-usermgr"
+install_path = "/usr/local/bin/oqto-usermgr"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["team"]
+
+[[assets]]
+id = "bin-pi-bridge"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/pi-bridge"
+stage_path = "bin/pi-bridge"
+install_path = "/usr/local/bin/pi-bridge"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["team"]
+
+[[assets]]
 id = "bin-oqto-setup"
 class = "immutable_symlink"
 kind = "binary"

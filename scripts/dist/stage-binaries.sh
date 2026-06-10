@@ -7,16 +7,17 @@ cd "$ROOT_DIR"
 BUILD_FIRST="${1:-}"
 if [[ "$BUILD_FIRST" == "--build" ]]; then
   cd backend
-  cargo build --release -p oqto --bin oqto
+  cargo build --release -p oqto --bin oqto --bin oqto-sandbox --bin pi-bridge
   cargo build --release -p oqtoctl --bin oqtoctl
   cargo build --release -p oqto-setup --bin oqto-setup
   cargo build --release -p oqto-runner --bin oqto-runner
   cargo build --release -p oqto-files --bin oqto-files
+  cargo build --release -p oqto-usermgr --bin oqto-usermgr
   cd "$ROOT_DIR"
 fi
 
 mkdir -p dist/immutable/bin
-for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files; do
+for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-usermgr pi-bridge; do
   src="backend/target/release/$bin"
   dst="dist/immutable/bin/$bin"
   if [[ ! -x "$src" ]]; then
