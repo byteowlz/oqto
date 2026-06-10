@@ -50,3 +50,8 @@ scripts/e2e/.secrets/
 .claude/
 .mmry/mmry.jsonl
 .mmry/index/
+
+# dist generated artifacts (keep source templates + manifest tracked)
+dist/out/
+dist/immutable/bin/*
+!dist/immutable/bin/.gitkeep
