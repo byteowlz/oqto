@@ -1,7 +1,7 @@
 pub mod cli;
 mod config;
 pub mod egress;
-pub mod shim;
+pub mod landlock_shim;
 mod spawn;
 mod workspace_config;
 

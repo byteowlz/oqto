@@ -21,7 +21,7 @@ use std::ffi::CString;
 /// - Seccomp fd wiring to descriptor 198 for bwrap `--seccomp 198`
 ///
 /// Note: Landlock is NOT applied here. It is installed by the inner shim
-/// (`crate::shim`) after bwrap completes user-namespace setup, because
+/// (`crate::landlock_shim`) after bwrap completes user-namespace setup, because
 /// Landlock write restrictions applied before exec block bwrap's write to
 /// `/proc/self/uid_map`. See trx oqto-b4za for context.
 #[cfg(target_os = "linux")]

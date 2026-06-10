@@ -1889,7 +1889,7 @@ impl SandboxConfig {
             debug!("Asserting nested user namespaces are disabled");
         }
 
-        // Landlock is applied by the inner shim (crate::shim) after bwrap
+        // Landlock is applied by the inner shim (crate::landlock_shim) after bwrap
         // completes user-namespace setup. Here we wire the binds/env the shim
         // needs; the shim argv is prepended after `--` further below.
         let mut wire_landlock_shim = false;
@@ -1903,11 +1903,11 @@ impl SandboxConfig {
                         return None;
                     }
                     warn!("{} (audit mode)", msg);
-                } else if let Some(shim_bin) = crate::shim::resolve_shim_binary() {
+                } else if let Some(shim_bin) = crate::landlock_shim::resolve_shim_binary() {
                     let shim_src = shim_bin.to_string_lossy().to_string();
                     args.push("--ro-bind".to_string());
                     args.push(shim_src.clone());
-                    args.push(crate::shim::SHIM_MOUNT_PATH.to_string());
+                    args.push(crate::landlock_shim::SHIM_MOUNT_PATH.to_string());
 
                     let mode_str = match self.landlock_mode {
                         LandlockMode::Audit => "audit",
@@ -1915,15 +1915,15 @@ impl SandboxConfig {
                         LandlockMode::Off => unreachable!(),
                     };
                     args.push("--setenv".to_string());
-                    args.push(crate::shim::SHIM_ENV.to_string());
+                    args.push(crate::landlock_shim::SHIM_ENV.to_string());
                     args.push("1".to_string());
 
                     args.push("--setenv".to_string());
-                    args.push(crate::shim::ENV_MODE.to_string());
+                    args.push(crate::landlock_shim::ENV_MODE.to_string());
                     args.push(mode_str.to_string());
 
                     args.push("--setenv".to_string());
-                    args.push(crate::shim::ENV_WORKSPACE.to_string());
+                    args.push(crate::landlock_shim::ENV_WORKSPACE.to_string());
                     args.push(workspace.to_string_lossy().to_string());
 
                     let allow_write_joined = self
@@ -1937,7 +1937,7 @@ impl SandboxConfig {
                         .collect::<Vec<_>>()
                         .join(":");
                     args.push("--setenv".to_string());
-                    args.push(crate::shim::ENV_ALLOW_WRITE.to_string());
+                    args.push(crate::landlock_shim::ENV_ALLOW_WRITE.to_string());
                     args.push(allow_write_joined);
 
                     wire_landlock_shim = true;
@@ -1945,7 +1945,7 @@ impl SandboxConfig {
                         "Landlock shim wired (mode={}, src={}, mount={})",
                         mode_str,
                         shim_src,
-                        crate::shim::SHIM_MOUNT_PATH
+                        crate::landlock_shim::SHIM_MOUNT_PATH
                     );
                 } else {
                     let msg = "landlock requested but oqto-sandbox shim binary could not be resolved (set OQTO_SANDBOX_SHIM_BIN or install on PATH)";
@@ -2057,7 +2057,7 @@ impl SandboxConfig {
         // so Landlock rules are installed after user-namespace setup completes.
         // Callers append the user command after these args unchanged.
         if wire_landlock_shim {
-            args.push(crate::shim::SHIM_MOUNT_PATH.to_string());
+            args.push(crate::landlock_shim::SHIM_MOUNT_PATH.to_string());
         }
 
         info!(
@@ -2698,8 +2698,8 @@ log_requests = true
         let fake_shim = std::env::current_exe().expect("current_exe");
         let _env = env_guard();
         // SAFETY: serialized by env_guard; we restore after the assertions.
-        let prev = env::var_os(crate::shim::SHIM_BIN_OVERRIDE_ENV);
-        unsafe { env::set_var(crate::shim::SHIM_BIN_OVERRIDE_ENV, &fake_shim) };
+        let prev = env::var_os(crate::landlock_shim::SHIM_BIN_OVERRIDE_ENV);
+        unsafe { env::set_var(crate::landlock_shim::SHIM_BIN_OVERRIDE_ENV, &fake_shim) };
 
         let temp = tempdir().unwrap();
         let ws = temp.path();
@@ -2716,25 +2716,25 @@ log_requests = true
 
         let has_shim_bind = args
             .windows(3)
-            .any(|w| w[0] == "--ro-bind" && w[2] == crate::shim::SHIM_MOUNT_PATH);
+            .any(|w| w[0] == "--ro-bind" && w[2] == crate::landlock_shim::SHIM_MOUNT_PATH);
         assert!(has_shim_bind, "shim --ro-bind missing: {args:?}");
 
-        let has_mode_env = args
-            .windows(3)
-            .any(|w| w[0] == "--setenv" && w[1] == crate::shim::ENV_MODE && w[2] == "enforce");
+        let has_mode_env = args.windows(3).any(|w| {
+            w[0] == "--setenv" && w[1] == crate::landlock_shim::ENV_MODE && w[2] == "enforce"
+        });
         assert!(has_mode_env, "OQTO_LANDLOCK_MODE setenv missing: {args:?}");
 
         let sep_idx = args.iter().rposition(|a| a == "--").expect("no --");
         assert_eq!(
             args.get(sep_idx + 1).map(String::as_str),
-            Some(crate::shim::SHIM_MOUNT_PATH),
+            Some(crate::landlock_shim::SHIM_MOUNT_PATH),
             "shim command must be first after `--`"
         );
 
         // Restore env
         match prev {
-            Some(v) => unsafe { env::set_var(crate::shim::SHIM_BIN_OVERRIDE_ENV, v) },
-            None => unsafe { env::remove_var(crate::shim::SHIM_BIN_OVERRIDE_ENV) },
+            Some(v) => unsafe { env::set_var(crate::landlock_shim::SHIM_BIN_OVERRIDE_ENV, v) },
+            None => unsafe { env::remove_var(crate::landlock_shim::SHIM_BIN_OVERRIDE_ENV) },
         }
     }
 
@@ -2751,7 +2751,7 @@ log_requests = true
 
         let has_shim_bind = args
             .windows(3)
-            .any(|w| w[0] == "--ro-bind" && w[2] == crate::shim::SHIM_MOUNT_PATH);
+            .any(|w| w[0] == "--ro-bind" && w[2] == crate::landlock_shim::SHIM_MOUNT_PATH);
         assert!(!has_shim_bind, "no shim bind expected when landlock=off");
 
         let last = args.last().map(String::as_str);

@@ -7,7 +7,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::shim::maybe_run_shim;
+use crate::landlock_shim::maybe_run_shim;
 use crate::{SandboxConfig, SandboxConfigFile, configure_bwrap_pre_exec};
 
 #[derive(Parser, Debug)]
