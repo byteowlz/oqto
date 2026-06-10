@@ -51,6 +51,12 @@ const MAX_INDEX: u32 = (1 << 22) - 1;
 /// Prefix length of each per-session point-to-point link.
 const PREFIX: u8 = 30;
 
+/// In-namespace port the `oqto-egress-relay` listens on. The DNAT redirects the
+/// agent's TCP here (on the namespace-side veth address); the relay recovers the
+/// original destination and forwards to eavs. Fixed because each namespace is
+/// isolated, so it only needs to be unique within the namespace.
+const RELAY_PORT: u16 = 10000;
+
 /// Where the transparent proxy and DNS resolver listen on the host side of the
 /// veth. Ports are host-configured; the bind address is the allocated host
 /// veth IP (the agent never learns the real upstream).
@@ -173,36 +179,56 @@ impl EgressPlan {
 
     /// The nftables ruleset (for `nft -f -`) applied **inside** the namespace.
     ///
-    /// - `nat output`: redirect DNS (53) to the resolver and all other TCP to
-    ///   the transparent proxy, both on the host veth IP.
-    /// - `filter output`: default-drop; only traffic now destined to the host
-    ///   veth (i.e. already redirected) plus loopback/established is allowed.
+    /// Topology (Option C): the agent's TCP is redirected to the in-namespace
+    /// `oqto-egress-relay` (on the namespace-side veth address), which recovers
+    /// the original destination via `SO_ORIGINAL_DST` and forwards to eavs over
+    /// the veth. DNS goes straight to the eavs DNS relay on the host veth.
+    ///
+    /// - `nat output`: UDP DNS -> eavs DNS relay (`host:dns`); all other TCP ->
+    ///   the local relay (`guest:relay`). Traffic already bound for the host
+    ///   veth (the relay's own connection to eavs, DNS) or the relay address is
+    ///   left unrewritten.
+    /// - `filter output`: default-drop; only loopback, established, the host
+    ///   veth (relay->eavs, dns->eavs) and the relay address (agent->relay) are
+    ///   allowed.
     ///
     /// There is deliberately no `masquerade`/`snat`/forward rule: the host does
     /// not route the namespace onward, so non-redirected egress is dropped both
     /// by this policy and by the absence of any route off the veth.
     pub fn nft_ruleset(&self) -> String {
         let host = self.host_ip;
-        let tcp = self.proxy.tcp_port;
+        let guest = self.guest_ip;
+        let relay = RELAY_PORT;
         let dns = self.proxy.dns_port;
         format!(
             "table inet oqto_egress {{\n\
              \x20   chain output_nat {{\n\
              \x20       type nat hook output priority -100; policy accept;\n\
-             \x20       ip daddr {host} tcp dport {tcp} accept\n\
-             \x20       ip daddr {host} udp dport {dns} accept\n\
+             \x20       ip daddr {host} accept\n\
+             \x20       ip daddr {guest} tcp dport {relay} accept\n\
              \x20       udp dport 53 dnat ip to {host}:{dns}\n\
-             \x20       tcp dport 53 dnat ip to {host}:{dns}\n\
-             \x20       meta l4proto tcp dnat ip to {host}:{tcp}\n\
+             \x20       meta l4proto tcp dnat ip to {guest}:{relay}\n\
              \x20   }}\n\
              \x20   chain output_filter {{\n\
              \x20       type filter hook output priority 0; policy drop;\n\
              \x20       oif \"lo\" accept\n\
              \x20       ct state established,related accept\n\
              \x20       ip daddr {host} accept\n\
+             \x20       ip daddr {guest} accept\n\
              \x20   }}\n\
              }}\n"
         )
+    }
+
+    /// In-namespace address the relay listens on (DNAT target).
+    pub fn relay_listen(&self) -> std::net::SocketAddrV4 {
+        std::net::SocketAddrV4::new(self.guest_ip, RELAY_PORT)
+    }
+
+    /// eavs transparent endpoint the relay forwards to (host veth IP + the
+    /// configured eavs transparent port).
+    pub fn eavs_endpoint(&self) -> std::net::SocketAddrV4 {
+        std::net::SocketAddrV4::new(self.host_ip, self.proxy.tcp_port)
     }
 
     /// Argv that pipes [`nft_ruleset`](Self::nft_ruleset) into `nft` inside the
@@ -584,20 +610,33 @@ mod tests {
 
     #[test]
     fn nft_ruleset_captures_and_drops() {
+        // index 0 -> host 10.0.0.1, guest 10.0.0.2.
         let plan = EgressPlan::new(0, proxy(), vec![]).unwrap();
         let rs = plan.nft_ruleset();
         // Default-drop on the filter output chain.
         assert!(rs.contains("policy drop"), "must default-drop:\n{rs}");
-        // All other TCP is redirected to the transparent proxy.
-        assert!(rs.contains("meta l4proto tcp dnat ip to 10.0.0.1:8443"));
-        // DNS is forced to the resolver.
+        // All other TCP is redirected to the in-namespace relay (guest:relay).
+        assert!(
+            rs.contains("meta l4proto tcp dnat ip to 10.0.0.2:10000"),
+            "tcp must redirect to the local relay:\n{rs}"
+        );
+        // DNS is forced to the eavs DNS relay on the host veth.
         assert!(rs.contains("udp dport 53 dnat ip to 10.0.0.1:5353"));
-        assert!(rs.contains("tcp dport 53 dnat ip to 10.0.0.1:5353"));
-        // Redirected traffic (now to the host veth) is permitted.
+        // The relay's path to eavs (host veth) and the agent->relay path
+        // (guest veth) are permitted by the filter chain.
         assert!(rs.contains("ip daddr 10.0.0.1 accept"));
+        assert!(rs.contains("ip daddr 10.0.0.2 accept"));
         // No NAT back out to the internet: capture must not become a gateway.
         assert!(!rs.contains("masquerade"), "must not masquerade:\n{rs}");
         assert!(!rs.contains("snat"), "must not snat:\n{rs}");
+    }
+
+    #[test]
+    fn relay_and_eavs_endpoints_derive_from_subnet() {
+        // index 0 -> host 10.0.0.1, guest 10.0.0.2; proxy() tcp_port = 8443.
+        let plan = EgressPlan::new(0, proxy(), vec![]).unwrap();
+        assert_eq!(plan.relay_listen().to_string(), "10.0.0.2:10000");
+        assert_eq!(plan.eavs_endpoint().to_string(), "10.0.0.1:8443");
     }
 
     #[test]
