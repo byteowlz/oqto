@@ -23,11 +23,13 @@
 //!   exhaustively unit-testable without privileges;
 //! - `apply`/`teardown` execute those commands and require `CAP_NET_ADMIN`.
 
+use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
-use std::process::{Command, Stdio};
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use log::{debug, info, warn};
@@ -379,12 +381,18 @@ fn run(argv: &[String], stdin: Option<&[u8]>) -> Result<()> {
 #[derive(Debug, Default)]
 pub struct EgressGuard {
     plan: Option<EgressPlan>,
+    /// The in-namespace `oqto-egress-relay` process, killed on drop before the
+    /// namespace is torn down.
+    relay: Option<Child>,
 }
 
 impl EgressGuard {
     /// Inert guard: no namespace, Drop is a no-op.
     pub fn inert() -> Self {
-        Self { plan: None }
+        Self {
+            plan: None,
+            relay: None,
+        }
     }
 
     /// The applied plan, if proxy mode created a namespace. Pass this to
@@ -396,6 +404,11 @@ impl EgressGuard {
 
 impl Drop for EgressGuard {
     fn drop(&mut self) {
+        // Kill the relay first so it isn't left pointing at a vanished namespace.
+        if let Some(child) = &mut self.relay {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         if let Some(plan) = &self.plan {
             plan.teardown();
         }
@@ -434,7 +447,72 @@ pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
     let plan = EgressPlan::from_network_config(cfg, index)?
         .context("proxy mode yielded no egress plan")?;
     plan.apply()?;
-    Ok(EgressGuard { plan: Some(plan) })
+    // Start the in-namespace relay. On failure, tear the namespace down so we
+    // never leave a half-built (and unguarded) egress path behind.
+    let relay = match spawn_relay(&plan) {
+        Ok(child) => child,
+        Err(e) => {
+            plan.teardown();
+            return Err(e);
+        }
+    };
+    Ok(EgressGuard {
+        plan: Some(plan),
+        relay: Some(relay),
+    })
+}
+
+/// Launch `oqto-egress-relay` inside the plan's namespace. The relay joins the
+/// namespace via `setns` in a pre-exec hook (so it sees the agent's DNAT) and
+/// is told its listen address and the eavs endpoint via env. Requires the relay
+/// binary to be resolvable; fails closed otherwise.
+fn spawn_relay(plan: &EgressPlan) -> Result<Child> {
+    let bin = crate::egress_relay::resolve_relay_binary().context(
+        "oqto-egress-relay binary not found (set OQTO_EGRESS_RELAY_BIN or install it on PATH); \
+         refusing proxy mode (fail-closed)",
+    )?;
+    let netns_path = CString::new(plan.netns_path())
+        .map_err(|_| anyhow::anyhow!("netns path contains NUL byte"))?;
+
+    let mut cmd = Command::new(&bin);
+    cmd.env(
+        crate::egress_relay::RELAY_LISTEN_ENV,
+        plan.relay_listen().to_string(),
+    );
+    cmd.env(
+        crate::egress_relay::RELAY_EAVS_ENV,
+        plan.eavs_endpoint().to_string(),
+    );
+    cmd.stdin(Stdio::null());
+
+    // SAFETY: pre_exec runs in the child after fork, before exec; it only makes
+    // async-signal-safe syscalls on a pre-built CString.
+    unsafe {
+        cmd.pre_exec(move || {
+            let fd = libc::open(netns_path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
+            if fd == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setns(fd, libc::CLONE_NEWNET) == -1 {
+                let err = std::io::Error::last_os_error();
+                libc::close(fd);
+                return Err(err);
+            }
+            libc::close(fd);
+            Ok(())
+        });
+    }
+
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("spawning oqto-egress-relay from {}", bin.display()))?;
+    info!(
+        "egress: relay started (pid {:?}) listening {} -> eavs {}",
+        child.id(),
+        plan.relay_listen(),
+        plan.eavs_endpoint()
+    );
+    Ok(child)
 }
 
 /// Lowest `/30` block index not currently backed by a live `oqto-egr-*`
