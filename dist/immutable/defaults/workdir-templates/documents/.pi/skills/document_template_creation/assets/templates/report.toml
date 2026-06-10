@@ -1,0 +1,184 @@
+# Report Content File
+# Professional business/technical report with multiple sections
+
+[meta]
+template = "report.typ"
+template_id = "report"
+template_version = "1.0.0"
+
+# =============================================================================
+# REPORT METADATA
+# =============================================================================
+[report]
+type = "Technical Report"
+title = "Cloud Migration Strategy and Implementation Plan"
+subtitle = "Phase 1: Assessment and Roadmap"
+author = "Dr. Sarah Chen, Senior Cloud Architect"
+date = "February 2025"
+version = "1.2"
+client = "GlobalTech Industries AG"
+confidential = true
+
+summary = """
+This report presents a comprehensive assessment of GlobalTech Industries AG's current IT infrastructure
+and outlines a strategic roadmap for migrating critical workloads to cloud infrastructure. The analysis
+covers five core business applications, identifies potential risks and mitigation strategies, and
+provides detailed cost projections for a three-year implementation timeline.
+
+Key findings indicate that a phased hybrid-cloud approach will yield optimal results, with projected
+annual savings of 35% on infrastructure costs while improving system reliability and scalability.
+The recommended implementation spans 18 months across four distinct phases.
+"""
+
+# =============================================================================
+# MAIN SECTIONS
+# Repeat [[sections]] for each chapter
+# =============================================================================
+
+[[sections]]
+title = "Introduction"
+content = """
+The rapid evolution of cloud technologies presents both opportunities and challenges for enterprise
+organizations. This report addresses GlobalTech Industries AG's strategic initiative to modernize its
+IT infrastructure through cloud migration, focusing on balancing operational continuity with
+technological advancement.
+
+The objectives of this assessment are threefold: evaluate current infrastructure readiness, identify
+optimal migration strategies for each application tier, and establish a realistic implementation
+timeline with measurable milestones.
+"""
+
+[[sections]]
+title = "Current State Assessment"
+content = """
+Our comprehensive audit of the existing infrastructure revealed a heterogeneous environment spanning
+three data centers with 450+ physical and virtual servers. The technology stack includes legacy
+systems dating back to 2012, presenting significant compatibility considerations.
+
+Key infrastructure components include:
+- **Core ERP System**: Oracle-based, single monolithic deployment
+- **Customer Portal**: Custom .NET application with SQL Server backend
+- **Analytics Platform**: Hadoop cluster processing 2TB daily
+- **Legacy CRM**: On-premise Salesforce predecessor requiring replacement
+- **Asset Management**: SAP module with extensive customizations
+"""
+
+[[sections.subsections]]
+title = "Performance Baseline"
+content = """
+System performance metrics collected over a 60-day period indicate that current infrastructure
+operates at 73% average utilization during peak hours, with critical applications experiencing
+latency spikes of up to 4 seconds during quarterly reporting periods.
+
+Network throughput analysis reveals that inter-data-center links are approaching saturation,
+suggesting that geographic distribution strategies must account for increased bandwidth requirements.
+"""
+
+[[sections.subsections]]
+title = "Security Posture"
+content = """
+Current security measures comply with ISO 27001 standards but lack modern zero-trust architecture
+principles. The perimeter-based security model presents vulnerabilities given the increasing
+prevalence of remote work arrangements and third-party integrations.
+
+Cloud-native security capabilities offer significant advantages, including automated threat
+detection, encryption at rest and in transit by default, and granular access controls integrated
+with existing identity management systems.
+"""
+
+[[sections]]
+title = "Migration Strategy"
+content = """
+Based on the assessment findings, we recommend a hybrid multi-cloud strategy leveraging AWS for
+compute-intensive workloads and Azure for enterprise integration services. This approach optimizes
+cost-efficiency while maintaining interoperability with existing Microsoft-centric tooling.
+
+The migration will proceed through four phases:
+1. Foundation (Months 1-3): Cloud landing zones, networking, security baseline
+2. Non-Critical Workloads (Months 4-8): Analytics, development environments
+3. Business Applications (Months 9-14): CRM replacement, customer portal
+4. Core ERP (Months 15-18): Gradual cutover with parallel operations
+"""
+
+[[sections]]
+title = "Cost Analysis"
+content = """
+Total Cost of Ownership (TCO) analysis over a five-year horizon shows favorable economics for
+the proposed cloud architecture. While initial migration costs represent significant investment,
+break-even occurs at month 22 with cumulative savings of €2.3M by year five.
+
+| Cost Category | On-Premise (5yr) | Cloud (5yr) | Savings |
+|---------------|------------------|-------------|---------|
+| Infrastructure | €4,200,000 | €2,800,000 | 33% |
+| Personnel | €1,800,000 | €1,200,000 | 33% |
+| Licensing | €900,000 | €600,000 | 33% |
+| **Total** | **€6,900,000** | **€4,600,000** | **33%** |
+
+Additional qualitative benefits include improved disaster recovery capabilities, faster deployment
+cycles, and access to advanced analytics services.
+"""
+
+[[sections]]
+title = "Risk Assessment"
+content = """
+Migration risks have been categorized by probability and impact, with mitigation strategies
+defined for each identified concern.
+
+**High Priority Risks:**
+- Data migration integrity during ERP transition
+- Network bandwidth constraints during peak operations
+- Staff skill gaps in cloud-native technologies
+
+**Mitigation Strategies:**
+- Comprehensive backup and rollback procedures for each phase
+- Dedicated 10Gbps connection provisioned before migration begins
+- Training program for 25 IT staff across three certification tracks
+"""
+
+[[sections]]
+title = "Recommendations"
+content = """
+Based on our analysis, we recommend proceeding with the proposed migration strategy, with the
+following immediate next steps:
+
+1. **Executive Approval**: Secure board-level commitment for the 18-month program
+2. **Cloud Partner Selection**: Finalize enterprise agreements with AWS and Azure
+3. **Team Formation**: Establish internal cloud center of excellence
+4. **Pilot Program**: Begin with analytics platform as proof of concept
+5. **Vendor Engagement**: Initiate RFP process for migration services partner
+
+Success metrics should include system availability (target: 99.9%), deployment frequency
+(target: daily releases), and incident response time (target: <30 min for critical issues).
+"""
+
+# =============================================================================
+# APPENDIX
+# =============================================================================
+
+[[appendix]]
+title = "A. Infrastructure Inventory"
+content = """
+Complete listing of all servers, storage systems, and network equipment with
+configuration details and interdependencies.
+"""
+
+[[appendix]]
+title = "B. Application Dependency Map"
+content = """
+Visual and tabular representation of application interdependencies,
+data flows, and integration points.
+"""
+
+[[appendix]]
+title = "C. Detailed Cost Breakdown"
+content = """
+Line-item cost analysis including cloud service estimates, migration labor,
+training expenses, and contingency reserves.
+"""
+
+[[appendix]]
+title = "D. Vendor Comparison Matrix"
+content = """
+Evaluation criteria and scoring for cloud service providers, migration
+tooling, and professional services vendors.
+"""

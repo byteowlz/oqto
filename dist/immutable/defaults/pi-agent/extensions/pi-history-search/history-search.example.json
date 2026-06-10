@@ -1,0 +1,8 @@
+{
+	"enabled": true,
+	"sessionsDir": null,
+	"indexOnStart": true,
+	"includeToolResults": true,
+	"maxResults": 10,
+	"snippetsPerSession": 3
+}

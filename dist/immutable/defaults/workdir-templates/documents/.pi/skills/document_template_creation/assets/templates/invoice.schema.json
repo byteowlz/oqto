@@ -1,0 +1,258 @@
+{
+  "$id": "https://tmpltr.dev/schemas/invoice.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Professional invoice with payment terms and itemized billing",
+  "properties": {
+    "brand": {
+      "properties": {},
+      "type": "object"
+    },
+    "buyer": {
+      "properties": {
+        "address": {
+          "default": "456 Client Street",
+          "type": "string"
+        },
+        "city": {
+          "default": "Los Angeles",
+          "type": "string"
+        },
+        "contact": {
+          "default": "Attn: John Doe",
+          "type": "string"
+        },
+        "email": {
+          "default": "accounts@customer.com",
+          "type": "string"
+        },
+        "name": {
+          "default": "Customer Company",
+          "type": "string"
+        },
+        "postal": {
+          "default": "20002",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "invoice": {
+      "properties": {
+        "colors": {
+          "properties": {
+            "primary": {
+              "default": "#1e293b",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "currency": {
+          "default": "USD",
+          "type": "string"
+        },
+        "date": {
+          "default": "today(",
+          "type": "string"
+        },
+        "due_date": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "notes": {
+          "default": "Thank you for your business!",
+          "type": "string"
+        },
+        "number": {
+          "default": "INV-0001",
+          "type": "string"
+        },
+        "subtotal": {
+          "default": "0.00",
+          "type": "string"
+        },
+        "tax_amount": {
+          "default": "0.00",
+          "type": "string"
+        },
+        "tax_rate": {
+          "default": "0",
+          "type": "string"
+        },
+        "terms": {
+          "default": "Payment due within 30 days.",
+          "type": "string"
+        },
+        "total": {
+          "default": "subtotal",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "items": {
+      "properties": {},
+      "type": "object"
+    },
+    "labels": {
+      "properties": {
+        "amount": {
+          "default": "Amount",
+          "type": "string"
+        },
+        "bank": {
+          "default": "Bank",
+          "type": "string"
+        },
+        "bic": {
+          "default": "BIC",
+          "type": "string"
+        },
+        "bill_to": {
+          "default": "Bill To",
+          "type": "string"
+        },
+        "date": {
+          "default": "Date",
+          "type": "string"
+        },
+        "description": {
+          "default": "Description",
+          "type": "string"
+        },
+        "due": {
+          "default": "Due Date",
+          "type": "string"
+        },
+        "iban": {
+          "default": "IBAN",
+          "type": "string"
+        },
+        "invoice": {
+          "default": "INVOICE",
+          "type": "string"
+        },
+        "item": {
+          "default": "#",
+          "type": "string"
+        },
+        "notes": {
+          "default": "Notes",
+          "type": "string"
+        },
+        "number": {
+          "default": "Number",
+          "type": "string"
+        },
+        "payment": {
+          "default": "Payment Details",
+          "type": "string"
+        },
+        "price": {
+          "default": "Price",
+          "type": "string"
+        },
+        "qty": {
+          "default": "Qty",
+          "type": "string"
+        },
+        "reference": {
+          "default": "Ref",
+          "type": "string"
+        },
+        "subtotal": {
+          "default": "Subtotal",
+          "type": "string"
+        },
+        "tax": {
+          "default": "Tax",
+          "type": "string"
+        },
+        "terms": {
+          "default": "Terms & Conditions",
+          "type": "string"
+        },
+        "total": {
+          "default": "Total",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "payment": {
+      "properties": {
+        "bank": {
+          "default": "Example Bank",
+          "type": "string"
+        },
+        "bic": {
+          "default": "EXAMPLEX",
+          "type": "string"
+        },
+        "iban": {
+          "default": "XX00 0000 0000 0000",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "seller": {
+      "properties": {
+        "address": {
+          "default": "123 Business Street",
+          "type": "string"
+        },
+        "city": {
+          "default": "New York",
+          "type": "string"
+        },
+        "company": {
+          "default": "Your Company",
+          "type": "string"
+        },
+        "email": {
+          "default": "billing@company.com",
+          "type": "string"
+        },
+        "phone": {
+          "default": "+1 (555) 123-4567",
+          "type": "string"
+        },
+        "postal": {
+          "default": "10001",
+          "type": "string"
+        },
+        "registration": {
+          "default": "Reg: 00000000",
+          "type": "string"
+        },
+        "vat": {
+          "default": "VAT: XX000000000",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "invoice content",
+  "type": "object"
+}

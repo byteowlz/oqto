@@ -1,0 +1,4 @@
+# Data analysis workspace sandbox
+# Needs network for pip installs. Needs write for uv/pip caches.
+profile = "development"
+isolate_pid = true

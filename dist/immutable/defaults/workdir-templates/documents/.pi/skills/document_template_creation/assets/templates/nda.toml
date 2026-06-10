@@ -1,0 +1,23 @@
+[meta]
+template = "nda.typ"
+template_id = "nda"
+template_version = "1.0.0"
+
+[agreement]
+type = "mutual"
+date = "February 12, 2026"
+duration = "2 years"
+jurisdiction = "the Federal Republic of Germany"
+purpose = "exploring a potential technology partnership"
+
+[party_a]
+name = "Sarah Chen"
+company = "TechCorp GmbH"
+address = "Innovation Drive 1, 10115 Berlin, Germany"
+role = "Chief Technology Officer"
+
+[party_b]
+name = "Marcus Weber"
+company = "InnoSoft AG"
+address = "Hauptstrasse 42, 10117 Berlin, Germany"
+role = "Managing Director"

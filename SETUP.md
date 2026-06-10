@@ -25,6 +25,44 @@ Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisit
 
 ## Quick Start
 
+### Bootstrap install (fresh machine, no repo clone)
+
+Use the bootstrap installer to fetch `oqto-setup` and a release artifact from
+GitHub Releases, verify checksums, install `oqto-setup`, and activate Oqto.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | bash
+```
+
+Pin a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
+  bash -s -- --version v0.4.0
+```
+
+Run setup immediately if this repo is already checked out:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
+  bash -s -- --run-setup-sh -- --personal
+```
+
+Repository-clone/dev path still works and is documented below.
+
+### Install/update validation matrix
+
+Use the matrix runner to validate fresh artifact install + doctor strict + setup wrapper paths.
+
+```bash
+# Plan mode (prints commands)
+./scripts/e2e/install-update-matrix.sh
+
+# Execute for personal profile only
+./scripts/e2e/install-update-matrix.sh --execute --profiles "personal"
+```
+
+
 ### Option 1: Interactive Setup Script (Development/Local)
 
 For development or single-machine setup:

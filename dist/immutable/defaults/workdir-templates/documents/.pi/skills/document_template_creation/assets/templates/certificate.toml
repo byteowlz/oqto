@@ -1,0 +1,64 @@
+# Certificate Content File
+# Professional certificate for awards, certifications, or recognition
+
+[meta]
+template = "certificate.typ"
+template_id = "certificate"
+template_version = "1.0.0"
+
+# =============================================================================
+# ISSUING ORGANIZATION
+# =============================================================================
+[issuer]
+organization = "Acme Institute"
+department = "Research Division"
+
+# =============================================================================
+# RECIPIENT INFORMATION
+# =============================================================================
+[recipient]
+name = "Max Mustermann"
+title = "M. Sc. Mechanical Engineering"
+
+# =============================================================================
+# CERTIFICATE DETAILS
+# =============================================================================
+[certificate]
+type = "ZERTIFIKAT"
+subtype = "für herausragende Leistungen"
+description = "Hiermit wird bestätigt, dass der Absolvent erfolgreich alle Anforderungen erfüllt und exzellente Kenntnisse nachgewiesen hat im Bereich"
+date_text = "Verliehen am"
+date = "12. Februar 2025"
+location = "Berlin, Deutschland"
+id_label = "Zertifikats-ID"
+id = "ACM-RES-2025-0042"
+verify_url = "https://example.com/verify"
+primary_color = "#1e3a5f"
+
+# =============================================================================
+# ACHIEVEMENT / COURSE
+# =============================================================================
+[achievement]
+title = "Advanced Generative AI Implementation"
+description = """
+Intensive Weiterbildung über 6 Monate mit praktischen Projekten in:
+- Large Language Models (LLM) Integration
+- Retrieval-Augmented Generation (RAG) Systeme
+- KI-gestützte Softwareentwicklung
+- Prompt Engineering und Fine-Tuning
+"""
+
+# =============================================================================
+# SIGNATURES
+# Repeat [[signatures]] for each signer
+# =============================================================================
+
+[[signatures]]
+name = "Prof. Dr. Jane Smith"
+title = "Director"
+organization = "Acme Institute"
+
+[[signatures]]
+name = "Dr. John Doe"
+title = "Head of Education"
+organization = "Acme Academy"

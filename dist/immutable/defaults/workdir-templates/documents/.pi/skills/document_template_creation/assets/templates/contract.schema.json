@@ -1,0 +1,28 @@
+{
+  "$id": "https://tmpltr.dev/schemas/contract.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "JSON/TOML schema for contract template",
+  "properties": {
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "contract content",
+  "type": "object"
+}

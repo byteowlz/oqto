@@ -2,6 +2,8 @@
 
 This document captures the current setup contract used by `oqto-setup plan` and `oqtoctl doctor --contract`.
 
+For canonical host-layering/copy-vs-symlink policy, see `docs/reference/install-layout.md`.
+
 The source of truth is the typed manifest in `backend/crates/oqto-provisioning`. Regenerate/verify with:
 
 ```bash

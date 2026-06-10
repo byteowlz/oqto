@@ -1,0 +1,137 @@
+# Week Calendar - Hand-Drawn Style
+# Usage: tmpltr compile week-calendar.toml -o week.pdf
+
+[meta]
+template = "week-calendar-landscape.typ"
+template_id = "week-calendar-landscape"
+template_version = "1.0.0"
+
+[week]
+title = "This Week"
+subtitle = "Feb 10 - Feb 16"
+number = "7"
+year = "2026"
+quote = "The secret of getting ahead is getting started."
+
+[style]
+ink_color = "#2c3e50"
+accent_color = "#c0392b"
+highlight_color = "#f9e79f"
+paper_color = "#fdf6e3"
+line_color = "#d5c4a1"
+
+[[days]]
+name = "Monday"
+date = "Feb 10"
+notes = ""
+[[days.tasks]]
+text = "Team standup 9:00"
+time = "9:00"
+done = false
+[[days.tasks]]
+text = "Review PR #142"
+done = true
+[[days.tasks]]
+text = "Draft project proposal"
+done = false
+
+[[days]]
+name = "Tuesday"
+date = "Feb 11"
+notes = ""
+[[days.tasks]]
+text = "Client call"
+time = "10:00"
+done = false
+[[days.tasks]]
+text = "Update documentation"
+done = false
+
+[[days]]
+name = "Wednesday"
+date = "Feb 12"
+notes = "Lunch with Alex"
+[[days.tasks]]
+text = "Workshop prep"
+time = "14:00"
+done = false
+[[days.tasks]]
+text = "Code review session"
+done = false
+[[days.tasks]]
+text = "Fix CI pipeline"
+done = true
+
+[[days]]
+name = "Thursday"
+date = "Feb 13"
+notes = ""
+[[days.tasks]]
+text = "Sprint planning"
+time = "9:30"
+done = false
+[[days.tasks]]
+text = "Deploy v2.1"
+done = false
+
+[[days]]
+name = "Friday"
+date = "Feb 14"
+notes = "Valentine's Day"
+[[days.tasks]]
+text = "Retro meeting"
+time = "11:00"
+done = false
+[[days.tasks]]
+text = "Write weekly report"
+done = false
+
+[[days]]
+name = "Saturday"
+date = "Feb 15"
+notes = ""
+[[days.tasks]]
+text = "Farmers market"
+done = false
+[[days.tasks]]
+text = "Read chapter 5"
+done = false
+
+[[days]]
+name = "Sunday"
+date = "Feb 16"
+notes = ""
+[[days.tasks]]
+text = "Meal prep"
+done = false
+[[days.tasks]]
+text = "Plan next week"
+done = false
+
+[[priorities]]
+text = "Ship project proposal"
+done = false
+
+[[priorities]]
+text = "Fix production bug"
+done = true
+
+[[priorities]]
+text = "Prepare workshop slides"
+done = false
+
+notes = "Remember to book dentist appointment. Pick up dry cleaning Thursday."
+
+[[goals]]
+text = "Exercise 3x this week"
+done = false
+
+[[goals]]
+text = "Read 50 pages"
+done = false
+
+[[goals]]
+text = "No social media before noon"
+done = false
+
+footer = ""

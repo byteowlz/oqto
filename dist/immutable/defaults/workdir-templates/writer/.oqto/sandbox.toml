@@ -1,0 +1,5 @@
+# Writer workspace sandbox
+# Needs network for web research. Otherwise minimal access.
+profile = "minimal"
+isolate_network = false
+isolate_pid = true

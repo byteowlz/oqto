@@ -1,0 +1,6 @@
+# Documents workspace sandbox
+# Read-only except workspace, /tmp, and tool data dirs.
+# No network needed (all local tools).
+profile = "minimal"
+isolate_network = false
+isolate_pid = true

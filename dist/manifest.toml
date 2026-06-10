@@ -1,0 +1,306 @@
+manifest_version = 1
+id = "oqto-dist"
+description = "Oqto distribution manifest (draft)"
+
+[release]
+layout = "transactional"
+root = "/var/lib/oqto/releases"
+current_symlink = "/var/lib/oqto/releases/current"
+
+# Canonical file classes:
+# - immutable_symlink: shipped in release, exposed via symlink, never edited in-place
+# - mutable_copy_once: seed once from defaults, then user/admin editable
+# - runtime_generated: created by services/runtimes; never shipped
+
+# ---------- Immutable shipped assets ----------
+
+[[assets]]
+id = "bin-oqto"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto"
+stage_path = "bin/oqto"
+install_path = "/usr/local/bin/oqto"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqtoctl"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqtoctl"
+stage_path = "bin/oqtoctl"
+install_path = "/usr/local/bin/oqtoctl"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqto-setup"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-setup"
+stage_path = "bin/oqto-setup"
+install_path = "/usr/local/bin/oqto-setup"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqto-runner"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-runner"
+stage_path = "bin/oqto-runner"
+install_path = "/usr/local/bin/oqto-runner"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqto-files"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-files"
+stage_path = "bin/oqto-files"
+install_path = "/usr/local/bin/oqto-files"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "seccomp-default-bpf"
+class = "immutable_symlink"
+kind = "policy"
+source = "dist/immutable/seccomp/default.bpf"
+stage_path = "seccomp/default.bpf"
+install_path = "/usr/local/share/oqto/seccomp/default.bpf"
+install_method = "copy"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["team"]
+
+[[assets]]
+id = "systemd-user-oqto-runner"
+class = "immutable_symlink"
+kind = "unit-template"
+source = "dist/immutable/systemd/user/oqto-runner.service"
+stage_path = "systemd/user/oqto-runner.service"
+install_path = "/usr/local/share/oqto/systemd/oqto-runner.service"
+install_method = "copy"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["personal", "team"]
+
+# ---------- Mutable admin config (copy once) ----------
+
+[[assets]]
+id = "etc-config-template"
+class = "mutable_copy_once"
+kind = "config-template"
+source = "dist/mutable-templates/etc/oqto/config.toml"
+install_path = "/etc/oqto/config.toml"
+install_method = "copy_if_missing"
+owner = "root"
+group = "root"
+mode = "0640"
+profiles = ["team"]
+
+[[assets]]
+id = "etc-sandbox-template"
+class = "mutable_copy_once"
+kind = "config-template"
+source = "dist/mutable-templates/etc/oqto/sandbox.toml"
+install_path = "/etc/oqto/sandbox.toml"
+install_method = "copy_if_missing"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["team"]
+
+[pi_agent_extensions]
+source_repo = "https://github.com/byteowlz/pi-agent-extensions"
+policy = "canonical shipped extension set"
+items = [
+  "pi-auto-rename",
+  "pi-custom-context-files",
+  "pi-env-ctx",
+  "pi-error-recovery",
+  "pi-history-search",
+  "pi-introspection",
+  "pi-markdown-export",
+  "pi-oqto-bridge",
+  "pi-oqto-todos",
+]
+
+# ---------- Mutable user/workspace defaults (copy once) ----------
+
+[[assets]]
+id = "pi-agent-settings"
+class = "mutable_copy_once"
+kind = "user-default"
+source = "dist/immutable/defaults/pi-agent/settings.json"
+install_path = "~/.pi/agent/settings.json"
+install_method = "copy_if_missing"
+owner = "$USER"
+group = "$USER_PRIMARY_GROUP"
+mode = "0600"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-agent-agents-md"
+class = "mutable_copy_once"
+kind = "user-default"
+source = "dist/immutable/defaults/pi-agent/AGENTS.md"
+install_path = "~/.pi/agent/AGENTS.md"
+install_method = "copy_if_missing"
+owner = "$USER"
+group = "$USER_PRIMARY_GROUP"
+mode = "0644"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "workdir-template-root"
+class = "mutable_copy_once"
+kind = "template"
+source = "dist/immutable/defaults/workdir-templates/default"
+install_path = "<workspace>/"
+install_method = "copy_template"
+owner = "workspace_owner"
+group = "workspace_group"
+mode = "preserve"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-auto-rename"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-auto-rename"
+install_path = "~/.pi/agent/extensions/pi-auto-rename"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-custom-context-files"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-custom-context-files"
+install_path = "~/.pi/agent/extensions/pi-custom-context-files"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-env-ctx"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-env-ctx"
+install_path = "~/.pi/agent/extensions/pi-env-ctx"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-error-recovery"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-error-recovery"
+install_path = "~/.pi/agent/extensions/pi-error-recovery"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-history-search"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-history-search"
+install_path = "~/.pi/agent/extensions/pi-history-search"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-introspection"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-introspection"
+install_path = "~/.pi/agent/extensions/pi-introspection"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-markdown-export"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-markdown-export"
+install_path = "~/.pi/agent/extensions/pi-markdown-export"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-oqto-bridge"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-oqto-bridge"
+install_path = "~/.pi/agent/extensions/pi-oqto-bridge"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-oqto-todos"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-oqto-todos"
+install_path = "~/.pi/agent/extensions/pi-oqto-todos"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+# ---------- Runtime-generated (tracked for policy/doctor only) ----------
+
+[[assets]]
+id = "oqto-db-personal"
+class = "runtime_generated"
+kind = "database"
+install_path = "~/.local/share/oqto/oqto.db"
+profiles = ["personal"]
+
+[[assets]]
+id = "oqto-db-team"
+class = "runtime_generated"
+kind = "database"
+install_path = "/var/lib/oqto/.local/share/oqto/oqto.db"
+owner = "oqto"
+group = "oqto"
+mode = "0640"
+profiles = ["team"]
+
+[[assets]]
+id = "pi-sessions"
+class = "runtime_generated"
+kind = "state"
+install_path = "~/.pi/agent/sessions"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "runner-socket-personal"
+class = "runtime_generated"
+kind = "socket"
+install_path = "$XDG_RUNTIME_DIR/oqto-runner.sock"
+profiles = ["personal"]
+
+[[assets]]
+id = "runner-socket-team"
+class = "runtime_generated"
+kind = "socket"
+install_path = "/run/oqto/runner-sockets/{user}/oqto-runner.sock"
+profiles = ["team"]

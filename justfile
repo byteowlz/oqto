@@ -64,6 +64,26 @@ lint-backend-crate-boundaries:
 lint-no-legacy-history-authority:
     ./scripts/lint/no-legacy-history-authority.sh
 
+# Validate dist/manifest.toml structure and asset references
+lint-dist-manifest:
+    ./scripts/lint/verify-dist-manifest.py --allow-missing-binaries
+
+# Strict dist manifest validation (all referenced sources must exist)
+lint-dist-manifest-strict:
+    ./scripts/lint/verify-dist-manifest.py
+
+# Sync canonical template/extension sources into dist/
+dist-sync:
+    ./scripts/dist/sync.sh
+
+# Stage built binaries into dist/immutable/bin/ (use --build to compile first)
+dist-stage-binaries *ARGS:
+    ./scripts/dist/stage-binaries.sh {{ARGS}}
+
+# Package dist payload as release tarball (+sha256)
+dist-package version="dev" target="local":
+    ./scripts/dist/package.sh {{version}} {{target}}
+
 # =============================================================================
 # Test
 # =============================================================================

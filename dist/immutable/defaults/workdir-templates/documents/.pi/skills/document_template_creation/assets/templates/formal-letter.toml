@@ -1,0 +1,96 @@
+# Formal Letter Content File
+# Professional business letter following DIN 5008 standards
+
+[meta]
+template = "formal-letter.typ"
+template_id = "formal-letter"
+template_version = "1.0.0"
+
+# Document language (de, en, etc.)
+lang = "de"
+
+# =============================================================================
+# SENDER INFORMATION
+# =============================================================================
+[sender]
+company = "byteowlz UG (haftungsbeschränkt)"
+street = "Musterstrasse 42"
+postal = "33102"
+city = "Berlin"
+phone = "+49 30 123456-0"
+email = "hello@byteowlz.com"
+website = "www.byteowlz.com"
+name = "Max Mustermann"
+title = "M. Sc."
+position = "Geschäftsführender Gesellschafter"
+
+# =============================================================================
+# RECIPIENT INFORMATION
+# =============================================================================
+[recipient]
+company = "Musterfirma GmbH"
+department = "IT-Abteilung"
+contact = "Herrn Dr.-Ing. Max Mustermann"
+street = "Musterstraße 123"
+postal = "10115"
+city = "Berlin"
+
+# =============================================================================
+# LETTER METADATA
+# =============================================================================
+[letter]
+date = "12. Februar 2025"
+subject = "Angebot für Softwareentwicklungsprojekt \"Digitalisierungsportal\""
+salutation = "Sehr geehrter Herr Dr.-Ing. Mustermann,"
+body = """
+hiermit übersenden wir Ihnen wie besprochen unser Angebot für die Entwicklung des Digitalisierungsportals.
+
+Basierend auf den in unserem Workshop vom 5. Februar besprochenen Anforderungen haben wir ein Konzept erarbeitet, das alle gewünschten Funktionen umfasst:
+
+- Benutzerverwaltung mit Rollenkonzept
+- Automatisierte Workflows für Genehmigungsprozesse
+- Integration mit Ihrem bestehenden ERP-System
+- Responsive Web-Oberfläche für alle Endgeräte
+- Dokumentenmanagement mit Volltextsuche
+
+Das Projekt wird in vier Phasen umgesetzt, mit einem Gesamtumfang von 480 Personenstunden. Die Projektlaufzeit beträgt voraussichtlich 4 Monate.
+
+Wir freuen uns auf Ihre Rückmeldung und stehen für Fragen gerne zur Verfügung.
+"""
+
+closing = "Mit freundlichen Grüßen"
+reference = "Ihre Anfrage vom 01.02.2025"
+
+# =============================================================================
+# ATTACHMENTS
+# Repeat [[attachments]] for each file
+# =============================================================================
+[[attachments]]
+name = "Angebot_Phase1.pdf"
+description = "Detailliertes Angebot mit Aufwandschätzung"
+
+[[attachments]]
+name = "Projektplan.pdf"
+description = "Grobplanung mit Meilensteinen"
+
+[[attachments]]
+name = "Referenzen.pdf"
+description = "Vergleichbare Projektreferenzen"
+
+# =============================================================================
+# CARBON COPY
+# Optional - leave empty if not needed
+# =============================================================================
+[[cc]]
+name = "Frau Erika Beispiel"
+company = "Projektleitung"
+
+# =============================================================================
+# LABELS (for localization)
+# =============================================================================
+[labels]
+location = "Ort"
+your_ref = "Ihr Zeichen"
+subject = "Betreff"
+attachments = "Anlagen"
+cc = "Kopie an"

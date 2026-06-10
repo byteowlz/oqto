@@ -1,0 +1,98 @@
+{
+  "$id": "https://tmpltr.dev/schemas/week-calendar.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Weekly planner with a sketchy, hand-drawn aesthetic",
+  "properties": {
+    "days": {
+      "properties": {},
+      "type": "object"
+    },
+    "footer": {
+      "properties": {},
+      "type": "object"
+    },
+    "goals": {
+      "properties": {},
+      "type": "object"
+    },
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "notes": {
+      "properties": {},
+      "type": "object"
+    },
+    "priorities": {
+      "properties": {},
+      "type": "object"
+    },
+    "style": {
+      "properties": {
+        "accent_color": {
+          "default": "#c0392b",
+          "type": "string"
+        },
+        "highlight_color": {
+          "default": "#f9e79f",
+          "type": "string"
+        },
+        "ink_color": {
+          "default": "#2c3e50",
+          "type": "string"
+        },
+        "line_color": {
+          "default": "#d5c4a1",
+          "type": "string"
+        },
+        "paper_color": {
+          "default": "#fdf6e3",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "week": {
+      "properties": {
+        "number": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "quote": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "subtitle": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "title": {
+          "default": "This Week",
+          "type": "string"
+        },
+        "year": {
+          "default": "2026",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "week-calendar content",
+  "type": "object"
+}

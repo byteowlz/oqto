@@ -1,0 +1,19 @@
+[meta]
+template = "business-card.typ"
+template_id = "business-card"
+template_version = "1.0.0"
+
+[style]
+primary_color = "#1a202c"
+accent_color = "#3182ce"
+
+[person]
+name = "Alex Rivera"
+title = "Senior Software Engineer"
+company = "TechCorp GmbH"
+
+[contact]
+email = "alex@techcorp.de"
+phone = "+49 170 1234567"
+website = "techcorp.de"
+address = "Innovation Drive 1, 10115 Berlin"

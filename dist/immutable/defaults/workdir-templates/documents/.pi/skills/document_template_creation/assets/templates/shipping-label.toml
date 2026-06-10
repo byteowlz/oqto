@@ -1,0 +1,30 @@
+[meta]
+template = "shipping-label.typ"
+template_id = "shipping-label"
+template_version = "1.0.0"
+
+[sender]
+company = "TechCorp GmbH"
+name = "Warehouse Dept."
+street = "Innovation Drive 1"
+postal = "33102"
+city = "Berlin"
+country = "Germany"
+phone = "+49 30 000000"
+
+[recipient]
+name = "Maria Santos"
+company = "Globex International"
+street = "742 Evergreen Terrace"
+street2 = "Building C, Floor 3"
+postal = "90210"
+city = "Springfield"
+state = "IL"
+country = "United States"
+
+[shipment]
+tracking = "DE4827391056"
+weight = "2.4 kg"
+service = "Express"
+date = "2026-02-12"
+instructions = "Fragile - Handle with care. Keep upright."

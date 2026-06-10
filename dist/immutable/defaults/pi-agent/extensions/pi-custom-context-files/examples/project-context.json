@@ -1,0 +1,21 @@
+{
+  "contextFiles": [
+    {
+      "names": ["PROJECT.md", "README.md"],
+      "optional": false
+    },
+    {
+      "names": ["CONVENTIONS.md", "STYLE.md", "GUIDELINES.md"],
+      "optional": true
+    },
+    {
+      "names": ["TECH-STACK.md", "STACK.md"],
+      "optional": true
+    },
+    {
+      "names": ["TEAM.md"],
+      "optional": true
+    }
+  ],
+  "_comment": "This is an example project context.json. Copy to .pi/context.json and customize."
+}

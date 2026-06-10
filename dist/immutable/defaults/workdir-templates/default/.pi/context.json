@@ -1,0 +1,16 @@
+{
+  "contextFiles": [
+    {
+      "names": ["BOOTSTRAP.md"],
+      "optional": true
+    },
+    {
+      "names": ["PERSONALITY.md", "PERSONA.md"],
+      "optional": true
+    },
+    {
+      "names": ["USER.md", "USERS.md"],
+      "optional": true
+    }
+  ]
+}

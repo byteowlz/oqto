@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "debug": false,
+  "sessionScoped": true,
+  "storagePath": ".pi/todos"
+}

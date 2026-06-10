@@ -1,0 +1,84 @@
+[meta]
+template = "contract.typ"
+template_id = "contract"
+template_version = "1.0.0"
+
+[contract]
+title = "Service Agreement"
+number = "SA-2026-0042"
+date = "February 12, 2026"
+start_date = "March 1, 2026"
+end_date = "August 31, 2026"
+jurisdiction = "the Federal Republic of Germany"
+
+[provider]
+name = "Alex Rivera"
+company = "Rivera Consulting"
+address = "Friedrichstrasse 44, 10117 Berlin, Germany"
+email = "alex@rivera-consulting.de"
+tax_id = "DE123456789"
+
+[client]
+name = "Sarah Chen"
+company = "TechCorp GmbH"
+address = "Innovation Drive 1, 10115 Berlin, Germany"
+email = "s.chen@techcorp.de"
+tax_id = "DE987654321"
+
+[[scope]]
+text = "Architecture review and redesign of the existing microservices platform"
+
+[[scope]]
+text = "Implementation of event-driven communication layer"
+
+[[scope]]
+text = "Performance optimization and load testing"
+
+[[scope]]
+text = "Technical documentation and knowledge transfer"
+
+[[deliverables]]
+text = "Architecture assessment report"
+due = "March 15, 2026"
+status = "pending"
+
+[[deliverables]]
+text = "System design document"
+due = "April 1, 2026"
+status = "pending"
+
+[[deliverables]]
+text = "Implemented event bus with tests"
+due = "June 1, 2026"
+status = "pending"
+
+[[deliverables]]
+text = "Performance report and handover"
+due = "August 15, 2026"
+status = "pending"
+
+[payment]
+total = "48,000"
+currency = "EUR"
+terms = "14 days"
+method = "bank transfer"
+
+[[milestones]]
+text = "Contract signing"
+amount = "12,000"
+due = "March 1, 2026"
+
+[[milestones]]
+text = "Design phase completion"
+amount = "12,000"
+due = "April 1, 2026"
+
+[[milestones]]
+text = "Implementation complete"
+amount = "16,000"
+due = "June 15, 2026"
+
+[[milestones]]
+text = "Final handover"
+amount = "8,000"
+due = "August 31, 2026"

@@ -1,0 +1,117 @@
+# Invoice Content File
+# Professional invoice template with itemized billing
+
+[meta]
+template = "invoice.typ"
+template_id = "invoice"
+template_version = "1.0.0"
+
+# =============================================================================
+# SELLER (Your Company Information)
+# =============================================================================
+[seller]
+company = "Acme Solutions GmbH"
+address = "Techstraße 123"
+postal = "33102"
+city = "Berlin"
+country = "Germany"
+email = "billing@acme-solutions.de"
+phone = "+49 30 123456-0"
+vat = "DE123456789"
+registration = "HRB 12345 Amtsgericht Berlin"
+
+# =============================================================================
+# BUYER (Customer Information)
+# =============================================================================
+[buyer]
+name = "TechCorp Industries AG"
+contact = "Herr Max Mustermann"
+address = "Industriepark Nord 45"
+postal = "10115"
+city = "Berlin"
+country = "Germany"
+email = "rechnungen@techcorp.de"
+
+# =============================================================================
+# INVOICE DETAILS
+# =============================================================================
+[invoice]
+number = "RE-2025-0042"
+date = "12.02.2025"
+due_date = "14.03.2025"
+currency = "EUR"
+subtotal = "8.500,00"
+tax_rate = "19"
+tax_amount = "1.615,00"
+total = "10.115,00"
+terms = "Zahlbar innerhalb von 30 Tagen ohne Abzug. Bei Zahlungsverzug berechnen wir Verzugszinsen in Höhe von 9 Prozentpunkten über dem Basiszinssatz."
+notes = "Vielen Dank für Ihren Auftrag! Für Fragen steht Ihnen unser Team jederzeit zur Verfügung."
+
+[invoice.colors]
+primary = "#1e293b"
+
+# =============================================================================
+# PAYMENT INFORMATION
+# =============================================================================
+[payment]
+bank = "Deutsche Bank AG"
+iban = "DE89 3704 0044 0532 0130 00"
+bic = "COBADEFFXXX"
+
+# =============================================================================
+# LINE ITEMS
+# Repeat this [[items]] block for each product/service
+# =============================================================================
+[[items]]
+description = "Software Development - Frontend (120 Stunden)"
+quantity = 120
+unit = "h"
+price = "95,00"
+amount = "11.400,00"
+
+[[items]]
+description = "Software Development - Backend (80 Stunden)"
+quantity = 80
+unit = "h"
+price = "110,00"
+amount = "8.800,00"
+
+[[items]]
+description = "Projektmanagement & Beratung"
+quantity = 20
+unit = "h"
+price = "85,00"
+amount = "1.700,00"
+
+[[items]]
+description = "Hosting & Infrastruktur (3 Monate)"
+quantity = 3
+unit = "Mo"
+price = "199,00"
+amount = "597,00"
+
+# =============================================================================
+# LABELS (for localization)
+# Change these to customize for different languages
+# =============================================================================
+[labels]
+invoice = "RECHNUNG"
+number = "Rechnungsnummer"
+date = "Rechnungsdatum"
+due = "Fällig am"
+bill_to = "Rechnungsempfänger"
+payment = "Zahlungsinformationen"
+bank = "Bank"
+iban = "IBAN"
+bic = "BIC/SWIFT"
+reference = "Verwendungszweck"
+item = "Pos."
+description = "Beschreibung"
+qty = "Menge"
+price = "Einzelpreis"
+amount = "Gesamtpreis"
+subtotal = "Zwischensumme"
+tax = "USt."
+total = "Gesamtsumme"
+terms = "Zahlungsbedingungen"
+notes = "Anmerkungen"

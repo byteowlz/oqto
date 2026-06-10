@@ -1,0 +1,5 @@
+# Automation workspace sandbox
+# Scripts need broader system access. Network for package installs.
+# Still deny secrets.
+profile = "development"
+isolate_pid = false

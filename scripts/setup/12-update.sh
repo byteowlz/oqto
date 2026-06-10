@@ -218,6 +218,10 @@ download_oqto_release() {
     return 1
   fi
 
+  if command -v oqto-setup >/dev/null 2>&1; then
+    log_info "Detected oqto-setup; prefer artifact activation path when tarball is available"
+  fi
+
   local target
   target=$(get_release_target)
   if [[ -z "$target" ]]; then
@@ -246,60 +250,57 @@ download_oqto_release() {
   tmpdir=$(mktemp -d)
   local base_url="https://github.com/byteowlz/oqto/releases/download/${version}"
 
-  # Download backend binaries
+  # Download backend release artifact + checksum
   local backend_tarball="oqto-${version}-${target}.tar.gz"
-  if ! curl -fsSL "${base_url}/${backend_tarball}" -o "$tmpdir/backend.tar.gz" 2>/dev/null; then
+  local backend_checksum="${backend_tarball}.sha256"
+  if ! curl -fsSL "${base_url}/${backend_tarball}" -o "$tmpdir/${backend_tarball}" 2>/dev/null; then
     log_info "Backend release not found at ${base_url}/${backend_tarball}"
     rm -rf "$tmpdir"
     return 1
   fi
+  if ! curl -fsSL "${base_url}/${backend_checksum}" -o "$tmpdir/${backend_checksum}" 2>/dev/null; then
+    log_info "Backend checksum not found at ${base_url}/${backend_checksum}"
+    rm -rf "$tmpdir"
+    return 1
+  fi
 
-  # Download frontend
+  if ! command -v oqto-setup >/dev/null 2>&1; then
+    log_warn "oqto-setup not found; cannot activate release artifact"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  log_info "Activating backend release via oqto-setup install..."
+  if ! sudo oqto-setup install \
+    --artifact "$tmpdir/${backend_tarball}" \
+    --checksum "$tmpdir/${backend_checksum}"; then
+    log_warn "oqto-setup install failed for release artifact"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  local installed=1
+
+  # Download frontend (legacy separate artifact, optional)
   local frontend_tarball="oqto-frontend-${version}.tar.gz"
   if ! curl -fsSL "${base_url}/${frontend_tarball}" -o "$tmpdir/frontend.tar.gz" 2>/dev/null; then
     log_info "Frontend release not found at ${base_url}/${frontend_tarball}"
-    rm -rf "$tmpdir"
-    return 1
+    log_info "Continuing without frontend release artifact"
   fi
 
-  # Extract backend
-  tar xzf "$tmpdir/backend.tar.gz" -C "$tmpdir"
-  local backend_dir="$tmpdir/oqto-${version}-${target}"
-  if [[ ! -d "$backend_dir/bin" ]]; then
-    log_warn "Release tarball missing bin/ directory"
-    rm -rf "$tmpdir"
-    return 1
-  fi
-
-  # Install backend binaries
-  local installed=0
-  for bin in "$backend_dir"/bin/*; do
-    if [[ -x "$bin" ]]; then
-      local name
-      name=$(basename "$bin")
-      sudo install -m 755 "$bin" "${TOOLS_INSTALL_DIR}/${name}"
-      log_success "${name} installed from release"
-      installed=$((installed + 1))
+  # Extract and deploy frontend (if downloaded)
+  if [[ -f "$tmpdir/frontend.tar.gz" ]]; then
+    tar xzf "$tmpdir/frontend.tar.gz" -C "$tmpdir"
+    local frontend_dir="$tmpdir/oqto-frontend-${version}"
+    if [[ -d "$frontend_dir/dist" ]]; then
+      local frontend_deploy="/var/www/oqto"
+      sudo mkdir -p "$frontend_deploy"
+      sudo rsync -a --delete "$frontend_dir/dist/" "$frontend_deploy/"
+      sudo chown -R root:root "$frontend_deploy"
+      log_success "Frontend deployed from release to ${frontend_deploy}"
+    else
+      log_warn "Frontend dist not found in release, will build from source"
     fi
-  done
-
-  if [[ $installed -eq 0 ]]; then
-    log_warn "No binaries found in release"
-    rm -rf "$tmpdir"
-    return 1
-  fi
-
-  # Extract and deploy frontend
-  tar xzf "$tmpdir/frontend.tar.gz" -C "$tmpdir"
-  local frontend_dir="$tmpdir/oqto-frontend-${version}"
-  if [[ -d "$frontend_dir/dist" ]]; then
-    local frontend_deploy="/var/www/oqto"
-    sudo mkdir -p "$frontend_deploy"
-    sudo rsync -a --delete "$frontend_dir/dist/" "$frontend_deploy/"
-    sudo chown -R root:root "$frontend_deploy"
-    log_success "Frontend deployed from release to ${frontend_deploy}"
-  else
-    log_warn "Frontend dist not found in release, will build from source"
   fi
 
   rm -rf "$tmpdir"

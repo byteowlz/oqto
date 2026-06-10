@@ -1,0 +1,81 @@
+{
+  "$id": "https://tmpltr.dev/schemas/report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Business/technical report with cover page, TOC, and sections",
+  "properties": {
+    "appendix": {
+      "properties": {},
+      "type": "object"
+    },
+    "brand": {
+      "properties": {},
+      "type": "object"
+    },
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "report": {
+      "properties": {
+        "author": {
+          "default": "Author Name",
+          "type": "string"
+        },
+        "client": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "confidential": {
+          "default": "false",
+          "type": "string"
+        },
+        "date": {
+          "default": "January 2025",
+          "type": "string"
+        },
+        "subtitle": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "summary": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "title": {
+          "default": "Report Title",
+          "type": "string"
+        },
+        "type": {
+          "default": "Technical Report",
+          "type": "string"
+        },
+        "version": {
+          "default": "1.0",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "sections": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "title": "report content",
+  "type": "object"
+}

@@ -1,0 +1,91 @@
+[meta]
+template = "meeting-notes.typ"
+template_id = "meeting-notes"
+template_version = "1.0.0"
+
+[meeting]
+title = "Q1 Product Roadmap Review"
+date = "2026-02-12"
+time = "14:00 - 15:30"
+location = "Room 4B / Zoom"
+organizer = "Sarah Chen"
+
+[style]
+primary_color = "#1a365d"
+accent_color = "#e53e3e"
+
+[[attendees]]
+name = "Sarah Chen"
+role = "Product Lead"
+present = true
+
+[[attendees]]
+name = "Marcus Weber"
+role = "Engineering"
+present = true
+
+[[attendees]]
+name = "Priya Sharma"
+role = "Design"
+present = true
+
+[[attendees]]
+name = "Tom Kowalski"
+role = "QA"
+present = false
+
+[[agenda]]
+title = "Q4 retrospective"
+duration = "15 min"
+presenter = "Sarah"
+notes = "Reviewed key metrics. Revenue up 12%, user retention improved by 8%."
+
+[[agenda]]
+title = "Feature prioritization for Q1"
+duration = "30 min"
+presenter = "Marcus"
+notes = "Discussed three major initiatives. AI search scored highest on impact/effort matrix."
+
+[[agenda]]
+title = "Design system update"
+duration = "20 min"
+presenter = "Priya"
+notes = "New component library ready for review. Migration plan needed for legacy pages."
+
+[[agenda]]
+title = "Release timeline"
+duration = "15 min"
+notes = "Targeting March 15 for v2.1 release."
+
+[[decisions]]
+text = "AI-powered search will be the top priority for Q1"
+owner = "Marcus"
+
+[[decisions]]
+text = "Design system migration starts February 20"
+owner = "Priya"
+
+[[decisions]]
+text = "Weekly sync reduced to 30 minutes"
+
+[[actions]]
+text = "Draft technical spec for AI search"
+owner = "Marcus"
+due = "Feb 19"
+
+[[actions]]
+text = "Set up design system migration board"
+owner = "Priya"
+due = "Feb 17"
+
+[[actions]]
+text = "Update Q1 OKRs with new priorities"
+owner = "Sarah"
+due = "Feb 14"
+
+[[actions]]
+text = "Schedule QA capacity planning"
+owner = "Tom"
+due = "Feb 21"
+
+notes = "Next meeting scheduled for February 26. Marcus to send out pre-read for AI search spec by Feb 20."

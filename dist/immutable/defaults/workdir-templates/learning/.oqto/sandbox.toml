@@ -1,0 +1,5 @@
+# Learning workspace sandbox
+# Needs network for web searches. Read-only except workspace and /tmp.
+profile = "minimal"
+isolate_network = false
+isolate_pid = true

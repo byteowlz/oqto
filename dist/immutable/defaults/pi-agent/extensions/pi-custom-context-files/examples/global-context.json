@@ -1,0 +1,17 @@
+{
+  "contextFiles": [
+    {
+      "names": ["USERS.md", "USER.md"],
+      "optional": true
+    },
+    {
+      "names": ["PERSONALITY.md", "PERSONA.md"],
+      "optional": true
+    },
+    {
+      "names": ["GLOBAL-RULES.md", "RULES.md"],
+      "optional": true
+    }
+  ],
+  "_comment": "This is an example global context.json. Copy to ~/.pi/agent/context.json and customize."
+}

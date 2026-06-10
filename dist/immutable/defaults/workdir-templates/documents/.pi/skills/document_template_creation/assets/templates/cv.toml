@@ -1,0 +1,116 @@
+[meta]
+template = "cv.typ"
+template_id = "cv"
+template_version = "1.0.0"
+
+[person]
+name = "Alex Rivera"
+title = "Senior Software Engineer"
+summary = "Full-stack engineer with 8+ years building scalable systems. Passionate about developer tools, distributed systems, and clean architecture."
+
+[contact]
+email = "alex@example.com"
+phone = "+49 170 1234567"
+location = "Berlin, Germany"
+website = "alexrivera.dev"
+linkedin = "linkedin.com/in/alexrivera"
+github = "github.com/arivera"
+
+[style]
+primary_color = "#2d3748"
+accent_color = "#3182ce"
+sidebar_color = "#f7fafc"
+
+[[skills]]
+name = "Rust"
+level = 5
+
+[[skills]]
+name = "TypeScript"
+level = 5
+
+[[skills]]
+name = "Python"
+level = 4
+
+[[skills]]
+name = "Go"
+level = 3
+
+[[skills]]
+name = "Kubernetes"
+level = 4
+
+[[skills]]
+name = "PostgreSQL"
+level = 4
+
+[[languages]]
+name = "English"
+level = "Native"
+
+[[languages]]
+name = "German"
+level = "Fluent (C1)"
+
+[[languages]]
+name = "Spanish"
+level = "Basic (A2)"
+
+[[interests]]
+name = "Open Source"
+[[interests]]
+name = "Trail Running"
+[[interests]]
+name = "Photography"
+
+[[experience]]
+title = "Senior Software Engineer"
+company = "TechCorp GmbH"
+period = "2022 - Present"
+location = "Berlin"
+description = "Lead backend team of 5. Architected migration from monolith to microservices."
+highlights = [
+  "Reduced API latency by 60% through caching and query optimization",
+  "Designed event-driven architecture handling 50k events/sec",
+  "Mentored 3 junior engineers to mid-level",
+]
+
+[[experience]]
+title = "Software Engineer"
+company = "StartupXYZ"
+period = "2019 - 2022"
+location = "Munich"
+description = "Full-stack development on core product serving 200k users."
+highlights = [
+  "Built real-time collaboration features using WebSockets",
+  "Implemented CI/CD pipeline reducing deploy time from 2h to 15min",
+]
+
+[[experience]]
+title = "Junior Developer"
+company = "WebAgency"
+period = "2017 - 2019"
+location = "Hamburg"
+description = "Frontend and backend development for client projects."
+
+[[education]]
+degree = "M.Sc. Computer Science"
+school = "Technical University of Munich"
+period = "2015 - 2017"
+details = "Thesis: Distributed Consensus in Edge Computing Networks"
+
+[[education]]
+degree = "B.Sc. Computer Science"
+school = "University of Hamburg"
+period = "2012 - 2015"
+
+[[certifications]]
+name = "AWS Solutions Architect"
+issuer = "Amazon"
+date = "2023"
+
+[[certifications]]
+name = "Certified Kubernetes Administrator"
+issuer = "CNCF"
+date = "2022"

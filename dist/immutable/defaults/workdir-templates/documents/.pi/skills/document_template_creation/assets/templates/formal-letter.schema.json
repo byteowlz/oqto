@@ -1,0 +1,198 @@
+{
+  "$id": "https://tmpltr.dev/schemas/formal-letter.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Professional business letter with sender/recipient blocks",
+  "properties": {
+    "blocks": {
+      "description": "Content blocks",
+      "properties": {
+        "paragraphs": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "format": {
+              "default": "markdown",
+              "enum": [
+                "markdown",
+                "typst",
+                "plain"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "brand": {
+      "properties": {},
+      "type": "object"
+    },
+    "labels": {
+      "properties": {
+        "attachments": {
+          "default": "Anlagen",
+          "type": "string"
+        },
+        "cc": {
+          "default": "Kopie an",
+          "type": "string"
+        },
+        "location": {
+          "default": "Berlin",
+          "type": "string"
+        },
+        "subject": {
+          "default": "Betreff",
+          "type": "string"
+        },
+        "your_ref": {
+          "default": "Ihr Zeichen",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "lang": {
+      "properties": {},
+      "type": "object"
+    },
+    "letter": {
+      "properties": {
+        "attachments": {
+          "default": "(",
+          "type": "string"
+        },
+        "body": {
+          "default": "Hier steht der Text Ihres Geschäftsbriefs. Der Text sollte klar strukturiert und sachlich formuliert sein.",
+          "type": "string"
+        },
+        "cc": {
+          "default": "(",
+          "type": "string"
+        },
+        "closing": {
+          "default": "Mit freundlichen Grüßen",
+          "type": "string"
+        },
+        "date": {
+          "default": "12. Februar 2025",
+          "type": "string"
+        },
+        "reference": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "salutation": {
+          "default": "Sehr geehrte Damen und Herren,",
+          "type": "string"
+        },
+        "subject": {
+          "default": "Betreffzeile",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "recipient": {
+      "properties": {
+        "city": {
+          "default": "Berlin",
+          "type": "string"
+        },
+        "company": {
+          "default": "Empfängerfirma GmbH",
+          "type": "string"
+        },
+        "contact": {
+          "default": "z. Hd. Frau Dr. Schmidt",
+          "type": "string"
+        },
+        "department": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "postal": {
+          "default": "10115",
+          "type": "string"
+        },
+        "street": {
+          "default": "Musterstraße 123",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "sender": {
+      "properties": {
+        "city": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "company": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "email": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "name": {
+          "default": "Max Mustermann",
+          "type": "string"
+        },
+        "phone": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "position": {
+          "default": "Geschäftsführer",
+          "type": "string"
+        },
+        "postal": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "street": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "title": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "website": {
+          "default": "\"\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "formal-letter content",
+  "type": "object"
+}

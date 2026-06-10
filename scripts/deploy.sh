@@ -12,6 +12,9 @@ SKIP_FRONTEND=false
 SKIP_BACKEND=false
 SKIP_SERVICES=false
 USE_REMOTE_BUILD=false
+DEPLOY_ARTIFACT=""
+DEPLOY_CHECKSUM=""
+ALLOW_LEGACY_DEPLOY_PATH="false"
 REMOTE_BUILD_SERVER="${REMOTE_BUILD_SERVER:-}"
 USE_MOLD_LINKER="${OQTO_USE_MOLD_LINKER:-false}"
 PREPARE_ONLY=false
@@ -81,6 +84,9 @@ Options:
   --keep-releases N        Keep the N newest old releases after activation
                            (current + last-good always preserved). 0 disables.
                            Default: 3. Also: OQTO_KEEP_RELEASES env var.
+  --artifact FILE          Use oqto-setup install with this artifact tarball
+  --checksum FILE          Optional checksum file for --artifact
+  --allow-legacy-path      Allow old prepare/activate deploy path (default: disabled)
   --dry-run                Print actions without executing
   --config FILE            Use alternate hosts config
   --help                   Show this help
@@ -117,6 +123,9 @@ while [[ $# -gt 0 ]]; do
         --health-timeout) HEALTH_TIMEOUT_SECONDS="$2"; shift 2 ;;
         --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
         --keep-releases) KEEP_RELEASES="$2"; shift 2 ;;
+        --artifact) DEPLOY_ARTIFACT="$2"; shift 2 ;;
+        --checksum) DEPLOY_CHECKSUM="$2"; shift 2 ;;
+        --allow-legacy-path) ALLOW_LEGACY_DEPLOY_PATH="true"; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --config) CONFIG="$2"; shift 2 ;;
         --help|-h) usage ;;
@@ -138,6 +147,56 @@ if [[ "$CANARY_ONLY" == "true" && "$CANARY_THEN_FLEET" == "true" ]]; then
     err "--canary and --canary-then-fleet are mutually exclusive"
     exit 1
 fi
+
+if [[ -n "$DEPLOY_ARTIFACT" ]]; then
+    if [[ ! -f "$DEPLOY_ARTIFACT" ]]; then
+        err "Artifact not found: $DEPLOY_ARTIFACT"
+        exit 1
+    fi
+    if [[ -n "$DEPLOY_CHECKSUM" && ! -f "$DEPLOY_CHECKSUM" ]]; then
+        err "Checksum file not found: $DEPLOY_CHECKSUM"
+        exit 1
+    fi
+fi
+
+prepare_default_artifact_if_needed() {
+    if [[ -n "$DEPLOY_ARTIFACT" || "$ALLOW_LEGACY_DEPLOY_PATH" == "true" ]]; then
+        return 0
+    fi
+
+    local target="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+    local version="$RELEASE_ID"
+    local out_dir="$ROOT_DIR/dist/out"
+    local artifact="$out_dir/oqto-${version}-${target}.tar.gz"
+    local checksum="${artifact}.sha256"
+
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+        err "--skip-build cannot be used without --artifact unless --allow-legacy-path is set"
+        exit 1
+    fi
+
+    log "No --artifact provided; building deployment artifact from dist workflow..."
+    host_exec "true" "" "cd '$ROOT_DIR' && just dist-sync"
+    host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-binaries --build"
+    host_exec "true" "" "cd '$ROOT_DIR' && just lint-dist-manifest-strict"
+    host_exec "true" "" "cd '$ROOT_DIR' && just dist-package '$version' '$target'"
+
+    if [[ "$DRY_RUN" != "true" ]]; then
+        if [[ ! -f "$artifact" ]]; then
+            err "Expected artifact not found after dist-package: $artifact"
+            exit 1
+        fi
+        if [[ ! -f "$checksum" ]]; then
+            err "Expected checksum not found after dist-package: $checksum"
+            exit 1
+        fi
+    fi
+
+    DEPLOY_ARTIFACT="$artifact"
+    DEPLOY_CHECKSUM="$checksum"
+    ok "Using generated artifact: $DEPLOY_ARTIFACT"
+}
+
 
 if [[ -z "$RELEASE_ID" ]]; then
     git_sha="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || echo nogit)"
@@ -797,7 +856,7 @@ preflight_host() {
         return 1
     fi
 
-    if [[ "$SKIP_BACKEND" != "true" ]]; then
+    if [[ -z "$DEPLOY_ARTIFACT" && "$SKIP_BACKEND" != "true" ]]; then
         local bin artifact_dir
         artifact_dir="$(backend_artifact_dir)"
         for bin in $binaries; do
@@ -1793,6 +1852,11 @@ print_status_host() {
 }
 
 build_artifacts() {
+    if [[ -n "$DEPLOY_ARTIFACT" ]]; then
+        log "Using prebuilt artifact path; skipping legacy build_artifacts phase"
+        return 0
+    fi
+
     if [[ "$SKIP_BUILD" == "true" ]]; then
         return 0
     fi
@@ -1846,6 +1910,50 @@ build_artifacts() {
     ok "Build completed"
 }
 
+deploy_via_oqto_setup_install() {
+    local name="$1" ssh_target="$2" is_local="$3"
+    local artifact_basename checksum_basename remote_artifact remote_checksum cmd
+
+    artifact_basename="$(basename "$DEPLOY_ARTIFACT")"
+    remote_artifact="/tmp/${artifact_basename}"
+
+    if [[ "$is_local" == "true" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "${YELLOW}  [dry-run]${NC} local :: sudo oqto-setup install --artifact '$DEPLOY_ARTIFACT' ${DEPLOY_CHECKSUM:+--checksum '$DEPLOY_CHECKSUM'}"
+            return 0
+        fi
+        cmd="sudo oqto-setup install --artifact '$DEPLOY_ARTIFACT'"
+        if [[ -n "$DEPLOY_CHECKSUM" ]]; then
+            cmd+=" --checksum '$DEPLOY_CHECKSUM'"
+        fi
+        bash -lc "$cmd"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
+        if [[ -n "$DEPLOY_CHECKSUM" ]]; then
+            checksum_basename="$(basename "$DEPLOY_CHECKSUM")"
+            remote_checksum="/tmp/${checksum_basename}"
+            echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_CHECKSUM' '$ssh_target:$remote_checksum'"
+        fi
+        echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target :: sudo oqto-setup install --artifact '$remote_artifact'"
+        return 0
+    fi
+
+    scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
+
+    cmd="sudo oqto-setup install --artifact '$remote_artifact'"
+    if [[ -n "$DEPLOY_CHECKSUM" ]]; then
+        checksum_basename="$(basename "$DEPLOY_CHECKSUM")"
+        remote_checksum="/tmp/${checksum_basename}"
+        scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
+        cmd+=" --checksum '$remote_checksum'"
+    fi
+
+    ssh "$ssh_target" "bash -lc $(printf '%q' "$cmd")"
+}
+
 deploy_host() {
     local i="$1"
     local name="${H_NAME[$i]}"
@@ -1872,15 +1980,22 @@ deploy_host() {
         return 0
     fi
 
-    if [[ "$ACTIVATE_ONLY" != "true" ]]; then
-        if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then
+    if [[ -n "$DEPLOY_ARTIFACT" ]]; then
+        log "[$name] deploying via oqto-setup install artifact path"
+        if ! deploy_via_oqto_setup_install "$name" "$ssh_target" "$is_local"; then
             return 1
         fi
-    fi
+    else
+        if [[ "$ACTIVATE_ONLY" != "true" ]]; then
+            if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then
+                return 1
+            fi
+        fi
 
-    if [[ "$PREPARE_ONLY" != "true" ]]; then
-        if ! activate_host "$name" "$ssh_target" "$is_local" "$mode" "$binaries" "$services" "$frontend" "$web_root"; then
-            return 1
+        if [[ "$PREPARE_ONLY" != "true" ]]; then
+            if ! activate_host "$name" "$ssh_target" "$is_local" "$mode" "$binaries" "$services" "$frontend" "$web_root"; then
+                return 1
+            fi
         fi
     fi
 
@@ -1981,6 +2096,7 @@ else
     prime_sudo_credentials sudo_targets
 fi
 
+prepare_default_artifact_if_needed
 build_artifacts
 
 if [[ "$CANARY_THEN_FLEET" == "true" ]]; then

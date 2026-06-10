@@ -1,0 +1,4 @@
+{
+  "defaultModel": "MiniMaxAI/MiniMax-M2.5",
+  "defaultProvider": "fhgenie-preview"
+}

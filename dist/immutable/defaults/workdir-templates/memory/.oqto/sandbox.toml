@@ -1,0 +1,6 @@
+# Memory workspace sandbox
+# Needs localhost network for mmry gRPC (port 48000).
+# No outbound internet access needed.
+# Secrets protected, PID isolated.
+profile = "minimal"
+isolate_pid = true

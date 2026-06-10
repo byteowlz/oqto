@@ -1,0 +1,49 @@
+[meta]
+template = "habit-tracker.typ"
+template_id = "habit-tracker"
+template_version = "1.0.0"
+
+title = "Habit Tracker"
+month = "February"
+year = "2026"
+days_in_month = 28
+quote = "Small daily improvements lead to stunning results."
+
+[style]
+primary_color = "#2d3748"
+accent_color = "#38a169"
+fail_color = "#e53e3e"
+
+[[habits]]
+name = "Exercise"
+data = [true, true, false, true, true, false, false, true, true, true, false, true, true, false]
+
+[[habits]]
+name = "Read 30min"
+data = [true, true, true, true, false, true, true, true, true, true, true, false, true, true]
+
+[[habits]]
+name = "Meditate"
+data = [true, false, true, true, true, true, false, true, false, true, true, true, false, true]
+
+[[habits]]
+name = "8 glasses water"
+data = [true, true, true, false, true, true, true, true, true, false, true, true, true, true]
+
+[[habits]]
+name = "Sleep by 23:00"
+data = [false, true, true, true, false, false, true, true, true, true, false, true, true, false]
+
+[[habits]]
+name = "No social media"
+data = [true, false, false, true, true, false, false, true, false, true, true, false, true, false]
+
+[[habits]]
+name = "Journal"
+data = [true, true, true, true, true, true, false, true, true, true, true, true, false, true]
+
+[[habits]]
+name = "Cook at home"
+data = [true, true, false, true, false, true, true, true, true, false, true, true, true, false]
+
+notes = "Focus on consistency over perfection."

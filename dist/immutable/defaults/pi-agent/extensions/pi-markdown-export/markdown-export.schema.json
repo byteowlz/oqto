@@ -1,0 +1,97 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "pi-markdown-export configuration",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"exportDir": {
+			"type": "string",
+			"default": "./pi-session-exports",
+			"description": "Directory bulk/picker exports are written to. Relative paths resolve against the cwd."
+		},
+		"includeSubdirs": {
+			"type": "boolean",
+			"default": false,
+			"description": "Include sessions from subdirectories of the cwd in bulk export and the picker."
+		},
+		"includeThinking": {
+			"type": "boolean",
+			"default": false,
+			"description": "Include assistant thinking blocks in the rendered Markdown."
+		},
+		"includeToolCalls": {
+			"type": "boolean",
+			"default": true,
+			"description": "Render assistant tool calls as compact one-liners (🔧 `read(path)`)."
+		},
+		"includeToolResults": {
+			"type": "boolean",
+			"default": false,
+			"description": "Include tool result bodies (file dumps, command output) — usually the bulk of the noise."
+		},
+		"maxCharsPerMessage": {
+			"type": "integer",
+			"minimum": 0,
+			"default": 0,
+			"description": "Cap each rendered message at this many characters (0 = unlimited). Truncated messages get a marker."
+		},
+		"sessionsDir": {
+			"type": ["string", "null"],
+			"default": null,
+			"description": "Override pi's sessions base directory. When null, resolves from $PI_SESSIONS_DIR then ~/.pi/agent/sessions. A leading ~ is expanded."
+		},
+		"replacements": {
+			"type": "array",
+			"default": [],
+			"description": "Find/replace rules applied to export text before any redaction command runs.",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["find", "replace"],
+				"properties": {
+					"name": { "type": "string", "description": "Optional label shown in logs." },
+					"find": { "type": "string", "description": "Literal string, or a regular expression source when 'regex' is true." },
+					"replace": { "type": "string", "description": "Replacement text. Supports $1-style group references when 'regex' is true." },
+					"regex": { "type": "boolean", "default": false, "description": "Treat 'find' as a regular expression." },
+					"flags": { "type": "string", "default": "g", "description": "Regex flags. Ignored unless 'regex' is true." }
+				}
+			}
+		},
+		"redactionCommands": {
+			"type": "array",
+			"default": [],
+			"description": "External CLIs run (in order) over the export before it is written. Placeholders {file} and {report} are substituted in args.",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["command"],
+				"properties": {
+					"name": { "type": "string", "description": "Label shown in logs." },
+					"command": { "type": "string", "description": "Executable to run." },
+					"args": {
+						"type": "array",
+						"items": { "type": "string" },
+						"description": "Arguments, with {file}/{report} placeholders substituted."
+					},
+					"mode": {
+						"type": "string",
+						"enum": ["scan", "filter"],
+						"default": "scan",
+						"description": "'scan' masks secret strings parsed from the tool's JSON output (gitleaks/trufflehog). 'filter' replaces the content with the command's stdout (or {file} when inPlace)."
+					},
+					"inPlace": { "type": "boolean", "default": false, "description": "filter mode: read the modified {file} back instead of stdout." },
+					"stdin": { "type": "boolean", "default": false, "description": "filter mode: pipe the current text to the command's stdin." },
+					"onFinding": {
+						"type": "string",
+						"enum": ["mask", "skip", "warn"],
+						"default": "warn",
+						"description": "scan mode fallback when findings cannot be parsed into maskable strings."
+					},
+					"maskWith": { "type": "string", "default": "[REDACTED]", "description": "scan mode: token detected secrets are replaced with." },
+					"required": { "type": "boolean", "default": false, "description": "When true, a missing executable or non-zero exit aborts the export." },
+					"timeoutMs": { "type": "integer", "minimum": 1, "default": 30000, "description": "Per-command timeout in milliseconds." }
+				}
+			}
+		}
+	}
+}

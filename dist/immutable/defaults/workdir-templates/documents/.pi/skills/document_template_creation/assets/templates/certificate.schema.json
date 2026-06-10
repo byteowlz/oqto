@@ -1,0 +1,112 @@
+{
+  "$id": "https://tmpltr.dev/schemas/certificate.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Professional certificate for awards, certifications, or recognition",
+  "properties": {
+    "achievement": {
+      "properties": {
+        "title": {
+          "default": "Course or Achievement Title",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "brand": {
+      "properties": {},
+      "type": "object"
+    },
+    "certificate": {
+      "properties": {
+        "date": {
+          "default": "January 1, 2025",
+          "type": "string"
+        },
+        "date_text": {
+          "default": "Awarded on",
+          "type": "string"
+        },
+        "description": {
+          "default": "Has successfully completed the requirements and demonstrated outstanding proficiency in",
+          "type": "string"
+        },
+        "id": {
+          "default": "CERT-000000",
+          "type": "string"
+        },
+        "id_label": {
+          "default": "Certificate ID",
+          "type": "string"
+        },
+        "location": {
+          "default": "\"\"",
+          "type": "string"
+        },
+        "primary_color": {
+          "default": "dark-blue",
+          "type": "string"
+        },
+        "subtype": {
+          "default": "of Achievement",
+          "type": "string"
+        },
+        "type": {
+          "default": "CERTIFICATE",
+          "type": "string"
+        },
+        "verify_url": {
+          "default": "\"\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "issuer": {
+      "properties": {
+        "organization": {
+          "default": "Organization Name",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "meta": {
+      "description": "Content file metadata (auto-generated when using fill/pipe)",
+      "properties": {
+        "template": {
+          "description": "Template file path",
+          "type": "string"
+        },
+        "template_id": {
+          "description": "Template identifier",
+          "type": "string"
+        },
+        "template_version": {
+          "description": "Template version",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "recipient": {
+      "properties": {
+        "name": {
+          "default": "Recipient Name",
+          "type": "string"
+        },
+        "title": {
+          "default": "\"\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "signatures": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "title": "certificate content",
+  "type": "object"
+}
