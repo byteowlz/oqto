@@ -243,7 +243,6 @@ pub async fn register(
                     );
                 }
 
-
                 // Provision shell dotfiles (zsh + starship)
                 if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
                     warn!(
@@ -417,7 +416,6 @@ pub async fn login(
                                 "Failed to store linux_username/uid in database"
                             );
                         }
-
                     }
                     Err(e) => {
                         return Err(ApiError::internal(format!(

@@ -533,7 +533,6 @@ pub async fn create_user(
                     );
                 }
 
-
                 // Provision shell dotfiles (zsh + starship)
                 if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
                     warn!(

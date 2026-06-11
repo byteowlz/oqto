@@ -156,7 +156,7 @@ async fn spawn_pi(
     tokio::process::ChildStdout,
 )> {
     let mut cmd = Command::new(&args.pi_executable);
-    cmd.arg("--mode").arg("rpc");
+    cmd.arg("--mode").arg("rpc").arg("--approve");
 
     if args.continue_session {
         cmd.arg("--continue");

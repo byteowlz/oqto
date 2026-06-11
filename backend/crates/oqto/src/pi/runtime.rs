@@ -120,7 +120,7 @@ impl PiRuntime for LocalPiRuntime {
 
         // Build the command
         let mut cmd = Command::new(&config.pi_executable);
-        cmd.arg("--mode").arg("rpc");
+        cmd.arg("--mode").arg("rpc").arg("--approve");
 
         // Session handling: specific file takes precedence over continue
         if let Some(ref session_file) = config.session_file {

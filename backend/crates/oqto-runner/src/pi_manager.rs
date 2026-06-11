@@ -627,7 +627,11 @@ impl PiSessionManager {
         let session_socket_dir_str = session_socket_dir.to_string_lossy().to_string();
 
         // Build Pi arguments
-        let mut pi_args: Vec<String> = vec!["--mode".to_string(), "rpc".to_string()];
+        let mut pi_args: Vec<String> = vec![
+            "--mode".to_string(),
+            "rpc".to_string(),
+            "--approve".to_string(),
+        ];
 
         if let Some(ref provider) = config.provider {
             pi_args.push("--provider".to_string());
@@ -2043,7 +2047,7 @@ impl PiSessionManager {
         );
 
         let mut cmd = Command::new(&self.config.pi_binary);
-        cmd.args(["--mode", "rpc", "--no-session"])
+        cmd.args(["--mode", "rpc", "--approve", "--no-session"])
             .current_dir(workdir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

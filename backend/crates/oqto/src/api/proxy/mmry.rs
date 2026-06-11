@@ -536,11 +536,11 @@ pub async fn proxy_mmry_stores(
 // ============================================================================
 
 use axum::Json;
+use mmry_core::agent_ctx::AgentCtx;
+use mmry_core::memory::MemoryType;
 use mmry_core::memory_file::MemoryEntry;
 use mmry_core::memory_file::MemoryEvent;
 use mmry_core::memory_file::MemoryFile;
-use mmry_core::agent_ctx::AgentCtx;
-use mmry_core::memory::MemoryType;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct WorkspaceMemoryListQuery {
@@ -800,7 +800,8 @@ pub async fn proxy_mmry_memory_for_workspace(
     match *req.method() {
         axum::http::Method::GET => {
             let memory = get_workspace_memory_by_id(&memory_file, &memory_id).await?;
-            let body = serde_json::to_vec(&memory).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let body =
+                serde_json::to_vec(&memory).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
@@ -809,7 +810,9 @@ pub async fn proxy_mmry_memory_for_workspace(
         }
         axum::http::Method::DELETE => {
             let event = MemoryEvent::deprecate(memory_id.clone(), &AgentCtx::from_env());
-            memory_file.append(&event).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            memory_file
+                .append(&event)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let body = serde_json::to_vec(&WorkspaceMemoryDeleteResponse {
                 deleted: true,
                 id: memory_id,
@@ -830,7 +833,9 @@ pub async fn proxy_mmry_memory_for_workspace(
 
             // Deprecate old + add replacement
             let dep = MemoryEvent::deprecate(memory_id, &AgentCtx::from_env());
-            memory_file.append(&dep).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            memory_file
+                .append(&dep)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let content = resolve_content(payload.content, payload.text, payload.memory)
                 .ok_or(StatusCode::BAD_REQUEST)?;
@@ -846,7 +851,9 @@ pub async fn proxy_mmry_memory_for_workspace(
             if let Some(importance) = payload.importance {
                 add.metadata["importance"] = serde_json::Value::Number(importance.into());
             }
-            memory_file.append(&add).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            memory_file
+                .append(&add)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let created = memory_file
                 .active_memories()

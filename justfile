@@ -774,8 +774,12 @@ deploy *ARGS:
 deploy-host name *ARGS:
     ./scripts/deploy.sh --host {{name}} {{ARGS}}
 
-# Deploy to a specific host with runner stream tracing enabled
-deploy-host-debug name trace_dir="/tmp/oqto-stream-traces" *ARGS:
+# Deploy to a specific host with runner stream tracing enabled (default trace dir)
+deploy-host-debug name *ARGS:
+    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir /tmp/oqto-stream-traces {{ARGS}}
+
+# Deploy to a specific host with runner stream tracing enabled (custom trace dir)
+deploy-host-debug-dir name trace_dir *ARGS:
     ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir {{trace_dir}} {{ARGS}}
 
 # Deploy without rebuilding (use existing artifacts)
