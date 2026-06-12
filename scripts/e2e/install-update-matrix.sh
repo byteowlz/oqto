@@ -111,10 +111,15 @@ for profile in $PROFILE_SET; do
   # Parity smoke check: setup wrapper should run doctor path too, but we only
   # retain summary lines to avoid duplicate full reports.
   setup_env="CARGO_HOME='$HOME/.cargo' RUSTUP_HOME='${RUSTUP_HOME:-$HOME/.rustup}' CARGO_TOOLCHAIN='${CARGO_TOOLCHAIN:-stable}'"
+  doctor_summary_pattern='Evaluated finding summary|Contract finding summary|No evaluated contract drift detected|No inspected contract drift detected|setup contract drift detected'
+  if [[ "$profile" == "team" ]]; then
+    doctor_summary_pattern="$doctor_summary_pattern|Suggested remediation commands"
+  fi
+
   if [[ "$profile" == "personal" ]]; then
-    run_cmd "$setup_env ./setup.sh --personal --doctor | rg -n 'Contract finding summary|No inspected contract drift detected|setup contract drift detected'"
+    run_cmd "$setup_env ./setup.sh --personal --doctor | rg -n '$doctor_summary_pattern'"
   else
-    run_cmd "$setup_env ./setup.sh --team --doctor | rg -n 'Contract finding summary|No inspected contract drift detected|setup contract drift detected|Suggested remediation commands'"
+    run_cmd "$setup_env ./setup.sh --team --doctor | rg -n '$doctor_summary_pattern'"
   fi
 
 done
