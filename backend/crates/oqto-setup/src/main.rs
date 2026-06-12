@@ -150,10 +150,10 @@ fn print_plan(profile: SetupProfile, json: bool) -> Result<()> {
             service.name, user, service.enabled, service.active, service.purpose
         );
     }
-    println!("\nChecks:");
+    println!("\nDeclared checks (static; severity shown only if the check fails):");
     for check in &manifest.checks {
         println!(
-            "- {:?}: {} -- remediation: {}",
+            "- severity-if-failed={:?}: {} -- remediation: {}",
             check.severity, check.description, check.remediation
         );
     }

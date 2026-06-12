@@ -3971,20 +3971,20 @@ async fn handle_doctor(
                     service.purpose
                 );
             }
-            println!("\nChecks:");
+            println!("\nDeclared checks (static; severity shown only if the check fails):");
             for check in &manifest.checks {
                 println!(
-                    "- [{:?}] {} -- remediation: {}",
+                    "- severity-if-failed={:?}: {} -- remediation: {}",
                     check.severity, check.description, check.remediation
                 );
             }
             println!(
-                "\nContract finding summary: {} error(s), {} warning(s), {} info",
+                "\nEvaluated finding summary: {} error(s), {} warning(s), {} info",
                 summary.errors, summary.warnings, summary.info
             );
-            println!("\nContract findings from host facts:");
+            println!("\nEvaluated findings from host facts:");
             if findings.is_empty() {
-                println!("No inspected contract drift detected.");
+                println!("No evaluated contract drift detected.");
             } else {
                 for finding in &findings {
                     println!(

@@ -27,9 +27,9 @@ Services:
 - oqto.service user=$USER enabled=true active=true -- Oqto backend
 - eavs.service user=$USER enabled=true active=true -- LLM proxy
 
-Checks:
-- Error: oqto-runner socket exists and accepts RPC -- remediation: start/restart the user oqto-runner.service
-- Error: Pi models.json is generated from EAVS -- remediation: run setup config sync or regenerate EAVS models
+Declared checks (static; severity shown only if the check fails):
+- severity-if-failed=Error: oqto-runner socket exists and accepts RPC -- remediation: start/restart the user oqto-runner.service
+- severity-if-failed=Error: Pi models.json is generated from EAVS -- remediation: run setup config sync or regenerate EAVS models
 ```
 
 ## Team profile
@@ -50,11 +50,11 @@ Services:
 - eavs.service user=root/system enabled=true active=true -- LLM proxy
 - oqto-runner.service user={linux_username} enabled=true active=true -- per-user runner daemon
 
-Checks:
-- Error: each active Oqto user has matching linux_username/linux_uid and OS account -- remediation: run oqtoctl doctor --apply or reprovision the user
-- Error: each active user's runner socket exists at the canonical shared path -- remediation: restart/reprovision the per-user oqto-runner service
-- Warning: user-runtime and shared runner sockets are not both present for the same user -- remediation: remove stale runner units or align runner_socket_pattern
-- Error: /etc/sudoers.d/oqto-multiuser validates with visudo -- remediation: regenerate Linux user isolation sudoers rules
+Declared checks (static; severity shown only if the check fails):
+- severity-if-failed=Error: each active Oqto user has matching linux_username/linux_uid and OS account -- remediation: run oqtoctl doctor --apply or reprovision the user
+- severity-if-failed=Error: each active user's runner socket exists at the canonical shared path -- remediation: restart/reprovision the per-user oqto-runner service
+- severity-if-failed=Warning: user-runtime and shared runner sockets are not both present for the same user -- remediation: remove stale runner units or align runner_socket_pattern
+- severity-if-failed=Error: /etc/sudoers.d/oqto-multiuser validates with visudo -- remediation: regenerate Linux user isolation sudoers rules
 ```
 
 ## Doctor and remediation commands
