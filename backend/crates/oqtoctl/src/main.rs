@@ -3264,33 +3264,47 @@ fn collect_contract_host_facts(
 }
 
 fn inspect_path(path: &str) -> oqto_provisioning::ObservedPath {
-    let output = std::process::Command::new("stat")
-        .args(["-c", "%U\t%G\t%a", path])
-        .output();
+    let output = run_stat_path(path).or_else(|| run_sudo_stat_path(path));
 
     match output {
-        Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let mut parts = text.trim().split('\t');
-            oqto_provisioning::ObservedPath {
-                exists: true,
-                owner: parts.next().map(ToString::to_string),
-                group: parts.next().map(ToString::to_string),
-                mode: parts.next().map(|mode| {
-                    if mode.len() == 4 {
-                        mode.to_string()
-                    } else {
-                        format!("0{mode}")
-                    }
-                }),
-            }
-        }
+        Some(out) if out.status.success() => parse_stat_path_output(&out.stdout),
         _ => oqto_provisioning::ObservedPath {
             exists: false,
             owner: None,
             group: None,
             mode: None,
         },
+    }
+}
+
+fn run_stat_path(path: &str) -> Option<std::process::Output> {
+    std::process::Command::new("stat")
+        .args(["-c", "%U\t%G\t%a", path])
+        .output()
+        .ok()
+}
+
+fn run_sudo_stat_path(path: &str) -> Option<std::process::Output> {
+    std::process::Command::new("sudo")
+        .args(["-n", "stat", "-c", "%U\t%G\t%a", path])
+        .output()
+        .ok()
+}
+
+fn parse_stat_path_output(stdout: &[u8]) -> oqto_provisioning::ObservedPath {
+    let text = String::from_utf8_lossy(stdout);
+    let mut parts = text.trim().split('\t');
+    oqto_provisioning::ObservedPath {
+        exists: true,
+        owner: parts.next().map(ToString::to_string),
+        group: parts.next().map(ToString::to_string),
+        mode: parts.next().map(|mode| {
+            if mode.len() == 4 {
+                mode.to_string()
+            } else {
+                format!("0{mode}")
+            }
+        }),
     }
 }
 
@@ -3342,15 +3356,21 @@ fn append_sudoers_findings(
 }
 
 fn validate_sudoers_file(path: &str) -> Option<bool> {
-    if !std::path::Path::new(path).exists() {
-        return Some(false);
-    }
-
     let output = std::process::Command::new("visudo")
         .args(["-c", "-f", path])
         .output()
+        .ok();
+    if let Some(out) = output
+        && out.status.success()
+    {
+        return Some(true);
+    }
+
+    let sudo_output = std::process::Command::new("sudo")
+        .args(["-n", "visudo", "-c", "-f", path])
+        .output()
         .ok()?;
-    Some(output.status.success())
+    Some(sudo_output.status.success())
 }
 
 async fn append_team_user_runner_findings(
