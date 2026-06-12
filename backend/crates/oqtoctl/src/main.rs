@@ -3264,16 +3264,23 @@ fn collect_contract_host_facts(
 }
 
 fn inspect_path(path: &str) -> oqto_provisioning::ObservedPath {
-    let output = run_stat_path(path).or_else(|| run_sudo_stat_path(path));
+    if let Some(out) = run_stat_path(path)
+        && out.status.success()
+    {
+        return parse_stat_path_output(&out.stdout);
+    }
 
-    match output {
-        Some(out) if out.status.success() => parse_stat_path_output(&out.stdout),
-        _ => oqto_provisioning::ObservedPath {
-            exists: false,
-            owner: None,
-            group: None,
-            mode: None,
-        },
+    if let Some(out) = run_sudo_stat_path(path)
+        && out.status.success()
+    {
+        return parse_stat_path_output(&out.stdout);
+    }
+
+    oqto_provisioning::ObservedPath {
+        exists: false,
+        owner: None,
+        group: None,
+        mode: None,
     }
 }
 
