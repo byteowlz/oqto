@@ -446,8 +446,6 @@ remediate_dependency() {
     [[ -z "$lang" ]] && lang="rust"
 
     local tag="v${required}"
-    local target
-    target="$(get_release_target)"
     local BYTEOWLZ_GITHUB="https://github.com/byteowlz"
 
     emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "start" "deps.${dep}.remediate.start"
@@ -464,9 +462,18 @@ trap 'rm -rf \$tmpdir' EXIT
 
 # --- Try GitHub release download ---
 downloaded=false
-if [[ -n "$target" ]]; then
+arch="\$(uname -m)"
+os="\$(uname -s)"
+target=""
+case "\$os:\$arch" in
+    Linux:x86_64) target="x86_64-unknown-linux-gnu" ;;
+    Linux:aarch64) target="aarch64-unknown-linux-gnu" ;;
+    Darwin:x86_64) target="x86_64-apple-darwin" ;;
+    Darwin:arm64) target="aarch64-apple-darwin" ;;
+esac
+if [[ -n "\$target" ]]; then
     urls=()
-    urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-${target}.tar.gz")
+    urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-\${target}.tar.gz")
 REMEDIATE_EOF
 
         # Add Go-style URL for Go tools
@@ -496,13 +503,15 @@ REMEDIATE_EOF
 fi
 
 if [[ "\$downloaded" == "true" ]]; then
-    installed_version="$(/usr/local/bin/$dep --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    version_output="\$(/usr/local/bin/$dep --version 2>&1 || true)"
+    installed_version="\$(printf '%s\n' "\$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
     required_version="$required"
-    if [[ -n "\$installed_version" ]] && [[ "$(printf '%s\n%s\n' "\$required_version" "\$installed_version" | sort -V | head -n1)" == "\$required_version" ]]; then
+    if [[ -n "\$installed_version" ]] && [[ "\$(printf '%s\n%s\n' "\$required_version" "\$installed_version" | sort -V | head -n1)" == "\$required_version" ]]; then
         echo "INSTALLED_FROM=release"
         exit 0
     fi
     echo "RELEASE_VERSION_MISMATCH=\${installed_version:-unknown}"
+    echo "RELEASE_VERSION_OUTPUT=\$version_output"
 fi
 
 # --- Fallback: cargo install from source ---
