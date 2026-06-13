@@ -36,7 +36,9 @@ KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
 # message sync is handled in background and must not dominate deploy time.
 OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-1}"
 OQTO_LOG_FAST_PATH="${OQTO_LOG_FAST_PATH:-true}"
-OQTO_LOG_FULL_BOOTSTRAP="${OQTO_LOG_FULL_BOOTSTRAP:-false}"
+# Default to converging oqto-log from Pi JSONL on deploy, but use the
+# fingerprint fast path below so unchanged session trees skip full bootstrap.
+OQTO_LOG_FULL_BOOTSTRAP="${OQTO_LOG_FULL_BOOTSTRAP:-true}"
 OQTO_LOG_MULTI_USER_ALL_USERS="${OQTO_LOG_MULTI_USER_ALL_USERS:-true}"
 RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
@@ -1689,6 +1691,102 @@ rollback_host() {
     return 1
 }
 
+run_oqto_log_deploy_gate() {
+    local name="$1" ssh_target="$2" is_local="$3" mode="$4"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    # Mandatory oqto-log migration/validation gate for both artifact and legacy
+    # activation paths. Fast path: always sync identities, but only run the
+    # expensive message bootstrap when Pi JSONL fingerprint changed.
+    local oqto_quiesce_start oqto_quiesce_end
+    oqto_quiesce_start="$(epoch_ms)"
+    quiesce_oqto_log_writers "$is_local" "$ssh_target" "$mode"
+    oqto_quiesce_end="$(epoch_ms)"
+    log "[$name] oqto-log quiesce took $((oqto_quiesce_end - oqto_quiesce_start))ms"
+
+    local oqto_log_state_dir="\$HOME/.local/share/oqto/oqto-log"
+    local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
+    local oqto_log_current_fp oqto_log_previous_fp
+    oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
+    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f '$oqto_log_state_file' && cat '$oqto_log_state_file' || true" 2>/dev/null || true)"
+
+    local identity_start identity_end
+    identity_start="$(epoch_ms)"
+    if ! run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "sync-identities"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.identity_sync_failed"
+        warn "oqto-log identity sync failed on $name"
+        return 1
+    fi
+    identity_end="$(epoch_ms)"
+    log "[$name] oqto-log identity sync took $((identity_end - identity_start))ms"
+
+    local oqto_log_converged=true
+    local oqto_log_skip_bootstrap=false
+    if [[ "$OQTO_LOG_FAST_PATH" == "true" && -n "$oqto_log_current_fp" && "$oqto_log_current_fp" == "$oqto_log_previous_fp" ]]; then
+        oqto_log_skip_bootstrap=true
+        log "[$name] oqto-log fast-path hit (fingerprint unchanged); skipped message bootstrap"
+    fi
+
+    if [[ "$OQTO_LOG_FULL_BOOTSTRAP" == "true" && "$oqto_log_skip_bootstrap" != "true" ]]; then
+        oqto_log_converged=false
+        local oqto_log_pass=1
+        while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
+            log "[$name] oqto-log message bootstrap/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
+
+            local bootstrap_output
+            local bootstrap_start bootstrap_end validate_start validate_end
+            bootstrap_start="$(epoch_ms)"
+            if ! bootstrap_output=$(run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "bootstrap" 2>&1); then
+                if echo "$bootstrap_output" | grep -q "replace_failed"; then
+                    warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
+                    local heal_backup_dir
+                    heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
+                    if [[ $? -ne 0 ]]; then
+                        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
+                        warn "Auto-heal failed on $name"
+                        return 1
+                    fi
+                else
+                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
+                    warn "oqto-log bootstrap migration failed on $name"
+                    return 1
+                fi
+            fi
+            bootstrap_end="$(epoch_ms)"
+            log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
+
+            validate_start="$(epoch_ms)"
+            if run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "validate-changed"; then
+                validate_end="$(epoch_ms)"
+                log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
+                oqto_log_converged=true
+                break
+            fi
+
+            validate_end="$(epoch_ms)"
+            log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
+            if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
+                warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate"
+                sleep 1
+            fi
+            oqto_log_pass=$((oqto_log_pass + 1))
+        done
+    else
+        log "[$name] oqto-log message bootstrap disabled or skipped; background sync will refresh messages"
+    fi
+
+    if [[ "$oqto_log_converged" == "true" ]]; then
+        host_exec "$is_local" "$ssh_target" "mkdir -p '$oqto_log_state_dir' && printf '%s\n' '$oqto_log_current_fp' > '$oqto_log_state_file'" >/dev/null 2>&1 || true
+    else
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
+        warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name"
+        return 1
+    fi
+}
+
 activate_host() {
     local name="$1" ssh_target="$2" is_local="$3" mode="$4" binaries="$5" services="$6" frontend="$7" web_root="$8"
     local release_dir="$RELEASES_ROOT/$RELEASE_ID"
@@ -1984,6 +2082,16 @@ deploy_host() {
         log "[$name] deploying via oqto-setup install artifact path"
         if ! deploy_via_oqto_setup_install "$name" "$ssh_target" "$is_local"; then
             return 1
+        fi
+        if ! run_oqto_log_deploy_gate "$name" "$ssh_target" "$is_local" "$mode"; then
+            return 1
+        fi
+        run_mmry_jsonl_migration "$is_local" "$ssh_target" "$mode"
+        if [[ "$DRY_RUN" != "true" ]]; then
+            restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
+            if ! health_check_host "$is_local" "$ssh_target" "$mode"; then
+                return 1
+            fi
         fi
     else
         if [[ "$ACTIVATE_ONLY" != "true" ]]; then
