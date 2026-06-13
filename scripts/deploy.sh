@@ -58,6 +58,22 @@ ok()   { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err()  { echo -e "${RED}[deploy]${NC} $*" >&2; }
 
+# OpenSSH 10+ can emit a repeated post-quantum/weak-KEX warning for every
+# connection. Deploy opens many short SSH sessions, so suppress that warning by
+# default for deploy-managed ssh/scp invocations. Operators can opt out with
+# OQTO_SUPPRESS_SSH_PQ_WARNING=false.
+declare -a OQTO_SSH_OPTIONS=()
+if [[ "${OQTO_SUPPRESS_SSH_PQ_WARNING:-true}" == "true" ]] \
+    && command ssh -G -o WarnWeakCrypto=no example.invalid >/dev/null 2>&1; then
+    OQTO_SSH_OPTIONS+=("-o" "WarnWeakCrypto=no")
+    if [[ -z "${RSYNC_RSH:-}" ]]; then
+        export RSYNC_RSH="ssh -o WarnWeakCrypto=no"
+    fi
+fi
+
+ssh() { command ssh "${OQTO_SSH_OPTIONS[@]}" "$@"; }
+scp() { command scp "${OQTO_SSH_OPTIONS[@]}" "$@"; }
+
 usage() {
     cat <<'EOF'
 Usage:
