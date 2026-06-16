@@ -485,3 +485,5 @@
 {"id":"evt_b8e1yqa5","issue_id":"oqto-3ct7.18","action":"dep_added","timestamp":"2026-06-16T15:17:26.793854868Z","note":"oqto-3ct7.10"}
 {"id":"evt_gj9sa2fz","issue_id":"oqto-3czz","action":"dep_added","timestamp":"2026-06-16T15:17:26.853107270Z","note":"oqto-0q7x"}
 {"id":"evt_vwa3p5dp","issue_id":"oqto-8v0y","action":"dep_added","timestamp":"2026-06-16T15:17:26.878757632Z","note":"oqto-0q7x"}
+{"id":"evt_6gfag8dk","issue_id":"oqto-6k4f","action":"created","timestamp":"2026-06-16T15:18:01.314633023Z"}
+{"id":"evt_0wwyfskn","issue_id":"oqto-3ct7.15","action":"dep_added","timestamp":"2026-06-16T15:18:01.346742445Z","note":"oqto-6k4f"}
