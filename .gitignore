@@ -1,3 +1,5 @@
+.claude/
+.agents/
 test-results/
 pi-session-exports/
 # ---- ignr (detected: macos) @ 2025-12-08 ----
@@ -56,3 +58,6 @@ scripts/e2e/.secrets/
 dist/out/
 dist/immutable/bin/*
 !dist/immutable/bin/.gitkeep
+
+# Node dependencies (never tracked anywhere, incl. shipped pi extensions)
+node_modules/
