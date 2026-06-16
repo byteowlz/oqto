@@ -487,3 +487,6 @@
 {"id":"evt_vwa3p5dp","issue_id":"oqto-8v0y","action":"dep_added","timestamp":"2026-06-16T15:17:26.878757632Z","note":"oqto-0q7x"}
 {"id":"evt_6gfag8dk","issue_id":"oqto-6k4f","action":"created","timestamp":"2026-06-16T15:18:01.314633023Z"}
 {"id":"evt_0wwyfskn","issue_id":"oqto-3ct7.15","action":"dep_added","timestamp":"2026-06-16T15:18:01.346742445Z","note":"oqto-6k4f"}
+{"id":"evt_0bp2h5hh","issue_id":"oqto-v6b6","action":"created","timestamp":"2026-06-16T18:32:58.522110961Z"}
+{"id":"evt_kr2rgb5v","issue_id":"oqto-v6b6","action":"updated","timestamp":"2026-06-16T18:32:58.556703844Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
+{"id":"evt_1t83c22t","issue_id":"oqto-v6b6","action":"closed","timestamp":"2026-06-16T18:33:34.091918480Z","note":"Added global node_modules/ to .gitignore; git rm -r --cached the 17.8k-file pi-auto-rename node_modules tree (kept on disk). Verified 0 tracked node_modules and ignore rule active. Follow-up (separate): make sync.sh exclude node_modules when copying extensions."}
