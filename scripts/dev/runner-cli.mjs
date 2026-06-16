@@ -9,7 +9,7 @@ function usage() {
 Runner CLI (JSON over Unix socket)
 
 Usage:
-  node scripts/runner-cli.mjs <command> [args]
+  node scripts/dev/runner-cli.mjs <command> [args]
 
 Commands:
   ping

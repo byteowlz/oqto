@@ -5,11 +5,11 @@ set -euo pipefail
 # Stops services, wipes databases and state, so setup.sh runs fresh.
 #
 # Usage:
-#   ./scripts/reset.sh           # Interactive (confirms each step)
-#   ./scripts/reset.sh --full    # Wipe everything including config
-#   ./scripts/reset.sh --db      # Only wipe databases
-#   ./scripts/reset.sh --state   # Only wipe setup state (re-run all steps)
-#   ./scripts/reset.sh --users   # Only wipe users from database
+#   ./scripts/dev/reset.sh           # Interactive (confirms each step)
+#   ./scripts/dev/reset.sh --full    # Wipe everything including config
+#   ./scripts/dev/reset.sh --db      # Only wipe databases
+#   ./scripts/dev/reset.sh --state   # Only wipe setup state (re-run all steps)
+#   ./scripts/dev/reset.sh --users   # Only wipe users from database
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FULL_RESET="false"
@@ -208,5 +208,5 @@ if [[ "$FULL_RESET" == "true" ]]; then
 else
   echo "Run ./setup.sh --redo admin_user_db  to recreate admin user"
   echo "Run ./setup.sh --update              to rebuild and redeploy"
-  echo "Run ./scripts/reset.sh --full        to also wipe config"
+  echo "Run ./scripts/dev/reset.sh --full        to also wipe config"
 fi

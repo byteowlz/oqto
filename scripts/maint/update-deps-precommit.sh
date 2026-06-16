@@ -11,7 +11,7 @@ fi
 
 ( cd "$ROOT" && just update-deps )
 
-"$ROOT/scripts/update-deps-github.sh"
+"$ROOT/scripts/maint/update-deps-github.sh"
 
 if git diff --quiet -- "$MANIFEST"; then
   exit 0

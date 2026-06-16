@@ -497,13 +497,13 @@ user home and fix ownership.
 
 ```bash
 # Example: migrate from current user to octo_wismut
-scripts/migrate-linux-user.sh --target-user octo_wismut
+scripts/migrate/migrate-linux-user.sh --target-user octo_wismut
 
 # Include a workspace dir (relative to home)
-scripts/migrate-linux-user.sh --target-user octo_wismut --workspace-dir byteowlz
+scripts/migrate/migrate-linux-user.sh --target-user octo_wismut --workspace-dir byteowlz
 
 # Auto-detect workspace_dir from config
-scripts/migrate-linux-user.sh --target-user octo_wismut
+scripts/migrate/migrate-linux-user.sh --target-user octo_wismut
 ```
 
 ## Service Installation

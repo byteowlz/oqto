@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/migrate-linux-user.sh --target-user <linux_user> [options]
+Usage: scripts/migrate/migrate-linux-user.sh --target-user <linux_user> [options]
 
 Options:
   --source-user <user>     Source user to migrate from (default: current user)

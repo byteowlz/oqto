@@ -13,7 +13,7 @@
 #   - jq installed
 #
 # Usage:
-#   ./scripts/e2e-streaming-test.sh [--scenario <name>] [--all] [--verbose]
+#   ./scripts/e2e/e2e-streaming-test.sh [--scenario <name>] [--all] [--verbose]
 #
 set -euo pipefail
 

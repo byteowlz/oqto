@@ -13,7 +13,7 @@ OUT_DIR="/tmp/oqto-e2e-trace-$(date +%Y%m%dT%H%M%S)"
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/debug-e2e-retry-trace.sh [options]
+  ./scripts/dev/debug-e2e-retry-trace.sh [options]
 
 Options:
   --base-url URL        Frontend URL (default: http://localhost:3000)

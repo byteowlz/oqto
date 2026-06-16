@@ -4,10 +4,10 @@ set -euo pipefail
 # Sandbox profile matrix checks:
 # 1) CLI-path smoke for all built-in profiles (minimal/development/strict)
 # 2) Runner-path + Pi + EAVS mock streaming checks for network-enabled profiles
-#    (minimal/development) via scripts/e2e-streaming-test.sh
+#    (minimal/development) via scripts/e2e/e2e-streaming-test.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-E2E_SCRIPT="$ROOT_DIR/scripts/e2e-streaming-test.sh"
+E2E_SCRIPT="$ROOT_DIR/scripts/e2e/e2e-streaming-test.sh"
 SANDBOX_CFG_DIR="${HOME}/.config/oqto"
 SANDBOX_CFG="${SANDBOX_CFG_DIR}/sandbox.toml"
 BACKUP_CFG=""

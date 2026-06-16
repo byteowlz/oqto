@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Minimal mode (verbosity=1) tool call gutter: tool calls shown as small icons in a right-side gutter column, vertically centered with the triggering text. Click opens popover listing each tool with a summary.
 - Deploy system: `just deploy` with `deploy/hosts.toml` config for multi-host deployment (archvm, octo-azure, zbook).
-- E2E streaming reliability test harness (`scripts/e2e-streaming-test.sh`) with 6 scenarios.
+- E2E streaming reliability test harness (`scripts/e2e/e2e-streaming-test.sh`) with 6 scenarios.
 - Error propagation from LLM through full pipeline to frontend: retry indicators (amber spinner), terminal errors (red box).
 - Active health check watchdog: process liveness via `kill(pid, 0)`, GetState ping after 90s idle, hard timeouts (10min streaming, 2min transient).
 

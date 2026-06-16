@@ -1022,8 +1022,8 @@ prepare_host() {
     fi
 
     # Stage migration scripts needed during activation (legacy mmry -> JSONL)
-    local mig_shell_src="$ROOT_DIR/scripts/migrate-mmry-jsonl.sh"
-    local mig_py_src="$ROOT_DIR/scripts/migrate_legacy_mmry_to_jsonl.py"
+    local mig_shell_src="$ROOT_DIR/scripts/migrate/migrate-mmry-jsonl.sh"
+    local mig_py_src="$ROOT_DIR/scripts/migrate/migrate_legacy_mmry_to_jsonl.py"
     if [[ -f "$mig_shell_src" && -f "$mig_py_src" ]]; then
         if [[ "$is_local" == "true" ]]; then
             host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$mig_shell_src' '$release_dir/meta/migrations/migrate-mmry-jsonl.sh'"

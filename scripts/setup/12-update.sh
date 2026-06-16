@@ -44,8 +44,8 @@ update_octo() {
   update_models_json
 
   # Migrate legacy mmry SQLite stores to workspace-local JSONL memories.
-  if [[ -x "$SCRIPT_DIR/scripts/migrate-mmry-jsonl.sh" ]]; then
-    "$SCRIPT_DIR/scripts/migrate-mmry-jsonl.sh" --mode auto --quiet || log_warn "mmry JSONL migration failed (continuing)"
+  if [[ -x "$SCRIPT_DIR/scripts/migrate/migrate-mmry-jsonl.sh" ]]; then
+    "$SCRIPT_DIR/scripts/migrate/migrate-mmry-jsonl.sh" --mode auto --quiet || log_warn "mmry JSONL migration failed (continuing)"
   fi
 
   # Restart services

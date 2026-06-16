@@ -2,7 +2,7 @@
 import fs from "node:fs";
 
 function usage() {
-	console.log("Usage: bun scripts/replay-ws-trace.mjs <trace.json>");
+	console.log("Usage: bun scripts/dev/replay-ws-trace.mjs <trace.json>");
 }
 
 const tracePath = process.argv[2];

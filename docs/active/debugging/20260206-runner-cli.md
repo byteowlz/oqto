@@ -5,12 +5,12 @@ This script sends raw JSON requests to the runner socket for debugging.
 ## Usage
 
 ```bash
-node scripts/runner-cli.mjs ping
-node scripts/runner-cli.mjs pi-list
-node scripts/runner-cli.mjs pi-get-state <session_id> --pretty
-node scripts/runner-cli.mjs pi-create <session_id> --cwd /home/wismut/byteowlz/oqto
-node scripts/runner-cli.mjs pi-prompt <session_id> "hello"
-node scripts/runner-cli.mjs --raw '{"type":"pi_get_commands","session_id":"..."}' --pretty
+node scripts/dev/runner-cli.mjs ping
+node scripts/dev/runner-cli.mjs pi-list
+node scripts/dev/runner-cli.mjs pi-get-state <session_id> --pretty
+node scripts/dev/runner-cli.mjs pi-create <session_id> --cwd /home/wismut/byteowlz/oqto
+node scripts/dev/runner-cli.mjs pi-prompt <session_id> "hello"
+node scripts/dev/runner-cli.mjs --raw '{"type":"pi_get_commands","session_id":"..."}' --pretty
 ```
 
 ## Socket selection

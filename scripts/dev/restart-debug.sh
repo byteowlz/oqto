@@ -8,7 +8,7 @@ RESTART_OQTO=true
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/restart-debug.sh [--trace-dir DIR] [--disable] [--runner-only]
+  ./scripts/dev/restart-debug.sh [--trace-dir DIR] [--disable] [--runner-only]
 
 Options:
   --trace-dir DIR   Trace output directory (default: /tmp/oqto-stream-traces)

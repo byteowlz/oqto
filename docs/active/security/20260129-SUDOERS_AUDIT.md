@@ -12,7 +12,7 @@ sudo visudo -c -f /etc/sudoers.d/oqto-multiuser
 sudo -l -U $(whoami)
 
 # 3. Run the automated test suite
-./scripts/test-sudoers-security.sh
+./scripts/e2e/test-sudoers-security.sh
 ```
 
 ## Threat Model
@@ -49,7 +49,7 @@ The sudoers configuration allows the oqto backend (running as `wismut`) to:
 
 ## Automated Security Tests
 
-Create `scripts/test-sudoers-security.sh`:
+Create `scripts/e2e/test-sudoers-security.sh`:
 
 ```bash
 #!/usr/bin/env bash

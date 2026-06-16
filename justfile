@@ -134,15 +134,15 @@ dev: agent-check-on-change
 
 # Fast reload: rebuild backend, install binaries, restart services
 reload:
-    ./scripts/fast-reload.sh
+    ./scripts/dev/fast-reload.sh
 
 # Restart services with runner stream tracing enabled (systemd --user)
 restart-debug trace_dir="/tmp/oqto-stream-traces":
-    ./scripts/restart-debug.sh --trace-dir {{trace_dir}}
+    ./scripts/dev/restart-debug.sh --trace-dir {{trace_dir}}
 
 # Disable runner stream tracing and restart runner
 restart-debug-off:
-    ./scripts/restart-debug.sh --disable
+    ./scripts/dev/restart-debug.sh --disable
 
 # =============================================================================
 # Install
@@ -800,7 +800,7 @@ deploy-dry-run *ARGS:
 
 # End-to-end retry/error trace capture via agent-browser + frontend console + runner traces
 trace-retry-e2e *ARGS:
-    ./scripts/debug-e2e-retry-trace.sh {{ARGS}}
+    ./scripts/dev/debug-e2e-retry-trace.sh {{ARGS}}
 
 # =============================================================================
 # Admin
@@ -853,4 +853,4 @@ update-pi:
 # Automatic non-daemon quality gate for agent workflows.
 # Runs only when git working tree changed since the last successful check.
 agent-check-on-change profile="quick":
-    ./scripts/agent-check-on-change.sh {{profile}}
+    ./scripts/dev/agent-check-on-change.sh {{profile}}
