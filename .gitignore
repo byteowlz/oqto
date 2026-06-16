@@ -59,5 +59,9 @@ dist/out/
 dist/immutable/bin/*
 !dist/immutable/bin/.gitkeep
 
-# Node dependencies (never tracked anywhere, incl. shipped pi extensions)
+# Pi extensions are pulled from ../pi-agent-extensions at release time
+# (scripts/dist/sync.sh) and packaged into the tarball; never tracked here.
+dist/immutable/defaults/pi-agent/extensions/
+
+# Node dependencies (never tracked anywhere)
 node_modules/
