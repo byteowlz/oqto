@@ -34,6 +34,12 @@ def main() -> int:
         action="store_true",
         help="Do not fail when binary source files under dist/immutable/bin are missing",
     )
+    parser.add_argument(
+        "--allow-missing-extensions",
+        action="store_true",
+        help="Do not fail when [pi_agent_extensions] items are missing on disk "
+        "(they are pulled from source at release time via scripts/dist/sync.sh)",
+    )
     args = parser.parse_args()
 
     manifest_path = pathlib.Path(args.manifest)
@@ -116,8 +122,15 @@ def main() -> int:
 
             source_path = repo_root / source
             missing_source = not source_path.exists()
-            is_binary = str(asset.get("kind", "")) == "binary"
-            if missing_source and not (is_binary and args.allow_missing_binaries):
+            kind = str(asset.get("kind", ""))
+            is_binary = kind == "binary"
+            # Pi extensions are pulled from source at release time
+            # (scripts/dist/sync.sh) and are not tracked in git.
+            is_extension = kind == "pi-extension"
+            exempt = (is_binary and args.allow_missing_binaries) or (
+                is_extension and args.allow_missing_extensions
+            )
+            if missing_source and not exempt:
                 fail(errors, f"{prefix}.source does not exist: {source}")
 
         install_method = asset.get("install_method")
