@@ -498,3 +498,7 @@
 {"id":"evt_6aar1e8z","issue_id":"oqto-5rxg","action":"created","timestamp":"2026-06-16T19:41:29.667696022Z"}
 {"id":"evt_t78675rm","issue_id":"oqto-5rxg","action":"updated","timestamp":"2026-06-16T19:41:29.704977660Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
 {"id":"evt_9j3sdtnq","issue_id":"oqto-5rxg","action":"closed","timestamp":"2026-06-16T19:42:37.090974257Z","note":"Tier A: deleted deploy/{archiso,lima,launchd} + 11 orphaned scripts (each verified 0 active refs). Tier C: superseded/narrowed headers on 3 design docs. Kept per judgment: CLAUDE.md symlink, oqto-guard (prompts-wired), mini-apps (WIP). Tier B (container/backend dead code) remains in oqto-3ct7 + ADR-0001."}
+{"id":"evt_wmxdzdrw","issue_id":"oqto-kfgc","action":"created","timestamp":"2026-06-16T20:01:03.977659640Z"}
+{"id":"evt_r2ft9bfz","issue_id":"oqto-jk6m","action":"created","timestamp":"2026-06-16T20:01:04.019377494Z"}
+{"id":"evt_wpe2krgf","issue_id":"oqto-kfgc","action":"updated","timestamp":"2026-06-16T20:01:04.063423223Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
+{"id":"evt_nddsv5vt","issue_id":"oqto-kfgc","action":"closed","timestamp":"2026-06-16T20:04:00.649125998Z","note":"scripts/ top-level 25 -> 6 (entry points + pi-askpass). Added dev/migrate/maint subdirs, folded vm/security/streaming tests into e2e/, deleted sync-oqto-website.sh. All external refs updated + verified (no stale paths, bash -n clean, just --list ok). pi-askpass decision tracked separately in oqto-jk6m."}
