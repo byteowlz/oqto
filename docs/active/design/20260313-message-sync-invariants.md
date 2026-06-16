@@ -1,6 +1,11 @@
 # Message Sync Invariants: Pi JSONL -> hstry -> Frontend
 
-## Status: RFC (Request for Comments)
+> **SUPERSEDED by ADR-0005 (and ADR-0004).** This RFC assumes hstry is the secondary
+> sync authority. oqto-log is now the sole durable authority and hstry is fully
+> decoupled; the three-way Pi-JSONL -> hstry -> frontend sync problem is resolved by
+> removing hstry from the path. Retained for history only.
+
+## Status: SUPERSEDED (was: RFC)
 ## Date: 2026-03-13
 
 ---

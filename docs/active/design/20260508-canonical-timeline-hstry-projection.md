@@ -1,6 +1,11 @@
 # Canonical timeline and hstry projection architecture
 
-Status: accepted for implementation
+> **SUPERSEDED by ADR-0005.** The projection-only endgame (phases 5-6: keep hstry as a
+> derived read model via an oqto-log -> hstry pipeline) is cancelled. hstry is fully
+> decoupled from oqto and survives only as an optional standalone cross-agent search
+> store; the projection pipeline (oqto-awh9.12) is closed. Retained for history only.
+
+Status: SUPERSEDED (was: accepted for implementation)
 Issue: oqto-awh9
 
 ## Decision

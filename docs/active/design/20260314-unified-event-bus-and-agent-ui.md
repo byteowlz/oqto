@@ -1,6 +1,11 @@
 # Unified Event Bus and Agent-Controlled UI
 
-Status: Draft proposal
+> **NARROWED by ADR-0012.** The decision is the in-process oqto-bus scoped to live
+> app/UI pub/sub (kept on-consumer, distinct from the gvnr durable event log, ADR-0004).
+> The broader cross-domain unification (trx/hstry/mmry over one bus) proposed here is
+> not being pursued. Treat ADR-0012, not this proposal, as authoritative.
+
+Status: NARROWED by ADR-0012 (was: Draft proposal)
 
 Owner: Oqto platform
 
