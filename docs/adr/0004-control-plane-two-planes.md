@@ -1,0 +1,5 @@
+# The control plane has two planes: registry (acted on) and event log (looked at)
+
+gvnr holds two kinds of state with different guarantees. The **registry** is the truth oqto acts on (routing, placement): its writers are process supervisors that maintain heartbeats (oqto-runner, a `gvnr exec` wrapper, future platforms) — entries expire when heartbeats stop, so phantom agents are structurally impossible. The **event log** is best-effort awareness: anything may emit (pi extensions, byt, trx hooks, scripts), and a missed event degrades visibility, never correctness. Registry transitions are also appended to the event log; an emitted event can never create or modify a registry fact. Oqto routing only ever consults the registry plane.
+
+This keeps gvnr standalone: the dependency is one-directional (oqto links gvnr's protocol crate; gvnr imports nothing from oqto), the vocabulary is product-neutral (machines, runners, agents, sessions, placements), and oqto-specific fields live in oqto's own session metadata joined via `AGENT_CTX` ids — never inlined into gvnr's schema (an opaque `labels` map is the only extension point).
