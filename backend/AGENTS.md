@@ -1,35 +1,14 @@
-# AGENTS.md
+# Backend agent guide
 
-Guidance for coding agents working on this Rust CLI template.
+This Rust workspace is Oqto's control plane. Keep backend changes on the established seams; do not add shortcuts to make one symptom pass.
 
-## Core Principles
-
-- **Never publish** artifacts to public registries without explicit user approval.
-- We favor clean refactors over backwards compatibility; update existing code in place (no `FooV2` suffixes).
-- Target Windows 11, Linux, and macOS 14+ with the same behavior; no legacy OS shims.
-- Keep file headers minimal—no author or timestamp banners.
-
-## Rust Workflow
-
-- Follow Clippy best practices: collapse trivial `if`s, inline `format!` arguments, and prefer method references over redundant closures.
-- When tests compare structures, assert on the full value instead of individual fields.
-- Run `cargo fmt` after code changes and `cargo test` for the touched crate. Invoke broader test or lint commands only if the user asks.
-
-## CLI Expectations
-
-- Prefer subcommands for verbs and keep outputs quiet/verbose via standard flags (`-q`, chainable `-v`, `--debug`, `--trace`).
-- Support machine-readable modes via `--json/--yaml` and honor NO_COLOR/FORCE_COLOR.
-- Offer `--dry-run`, `--yes/--force`, `--no-progress`, `--timeout`, and `--parallel` when operations warrant them.
-- Generate help quickly (`-h/--help`) and provide shell completions off the same Clap definitions.
-
-## Configuration & Storage
-
-- Use XDG directories when available: config at `$XDG_CONFIG_HOME/<app>/config.toml`, data at `$XDG_DATA_HOME/<app>`, state at `$XDG_STATE_HOME/<app>` with sensible fallbacks (e.g., `~/.config`).
-- Expand `~` and environment variables in config paths.
-- Ship a commented example under `examples/`, create a default config on first run, and load overrides via the `config` crate.
-
-## General Rules
-
-- Do exactly what the user asks—no unsolicited files or docs.
-- Keep README updates concise, emoji-free, and only when requested.
-- Never commit secrets or sensitive paths; scrub logs before surfacing them.
+- Prefer crate ownership over monolith growth: `oqto` composes, `oqto-runner` owns harness processes, `oqto-protocol` owns wire types, `oqto-history` owns oqto-log/history storage, `oqto-sandbox` owns isolation, setup/provisioning crates own host mutation.
+- Runtime actions go through the runner protocol. Do not call harnesses, write session files, or mutate history directly from unrelated API/CLI paths.
+- History writes for runner sessions go through oqto-log abstractions. hstry is legacy/interop; do not introduce new hstry-primary runtime paths.
+- Protocol/type changes must regenerate/check frontend types; do not hand-edit generated TypeScript to make builds pass.
+- Session IDs need typed discipline: keep platform, external/Pi, and temp IDs distinct across API, runner, history, and frontend payloads.
+- Sandbox/security/config work must fail closed and prove docs/examples match runtime behavior; unsupported modes should error, not silently degrade.
+- User/host provisioning must be idempotent and preserve user-owned config with backup/diff/merge semantics.
+- Rust production code: `anyhow::Result` + context, no `unwrap`/`expect`, no broad `allow` without rationale, no warning debt handoff.
+- Test the touched crate with targeted `cargo fmt`, `cargo clippy`, and `cargo test` plus `just lint-rust-ai-guardrails`; broaden only when the changed seam crosses crates.
+- If cargo fails under Claude Code with EPERM/statx/timer_create on git deps, treat it as harness sandbox capability and run cargo gates in an unsandboxed lane.

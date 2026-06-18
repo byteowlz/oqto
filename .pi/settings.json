@@ -1,4 +1,4 @@
 {
-  "defaultModel": "Kimi-K2.6-Foundry",
-  "defaultProvider": "Foundry_Kimi"
+  "defaultModel": "glm-5.2",
+  "defaultProvider": "Z-AI"
 }

@@ -1,10 +1,9 @@
 # Oqto canonical install layout
 
-Status: draft reference for epic `oqto-vemr` child `oqto-vemr.1`.
+reference for epic `oqto-vemr` child `oqto-vemr.1`.
 
 This document defines the target host layout and file ownership model for install, deploy, and update.
 
-Goals:
 - One obvious location for shipped assets.
 - One obvious location for admin/user mutable data.
 - Deterministic update behavior (release switch + doctor), without ad-hoc copying.
@@ -31,6 +30,7 @@ Every shipped path must be assigned exactly one class.
 | `runtime_generated` | Never shipped; created by runtime/services | sessions, DBs, logs, caches, sockets |
 
 Rules:
+
 1. `immutable_symlink` files are owned by release activation, not by ad-hoc setup steps.
 2. `mutable_copy_once` files may be seeded from shipped defaults, then user/admin-owned.
 3. `runtime_generated` files are excluded from release artifacts and template payloads.
@@ -107,11 +107,13 @@ No direct in-place replacement of shipped binaries outside release staging/activ
 ## 7) Current drift vs target (as of now)
 
 Observed current state:
+
 - Transactional release deployment exists (`scripts/deploy.sh`) and already uses `/var/lib/oqto/releases` + `/usr/local/bin` relinks.
 - Setup path (`setup.sh` + setup modules) still includes direct file installation/copy logic in several places.
 - Shipped vs mutable assets are not yet centrally declared in a single manifest consumed by both setup and deploy.
 
 Required follow-up tasks (mapped to epic children):
+
 - `oqto-vemr.2`: introduce `dist/manifest.toml` + asset classification.
 - `oqto-vemr.3`: unify setup and deploy activation path.
 - `oqto-vemr.4`: apply template and `~/.pi` layering consistently.
