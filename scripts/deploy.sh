@@ -404,8 +404,10 @@ from pathlib import Path
 p = Path(r"$DEPENDENCY_POLICY_FILE")
 data = tomllib.loads(p.read_text())
 byteowlz = data.get("byteowlz", {})
-# Deploy/runtime-critical CLI dependencies.
-keys = ("eavs", "hstry", "mmry", "trx", "agntz", "sx", "skdlr")
+# Deploy/runtime-critical CLI dependencies. hstry is intentionally optional:
+# Oqto history is served by oqto-log; hstry may exist as an external/interop
+# tool, but deploy must not install, remediate, or gate on it.
+keys = ("eavs", "mmry", "trx", "agntz", "sx", "skdlr")
 for key in keys:
     v = str(byteowlz.get(key, "")).strip()
     if not v or v == "latest":
@@ -653,125 +655,6 @@ check_dependency_compatibility() {
             fi
             ok "  $dep: $current (remediated)"
         done
-    fi
-
-    # Extra compatibility guard: hstry adapters CLI must be functional.
-    if ! host_exec "$is_local" "$ssh_target" "hstry adapters --help >/dev/null 2>&1"; then
-        log "  hstry adapters unavailable, running adapters update..."
-        if host_exec "$is_local" "$ssh_target" "hstry adapters update >/dev/null 2>&1"; then
-            ok "  hstry adapters updated"
-        else
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.adapters_unavailable"
-            err "hstry adapters command unavailable on $name"
-            return 1
-        fi
-    fi
-
-    # Schema compatibility guard/fixup: ensure session-tree columns exist in hstry DB(s)
-    # used by oqto session APIs.
-    if [[ "$mode" == "multi-user" ]]; then
-        local hstry_multi_check
-        hstry_multi_check="$(host_exec_sudo "$is_local" "$ssh_target" 'python3 - <<"PY"
-import pwd, os, sqlite3
-
-checked = 0
-fixed = 0
-missing = 0
-errors = []
-
-for entry in pwd.getpwall():
-    username = entry.pw_name
-    if not username.startswith("oqto_"):
-        continue
-    db = os.path.join(entry.pw_dir, ".local", "share", "hstry", "hstry.db")
-    if not os.path.exists(db):
-        missing += 1
-        continue
-
-    checked += 1
-    try:
-        conn = sqlite3.connect(db)
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(conversations)")
-        cols = {row[1] for row in cur.fetchall()}
-
-        changed = False
-        if "parent_conversation_id" not in cols:
-            cur.execute("ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT")
-            changed = True
-        if "fork_type" not in cols:
-            cur.execute("ALTER TABLE conversations ADD COLUMN fork_type TEXT")
-            changed = True
-
-        if changed:
-            conn.commit()
-            fixed += 1
-        conn.close()
-    except Exception as e:
-        errors.append(f"{username}:{e}")
-
-if errors:
-    print("error")
-    for e in errors[:10]:
-        print(e)
-else:
-    print(f"ok checked={checked} fixed={fixed} missing={missing}")
-PY' 2>/dev/null || echo "unknown")"
-
-        case "$hstry_multi_check" in
-            ok*)
-                log "  hstry schema (multi-user): $hstry_multi_check"
-                ;;
-            error*)
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_fix_failed"
-                err "hstry schema fix failed on $name"
-                return 1
-                ;;
-            *)
-                warn "  hstry schema (multi-user) check returned '$hstry_multi_check'"
-                ;;
-        esac
-    else
-        local hstry_db_check
-        hstry_db_check="$(host_exec "$is_local" "$ssh_target" '
-            DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
-            if [[ ! -f "$DB" ]]; then
-                echo "missing"
-                exit 0
-            fi
-            if ! command -v sqlite3 >/dev/null 2>&1; then
-                echo "no-sqlite3"
-                exit 0
-            fi
-            cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
-            p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
-            f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
-            if [[ "$p" -ge 1 && "$f" -ge 1 ]]; then
-                echo "ok"
-            else
-                echo "incompatible"
-            fi
-        ' 2>/dev/null || echo "unknown")"
-
-        case "$hstry_db_check" in
-            ok)
-                log "  hstry schema: session-tree columns present (ok)"
-                ;;
-            missing)
-                log "  hstry schema: DB not found yet (skipping check)"
-                ;;
-            no-sqlite3)
-                warn "  sqlite3 not available; cannot verify hstry schema compatibility"
-                ;;
-            incompatible)
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_incompatible"
-                err "hstry DB schema on $name is incompatible (missing parent_conversation_id/fork_type in conversations). Upgrade/migrate hstry before deploy."
-                return 1
-                ;;
-            *)
-                warn "  hstry schema check returned '$hstry_db_check' (continuing)"
-                ;;
-        esac
     fi
 
     return 0
@@ -1299,7 +1182,6 @@ restart_services_ordered() {
         sync_single_user_unit_files "$is_local" "$ssh_target"
         restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
         restart_single_user_service "$is_local" "$ssh_target" "oqto"
-        restart_single_user_service "$is_local" "$ssh_target" "hstry"
         restart_single_user_service "$is_local" "$ssh_target" "mmry"
 
         local svc
@@ -1310,7 +1192,7 @@ restart_services_ordered() {
             restart_single_user_service "$is_local" "$ssh_target" "$svc"
         done
     else
-        # Multi-user: oqto is system service; user runners/hstry are managed per-user via oqtoctl/usermgr.
+        # Multi-user: oqto is system service; user runners are managed per-user via oqtoctl/usermgr.
         host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
         restart_all_multi_user_runners "$is_local" "$ssh_target"
 
@@ -1517,7 +1399,7 @@ health_check_host() {
             return 1
         fi
 
-        local ok_backend="false" ok_runner="false" ok_hstry="false" ok_deps="false"
+        local ok_backend="false" ok_runner="false" ok_deps="false"
 
         if host_exec "$is_local" "$ssh_target" "curl -sf http://127.0.0.1:8080/api/health >/dev/null"; then
             ok_backend="true"
@@ -1526,15 +1408,6 @@ health_check_host() {
         if [[ "$mode" == "single-user" ]]; then
             if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
                 ok_runner="true"
-            fi
-            # Single-user hstry must be available. Accept any of:
-            # - hstry self-reported running state
-            # - active user systemd unit
-            # - running hstry process
-            if host_exec "$is_local" "$ssh_target" "hstry service status 2>/dev/null | grep -qi running" \
-               || host_exec "$is_local" "$ssh_target" "systemctl --user is-active --quiet hstry" \
-               || host_exec "$is_local" "$ssh_target" "pgrep -x hstry >/dev/null"; then
-                ok_hstry="true"
             fi
         else
             # Multi-user: ensure at least one installed user's runner socket exists.
@@ -1562,16 +1435,13 @@ PY
             '; then
                 ok_runner="true"
             fi
-            # In multi-user mode, hstry is per-user via runner; backend must be
-            # healthy and runner sockets present.
-            ok_hstry="true"
         fi
 
-        if host_exec "$is_local" "$ssh_target" "command -v hstry >/dev/null && command -v mmry >/dev/null"; then
+        if host_exec "$is_local" "$ssh_target" "command -v mmry >/dev/null"; then
             ok_deps="true"
         fi
 
-        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_hstry" == "true" && "$ok_deps" == "true" ]]; then
+        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_deps" == "true" ]]; then
             return 0
         fi
 
