@@ -58,8 +58,11 @@ mkdir -p dist/immutable/defaults/pi-agent \
 cp "$TEMPLATES_REPO/pi-agent/AGENTS.md" dist/immutable/defaults/pi-agent/AGENTS.md
 if [[ -f "$TEMPLATES_REPO/pi-agent/settings.json" ]]; then
   cp "$TEMPLATES_REPO/pi-agent/settings.json" dist/immutable/defaults/pi-agent/settings.json
-elif [[ -f .pi/settings.json ]]; then
-  cp .pi/settings.json dist/immutable/defaults/pi-agent/settings.json
+else
+  # Never copy the developer checkout's .pi/settings.json into release
+  # defaults. Model/provider defaults are user/admin/EAVS policy, not a
+  # globally shipped template opinion.
+  printf '{}\n' > dist/immutable/defaults/pi-agent/settings.json
 fi
 
 # Workdir templates: sync full tree.
