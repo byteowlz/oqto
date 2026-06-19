@@ -117,6 +117,40 @@ impl SessionReadiness for HttpSessionReadiness {
     }
 }
 
+/// Inject `AGENT_CTX_*` platform/identity metadata into an agent's environment.
+///
+/// Schema: `schemas/agent-context-env`. Ownership split (ADR-0013): the
+/// runner/backend owns platform/workspace/identity facts; the `pi-env-ctx`
+/// extension refines harness-native facts (`HARNESS_SESSION_ID`, `MODEL`,
+/// `SESSION_NAME`). `AGENT_CTX_PLATFORM_SESSION_ID` supersedes the legacy
+/// `OQTO_SESSION_ID` (kept for now until `oqtoctl a2ui` migrates).
+///
+/// Not set here yet, by design:
+/// - `AGENT_CTX_WORKSPACE_ID`: must use the canonical oqto-log workspace-id
+///   derivation (SHA-256 of the canonicalized path) so it joins; pending a
+///   single shared helper (oqto-nbs7 follow-up).
+/// - `AGENT_CTX_RUN_MODE`: awaits the runtime-mode collapse (ADR-0001).
+fn inject_agent_ctx(env: &mut std::collections::HashMap<String, String>, session: &Session) {
+    env.insert("AGENT_CTX_VERSION".to_string(), "1".to_string());
+    env.insert("AGENT_CTX_PLATFORM_NAME".to_string(), "oqto".to_string());
+    env.insert(
+        "AGENT_CTX_PLATFORM_VERSION".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
+    env.insert(
+        "AGENT_CTX_PLATFORM_SESSION_ID".to_string(),
+        session.id.clone(),
+    );
+    env.insert("AGENT_CTX_USER_ID".to_string(), session.user_id.clone());
+    env.insert(
+        "AGENT_CTX_WORKSPACE_PATH".to_string(),
+        session.workspace_path.clone(),
+    );
+    if let Some(harness) = session.agent.as_deref() {
+        env.insert("AGENT_CTX_HARNESS".to_string(), harness.to_string());
+    }
+}
+
 /// Session service configuration.
 #[derive(Debug, Clone)]
 pub struct SessionServiceConfig {
@@ -1468,6 +1502,7 @@ impl SessionService {
         // This is the SINGLE authority for what env vars the agent sees.
         // spawn_as_user() calls env_clear() so only vars in this map are passed.
         let mut env = crate::local::base_system_env();
+        inject_agent_ctx(&mut env, session);
         if let Some(ref eavs_url) = self.config.eavs_container_url {
             env.insert("EAVS_URL".to_string(), eavs_url.clone());
         }
@@ -1926,6 +1961,7 @@ impl SessionService {
 
                 // Build environment variables (single authority for agent env)
                 let mut env = crate::local::base_system_env();
+                inject_agent_ctx(&mut env, session);
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
                     env.insert("EAVS_URL".to_string(), eavs_url.clone());
                 }
