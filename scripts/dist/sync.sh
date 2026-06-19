@@ -4,17 +4,50 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-TEMPLATES_REPO="${OQTO_TEMPLATES_REPO:-$ROOT_DIR/../oqto-templates}"
-EXTENSIONS_REPO="${PI_AGENT_EXTENSIONS_REPO:-$ROOT_DIR/../pi-agent-extensions}"
+DIST_CACHE_DIR="${OQTO_DIST_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/oqto/dist-sources}"
+OQTO_TEMPLATES_URL="${OQTO_TEMPLATES_URL:-https://github.com/byteowlz/oqto-templates.git}"
+PI_AGENT_EXTENSIONS_URL="${PI_AGENT_EXTENSIONS_URL:-https://github.com/byteowlz/pi-agent-extensions.git}"
+OQTO_TEMPLATES_REF="${OQTO_TEMPLATES_REF:-main}"
+PI_AGENT_EXTENSIONS_REF="${PI_AGENT_EXTENSIONS_REF:-main}"
 
-if [[ ! -d "$TEMPLATES_REPO" ]]; then
-  echo "error: oqto-templates repo not found at $TEMPLATES_REPO" >&2
-  exit 1
-fi
-if [[ ! -d "$EXTENSIONS_REPO" ]]; then
-  echo "error: pi-agent-extensions repo not found at $EXTENSIONS_REPO" >&2
-  exit 1
-fi
+resolve_source_repo() {
+  local name="$1" local_path="$2" url="$3" ref="$4"
+  local cached_path="$DIST_CACHE_DIR/$name"
+
+  if [[ -d "$local_path/.git" || -d "$local_path" ]]; then
+    echo "$local_path"
+    return 0
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "error: $name source missing at $local_path and git is not available to fetch $url" >&2
+    return 1
+  fi
+
+  mkdir -p "$DIST_CACHE_DIR"
+  if [[ ! -d "$cached_path/.git" ]]; then
+    echo "[dist-sync] $name missing at $local_path; cloning $url into $cached_path" >&2
+    rm -rf "$cached_path"
+    git clone --filter=blob:none "$url" "$cached_path" >&2
+  else
+    echo "[dist-sync] $name missing at $local_path; updating cached checkout $cached_path" >&2
+    git -C "$cached_path" fetch --tags --prune origin >&2
+  fi
+
+  git -C "$cached_path" checkout --detach "$ref" >&2 || git -C "$cached_path" checkout "$ref" >&2
+  echo "$cached_path"
+}
+
+TEMPLATES_REPO="$(resolve_source_repo \
+  oqto-templates \
+  "${OQTO_TEMPLATES_REPO:-$ROOT_DIR/../oqto-templates}" \
+  "$OQTO_TEMPLATES_URL" \
+  "$OQTO_TEMPLATES_REF")"
+EXTENSIONS_REPO="$(resolve_source_repo \
+  pi-agent-extensions \
+  "${PI_AGENT_EXTENSIONS_REPO:-$ROOT_DIR/../pi-agent-extensions}" \
+  "$PI_AGENT_EXTENSIONS_URL" \
+  "$PI_AGENT_EXTENSIONS_REF")"
 
 mkdir -p dist/immutable/defaults/pi-agent \
          dist/immutable/defaults/pi-agent/extensions \
