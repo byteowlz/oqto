@@ -3122,6 +3122,81 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 mod tests {
     use super::*;
 
+    fn agent_ctx_test_session(agent: Option<&str>) -> Session {
+        Session {
+            id: "sess_abc".to_string(),
+            readable_id: None,
+            container_id: None,
+            container_name: "oqto-test".to_string(),
+            user_id: "u_42".to_string(),
+            workspace_path: "/home/wismut/ws".to_string(),
+            agent: agent.map(ToString::to_string),
+            image: "img".to_string(),
+            image_digest: None,
+            agent_port: 1,
+            fileserver_port: 2,
+            ttyd_port: 3,
+            eavs_port: None,
+            agent_base_port: None,
+            max_agents: None,
+            eavs_key_id: None,
+            eavs_key_hash: None,
+            eavs_virtual_key: None,
+            mmry_port: None,
+            status: SessionStatus::Pending,
+            runtime_mode: RuntimeMode::Local,
+            created_at: "now".to_string(),
+            started_at: None,
+            stopped_at: None,
+            last_activity_at: None,
+            error_message: None,
+        }
+    }
+
+    #[test]
+    fn test_inject_agent_ctx_sets_platform_fields() {
+        let mut env = std::collections::HashMap::new();
+        inject_agent_ctx(&mut env, &agent_ctx_test_session(Some("pi")));
+
+        assert_eq!(env.get("AGENT_CTX_VERSION").map(String::as_str), Some("1"));
+        assert_eq!(
+            env.get("AGENT_CTX_PLATFORM_NAME").map(String::as_str),
+            Some("oqto")
+        );
+        assert_eq!(
+            env.get("AGENT_CTX_PLATFORM_SESSION_ID").map(String::as_str),
+            Some("sess_abc")
+        );
+        assert_eq!(
+            env.get("AGENT_CTX_USER_ID").map(String::as_str),
+            Some("u_42")
+        );
+        assert_eq!(
+            env.get("AGENT_CTX_WORKSPACE_PATH").map(String::as_str),
+            Some("/home/wismut/ws")
+        );
+        assert_eq!(env.get("AGENT_CTX_HARNESS").map(String::as_str), Some("pi"));
+        // PLATFORM_VERSION is set from CARGO_PKG_VERSION (non-empty).
+        assert!(
+            env.get("AGENT_CTX_PLATFORM_VERSION")
+                .is_some_and(|v| !v.is_empty())
+        );
+        // PLATFORM_SESSION_ID supersedes the legacy OQTO_SESSION_ID; the
+        // helper does not set OQTO_SESSION_ID (kept by the runner for now).
+        assert!(!env.contains_key("OQTO_SESSION_ID"));
+        // Deferred by design (ADR-0013): WORKSPACE_ID needs the canonical
+        // oqto-log derivation; RUN_MODE awaits the ADR-0001 mode collapse.
+        assert!(!env.contains_key("AGENT_CTX_WORKSPACE_ID"));
+        assert!(!env.contains_key("AGENT_CTX_RUN_MODE"));
+    }
+
+    #[test]
+    fn test_inject_agent_ctx_omits_harness_when_absent() {
+        let mut env = std::collections::HashMap::new();
+        inject_agent_ctx(&mut env, &agent_ctx_test_session(None));
+        assert!(!env.contains_key("AGENT_CTX_HARNESS"));
+    }
+
     trait TestUnwrap<T> {
         fn t(self) -> T;
     }
