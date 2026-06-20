@@ -1,7 +1,7 @@
 //! Canonical chat history conversions.
 
-use hstry_core::parts::{Part, ToolStatus};
 use oqto_protocol::messages::{Message, Role, Usage};
+use oqto_protocol::{Part, ToolStatus};
 use serde_json::Value;
 
 use super::models::{ChatMessage, ChatMessagePart};

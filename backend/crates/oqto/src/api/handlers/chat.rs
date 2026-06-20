@@ -388,10 +388,10 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
     merged
 }
 
-/// List all chat sessions from hstry.
+/// List all chat sessions from oqto-log.
 ///
-/// In multi-user mode, this uses the runner to query hstry for the user.
-/// In single-user mode, queries hstry gRPC directly.
+/// In multi-user mode, this uses the runner to query oqto-log for the user.
+/// In single-user mode, queries the runner directly.
 ///
 /// SECURITY: In multi-user mode, we MUST use the runner. Falling back to direct
 /// access would read from the backend user's data, potentially
@@ -435,7 +435,7 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
     // Important UX invariant: chat history endpoint must return immediately.
-    // Heavy JSONL->hstry repair is handled explicitly via backfill endpoint,
+    // Heavy JSONL->oqto-log repair is handled explicitly via backfill endpoint,
     // never on this hot path.
 
     let mut sessions: Vec<ChatSession> = response
@@ -500,7 +500,7 @@ pub struct BackfillChatHistoryResponse {
     pub failed_files: usize,
 }
 
-/// Trigger JSONL->hstry backfill for personal or shared-workspace sessions.
+/// Trigger JSONL->oqto-log backfill for personal or shared-workspace sessions.
 #[instrument(skip(state))]
 pub async fn backfill_chat_history(
     State(state): State<AppState>,
@@ -653,7 +653,7 @@ pub struct DeleteChatSessionQuery {
     pub shared_workspace_id: Option<String>,
 }
 
-/// Delete a chat session from hstry.
+/// Delete a chat session from oqto-log.
 ///
 /// Removes the conversation and all its messages from the history database.
 /// In multi-user mode, routes through the runner for user isolation.
@@ -862,7 +862,7 @@ fn convert_runner_response(
 
 /// Get all messages for a chat session.
 ///
-/// Get all messages for a chat session via hstry.
+/// Get all messages for a chat session via oqto-log.
 ///
 /// Query params:
 /// - `render=true`: Include pre-rendered markdown HTML in `text_html` field

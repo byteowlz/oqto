@@ -76,7 +76,7 @@ fn create_router_with_config_and_auth(
 
     // Protected routes (require authentication)
     let protected_routes = Router::new()
-        // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
+        // Multiplexed WebSocket endpoint for Pi, files, terminal, chat history channels
         .route("/ws/mux", get(ws::multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
@@ -380,7 +380,7 @@ fn create_router_with_config_and_auth(
             "/admin/shared-workspaces/{workspace_id}/members/{user_id}",
             delete(handlers::admin_remove_shared_workspace_member),
         )
-        // Chat history routes (reads from disk, reads from hstry)
+        // Chat history routes (reads from disk, reads from oqto-log)
         .route("/chat-history", get(handlers::list_chat_history))
         .route(
             "/chat-history/backfill",

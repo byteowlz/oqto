@@ -1,10 +1,10 @@
 //! Pure projection helpers for canonical timeline views.
 //!
 //! Storage code persists the lossless graph. These helpers derive narrower views
-//! such as the active branch chat timeline and hstry/search projection documents.
+//! such as the active branch chat timeline and search projection documents.
 
 use anyhow::{Context, Result, bail};
-use hstry_core::parts::Part;
+use oqto_protocol::Part;
 use oqto_protocol::messages::Role;
 use oqto_protocol::timeline::{
     TimelineDocument, TimelineMessage, TimelinePart, TimelineTurn, ToolLifecycleStatus, TurnStatus,
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-/// Flattened hstry/search projection with pointers back to canonical timeline.
+/// Flattened search projection with pointers back to canonical timeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HstryProjectionRecord {
     pub oqto_session_id: String,
@@ -122,8 +122,8 @@ pub fn validate_timeline(document: &TimelineDocument) -> Result<()> {
     Ok(())
 }
 
-/// Project the active branch to flattened hstry/search records.
-pub fn project_active_branch_to_hstry(
+/// Project the active branch to flattened search records.
+pub fn project_active_branch_to_search(
     document: &TimelineDocument,
     branch_id: &str,
 ) -> Result<Vec<HstryProjectionRecord>> {
@@ -137,7 +137,7 @@ pub fn project_active_branch_to_hstry(
         )
     }) {
         for message in &turn.messages {
-            let parts = message_parts_for_hstry(message);
+            let parts = message_parts_for_search(message);
             let content = parts
                 .iter()
                 .filter_map(part_text_for_search)
@@ -208,7 +208,7 @@ fn reject_temporary_id(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn message_parts_for_hstry(message: &TimelineMessage) -> Vec<Part> {
+fn message_parts_for_search(message: &TimelineMessage) -> Vec<Part> {
     message
         .parts
         .iter()
@@ -228,7 +228,7 @@ fn message_parts_for_hstry(message: &TimelineMessage) -> Vec<Part> {
                     ..
                 } = &mut part
                 {
-                    *part_status = timeline_tool_status_to_hstry(*status);
+                    *part_status = timeline_tool_status_to_part(*status);
                 }
                 Some(part)
             }
@@ -247,15 +247,15 @@ fn message_parts_for_hstry(message: &TimelineMessage) -> Vec<Part> {
         .collect()
 }
 
-fn timeline_tool_status_to_hstry(status: ToolLifecycleStatus) -> hstry_core::parts::ToolStatus {
+fn timeline_tool_status_to_part(status: ToolLifecycleStatus) -> oqto_protocol::ToolStatus {
     match status {
-        ToolLifecycleStatus::Pending => hstry_core::parts::ToolStatus::Pending,
+        ToolLifecycleStatus::Pending => oqto_protocol::ToolStatus::Pending,
         ToolLifecycleStatus::Started
         | ToolLifecycleStatus::Running
-        | ToolLifecycleStatus::Delta => hstry_core::parts::ToolStatus::Running,
-        ToolLifecycleStatus::Completed => hstry_core::parts::ToolStatus::Success,
+        | ToolLifecycleStatus::Delta => oqto_protocol::ToolStatus::Running,
+        ToolLifecycleStatus::Completed => oqto_protocol::ToolStatus::Success,
         ToolLifecycleStatus::Failed | ToolLifecycleStatus::Cancelled => {
-            hstry_core::parts::ToolStatus::Error
+            oqto_protocol::ToolStatus::Error
         }
     }
 }
@@ -385,9 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn hstry_projection_carries_deep_links() {
+    fn search_projection_carries_deep_links() {
         let document = base_document(vec![text_turn("turn-1", None, 1, "hello")], "turn-1");
-        let records = project_active_branch_to_hstry(&document, "main").expect("project");
+        let records = project_active_branch_to_search(&document, "main").expect("project");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].content, "hello");
         assert_eq!(records[0].metadata["oqto"]["turn_id"], "turn-1");

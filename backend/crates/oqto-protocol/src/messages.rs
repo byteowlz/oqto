@@ -1,15 +1,15 @@
 //! Canonical message types.
 //!
-//! Messages are the persistent units of a conversation. They are stored in hstry
+//! Messages are the persistent units of a conversation. They are stored in oqto-log
 //! and rendered by the frontend. A message contains an ordered list of typed parts
-//! (re-exported from `hstry_core::parts`).
+//! (defined in `oqto_protocol::parts`).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use hstry_core::parts::{Part, Sender};
+use crate::{Part, Sender};
 
-/// A conversation message. Stored in hstry, rendered by the frontend.
+/// A conversation message. Stored in oqto-log, rendered by the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     /// Unique within conversation (UUID or agent-assigned).
@@ -77,7 +77,7 @@ pub struct Message {
     pub metadata: Option<Value>,
 }
 
-// Sender and SenderType are re-exported from hstry_core::parts via lib.rs.
+// Sender and SenderType are re-exported from oqto_protocol::parts via lib.rs.
 // They are imported above for use in Message.
 
 // ============================================================================
@@ -140,7 +140,7 @@ pub struct Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hstry_core::parts::{Part, SenderType};
+    use crate::{Part, SenderType};
 
     #[test]
     fn test_message_serialization() {

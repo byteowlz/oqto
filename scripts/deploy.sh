@@ -256,8 +256,41 @@ host_exec_sudo() {
     local is_local="$1"
     local ssh_target="$2"
     local inner="$3"
-    host_exec "$is_local" "$ssh_target" "sudo bash -lc $(printf '%q' "$inner")"
+    host_exec "$is_local" "$ssh_target" "sudo -n bash -lc $(printf '%q' "$inner")"
 }
+
+SUDO_KEEPALIVE_PIDS=()
+
+stop_sudo_keepalive() {
+    local pid
+    for pid in "${SUDO_KEEPALIVE_PIDS[@]:-}"; do
+        kill "$pid" >/dev/null 2>&1 || true
+    done
+    SUDO_KEEPALIVE_PIDS=()
+}
+
+start_sudo_keepalive() {
+    local is_local="$1"
+    local ssh_target="$2"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ "$is_local" == "true" ]]; then
+        (
+            while true; do
+                sudo -n -v >/dev/null 2>&1 || exit 1
+                sleep 60
+            done
+        ) &
+    else
+        ssh -tt "$ssh_target" 'while true; do sudo -n -v >/dev/null 2>&1 || exit 1; sleep 60; done' >/dev/null 2>&1 &
+    fi
+    SUDO_KEEPALIVE_PIDS+=("$!")
+}
+
+trap stop_sudo_keepalive EXIT
 
 emit_event() {
     local is_local="$1"
@@ -1915,7 +1948,7 @@ deploy_via_oqto_setup_install() {
             echo -e "${YELLOW}  [dry-run]${NC} local :: sudo oqto-setup install --artifact '$DEPLOY_ARTIFACT' ${DEPLOY_CHECKSUM:+--checksum '$DEPLOY_CHECKSUM'}"
             return 0
         fi
-        cmd="sudo oqto-setup install --artifact '$DEPLOY_ARTIFACT'"
+        cmd="sudo -n oqto-setup install --artifact '$DEPLOY_ARTIFACT'"
         if [[ -n "$DEPLOY_CHECKSUM" ]]; then
             cmd+=" --checksum '$DEPLOY_CHECKSUM'"
         fi
@@ -1936,7 +1969,7 @@ deploy_via_oqto_setup_install() {
 
     scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
 
-    cmd="sudo oqto-setup install --artifact '$remote_artifact'"
+    cmd="sudo -n oqto-setup install --artifact '$remote_artifact'"
     if [[ -n "$DEPLOY_CHECKSUM" ]]; then
         checksum_basename="$(basename "$DEPLOY_CHECKSUM")"
         remote_checksum="/tmp/${checksum_basename}"
@@ -2056,6 +2089,7 @@ prime_sudo_credentials() {
                 err "Sudo authentication failed on $name"
                 return 1
             fi
+            start_sudo_keepalive "true" ""
             continue
         fi
 
@@ -2063,6 +2097,7 @@ prime_sudo_credentials() {
         # - some allow non-interactive sudo (cached/NOPASSWD)
         # - some require a TTY for password entry
         if ssh "$ssh_target" "sudo -n true" >/dev/null 2>&1; then
+            start_sudo_keepalive "false" "$ssh_target"
             continue
         fi
 
@@ -2070,6 +2105,7 @@ prime_sudo_credentials() {
             err "Sudo authentication failed on $name"
             return 1
         fi
+        start_sudo_keepalive "false" "$ssh_target"
     done
 }
 

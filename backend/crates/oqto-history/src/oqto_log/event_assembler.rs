@@ -342,8 +342,8 @@ fn draft_to_timeline_message(
         parts.push(TimelinePart::Content {
             part_id: format!("{message_id}:part:{part_seq}"),
             seq: part_seq,
-            part: hstry_core::parts::Part::Thinking {
-                id: format!("{message_id}:hstry-part:{part_seq}"),
+            part: oqto_protocol::Part::Thinking {
+                id: format!("{message_id}:part:{part_seq}"),
                 text: text.clone(),
             },
             raw_refs: vec![],
@@ -355,8 +355,8 @@ fn draft_to_timeline_message(
         parts.push(TimelinePart::Content {
             part_id: format!("{message_id}:part:{part_seq}"),
             seq: part_seq,
-            part: hstry_core::parts::Part::Text {
-                id: format!("{message_id}:hstry-part:{part_seq}"),
+            part: oqto_protocol::Part::Text {
+                id: format!("{message_id}:part:{part_seq}"),
                 text: text.clone(),
                 format: None,
             },
@@ -406,7 +406,7 @@ fn finalized_message_to_timeline(
         .parts
         .iter()
         .filter_map(|part| match part {
-            hstry_core::parts::Part::Text { text, .. } => Some(text.as_str()),
+            oqto_protocol::Part::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -639,7 +639,7 @@ mod tests {
             role: Role::Assistant,
             client_id: None,
             sender: None,
-            parts: vec![hstry_core::parts::Part::Text {
+            parts: vec![oqto_protocol::Part::Text {
                 id: "p-final".to_string(),
                 text: "final".to_string(),
                 format: None,
@@ -678,7 +678,7 @@ mod tests {
             .unwrap();
         match &turn.messages[0].parts[0] {
             TimelinePart::Content {
-                part: hstry_core::parts::Part::Text { text, .. },
+                part: oqto_protocol::Part::Text { text, .. },
                 ..
             } => assert_eq!(text, "final"),
             _ => panic!("expected final text"),

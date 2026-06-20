@@ -227,8 +227,8 @@ fn project_parts(message_id: &str, msg: &AgentMessage, raw_id: &str) -> Result<V
     Ok(vec![TimelinePart::Content {
         part_id: format!("{message_id}:part:0"),
         seq: 0,
-        part: hstry_core::parts::Part::Text {
-            id: format!("{message_id}:hstry-part:0"),
+        part: oqto_protocol::Part::Text {
+            id: format!("{message_id}:part:0"),
             text: extract_text(&msg.content),
             format: None,
         },
@@ -248,8 +248,8 @@ fn project_array_item(
         return Ok(Some(TimelinePart::Content {
             part_id: format!("{message_id}:part:{seq}"),
             seq,
-            part: hstry_core::parts::Part::Text {
-                id: format!("{message_id}:hstry-part:{seq}"),
+            part: oqto_protocol::Part::Text {
+                id: format!("{message_id}:part:{seq}"),
                 text: item.to_string(),
                 format: None,
             },
@@ -266,8 +266,8 @@ fn project_array_item(
         "text" => Ok(Some(TimelinePart::Content {
             part_id: format!("{message_id}:part:{seq}"),
             seq,
-            part: hstry_core::parts::Part::Text {
-                id: format!("{message_id}:hstry-part:{seq}"),
+            part: oqto_protocol::Part::Text {
+                id: format!("{message_id}:part:{seq}"),
                 text: obj
                     .get("text")
                     .and_then(Value::as_str)
@@ -281,8 +281,8 @@ fn project_array_item(
         "thinking" | "reasoning" => Ok(Some(TimelinePart::Content {
             part_id: format!("{message_id}:part:{seq}"),
             seq,
-            part: hstry_core::parts::Part::Thinking {
-                id: format!("{message_id}:hstry-part:{seq}"),
+            part: oqto_protocol::Part::Thinking {
+                id: format!("{message_id}:part:{seq}"),
                 text: obj
                     .get("text")
                     .and_then(Value::as_str)
@@ -350,8 +350,8 @@ fn project_array_item(
         _ => Ok(Some(TimelinePart::Content {
             part_id: format!("{message_id}:part:{seq}"),
             seq,
-            part: hstry_core::parts::Part::Text {
-                id: format!("{message_id}:hstry-part:{seq}"),
+            part: oqto_protocol::Part::Text {
+                id: format!("{message_id}:part:{seq}"),
                 text: item.to_string(),
                 format: None,
             },

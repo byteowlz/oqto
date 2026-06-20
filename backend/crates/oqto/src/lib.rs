@@ -14,7 +14,6 @@ pub mod db;
 pub mod eavs;
 pub mod feedback;
 pub mod history;
-pub mod hstry;
 pub mod identity;
 pub mod invite;
 pub mod local;

@@ -907,7 +907,7 @@ fn pi_content_to_parts(content: &Value, msg: &AgentMessage) -> Vec<Part> {
 
 /// Convert a Pi image source to a canonical Image part.
 fn pi_image_to_part(source: &ImageSource) -> Part {
-    use hstry_core::parts::MediaSource;
+    use oqto_protocol::MediaSource;
 
     let media_source = match source {
         ImageSource::Url { url } => MediaSource::url(url),

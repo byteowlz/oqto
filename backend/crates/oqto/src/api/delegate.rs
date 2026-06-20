@@ -181,7 +181,7 @@ pub async fn get_messages(
     Query(_query): Query<MessagesQuery>,
 ) -> ApiResult<Json<Vec<SessionMessage>>> {
     require_localhost(&addr)?;
-    // Messages are now accessed through hstry
+    // Messages are now accessed through oqto-log
     Ok(Json(vec![]))
 }
 

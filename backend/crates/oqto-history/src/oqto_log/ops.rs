@@ -52,6 +52,34 @@ fn list_db_paths(user_home: &Path) -> Vec<PathBuf> {
     out
 }
 
+async fn open_migrated_pool(db: &Path, context_label: &str) -> Result<sqlx::SqlitePool> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(db)
+                .create_if_missing(true),
+        )
+        .await
+        .with_context(|| format!("open db for {context_label}: {}", db.display()))?;
+
+    crate::oqto_log::store::repair_accidental_projection_migration_drift(&pool)
+        .await
+        .with_context(|| {
+            format!(
+                "repair migration metadata for {context_label}: {}",
+                db.display()
+            )
+        })?;
+
+    OQTO_LOG_MIGRATOR
+        .run(&pool)
+        .await
+        .with_context(|| format!("run migrations for {context_label}: {}", db.display()))?;
+
+    Ok(pool)
+}
+
 pub async fn diagnostics(user_home: &Path) -> Result<OpsSummary> {
     let mut summary = OpsSummary::default();
     let dbs = list_db_paths(user_home);
@@ -152,6 +180,15 @@ pub async fn upsert_session_identity(
         .with_context(|| {
             format!(
                 "open oqto-log db for identity upsert: {}",
+                db_path.display()
+            )
+        })?;
+
+    crate::oqto_log::store::repair_accidental_projection_migration_drift(&pool)
+        .await
+        .with_context(|| {
+            format!(
+                "repair oqto-log migration metadata for identity upsert: {}",
                 db_path.display()
             )
         })?;
@@ -282,6 +319,15 @@ pub async fn batch_upsert_session_identities(
             )
         })?;
 
+    crate::oqto_log::store::repair_accidental_projection_migration_drift(&pool)
+        .await
+        .with_context(|| {
+            format!(
+                "repair oqto-log migration metadata for identity batch upsert: {}",
+                db_path.display()
+            )
+        })?;
+
     OQTO_LOG_MIGRATOR.run(&pool).await.with_context(|| {
         format!(
             "run oqto-log migrations for identity batch upsert: {}",
@@ -379,16 +425,7 @@ pub async fn delete_identity_only_sessions_outside_workspace(
 ) -> Result<usize> {
     let mut deleted = 0usize;
     for db in list_db_paths(user_home) {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(&db))
-            .await
-            .with_context(|| {
-                format!(
-                    "open db for out-of-scope identity cleanup: {}",
-                    db.display()
-                )
-            })?;
+        let pool = open_migrated_pool(&db, "out-of-scope identity cleanup").await?;
 
         let candidates = sqlx::query_as::<_, (String, Option<String>)>(
             r#"
@@ -432,16 +469,7 @@ pub async fn normalize_session_timestamps_for_workspace(
 ) -> Result<usize> {
     let mut normalized = 0usize;
     for db in list_db_paths(user_home) {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(&db))
-            .await
-            .with_context(|| {
-                format!(
-                    "open db for session timestamp normalization: {}",
-                    db.display()
-                )
-            })?;
+        let pool = open_migrated_pool(&db, "session timestamp normalization").await?;
 
         let mut tx = pool
             .begin()
@@ -473,105 +501,6 @@ pub async fn normalize_session_timestamps_for_workspace(
         normalized += result.rows_affected() as usize;
     }
     Ok(normalized)
-}
-
-pub async fn sync_identities_from_hstry(
-    user_home: &Path,
-    user_id: &str,
-) -> Result<IdentitySyncSummary> {
-    let hstry_db = user_home
-        .join(".local")
-        .join("share")
-        .join("hstry")
-        .join("hstry.db");
-    if !hstry_db.exists() {
-        return Ok(IdentitySyncSummary::default());
-    }
-
-    let hstry_pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(&hstry_db)
-                .read_only(true),
-        )
-        .await
-        .with_context(|| format!("open hstry db for identity sync: {}", hstry_db.display()))?;
-
-    let rows = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>, String)>(
-        r#"
-        SELECT external_id, platform_id, workspace, id
-        FROM conversations
-        WHERE source_id = 'pi'
-        "#,
-    )
-    .fetch_all(&hstry_pool)
-    .await
-    .context("query hstry conversations for identity sync")?;
-
-    let mut summary = IdentitySyncSummary {
-        conversations_scanned: rows.len(),
-        ..IdentitySyncSummary::default()
-    };
-
-    let mut touched = std::collections::HashSet::new();
-
-    for (external_id, platform_id, workspace, fallback_id) in rows {
-        let workspace_id = workspace.unwrap_or_else(|| "global".to_string());
-        let session_id = external_id
-            .clone()
-            .or(platform_id.clone())
-            .unwrap_or(fallback_id.clone());
-
-        let db_path =
-            crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, &workspace_id)?;
-        touched.insert(db_path.clone());
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .create_if_missing(true),
-            )
-            .await
-            .with_context(|| {
-                format!("open oqto-log db for identity sync: {}", db_path.display())
-            })?;
-
-        OQTO_LOG_MIGRATOR.run(&pool).await.with_context(|| {
-            format!(
-                "run oqto-log migrations for identity sync: {}",
-                db_path.display()
-            )
-        })?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO oqto_log_sessions (
-              session_id, platform_id, external_id, user_id, workspace_id
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-              platform_id = COALESCE(excluded.platform_id, oqto_log_sessions.platform_id),
-              external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
-              user_id = COALESCE(excluded.user_id, oqto_log_sessions.user_id),
-              workspace_id = COALESCE(excluded.workspace_id, oqto_log_sessions.workspace_id)
-            "#,
-        )
-        .bind(&session_id)
-        .bind(platform_id.as_deref())
-        .bind(external_id.as_deref())
-        .bind(user_id)
-        .bind(&workspace_id)
-        .execute(&pool)
-        .await
-        .with_context(|| format!("upsert oqto_log session identity: {}", session_id))?;
-
-        summary.sessions_upserted += 1;
-    }
-
-    summary.dbs_touched = touched.len();
-    Ok(summary)
 }
 
 /// Look up an oqto-log session by its external_id (Pi session ID).
@@ -1110,6 +1039,46 @@ mod tests {
             stop_reason: None,
             extra: HashMap::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn identity_cleanup_migrates_empty_discovered_databases() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let db_dir = temp
+            .path()
+            .join(".local/share/oqto/oqto-log/empty-workspace");
+        std::fs::create_dir_all(&db_dir).expect("create db dir");
+        let db_path = db_dir.join("oqto-log.sqlite");
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("create empty sqlite db")
+            .close()
+            .await;
+
+        let deleted =
+            delete_identity_only_sessions_outside_workspace(temp.path(), Path::new("/tmp/ws"))
+                .await
+                .expect("cleanup should migrate empty db");
+        assert_eq!(deleted, 0);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&db_path))
+            .await
+            .expect("reopen migrated db");
+        let sessions_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'oqto_log_sessions'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query schema");
+        assert_eq!(sessions_table, 1);
     }
 
     #[tokio::test]

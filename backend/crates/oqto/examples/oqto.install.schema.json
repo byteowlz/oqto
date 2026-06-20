@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "oqto.install.schema.json",
   "title": "Oqto Install Configuration",
-  "description": "Portable install configuration used to hydrate Oqto, hstry, and mmry config files.",
+  "description": "Portable install configuration used to hydrate Oqto and mmry config files.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -15,7 +15,10 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["merge", "overwrite"],
+          "enum": [
+            "merge",
+            "overwrite"
+          ],
           "description": "How to apply config updates when files already exist."
         },
         "config_home": {
@@ -38,9 +41,6 @@
     },
     "sandbox": {
       "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
-    },
-    "hstry": {
-      "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/hstry/hstry.config.schema.json"
     },
     "mmry": {
       "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/mmry/mmry.config.schema.json"

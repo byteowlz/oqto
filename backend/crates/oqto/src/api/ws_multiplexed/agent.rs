@@ -122,7 +122,7 @@ pub(super) async fn handle_agent_command(
             // For non-create commands, resolve runner deterministically in this order:
             // 0) System-scoped commands (`session_id = _system`) -> personal runner
             // 1) Per-connection cached session cwd metadata
-            // 2) Durable hstry conversation workspace metadata
+            // 2) Durable session workspace metadata
             // 3) fail closed (unknown target)
 
             if session_id == "_system" {
@@ -1632,8 +1632,8 @@ pub(super) async fn handle_agent_command(
                             "last_activity": s.last_activity,
                             "subscriber_count": s.subscriber_count,
                         });
-                        if let Some(ref hid) = s.hstry_id {
-                            obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                        if let Some(ref hid) = s.external_history_id {
+                            obj["external_history_id"] = serde_json::Value::String(hid.clone());
                         }
                         obj
                     })
@@ -1719,8 +1719,9 @@ pub(super) async fn handle_agent_command(
                                         "subscriber_count": s.subscriber_count,
                                         "shared_workspace_id": ws.id,
                                     });
-                                    if let Some(ref hid) = s.hstry_id {
-                                        obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                                    if let Some(ref hid) = s.external_history_id {
+                                        obj["external_history_id"] =
+                                            serde_json::Value::String(hid.clone());
                                     }
                                     all_sessions.push(obj);
                                 }

@@ -113,13 +113,13 @@ pub enum RunnerRequest {
 
     /// Get messages from a main chat session.
     GetMainChatMessages(GetMainChatMessagesRequest),
-    /// Get messages from a workspace Pi session (hstry-backed).
+    /// Get messages from a workspace Pi session (oqto-log-backed).
     GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest),
-    /// List workspace Pi chat sessions (hstry-backed).
+    /// List workspace Pi chat sessions (oqto-log-backed).
     ListWorkspaceChatSessions(ListWorkspaceChatSessionsRequest),
-    /// Get a workspace Pi chat session (hstry-backed).
+    /// Get a workspace Pi chat session (oqto-log-backed).
     GetWorkspaceChatSession(GetWorkspaceChatSessionRequest),
-    /// Get workspace Pi chat session messages (hstry-backed, parts preserved).
+    /// Get workspace Pi chat session messages (oqto-log-backed, parts preserved).
     GetWorkspaceChatSessionMessages(GetWorkspaceChatSessionMessagesRequest),
 
     /// Update a workspace Pi chat session (e.g., rename title).
@@ -164,7 +164,7 @@ pub enum RunnerRequest {
     /// Close a Pi session (stop the process).
     PiCloseSession(PiCloseSessionRequest),
 
-    /// Delete a Pi session: close the process, remove from hstry, and delete the JSONL file.
+    /// Delete a Pi session: close the process, remove from oqto-log, and delete the JSONL file.
     PiDeleteSession(PiDeleteSessionRequest),
 
     /// Start a new session within existing Pi process.
@@ -444,7 +444,7 @@ pub enum RunnerResponse {
         session_id: String,
     },
 
-    /// Pi session deleted (closed + removed from hstry + JSONL file deleted).
+    /// Pi session deleted (closed + removed from oqto-log + JSONL file deleted).
     PiSessionDeleted {
         /// The session that was deleted.
         session_id: String,
@@ -731,7 +731,7 @@ pub struct GetWorkspaceChatMessagesRequest {
     pub limit: Option<usize>,
 }
 
-/// Request to list workspace Pi chat sessions (hstry-backed).
+/// Request to list workspace Pi chat sessions (oqto-log-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListWorkspaceChatSessionsRequest {
     /// Filter by workspace path.
@@ -745,7 +745,7 @@ pub struct ListWorkspaceChatSessionsRequest {
     pub limit: Option<usize>,
 }
 
-/// Request to get a workspace Pi chat session (hstry-backed).
+/// Request to get a workspace Pi chat session (oqto-log-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorkspaceChatSessionRequest {
     /// Session ID.
@@ -763,7 +763,7 @@ pub enum WorkspaceChatMessagesSource {
     Live,
 }
 
-/// Request to get messages from a workspace Pi chat session (hstry-backed).
+/// Request to get messages from a workspace Pi chat session (oqto-log-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorkspaceChatSessionMessagesRequest {
     /// Session ID.
@@ -1028,7 +1028,7 @@ pub struct PiCloseSessionRequest {
     pub session_id: String,
 }
 
-/// Request to delete a Pi session (close + remove from hstry + delete JSONL file).
+/// Request to delete a Pi session (close + remove from oqto-log + delete JSONL file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiDeleteSessionRequest {
     /// Session ID.
@@ -1638,7 +1638,7 @@ pub struct WorkspaceChatSessionUpdatedResponse {
 pub struct WorkspaceChatHistoryRepairResponse {
     /// Number of JSONL files scanned.
     pub scanned_files: usize,
-    /// Number of conversations upserted into hstry.
+    /// Number of session records repaired.
     pub repaired_conversations: usize,
     /// Number of files skipped (already present or invalid).
     pub skipped_files: usize,
@@ -1661,150 +1661,6 @@ pub type ChatMessageProto = oqto_protocol::projection::ProjectedChatMessage;
 // ============================================================================
 // AgentMessage -> ChatMessageProto conversion
 // ============================================================================
-
-/// Convert hstry proto messages to `ChatMessageProto` for the message buffer.
-///
-/// Used to seed the runner message buffer from hstry on session resume.
-pub fn hstry_proto_to_chat_proto(
-    msg: &hstry_core::service::proto::Message,
-    session_id: &str,
-) -> ChatMessageProto {
-    let created_at = msg.created_at_ms.unwrap_or(0);
-    let message_id = msg
-        .id
-        .clone()
-        .unwrap_or_else(|| format!("hstry_msg_{}", msg.idx));
-
-    // Parse parts_json to extract structured parts
-    let parts: Vec<ChatMessagePartProto> =
-        if let Ok(parts_arr) = serde_json::from_str::<Vec<serde_json::Value>>(&msg.parts_json) {
-            parts_arr
-                .iter()
-                .enumerate()
-                .map(|(i, part)| {
-                    let part_type = part
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("text")
-                        .to_string();
-                    let id = part
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| format!("part_{}_{}", msg.idx, i));
-
-                    match part_type.as_str() {
-                        "tool_call" => ChatMessagePartProto {
-                            id,
-                            part_type: "tool_call".to_string(),
-                            text: None,
-                            text_html: None,
-                            tool_name: part.get("name").and_then(|v| v.as_str()).map(String::from),
-                            tool_call_id: part.get("id").and_then(|v| v.as_str()).map(String::from),
-                            tool_input: part.get("input").cloned(),
-                            tool_output: None,
-                            tool_status: None,
-                            tool_title: None,
-                        },
-                        "tool_result" => ChatMessagePartProto {
-                            id,
-                            part_type: "tool_result".to_string(),
-                            text: None,
-                            text_html: None,
-                            tool_name: part.get("name").and_then(|v| v.as_str()).map(String::from),
-                            tool_call_id: part
-                                .get("toolCallId")
-                                .and_then(|v| v.as_str())
-                                .map(String::from),
-                            tool_input: None,
-                            tool_output: part.get("output").cloned(),
-                            tool_status: Some(
-                                if part
-                                    .get("is_error")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false)
-                                {
-                                    "error"
-                                } else {
-                                    "success"
-                                }
-                                .to_string(),
-                            ),
-                            tool_title: None,
-                        },
-                        _ => ChatMessagePartProto {
-                            id,
-                            part_type,
-                            text: part.get("text").and_then(|v| v.as_str()).map(String::from),
-                            text_html: None,
-                            tool_name: None,
-                            tool_call_id: None,
-                            tool_input: None,
-                            tool_output: None,
-                            tool_status: None,
-                            tool_title: None,
-                        },
-                    }
-                })
-                .collect()
-        } else {
-            // Fallback: single text part from content
-            vec![ChatMessagePartProto {
-                id: format!("part_{}", msg.idx),
-                part_type: "text".to_string(),
-                text: Some(msg.content.clone()),
-                text_html: None,
-                tool_name: None,
-                tool_call_id: None,
-                tool_input: None,
-                tool_output: None,
-                tool_status: None,
-                tool_title: None,
-            }]
-        };
-
-    // Split model string "provider/model" if present
-    let (provider_id, model_id) = match &msg.model {
-        Some(m) => {
-            if let Some((provider, model)) = m.split_once('/') {
-                (Some(provider.to_string()), Some(model.to_string()))
-            } else {
-                (msg.provider.clone(), Some(m.clone()))
-            }
-        }
-        None => (msg.provider.clone(), None),
-    };
-
-    ChatMessageProto {
-        id: message_id,
-        session_id: session_id.to_string(),
-        role: msg.role.clone(),
-        created_at,
-        completed_at: None,
-        parent_id: None,
-        model_id,
-        provider_id,
-        agent: None,
-        summary_title: None,
-        tokens_input: msg.tokens.map(|t| t / 2), // hstry stores total, estimate split
-        tokens_output: msg.tokens.map(|t| t / 2),
-        tokens_reasoning: None,
-        cost: msg.cost_usd,
-        client_id: msg.client_id.clone(),
-        parts,
-    }
-}
-
-/// Convert a batch of hstry proto messages to `ChatMessageProto`.
-pub fn hstry_protos_to_chat_protos(
-    messages: Vec<hstry_core::service::proto::Message>,
-    session_id: &str,
-) -> Vec<ChatMessageProto> {
-    messages
-        .iter()
-        .map(|msg| hstry_proto_to_chat_proto(msg, session_id))
-        .collect()
-}
 
 /// Convert a Pi `AgentMessage` into a `ChatMessageProto`.
 ///
@@ -2206,10 +2062,10 @@ pub struct PiSessionCreatedResponse {
 pub struct PiSessionInfo {
     /// Session ID (the Oqto session ID used in events and commands).
     pub session_id: String,
-    /// The hstry external_id (Pi's native session ID).
-    /// Used to correlate runner sessions with hstry conversations.
+    /// The external_id (Pi's native session ID).
+    /// Used to correlate runner sessions with imported conversations.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hstry_id: Option<String>,
+    pub external_history_id: Option<String>,
     /// Current session state.
     pub state: PiSessionState,
     /// Last activity timestamp (Unix ms).
@@ -2651,7 +2507,7 @@ mod tests {
     fn test_pi_session_state() {
         let info = PiSessionInfo {
             session_id: "ses_123".to_string(),
-            hstry_id: None,
+            external_history_id: None,
             state: PiSessionState::Streaming,
             last_activity: 1234567890000,
             subscriber_count: 2,

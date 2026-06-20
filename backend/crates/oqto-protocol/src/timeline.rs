@@ -2,14 +2,14 @@
 //!
 //! The timeline is Oqto's durable, lossless conversation graph. It is intentionally
 //! richer than the chat message DTO used by the UI or the compatibility projection
-//! written to hstry: turns and branches are first-class, tool calls/results remain
+//! written to oqto-log: turns and branches are first-class, tool calls/results remain
 //! distinct parts, harness-native envelopes can be retained byte-for-byte, and
 //! context snapshots capture what an agent actually saw before a turn was generated.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use hstry_core::parts::Part;
+use crate::Part;
 
 use crate::messages::{Role, StopReason, Usage};
 
@@ -17,7 +17,7 @@ use crate::messages::{Role, StopReason, Usage};
 pub const TIMELINE_SCHEMA_VERSION: u32 = 1;
 
 /// Extension namespace prefixes reserved by timeline v1.
-pub const EXTENSION_NAMESPACES: &[&str] = &["oqto", "pi", "acp", "provider", "hstry"];
+pub const EXTENSION_NAMESPACES: &[&str] = &["oqto", "pi", "acp", "provider"];
 
 /// Top-level lossless timeline document for a single Oqto session.
 #[derive(Debug, Clone, Serialize, Deserialize)]

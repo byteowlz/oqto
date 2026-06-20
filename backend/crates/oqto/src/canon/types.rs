@@ -1,6 +1,5 @@
-//! Canonical message types aligned with hstry format.
+//! Canonical message types owned by Oqto.
 //!
-//! See: https://github.com/byteowlz/hstry/blob/main/adapters/types/index.ts
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

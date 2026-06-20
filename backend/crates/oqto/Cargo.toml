@@ -115,12 +115,8 @@ notify.workspace = true
 # TypeScript type generation
 ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings", "chrono-impl", "serde-json-impl"] }
 
-# gRPC for hstry communication
 tonic.workspace = true
 prost.workspace = true
-
-# Chat history (unified with hstry)
-hstry-core.workspace = true
 
 # Issue tracking (in-process, replaces trx CLI shell-out)
 trx-core.workspace = true

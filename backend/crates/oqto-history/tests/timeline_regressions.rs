@@ -6,7 +6,7 @@ use oqto_history::oqto_log::event_assembler::{
 use oqto_history::oqto_log::native_projector::{
     PiTimelineProjectionInput, project_pi_messages_to_timeline,
 };
-use oqto_history::oqto_log::projection::{project_active_branch_to_hstry, validate_timeline};
+use oqto_history::oqto_log::projection::{project_active_branch_to_search, validate_timeline};
 use oqto_pi::AgentMessage;
 use oqto_protocol::events::{Event, EventPayload, ToolCallInfo};
 use oqto_protocol::messages::{Message, Role, StopReason};
@@ -130,7 +130,7 @@ fn invariant_rejects_missing_raw_ref() {
 }
 
 #[test]
-fn golden_hstry_projection_has_deep_links_for_active_branch() {
+fn golden_search_projection_has_deep_links_for_active_branch() {
     let messages = vec![
         agent_msg("user", Value::String("searchable thing".to_string()), 1),
         agent_msg(
@@ -140,7 +140,7 @@ fn golden_hstry_projection_has_deep_links_for_active_branch() {
         ),
     ];
     let doc = project(&messages);
-    let records = project_active_branch_to_hstry(&doc, &doc.branches[0].branch_id)
+    let records = project_active_branch_to_search(&doc, &doc.branches[0].branch_id)
         .expect("project active branch");
     assert_eq!(records.len(), 2);
     for record in records {
@@ -160,7 +160,7 @@ fn golden_event_final_snapshot_wins_over_stream_deltas() {
         role: Role::Assistant,
         client_id: None,
         sender: None,
-        parts: vec![hstry_core::parts::Part::Text {
+        parts: vec![oqto_protocol::Part::Text {
             id: "p-final".to_string(),
             text: "authoritative final".to_string(),
             format: None,
@@ -218,7 +218,7 @@ fn golden_event_final_snapshot_wins_over_stream_deltas() {
     assert_eq!(turn.status, TurnStatus::Committed);
     match &turn.messages[0].parts[0] {
         TimelinePart::Content {
-            part: hstry_core::parts::Part::Text { text, .. },
+            part: oqto_protocol::Part::Text { text, .. },
             ..
         } => {
             assert_eq!(text, "authoritative final");

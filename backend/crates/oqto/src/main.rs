@@ -38,13 +38,11 @@ mod api;
 mod api_keys;
 mod audit;
 mod auth;
-mod canon;
 mod container;
 mod db;
 mod eavs;
 mod feedback;
 mod history;
-mod hstry;
 mod identity;
 mod invite;
 mod local;
@@ -53,7 +51,7 @@ mod observability;
 mod onboarding;
 mod oqto_log;
 mod pi;
-// pi_workspace removed -- JSONL scanning replaced by hstry-only session listing
+// pi_workspace removed -- JSONL scanning replaced by oqto-log session listing
 mod projects;
 mod runner;
 mod session;
@@ -549,8 +547,6 @@ struct AppConfig {
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
     sldr: SldrConfig,
-    /// hstry (chat history) configuration.
-    hstry: HstryConfig,
     /// Feedback collection configuration.
     feedback: feedback::FeedbackConfig,
 }
@@ -662,7 +658,6 @@ impl Default for AppConfig {
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
-            hstry: HstryConfig::default(),
             feedback: feedback::FeedbackConfig::default(),
         }
     }
@@ -924,30 +919,6 @@ impl Default for SldrConfig {
             binary: "sldr-server".to_string(),
             user_base_port: 49_000,
             user_port_range: 1_000,
-        }
-    }
-}
-
-/// hstry (chat history) configuration.
-///
-/// hstry provides unified chat history storage across all AI agents.
-/// In multi-user mode, per-user hstry instances are spawned via oqto-runner
-/// using the shared `local.runner_socket_pattern`.
-/// In single-user mode, auto-starts hstry daemon directly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct HstryConfig {
-    /// Whether hstry integration is enabled.
-    pub enabled: bool,
-    /// Path to the hstry binary.
-    pub binary: String,
-}
-
-impl Default for HstryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            binary: "hstry".to_string(),
         }
     }
 }
@@ -2679,7 +2650,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Audit logging disabled");
     }
 
-    // Initialize hstry (chat history) service
+    // Initialize chat history service
     let multi_user = ctx.config.local.linux_users.enabled && !ctx.config.local.single_user;
     if multi_user {
         // Verify runner socket directory ownership on startup.
@@ -2711,12 +2682,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 warn!("Failed to verify runner socket dirs via usermgr (non-fatal): {e:#}");
             }
         }
-
-        info!("Skipping hstry runtime initialization in multi-user mode");
-    } else if ctx.config.hstry.enabled {
-        warn!("Ignoring legacy hstry runtime config; Oqto uses oqto-log for history");
-    } else {
-        debug!("hstry integration disabled");
     }
 
     // Initialize EAVS client if configured

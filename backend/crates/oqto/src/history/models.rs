@@ -63,13 +63,13 @@ pub struct ChatSession {
     pub is_child: bool,
     /// Path to the session JSON file (for loading messages later)
     pub source_path: Option<String>,
-    /// Persisted stats from hstry metadata (when available)
+    /// Persisted stats from chat history metadata (when available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stats: Option<ChatSessionStats>,
-    /// Last used model ID (from hstry conversation)
+    /// Last used model ID (from chat history)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Last used provider ID (from hstry conversation)
+    /// Last used provider ID (from chat history)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 }

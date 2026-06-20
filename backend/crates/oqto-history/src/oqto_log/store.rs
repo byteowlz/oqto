@@ -16,6 +16,105 @@ static OQTO_LOG_POOLS: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
 
 static OQTO_LOG_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations_oqto_log");
 
+const TIMELINE_V1_EXTENSIONS_VERSION: i64 = 20260508001;
+const TIMELINE_V1_EXTENSIONS_CHECKSUM: &[u8] = &[
+    0x29, 0xc0, 0x34, 0x38, 0xd3, 0x7a, 0x58, 0xb1, 0x17, 0x5f, 0x64, 0xba, 0xef, 0xd1, 0x2e, 0xba,
+    0x34, 0x77, 0x84, 0x21, 0xb3, 0x9a, 0x86, 0x0f, 0x23, 0x1f, 0x95, 0x5a, 0x1e, 0x3b, 0x5b, 0xcf,
+    0xdf, 0x61, 0xfc, 0x13, 0x2a, 0x61, 0x3d, 0x4d, 0x18, 0x3b, 0xd9, 0xdb, 0x72, 0xf3, 0x62, 0x1e,
+];
+
+async fn table_exists(pool: &sqlx::SqlitePool, table_name: &str) -> Result<bool> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(table_name)
+            .fetch_one(pool)
+            .await
+            .with_context(|| format!("inspect sqlite table {table_name}"))?;
+    Ok(count > 0)
+}
+
+async fn column_exists(
+    pool: &sqlx::SqlitePool,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool> {
+    let query = format!(
+        "SELECT COUNT(1) FROM pragma_table_info('{}') WHERE name = ?",
+        table_name.replace('\'', "''")
+    );
+    let count: i64 = sqlx::query_scalar(&query)
+        .bind(column_name)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("inspect sqlite column {table_name}.{column_name}"))?;
+    Ok(count > 0)
+}
+
+pub(crate) async fn repair_accidental_projection_migration_drift(
+    pool: &sqlx::SqlitePool,
+) -> Result<()> {
+    if !table_exists(pool, "_sqlx_migrations").await? {
+        return Ok(());
+    }
+
+    let migration_checksum: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT checksum FROM _sqlx_migrations WHERE version = ? AND success = 1",
+    )
+    .bind(TIMELINE_V1_EXTENSIONS_VERSION)
+    .fetch_optional(pool)
+    .await
+    .context("inspect oqto-log timeline migration checksum")?;
+
+    if migration_checksum.as_deref() == Some(TIMELINE_V1_EXTENSIONS_CHECKSUM) {
+        return Ok(());
+    }
+
+    let has_accidental_table = table_exists(pool, "oqto_log_search_projection_checkpoints").await?;
+    if !has_accidental_table {
+        return Ok(());
+    }
+
+    let has_legacy_table = table_exists(pool, "oqto_log_hstry_projection_checkpoints").await?;
+    if !has_legacy_table {
+        sqlx::query(
+            "ALTER TABLE oqto_log_search_projection_checkpoints RENAME TO oqto_log_hstry_projection_checkpoints",
+        )
+        .execute(pool)
+        .await
+        .context("restore immutable timeline projection checkpoint table name")?;
+    }
+
+    if column_exists(
+        pool,
+        "oqto_log_hstry_projection_checkpoints",
+        "projection_conversation_id",
+    )
+    .await?
+        && !column_exists(
+            pool,
+            "oqto_log_hstry_projection_checkpoints",
+            "hstry_conversation_id",
+        )
+        .await?
+    {
+        sqlx::query(
+            "ALTER TABLE oqto_log_hstry_projection_checkpoints RENAME COLUMN projection_conversation_id TO hstry_conversation_id",
+        )
+        .execute(pool)
+        .await
+        .context("restore immutable timeline projection checkpoint column name")?;
+    }
+
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ? AND success = 1")
+        .bind(TIMELINE_V1_EXTENSIONS_CHECKSUM)
+        .bind(TIMELINE_V1_EXTENSIONS_VERSION)
+        .execute(pool)
+        .await
+        .context("restore immutable timeline migration checksum")?;
+
+    Ok(())
+}
+
 fn normalize_role(role: &str) -> &'static str {
     if role.eq_ignore_ascii_case("user") {
         "user"
@@ -73,6 +172,15 @@ pub async fn migrate_db_path(db_path: &Path) -> Result<()> {
             )
         })?;
 
+    repair_accidental_projection_migration_drift(&pool)
+        .await
+        .with_context(|| {
+            format!(
+                "repairing oqto-log migration metadata: {}",
+                db_path.display()
+            )
+        })?;
+
     OQTO_LOG_MIGRATOR
         .run(&pool)
         .await
@@ -102,6 +210,10 @@ async fn open_workspace_pool(user_home: &Path, workspace_id: &str) -> Result<sql
         .connect_with(connect_options)
         .await
         .with_context(|| format!("connecting oqto-log db: {}", db_path.display()))?;
+
+    repair_accidental_projection_migration_drift(&pool)
+        .await
+        .context("repairing oqto-log migration metadata")?;
 
     OQTO_LOG_MIGRATOR
         .run(&pool)
@@ -871,4 +983,82 @@ pub async fn read_session_stats(
         messages,
         latest_source_hash,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    #[tokio::test]
+    async fn repairs_accidental_projection_migration_drift() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let db_path = temp.path().join("oqto-log.sqlite");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .create_if_missing(true),
+            )
+            .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (?, 'timeline v1 extensions', 1, ?, 0)",
+        )
+        .bind(TIMELINE_V1_EXTENSIONS_VERSION)
+        .bind(vec![0x71_u8; 48])
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            r#"
+            CREATE TABLE oqto_log_search_projection_checkpoints (
+                checkpoint_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                projection_conversation_id TEXT,
+                last_turn_version INTEGER,
+                last_projected_hash TEXT,
+                projected_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        repair_accidental_projection_migration_drift(&pool).await?;
+
+        assert!(table_exists(&pool, "oqto_log_hstry_projection_checkpoints").await?);
+        assert!(!table_exists(&pool, "oqto_log_search_projection_checkpoints").await?);
+        assert!(
+            column_exists(
+                &pool,
+                "oqto_log_hstry_projection_checkpoints",
+                "hstry_conversation_id"
+            )
+            .await?
+        );
+        let checksum: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+                .bind(TIMELINE_V1_EXTENSIONS_VERSION)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(checksum, TIMELINE_V1_EXTENSIONS_CHECKSUM);
+
+        OQTO_LOG_MIGRATOR.run(&pool).await?;
+        Ok(())
+    }
 }

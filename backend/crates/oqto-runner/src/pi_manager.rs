@@ -1200,7 +1200,7 @@ impl PiSessionManager {
             };
             infos.push(PiSessionInfo {
                 session_id: id,
-                hstry_id: external_id,
+                external_history_id: external_id,
                 state: current_state,
                 last_activity: {
                     // Convert Instant to Unix timestamp in milliseconds.

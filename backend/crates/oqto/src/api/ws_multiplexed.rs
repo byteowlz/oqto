@@ -4,7 +4,6 @@
 //! - `pi` - Pi session commands and events
 //! - `files` - File operations (future)
 //! - `terminal` - Terminal I/O (future)
-//! - `hstry` - History queries (future)
 //! - `system` - System events (connection status, errors)
 
 use std::collections::{HashMap, HashSet};
@@ -22,7 +21,6 @@ use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::Row;
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -180,94 +178,6 @@ fn workspace_chat_messages_to_json(
     serde_json::Value::Array(mapped)
 }
 
-async fn read_hstry_message_version_snapshot(
-    session_id: &str,
-    _workspace: Option<String>,
-    is_multi_user: bool,
-) -> Option<oqto_protocol::events::MessageVersion> {
-    if is_multi_user {
-        return None;
-    }
-
-    let db_path = crate::history::hstry_db_path()?;
-    let pool = crate::history::repository::open_hstry_pool(&db_path)
-        .await
-        .ok()?;
-
-    let has_version_col: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'version'",
-    )
-    .fetch_one(&pool)
-    .await
-    .ok()?;
-
-    if has_version_col <= 0 {
-        return None;
-    }
-
-    let has_updated_at_col: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'updated_at'",
-    )
-    .fetch_one(&pool)
-    .await
-    .ok()?;
-    let has_created_at_col: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'created_at'",
-    )
-    .fetch_one(&pool)
-    .await
-    .ok()?;
-
-    let query = if has_updated_at_col > 0 && has_created_at_col > 0 {
-        r#"
-        SELECT c.version as version,
-               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-        FROM conversations c
-        WHERE c.source_id = 'pi'
-          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
-        ORDER BY COALESCE(c.updated_at, c.created_at) DESC
-        LIMIT 1
-        "#
-    } else {
-        r#"
-        SELECT c.version as version,
-               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-        FROM conversations c
-        WHERE c.source_id = 'pi'
-          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
-        LIMIT 1
-        "#
-    };
-
-    let mut row = None;
-    for attempt in 0..3 {
-        row = sqlx::query(query)
-            .bind(session_id)
-            .bind(session_id)
-            .bind(session_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten();
-        if row.is_some() {
-            break;
-        }
-        if attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(120)).await;
-        }
-    }
-
-    let row = row?;
-    let version = row.try_get::<i64, _>("version").ok()?;
-    let message_count = row.try_get::<i64, _>("message_count").ok();
-
-    Some(oqto_protocol::events::MessageVersion {
-        version: version.max(0) as u64,
-        message_count: message_count.map(|v| v.max(0) as u64),
-        last_message_hash: None,
-    })
-}
-
 use super::handlers::trx::{
     CloseTrxIssueRequest, CreateTrxIssueRequest, TrxWorkspaceQuery, UpdateTrxIssueRequest,
 };
@@ -284,7 +194,6 @@ pub enum Channel {
     Agent,
     Files,
     Terminal,
-    Hstry,
     Trx,
     Session,
     System,
@@ -302,7 +211,6 @@ pub enum WsCommand {
     Agent(oqto_protocol::commands::Command),
     Files(FilesWsCommand),
     Terminal(TerminalWsCommand),
-    Hstry(HstryWsCommand),
     Trx(TrxWsCommand),
     Session(SessionWsCommand),
     Bus(crate::bus::BusCommand),
@@ -472,19 +380,6 @@ pub enum TerminalWsCommand {
     },
 }
 
-/// History channel commands (placeholder for future implementation).
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HstryWsCommand {
-    Query {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        session_id: Option<String>,
-        query: Option<String>,
-        limit: Option<u32>,
-    },
-}
-
 /// Session channel commands (legacy WS protocol).
 #[derive(Debug, Deserialize)]
 pub struct SessionWsCommand {
@@ -571,7 +466,6 @@ pub enum WsEvent {
     Agent(Box<oqto_protocol::events::Event>),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
-    Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
     Bus(crate::bus::BusWsEvent),
@@ -809,22 +703,6 @@ impl TreeTraversalContext {
         self.visited_nodes
             .load(std::sync::atomic::Ordering::Relaxed)
     }
-}
-
-/// Hstry channel events.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HstryWsEvent {
-    Result {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        data: Value,
-    },
-    Error {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        error: String,
-    },
 }
 
 /// TRX channel events.
@@ -1564,9 +1442,6 @@ async fn handle_ws_command(
         WsCommand::Terminal(term_cmd) => {
             terminal::handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
-        WsCommand::Hstry(hstry_cmd) => {
-            history::handle_hstry_command(hstry_cmd, user_id, state).await
-        }
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await
@@ -1626,9 +1501,6 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | TerminalWsCommand::Input { id, .. }
             | TerminalWsCommand::Resize { id, .. }
             | TerminalWsCommand::Close { id, .. } => id.clone(),
-        },
-        WsCommand::Hstry(hstry_cmd) => match hstry_cmd {
-            HstryWsCommand::Query { id, .. } => id.clone(),
         },
         WsCommand::Trx(trx_cmd) => match trx_cmd {
             TrxWsCommand::List { id, .. }
@@ -1757,7 +1629,6 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
             };
             (label.to_string(), session_id, workspace_path)
         }
-        WsCommand::Hstry(_) => ("hstry.query".to_string(), None, None),
         WsCommand::Trx(trx_cmd) => {
             let label = match trx_cmd {
                 TrxWsCommand::List { .. } => "trx.list",
@@ -1986,7 +1857,7 @@ async fn broadcast_user_message(
         role: oqto_protocol::messages::Role::User,
         client_id,
         sender: None,
-        parts: vec![hstry_core::parts::Part::Text {
+        parts: vec![oqto_protocol::Part::Text {
             id: format!("part-{}", now),
             text: message.to_string(),
             format: None,
@@ -2931,93 +2802,6 @@ mod tests {
         let resolved =
             resolve_workspace_path_for_validation("../oqto_other_user/secret", &user_home);
         assert!(!resolved.starts_with(&user_home));
-    }
-
-    #[tokio::test]
-    async fn test_read_hstry_message_version_snapshot_reads_version_from_db() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("oqto-hstry-version-{unique}.db"));
-
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(true);
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .expect("open temp sqlite");
-
-        sqlx::query(
-            r#"CREATE TABLE conversations (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                external_id TEXT,
-                platform_id TEXT,
-                readable_id TEXT,
-                version INTEGER NOT NULL DEFAULT 0
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create conversations");
-
-        sqlx::query(
-            r#"CREATE TABLE messages (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create messages");
-
-        sqlx::query(
-            "INSERT INTO conversations (id, source_id, external_id, version) VALUES (?, 'pi', ?, ?)",
-        )
-        .bind("conv-1")
-        .bind("sess-1")
-        .bind(7_i64)
-        .execute(&pool)
-        .await
-        .expect("insert conversation");
-
-        sqlx::query("INSERT INTO messages (id, conversation_id) VALUES (?, ?)")
-            .bind("m-1")
-            .bind("conv-1")
-            .execute(&pool)
-            .await
-            .expect("insert m1");
-        sqlx::query("INSERT INTO messages (id, conversation_id) VALUES (?, ?)")
-            .bind("m-2")
-            .bind("conv-1")
-            .execute(&pool)
-            .await
-            .expect("insert m2");
-
-        drop(pool);
-
-        let previous = std::env::var("OQTO_HSTRY_DB").ok();
-        // SAFETY: test-only process-local env mutation, restored before exit.
-        unsafe { std::env::set_var("OQTO_HSTRY_DB", &db_path) };
-
-        let snapshot = read_hstry_message_version_snapshot("sess-1", None, false).await;
-
-        if let Some(prev) = previous {
-            // SAFETY: test-only process-local env mutation, restored before exit.
-            unsafe { std::env::set_var("OQTO_HSTRY_DB", prev) };
-        } else {
-            // SAFETY: test-only process-local env mutation, restored before exit.
-            unsafe { std::env::remove_var("OQTO_HSTRY_DB") };
-        }
-
-        let _ = std::fs::remove_file(&db_path);
-
-        let snapshot = snapshot.expect("snapshot present");
-        assert_eq!(snapshot.version, 7);
-        assert_eq!(snapshot.message_count, Some(2));
     }
 
     #[tokio::test]

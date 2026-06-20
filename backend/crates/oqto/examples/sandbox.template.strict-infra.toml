@@ -1,6 +1,6 @@
 # Oqto sandbox template: strict-infra
 # Use for security-critical repos (runner/auth/secrets/control-plane).
-# Recommended targets: oqto/oqto_refactor, kyz, eavs, hstry, mmry, agntz, trx.
+# Recommended targets: oqto/oqto_refactor, kyz, eavs, mmry, agntz, trx.
 
 "$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
 

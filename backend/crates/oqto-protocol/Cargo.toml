@@ -9,7 +9,6 @@ authors.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-hstry-core = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings", "chrono-impl", "serde-json-impl"] }

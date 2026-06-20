@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn searches_all_oqto_log_workspaces_without_hstry() {
+    async fn searches_all_oqto_log_workspaces_without_legacy_history() {
         let temp = tempfile::tempdir().expect("temp home");
         seed_session(
             temp.path(),

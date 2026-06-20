@@ -17,7 +17,6 @@ serde_json.workspace = true
 sha2.workspace = true
 chrono.workspace = true
 futures.workspace = true
-hstry-core.workspace = true
 hyper-util.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

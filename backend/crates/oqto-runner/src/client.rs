@@ -652,7 +652,7 @@ impl RunnerClient {
         }
     }
 
-    /// Get messages from a workspace Pi session (hstry-backed).
+    /// Get messages from a workspace Pi session (oqto-log-backed).
     pub async fn get_workspace_chat_messages(
         &self,
         workspace_path: impl Into<String>,
@@ -672,7 +672,7 @@ impl RunnerClient {
         }
     }
 
-    /// List workspace Pi chat sessions (hstry-backed).
+    /// List workspace Pi chat sessions (oqto-log-backed).
     pub async fn list_workspace_chat_sessions(
         &self,
         workspace: Option<String>,
@@ -692,7 +692,7 @@ impl RunnerClient {
         }
     }
 
-    /// Get a workspace Pi chat session (hstry-backed).
+    /// Get a workspace Pi chat session (oqto-log-backed).
     pub async fn get_workspace_chat_session(
         &self,
         session_id: impl Into<String>,
@@ -708,7 +708,7 @@ impl RunnerClient {
         }
     }
 
-    /// Get messages from a workspace Pi chat session (hstry-backed, parts preserved).
+    /// Get messages from a workspace Pi chat session (oqto-log-backed, parts preserved).
     pub async fn get_workspace_chat_session_messages(
         &self,
         session_id: impl Into<String>,
@@ -1365,7 +1365,7 @@ impl RunnerClient {
         }
     }
 
-    /// Delete a Pi session: close the process, remove from hstry, delete JSONL file.
+    /// Delete a Pi session: close the process, remove from chat history, delete JSONL file.
     pub async fn pi_delete_session(&self, session_id: &str) -> Result<()> {
         let req = RunnerRequest::PiDeleteSession(PiDeleteSessionRequest {
             session_id: session_id.to_string(),

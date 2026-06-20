@@ -1,7 +1,7 @@
 //! Canonical event types.
 //!
 //! Events are ephemeral signals for real-time UI updates. They are NOT stored in
-//! hstry as messages (but some may be logged for debugging).
+//! oqto-log as messages (but some may be logged for debugging).
 //!
 //! Events form a state machine: the frontend can always derive the exact UI state
 //! from the current event without tracking history.
@@ -245,7 +245,7 @@ pub enum EventPayload {
     /// Full message list (response to get_messages or on reconnect).
     Messages { messages: Vec<Message> },
 
-    /// Persisted count (after hstry write).
+    /// Persisted count (after oqto-log write).
     Persisted { message_count: u64 },
 
     // -- Transport reliability --

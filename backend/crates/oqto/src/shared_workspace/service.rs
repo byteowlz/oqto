@@ -1198,7 +1198,7 @@ impl SharedWorkspaceService {
             serde_json::json!({ "path": home, "mode": "2770" }),
         );
 
-        // Provision the runner (hstry, mmry, oqto-runner) for the shared workspace user.
+        // Provision the runner (mmry, oqto-runner) for the shared workspace user.
         // This is the same setup-user-runner call used for regular users, so the shared
         // workspace gets its own runner process that can list/create sessions.
         crate::local::linux_users::usermgr_request(
