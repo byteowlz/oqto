@@ -1,4 +1,12 @@
-# Oqto install contract
+# Oqto install contract (reference)
+
+> **Reference, not an ADR.** This is a generated snapshot of the typed manifest in
+> `backend/crates/oqto-provisioning`; regenerate/verify with the commands below rather than
+> hand-editing. The runner-unit rows below reflect the **current** always-on per-user
+> `oqto-runner.service` model; **ADR-0002** moves runner lifecycle to systemd socket
+> activation, which will change the Services and socket rows once implemented. The host
+> layout and file-class model behind this contract are decided in **ADR-0016**.
+
 
 This document captures the current setup contract used by `oqto-setup plan` and `oqtoctl doctor --contract`.
 
