@@ -1,7 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
-import { type Plugin, defineConfig, loadEnv } from "vite";
+import { type Plugin, type ProxyOptions, defineConfig, loadEnv } from "vite";
+
+// Log transient upstream proxy failures (ECONNREFUSED/ECONNRESET while the
+// backend is down or restarting) as a concise warning, instead of letting the
+// unhandled http-proxy 'error' event surface as a stack trace / tear down the
+// Vite dev server. oqto-sp28.
+function proxyErrorLogger(label: string): ProxyOptions["configure"] {
+	return (proxy) => {
+		proxy.on("error", (err) => {
+			const code = (err as NodeJS.ErrnoException).code ?? err.message;
+			console.warn(
+				`[vite proxy ${label}] upstream ${code} - backend down or restarting`,
+			);
+		});
+	};
+}
 
 const ghosttyWasmSource = path.resolve(
 	__dirname,
@@ -83,30 +98,36 @@ export default defineConfig(({ mode }) => {
 				"^/c/[^/]+/api": {
 					target: caddyUrl,
 					changeOrigin: true,
+					configure: proxyErrorLogger("c/api"),
 				},
 				"^/c/[^/]+/files": {
 					target: caddyUrl,
 					changeOrigin: true,
+					configure: proxyErrorLogger("c/files"),
 				},
 				"^/c/[^/]+/term": {
 					target: caddyUrl,
 					changeOrigin: true,
 					ws: true,
+					configure: proxyErrorLogger("c/term"),
 				},
 				"/api/files": {
 					target: fileserverUrl,
 					changeOrigin: true,
 					rewrite: (pathValue) => pathValue.replace(/^\/api\/files/, ""),
+					configure: proxyErrorLogger("api/files"),
 				},
 				"/api/models-dev": {
 					target: "https://models.dev",
 					changeOrigin: true,
 					rewrite: (pathValue) => pathValue.replace(/^\/api\/models-dev/, ""),
+					configure: proxyErrorLogger("api/models-dev"),
 				},
 				"/api": {
 					target: controlPlaneUrl,
 					changeOrigin: true,
 					ws: true,
+					configure: proxyErrorLogger("api"),
 				},
 			},
 		},
