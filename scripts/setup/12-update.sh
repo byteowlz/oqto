@@ -91,7 +91,6 @@ update_tools() {
     [mmry]=mmry
     [trx]=trx
     [agntz]=agntz
-    [mailz]=mailz
     [sx]=sx
     [scrpr]=scrpr
     [tmpltr]=tmpltr

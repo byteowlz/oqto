@@ -25,7 +25,6 @@ Ansible playbook for setting up and hardening a Linux server for Oqto.
    - agntz (agent operations)
    - mmry (memory system)
    - trx (task tracking)
-   - mailz (agent messaging)
    - OpenCode (local mode only)
 
 4. **Configures Oqto**
