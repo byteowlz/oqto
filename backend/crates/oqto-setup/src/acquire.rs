@@ -73,9 +73,52 @@ pub fn verify_sha256(artifact: &Path, checksum_file: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Fetch every artifact in `plan` (and its checksum sibling) into `dest_dir`,
-/// verifying each against its published sha256. Returns the staged tarball paths
-/// in plan order. Fail-closed: a download or checksum failure aborts the bundle.
+/// Extract the lowercase sha256 recorded for `filename` from a combined
+/// `checksums.txt` body (`<sha256>  <filename>` lines, optional `*` binary
+/// marker). Errors if no line matches.
+pub fn checksum_for(checksums: &str, filename: &str) -> Result<String> {
+    for line in checksums.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if name.trim_start_matches('*') == filename {
+            return Ok(hash.to_ascii_lowercase());
+        }
+    }
+    bail!("checksums.txt has no entry for {filename}")
+}
+
+/// Verify `artifact` against the sha256 recorded for `filename` in a combined
+/// `checksums.txt` file — the format byteowlz/oqto releases actually publish
+/// (one file per release, not a per-artifact `.sha256` sibling).
+pub fn verify_against_checksums(
+    artifact: &Path,
+    checksums_file: &Path,
+    filename: &str,
+) -> Result<()> {
+    let checksums = std::fs::read_to_string(checksums_file)
+        .with_context(|| format!("Failed reading checksums {}", checksums_file.display()))?;
+    let expected = checksum_for(&checksums, filename)
+        .with_context(|| format!("in {}", checksums_file.display()))?;
+
+    let bytes = std::fs::read(artifact)
+        .with_context(|| format!("Failed reading artifact {}", artifact.display()))?;
+    let actual = sha256_hex(&bytes);
+
+    if actual != expected {
+        bail!(
+            "Checksum mismatch for {} (expected {expected}, got {actual})",
+            artifact.display()
+        );
+    }
+    Ok(())
+}
+
+/// Fetch every artifact in `plan` (and its release `checksums.txt`) into
+/// `dest_dir`, verifying each against the published sha256. Returns the staged
+/// tarball paths in plan order. Fail-closed: a download or checksum failure
+/// aborts the bundle.
 pub fn acquire_artifacts(
     plan: &[ArtifactRef],
     dest_dir: &Path,
@@ -91,12 +134,12 @@ pub fn acquire_artifacts(
             .fetch(&artifact.url, &tarball)
             .with_context(|| format!("Failed downloading {}", artifact.name))?;
 
-        let checksum_file = dest_dir.join(format!("{}.sha256", artifact.filename));
+        let checksums_file = dest_dir.join(format!("{}.checksums.txt", artifact.filename));
         fetcher
-            .fetch(&artifact.checksum_url, &checksum_file)
-            .with_context(|| format!("Failed downloading checksum for {}", artifact.name))?;
+            .fetch(&artifact.checksums_url, &checksums_file)
+            .with_context(|| format!("Failed downloading checksums for {}", artifact.name))?;
 
-        verify_sha256(&tarball, &checksum_file)
+        verify_against_checksums(&tarball, &checksums_file, &artifact.filename)
             .with_context(|| format!("Checksum verification failed for {}", artifact.name))?;
         staged.push(tarball);
     }
@@ -134,17 +177,23 @@ mod tests {
             version: "0.1.0".into(),
             filename: filename.into(),
             url: url.into(),
-            checksum_url: format!("{url}.sha256"),
+            checksums_url: format!("{url}.checksums.txt"),
         }
     }
 
-    /// Build the fake file table for one artifact whose checksum matches.
+    /// Build the fake file table for one artifact whose checksums.txt entry
+    /// matches (with a decoy line, to exercise per-filename lookup).
     fn good_files(url: &str, filename: &str, content: &[u8]) -> HashMap<String, Vec<u8>> {
         let mut files = HashMap::new();
         files.insert(url.to_string(), content.to_vec());
         files.insert(
-            format!("{url}.sha256"),
-            format!("{}  {filename}\n", sha256_hex(content)).into_bytes(),
+            format!("{url}.checksums.txt"),
+            format!(
+                "{}  decoy-other.tar.gz\n{}  {filename}\n",
+                sha256_hex(b"decoy"),
+                sha256_hex(content)
+            )
+            .into_bytes(),
         );
         files
     }
@@ -162,6 +211,19 @@ mod tests {
     }
 
     #[test]
+    fn checksum_for_picks_matching_line_and_rejects_missing() {
+        let body = "aaaa  other.tar.gz\nbbbb  target.tar.gz\n";
+        assert_eq!(checksum_for(body, "target.tar.gz").unwrap(), "bbbb");
+        assert!(checksum_for(body, "absent.tar.gz").is_err());
+    }
+
+    #[test]
+    fn checksum_for_strips_binary_marker_and_lowercases() {
+        let body = "ABCD *target.tar.gz\n";
+        assert_eq!(checksum_for(body, "target.tar.gz").unwrap(), "abcd");
+    }
+
+    #[test]
     fn acquire_fetches_and_verifies_each_artifact() {
         let dir = tempfile::tempdir().unwrap();
         let url = "https://example/mmry.tar.gz";
@@ -176,10 +238,10 @@ mod tests {
 
         assert_eq!(staged, vec![dir.path().join("mmry.tar.gz")]);
         assert_eq!(std::fs::read(&staged[0]).unwrap(), content);
-        // Both the artifact and its checksum sibling were fetched.
+        // Both the artifact and its release checksums.txt were fetched.
         assert_eq!(
             *fetcher.calls.borrow(),
-            vec![url.to_string(), format!("{url}.sha256")]
+            vec![url.to_string(), format!("{url}.checksums.txt")]
         );
     }
 
@@ -191,7 +253,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(url.to_string(), b"actual-bytes".to_vec());
         files.insert(
-            format!("{url}.sha256"),
+            format!("{url}.checksums.txt"),
             format!("{}  trx.tar.gz\n", sha256_hex(b"expected-other-bytes")).into_bytes(),
         );
         let fetcher = FakeFetcher {

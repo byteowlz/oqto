@@ -34,13 +34,21 @@ There must be exactly one acquisition path: **manifest-driven download of prebui
 
 ## Implementation status
 
-On branch `feat/oqto-setup-engine-vemr` (commit `10401ec`):
+On branch `feat/oqto-setup-engine-vemr`:
 
-- **Landed:** the transactional activation engine in `oqto-setup` (`src/main.rs`), the manifest-driven acquisition resolver (`src/deps.rs`) and download driver (`src/acquire.rs`). 22 tests green; clippy + fmt clean. Covers the engine side of `oqto-vemr.3` and the resolver/download side of `oqto-vemr.9`.
-- **Pending (host-gated, do with oversight on a box that can exercise install/deploy):**
-  1. Wire `just install-deps` → `oqto-setup acquire` (additive, reversible — start here).
-  2. `release.yml`: publish the full multi-target bundle + per-artifact `.sha256`.
-  3. Delete the four duplicate acquisition paths and `deploy.sh`'s activation bash (the destructive half — only after 1–2 prove out).
+- **Landed (`10401ec`):** the transactional activation engine (`src/main.rs`), the manifest-driven acquisition resolver (`src/deps.rs`) and download driver (`src/acquire.rs`).
+- **Landed (checksums fix):** `acquire` now verifies against each release's combined **`checksums.txt`** — the format byteowlz/oqto releases actually publish — instead of the non-existent per-file `.sha256` siblings it originally assumed. 24 tests green; clippy + fmt clean. **Verified end-to-end against live releases** (oqto bundle 26M, mmry 43M, sx 3.6M — all three naming variants downloaded + checksum-verified).
+
+Findings that refine the remaining plan (probed against live releases, 2026-06-25):
+- **Acquisition is per-repo, not one bundle.** Each byteowlz tool publishes its own release + `checksums.txt`; `deps.rs` resolves per-repo URLs. So oqto's `release.yml` does **not** need to re-bundle the byteowlz tools — `oqto-vemr.9`'s "full bundle" scope shrinks to "the oqto platform bundle," already published.
+- **`checksums.txt` already exists** for every release → the "publish checksum siblings" idea is moot; consuming the existing combined file was the fix.
+- **11/14 manifest tools resolve cleanly** (oqto, mmry, trx, sx, eavs, agntz, tmpltr, sldr, skdlr, ignr, scrpr). **mailz / eaRS / kokorox have 0 published releases** (optional mail/voice tools, build-from-source only). Since `acquire` is fail-closed, the full-manifest run aborts on them until they either publish releases or the manifest gains an explicit `optional`/build-from-source marker.
+- **Tarball layouts differ:** byteowlz Rust tools are flat multi-binary (`mmry` ships `mmry`/`mmry-mcp`/`mmry-tui`/`mmry-service`); Go tools include `LICENSE`/`README`; the **oqto bundle is a structured dir for `oqto-setup install`, not flat bin placement**. So the extract→PATH step is layout-aware and belongs in Rust, not a justfile bash loop.
+
+- **Pending (host-gated; do with oversight on a box that can exercise install/deploy):**
+  1. Decide optional-tool handling (mark mailz/eaRS/kokorox optional, or publish their releases), then add the extract→PATH placement step in `oqto-setup` and wire `just install-deps` → it (additive, reversible).
+  2. `release.yml`: extend the oqto bundle to additional target triples (aarch64 today; macOS/Windows later).
+  3. Delete the four duplicate acquisition paths and `deploy.sh`'s activation bash (destructive — only after 1 proves out).
 
 ## Consequences
 

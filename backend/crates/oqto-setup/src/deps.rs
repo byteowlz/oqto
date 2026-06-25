@@ -107,6 +107,18 @@ impl Component {
             ),
         }
     }
+
+    /// The combined `checksums.txt` URL for this component's release. One file
+    /// per release covers every arch (`<sha256>  <filename>` lines), which is
+    /// what byteowlz/oqto releases actually publish (no per-file `.sha256`).
+    pub fn checksums_url(&self, base: &str) -> String {
+        let base = base.trim_end_matches('/');
+        format!(
+            "{base}/{name}/releases/download/v{ver}/checksums.txt",
+            name = self.name,
+            ver = self.version
+        )
+    }
 }
 
 /// A fully-resolved artifact to fetch: where to download it, where to get its
@@ -119,7 +131,10 @@ pub struct ArtifactRef {
     pub version: String,
     pub filename: String,
     pub url: String,
-    pub checksum_url: String,
+    /// The combined `checksums.txt` for this artifact's release. One file per
+    /// release lists every artifact as `<sha256>  <filename>` lines; the driver
+    /// resolves this artifact's hash by looking up `filename`.
+    pub checksums_url: String,
 }
 
 /// Resolve every component into a concrete [`ArtifactRef`] for `target` under
@@ -141,13 +156,13 @@ pub fn plan_downloads(
                 .next()
                 .unwrap_or(c.name.as_str())
                 .to_string();
-            let checksum_url = format!("{url}.sha256");
+            let checksums_url = c.checksums_url(base);
             ArtifactRef {
                 name: c.name.clone(),
                 version: c.version.clone(),
                 filename,
                 url,
-                checksum_url,
+                checksums_url,
             }
         })
         .collect()
@@ -249,7 +264,7 @@ pi = "latest"
     }
 
     #[test]
-    fn plan_downloads_resolves_filename_and_checksum_sibling() {
+    fn plan_downloads_resolves_filename_and_checksums_url() {
         let components = vec![
             Component::new("mmry", "0.11.0"),
             Component::new("sx", "2.4.0"),
@@ -267,15 +282,14 @@ pi = "latest"
                 version: "0.11.0".into(),
                 filename: "mmry-v0.11.0-x86_64-unknown-linux-gnu.tar.gz".into(),
                 url: "https://github.com/byteowlz/mmry/releases/download/v0.11.0/mmry-v0.11.0-x86_64-unknown-linux-gnu.tar.gz".into(),
-                checksum_url: "https://github.com/byteowlz/mmry/releases/download/v0.11.0/mmry-v0.11.0-x86_64-unknown-linux-gnu.tar.gz.sha256".into(),
+                checksums_url: "https://github.com/byteowlz/mmry/releases/download/v0.11.0/checksums.txt".into(),
             }
         );
-        // Go tool keeps its goreleaser filename.
+        // Go tool keeps its goreleaser filename; checksums.txt is per-release.
         assert_eq!(plan[1].filename, "sx_Linux_x86_64.tar.gz");
-        assert!(
-            plan[1]
-                .checksum_url
-                .ends_with("sx_Linux_x86_64.tar.gz.sha256")
+        assert_eq!(
+            plan[1].checksums_url,
+            "https://github.com/byteowlz/sx/releases/download/v2.4.0/checksums.txt"
         );
     }
 }
