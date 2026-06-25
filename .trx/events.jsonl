@@ -596,3 +596,14 @@
 {"id":"evt_2mx7wvpp","issue_id":"oqto-nppq.8","action":"created","timestamp":"2026-06-25T09:23:35.385021394Z"}
 {"id":"evt_1w9qrb1a","issue_id":"oqto-nppq.9","action":"created","timestamp":"2026-06-25T09:23:35.410670538Z"}
 {"id":"evt_56719fs7","issue_id":"oqto-nppq.10","action":"created","timestamp":"2026-06-25T09:23:35.436483580Z"}
+{"id":"evt_y7ag8q3a","issue_id":"oqto-4vjy","action":"created","timestamp":"2026-06-25T20:41:23.221396584Z"}
+{"id":"evt_k71asc53","issue_id":"oqto-4vjy.1","action":"created","timestamp":"2026-06-25T20:41:23.259403068Z"}
+{"id":"evt_fg21s6x9","issue_id":"oqto-4vjy.2","action":"created","timestamp":"2026-06-25T20:41:23.289786852Z"}
+{"id":"evt_2w19xvse","issue_id":"oqto-4vjy.3","action":"created","timestamp":"2026-06-25T20:41:23.320677331Z"}
+{"id":"evt_zg57sg5k","issue_id":"oqto-4vjy.4","action":"created","timestamp":"2026-06-25T20:41:23.345596876Z"}
+{"id":"evt_3wxqwtps","issue_id":"oqto-4vjy.5","action":"created","timestamp":"2026-06-25T20:41:23.369955748Z"}
+{"id":"evt_pfazr2cj","issue_id":"oqto-4vjy.3","action":"updated","timestamp":"2026-06-25T20:41:44.362740360Z","changes":[{"field":"description","from":"Implement the spec as code in  (naming/checksums/layout/targets), wrapped by a reusable workflow at byteowlz/.github/.github/workflows/release.yml. May wrap cargo-dist/goreleaser internally but normalizes output to ADR-0021. CROSS-REPO (byteowlz/byt + byteowlz/.github).","to":"Implement the spec as code in the byt meta-tool as a new \"byt release\" subcommand (naming/checksums/layout/targets per ADR-0021), wrapped by a reusable workflow at byteowlz/.github/.github/workflows/release.yml. May wrap cargo-dist/goreleaser internally but normalizes output to the spec. NOTE: byt currently has no release subcommand (confirmed). CROSS-REPO: byteowlz/byt + byteowlz/.github."}]}
+{"id":"evt_c8ea1fbj","issue_id":"oqto-4vjy.4","action":"dep_added","timestamp":"2026-06-25T20:41:44.389608038Z","note":"oqto-4vjy.3"}
+{"id":"evt_3n1j73ps","issue_id":"oqto-4vjy.5","action":"dep_added","timestamp":"2026-06-25T20:41:44.423272182Z","note":"oqto-4vjy.4"}
+{"id":"evt_qjahcvmm","issue_id":"oqto-4vjy.1","action":"closed","timestamp":"2026-06-25T20:41:44.447840127Z","changes":[{"field":"status","from":"open","to":"closed"}]}
+{"id":"evt_8an41c8e","issue_id":"oqto-4vjy","action":"updated","timestamp":"2026-06-25T20:41:44.475835910Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
