@@ -68,6 +68,7 @@ import {
 import { workspaceFileUrl } from "@/lib/api/files";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
+import { insertFileMention } from "@/lib/file-mention";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import { downloadFileMux, uploadFileMux } from "@/lib/mux-files";
 import {
@@ -2172,6 +2173,42 @@ export function ChatView({
 		},
 		[setInput],
 	);
+
+	// Insert an `@<path>` mention at the cursor in the live composer.
+	const insertFileMentionAtCursor = useCallback(
+		(path: string) => {
+			const textarea = inputRef.current;
+			const currentValue = inputValueRef.current;
+			const cursor = textarea?.selectionStart ?? currentValue.length;
+			const { value: nextValue, cursor: nextCursor } = insertFileMention(
+				currentValue,
+				cursor,
+				path,
+			);
+			setInput(nextValue);
+			requestAnimationFrame(() => {
+				const el = inputRef.current;
+				if (!el) return;
+				el.focus();
+				el.setSelectionRange(nextCursor, nextCursor);
+			});
+		},
+		[setInput],
+	);
+
+	// File-tree "Mention file in chat" action emits oqto:mention-file-in-chat;
+	// handle it in the live composer (previously only wired in the unrendered
+	// ChatInputArea, so the action did nothing). oqto-drwc.
+	// useeffect-guardrail: allow - window CustomEvent subscription for file-tree @mention insertion
+	useEffect(() => {
+		const onMentionFile = (event: Event) => {
+			const detail = (event as CustomEvent<{ path?: string }>).detail;
+			if (detail?.path) insertFileMentionAtCursor(detail.path);
+		};
+		window.addEventListener("oqto:mention-file-in-chat", onMentionFile);
+		return () =>
+			window.removeEventListener("oqto:mention-file-in-chat", onMentionFile);
+	}, [insertFileMentionAtCursor]);
 
 	const handleStop = useCallback(async () => {
 		await abort();
