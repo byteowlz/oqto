@@ -35,7 +35,20 @@ function copyGhosttyWasm(): Plugin {
 			return;
 		}
 		fs.mkdirSync(path.dirname(ghosttyWasmTarget), { recursive: true });
-		fs.copyFileSync(ghosttyWasmSource, ghosttyWasmTarget);
+		try {
+			fs.copyFileSync(ghosttyWasmSource, ghosttyWasmTarget);
+		} catch (err) {
+			// copyFileSync uses copy_file_range/reflink, which some filesystems
+			// (CoW/overlay/virtiofs) reject with EPERM/ENOSYS/EXDEV even when
+			// permissions are fine. Fall back to a plain read+write copy so the
+			// dev server can start. oqto-y0zy.
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code === "EPERM" || code === "ENOSYS" || code === "EXDEV") {
+				fs.writeFileSync(ghosttyWasmTarget, fs.readFileSync(ghosttyWasmSource));
+			} else {
+				throw err;
+			}
+		}
 	};
 
 	return {
