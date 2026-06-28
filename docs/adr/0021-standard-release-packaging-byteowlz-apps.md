@@ -34,3 +34,4 @@ This gives: single source of truth (`byt`) + GitHub-native org-wide reuse (`.git
 - Drift like skdlr's missing `checksums.txt` becomes impossible — produced by construction.
 - Migration cost: every byteowlz repo adopts the reusable workflow once (one-time per repo). Tracked org-side; the oqto-side cleanup (deps.rs simplification) is gated on repos conforming.
 - **Near-term unblock (independent of the rollout):** skdlr must publish a `checksums.txt` now so the full managed `acquire` is green.
+- **Cross-compilation rule for Rust apps with C deps:** apps pulling OpenSSL (via `git2`, native-TLS `reqwest`, etc.) must **vendor the C dependency** (e.g. `git2`'s `vendored-openssl` feature) — `zig cc` can't see Debian's multiarch system headers, and vendoring also drops the runtime libssl dependency. Verified on byt (its `git2`→`openssl-sys` build failed until vendored). Each migrating repo (eavs/mmry/trx/…) applies this in its own `Cargo.toml`.
