@@ -365,6 +365,28 @@ update-deps:
     echo ""
     echo "Done: dependencies.toml updated"
 
+# Acquire PREBUILT dependency binaries from GitHub releases and install them
+# (ADR-0018 / vemr.9): the manifest-driven, checksum-verified path via
+# `oqto-setup acquire --install-bin`. Additive alternative to `install-deps`
+# (which builds from sibling source). Needs sudo for /usr/local/bin.
+acquire-deps arch="x86-64":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SETUP="$(command -v oqto-setup || true)"
+    if [ -z "$SETUP" ]; then
+        echo "building oqto-setup..."
+        (cd backend && cargo build -q -p oqto-setup)
+        SETUP="$(pwd)/backend/target/debug/oqto-setup"
+    fi
+    STAGE="$(mktemp -d)"
+    trap 'rm -rf "$STAGE"' EXIT
+    echo "Acquiring + installing prebuilt deps (arch={{arch}}) -> /usr/local/bin"
+    sudo "$SETUP" acquire \
+        --manifest "$(pwd)/dependencies.toml" \
+        --arch "{{arch}}" \
+        --dest "$STAGE" \
+        --install-bin /usr/local/bin
+
 # Install/update all byteowlz dependencies from sibling source repos
 install-deps *ARGS:
     #!/usr/bin/env bash

@@ -93,6 +93,10 @@ enum Command {
         /// Directory to stage downloaded artifacts into.
         #[arg(long, default_value = "dist/out")]
         dest: PathBuf,
+        /// If set, extract the staged bundle and install binaries into this dir
+        /// (e.g. /usr/local/bin) — completes the acquire -> install path.
+        #[arg(long)]
+        install_bin: Option<PathBuf>,
     },
 }
 
@@ -192,13 +196,20 @@ fn main() -> Result<()> {
             arch,
             base_url,
             dest,
-        } => acquire_bundle(&manifest, arch, &base_url, &dest),
+            install_bin,
+        } => acquire_bundle(&manifest, arch, &base_url, &dest, install_bin.as_deref()),
     }
 }
 
 /// Resolve the dependency manifest and download + checksum-verify every artifact
 /// into `dest` using the real `curl` fetcher.
-fn acquire_bundle(manifest: &Path, arch: ArchArg, base_url: &str, dest: &Path) -> Result<()> {
+fn acquire_bundle(
+    manifest: &Path,
+    arch: ArchArg,
+    base_url: &str,
+    dest: &Path,
+    install_bin: Option<&Path>,
+) -> Result<()> {
     let contents = fs::read_to_string(manifest)
         .with_context(|| format!("Failed to read dependency manifest: {}", manifest.display()))?;
     let components = deps::parse_dependency_manifest(&contents)?;
@@ -214,6 +225,26 @@ fn acquire_bundle(manifest: &Path, arch: ArchArg, base_url: &str, dest: &Path) -
         staged.len(),
         dest.display()
     );
+
+    if let Some(bin) = install_bin {
+        // The oqto platform bundle is a structured release installed via
+        // `oqto-setup install` (transactional); flat-install only the tools.
+        let tool_tarballs: Vec<PathBuf> = components
+            .iter()
+            .zip(&staged)
+            .filter(|(c, _)| !matches!(c.naming, deps::ArtifactNaming::Oqto))
+            .map(|(_, p)| p.clone())
+            .collect();
+        let installed = acquire::install_staged(&tool_tarballs, bin)?;
+        for b in &installed {
+            println!("installed {} -> {}", b, bin.join(b).display());
+        }
+        println!(
+            "Installed {} binary/binaries into {}",
+            installed.len(),
+            bin.display()
+        );
+    }
     Ok(())
 }
 

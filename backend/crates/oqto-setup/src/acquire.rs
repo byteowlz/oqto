@@ -146,6 +146,121 @@ pub fn acquire_artifacts(
     Ok(staged)
 }
 
+/// Recursively collect regular files under `root`.
+fn walk_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            walk_files(&path, out)?;
+        } else if path.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("exe")
+}
+
+/// Pick which extracted files are the binaries to install: if any live under a
+/// `bin/` directory (the standardized bundle layout, ADR-0021), install those;
+/// otherwise fall back to every executable regular file (covers today's flat
+/// byteowlz tool tarballs). `LICENSE`/`README` etc. are non-executable, skipped.
+fn pick_binaries(files: &[(PathBuf, bool)]) -> Vec<PathBuf> {
+    // Files directly under a `bin/` dir, paired with that bin dir's depth.
+    let in_bin: Vec<(&PathBuf, usize)> = files
+        .iter()
+        .filter(|(p, _)| {
+            p.parent()
+                .and_then(Path::file_name)
+                .is_some_and(|n| n == "bin")
+        })
+        .map(|(p, _)| (p, p.parent().map_or(0, |d| d.components().count())))
+        .collect();
+    // Prefer only the shallowest `bin/` (the bundle's top-level bin — never a
+    // nested `lib/.../bin`, e.g. a bundled node helper).
+    if let Some(min) = in_bin.iter().map(|(_, depth)| *depth).min() {
+        return in_bin
+            .iter()
+            .filter(|(_, depth)| *depth == min)
+            .map(|(p, _)| (*p).clone())
+            .collect();
+    }
+    // Flat tarballs: every executable regular file.
+    files
+        .iter()
+        .filter(|(_, exec)| *exec)
+        .map(|(p, _)| p.clone())
+        .collect()
+}
+
+/// Extract each staged tarball and install its binaries into `bin_dir` (mode
+/// `0755`), layout-aware via [`pick_binaries`]. Returns the installed binary
+/// names. This is the single install step the duplicate acquisition paths
+/// (install.sh, docker, setup module 08, deploy remediate) converge on.
+pub fn install_staged(staged: &[PathBuf], bin_dir: &Path) -> Result<Vec<String>> {
+    std::fs::create_dir_all(bin_dir)
+        .with_context(|| format!("creating bin dir {}", bin_dir.display()))?;
+    let mut installed = Vec::new();
+    for tarball in staged {
+        let name = tarball
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pkg");
+        let extract = tarball.with_file_name(format!(".extract-{name}"));
+        let _ = std::fs::remove_dir_all(&extract);
+        std::fs::create_dir_all(&extract)?;
+
+        let status = Command::new("tar")
+            .arg("-xzf")
+            .arg(tarball)
+            .arg("-C")
+            .arg(&extract)
+            .status()
+            .with_context(|| format!("spawning tar for {}", tarball.display()))?;
+        if !status.success() {
+            bail!("failed to extract {}", tarball.display());
+        }
+
+        let mut files = Vec::new();
+        walk_files(&extract, &mut files)?;
+        let pairs: Vec<(PathBuf, bool)> = files
+            .iter()
+            .map(|p| (p.clone(), is_executable(p)))
+            .collect();
+
+        for src in pick_binaries(&pairs) {
+            let bin = src
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let dest = bin_dir.join(&bin);
+            std::fs::copy(&src, &dest)
+                .with_context(|| format!("installing {bin} -> {}", dest.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perm = std::fs::metadata(&dest)?.permissions();
+                perm.set_mode(0o755);
+                std::fs::set_permissions(&dest, perm)?;
+            }
+            installed.push(bin);
+        }
+        let _ = std::fs::remove_dir_all(&extract);
+    }
+    Ok(installed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,4 +400,49 @@ mod tests {
 
         assert!(acquire_artifacts(&plan, dir.path(), &fetcher).is_err());
     }
+
+    #[test]
+    fn pick_binaries_prefers_bin_dir() {
+        let files = vec![
+            (PathBuf::from("/x/oqto-v1/bin/oqto"), true),
+            (PathBuf::from("/x/oqto-v1/bin/oqto-runner"), true),
+            (PathBuf::from("/x/oqto-v1/lib/thing.so"), false),
+            (PathBuf::from("/x/oqto-v1/README.md"), false),
+        ];
+        assert_eq!(
+            pick_binaries(&files),
+            vec![
+                PathBuf::from("/x/oqto-v1/bin/oqto"),
+                PathBuf::from("/x/oqto-v1/bin/oqto-runner"),
+            ]
+        );
+    }
+
+    #[test]
+    fn pick_binaries_ignores_nested_bin() {
+        // a nested lib/.../bin (e.g. a bundled node helper) must NOT be picked.
+        let files = vec![
+            (PathBuf::from("/x/app/bin/app"), true),
+            (PathBuf::from("/x/app/lib/sub/bin/helper.js"), true),
+        ];
+        assert_eq!(pick_binaries(&files), vec![PathBuf::from("/x/app/bin/app")]);
+    }
+
+    #[test]
+    fn pick_binaries_falls_back_to_executables() {
+        let files = vec![
+            (PathBuf::from("/x/mmry"), true),
+            (PathBuf::from("/x/mmry-mcp"), true),
+            (PathBuf::from("/x/LICENSE"), false),
+            (PathBuf::from("/x/README.md"), false),
+        ];
+        assert_eq!(
+            pick_binaries(&files),
+            vec![PathBuf::from("/x/mmry"), PathBuf::from("/x/mmry-mcp")]
+        );
+    }
+
+    // Note: install_staged()'s IO (tar extract + copy + chmod) is verified
+    // end-to-end on a real host (the cargo-test sandbox lacks a usable tar);
+    // its selection logic is covered by pick_binaries_* above.
 }

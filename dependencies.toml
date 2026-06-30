@@ -9,16 +9,16 @@ description = "Main platform (this repo)"
 
 [byteowlz]
 # Core backend services
-eavs = "0.6.2"
-mmry = "0.11.0"
-trx = "0.6.1"
-agntz = "0.3.0"
-sx = "2.4.0"
+eavs = "0.7.1"
+mmry = "0.13.1"
+trx = "0.6.2"
+agntz = "0.3.1"
+sx = "2.4.1"
 scrpr = "1.1.0"
-tmpltr = "0.3.0"
-sldr = "0.3.0"
+tmpltr = "0.3.1"
+sldr = "0.8.0"
 skdlr = "0.2.6"
-ignr = "0.1.1"
+ignr = "0.1.2"
 
 [optional]
 # Voice mode — GPU-best; no prebuilt binaries published, build from source when
