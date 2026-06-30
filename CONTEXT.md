@@ -27,6 +27,14 @@ _Avoid_: user (ambiguous — collides with the OS principal)
 The OS-level identity an agent's processes run as (a Linux uid). Created at provisioning time, never the same thing as an Account; one Account maps to one Principal in multi-user deployments.
 _Avoid_: user, linux user (use Principal when the OS identity is meant)
 
+**Workspace**:
+A named collection of work directories, owned by one Account (personal) or shared across Accounts (shared). The whole — the unit an Account opens and the unit of placement isolation.
+_Avoid_: project; and note the code's current `workspace_path` / `SharedWorkspace.path` actually name a work directory / Workspace respectively — a pending rename.
+
+**Work directory**:
+The directory a harness process runs in and loads its `AGENTS.md` from — the unit carrying a single agent persona. A Workspace contains many; each can run its own agent.
+_Avoid_: workspace (that is the whole), cwd, repo.
+
 **Harness**:
 An agent runtime a runner can spawn. The runner translates the harness's native protocol into the canonical protocol; nothing outside the runner sees harness-native messages. Pi is the only first-class harness (native full-fidelity translator); all others attach via bridges (ACP or their own interface) and advertise their capability set per session (see ADR-0006).
 _Avoid_: agent (ambiguous), backend (wrong layer)

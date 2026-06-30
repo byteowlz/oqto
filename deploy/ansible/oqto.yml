@@ -466,15 +466,6 @@
         CARGO_HOME: /usr/local/cargo
       failed_when: false  # Optional
 
-    - name: Install mailz via cargo
-      ansible.builtin.command: /usr/local/cargo/bin/cargo install mailz
-      args:
-        creates: /usr/local/cargo/bin/mailz
-      environment:
-        RUSTUP_HOME: /usr/local/rustup
-        CARGO_HOME: /usr/local/cargo
-      failed_when: false  # Optional
-
     # ==========================================================================
     # Install OpenCode (local mode)
     # ==========================================================================

@@ -411,7 +411,6 @@ install-deps *ARGS:
       case "$key" in
         eaRS) bin="ears" ;;
         kokorox) bin="koko" ;;
-        mailz) bin="mailz-cli" ;;
       esac
 
       if [[ -x "/usr/local/bin/$bin" ]]; then
@@ -554,7 +553,6 @@ check-deps:
       case "$key" in
         eaRS) bin="ears" ;;
         kokorox) bin="koko" ;;
-        mailz) bin="mailz-cli" ;;
       esac
       installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
       if [[ -z "$installed_ver" ]]; then
@@ -606,7 +604,6 @@ check-updates:
         ["byteowlz/mmry"]="mmry"
         ["byteowlz/trx"]="trx"
         ["byteowlz/agntz"]="agntz"
-        ["byteowlz/mailz"]="mailz"
         ["byteowlz/sldr"]="sldr"
         ["byteowlz/eaRS"]="eaRS"
         ["byteowlz/kokorox"]="kokorox"
