@@ -24,7 +24,7 @@ We standardize release packaging across all byteowlz apps so the consumer collap
 
 ## Where it lives / enforcement
 
-The spec is implemented **once, as code, in `byt release`** — the existing byteowlz cross-repo meta-tool (same home as `byt design-system sync`) — so naming/checksums/layout/targets come from one tested implementation, not N hand-rolled workflows. Each repo's release is a thin **reusable GitHub Actions workflow at `byteowlz/.github/.github/workflows/release.yml`** that installs `byt` and runs `byt release`; consumer repos call it pinned to a tag, making each repo's own `release.yml` ~3 lines.
+The spec is implemented **once, as code, in `byt release`** — the existing byteowlz cross-repo meta-tool (same home as `byt design-system sync`) — so naming/checksums/layout/targets come from one tested implementation, not N hand-rolled workflows. Each repo's release is a thin **reusable GitHub Actions workflow at `byteowlz/byt/.github/workflows/release.yml` (byt is public, so any repo can call it directly — no separate `.github` repo needed)** that installs `byt` and runs `byt release`; consumer repos call it pinned to a tag, making each repo's own `release.yml` ~3 lines.
 
 This gives: single source of truth (`byt`) + GitHub-native org-wide reuse (`.github`) + minimal per-repo surface. `byt release` may wrap cargo-dist/goreleaser internally, but **normalizes their output to this spec** — those tools are rejected as the public contract precisely because they produce provider-shaped, Rust-vs-Go-divergent output, which is the divergence being removed.
 
