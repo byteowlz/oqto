@@ -19,6 +19,7 @@ We standardize release packaging across all byteowlz apps so the consumer collap
 | Checksums | `checksums.txt` per release (`<sha256>  <filename>` lines), **mandatory**; signature (minisign/cosign) optional, recommended |
 | Tarball layout | executables under `bin/`; `LICENSE`/`README` at root |
 | Targets | required: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`; add `*-apple-darwin`, `x86_64-pc-windows-msvc` where the app supports them (ADR-0020) |
+| **glibc floor** | linux-gnu artifacts built against a **glibc floor of 2.28** via `cargo-zigbuild --target <triple>.2.28`, so prebuilt binaries run on older targets (RHEL8 / Ubuntu 18.04+). Without this, `ubuntu-latest`-built binaries require glibc ≥2.39 and **fail on Ubuntu 22.04** (demonstrated 2026-06-30). Dynamic-link only (NOT static/musl) — the host's patched glibc is used at runtime, so this is **not** a security regression. Artifact name keeps the plain triple (no `.2.28` suffix). |
 | Tag | `v{semver}` |
 
 ## Where it lives / enforcement
