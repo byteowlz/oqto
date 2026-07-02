@@ -1,10 +1,12 @@
-//! Typed resolver for the binary-acquisition set (ADR-0018 / vemr.9).
+//! Typed resolver for the binary-acquisition set (ADR-0018 / ADR-0021 / vemr.9).
 //!
-//! Encodes the GitHub-release artifact naming that the Docker downloader stage
-//! and `scripts/install.sh` already rely on, so the four duplicate acquisition
-//! paths (install.sh, docker downloader, setup module 08, deploy remediate) can
-//! collapse onto one manifest-driven resolver. This module is pure — parsing and
-//! URL construction only, no IO — so the naming scheme is unit-testable.
+//! Every byteowlz release (Rust and Go alike) is now packaged by `byt release`
+//! to one spec (ADR-0021): `{name}-v{ver}-{target-triple}.tar.gz`, a top-level
+//! `{name}-v{ver}-{triple}/bin/<exes>` layout, and a combined `checksums.txt`.
+//! So acquisition collapses to a single naming rule — no per-tool special cases.
+//! This module is pure (parsing + URL construction, no IO), so the scheme is
+//! unit-testable; the four former acquisition paths (install.sh, docker
+//! downloader, setup module 08, deploy remediate) converge on it.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -17,41 +19,15 @@ pub enum Arch {
     Aarch64,
 }
 
-/// Per-arch artifact identifiers: the Rust target triple plus the goreleaser
-/// OS/arch tokens used by the Go tools.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TargetTriple {
-    pub rust_target: &'static str,
-    pub go_os: &'static str,
-    pub go_arch: &'static str,
-}
-
 impl Arch {
-    pub fn target(self) -> TargetTriple {
+    /// The Rust/ADR-0021 target triple for this arch (Go releases use the same
+    /// triple in their artifact names — no separate goreleaser tokens anymore).
+    pub fn target(self) -> &'static str {
         match self {
-            Arch::X86_64 => TargetTriple {
-                rust_target: "x86_64-unknown-linux-gnu",
-                go_os: "Linux",
-                go_arch: "x86_64",
-            },
-            Arch::Aarch64 => TargetTriple {
-                rust_target: "aarch64-unknown-linux-gnu",
-                go_os: "Linux",
-                go_arch: "arm64",
-            },
+            Arch::X86_64 => "x86_64-unknown-linux-gnu",
+            Arch::Aarch64 => "aarch64-unknown-linux-gnu",
         }
     }
-}
-
-/// How a component's release artifact is named on GitHub.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArtifactNaming {
-    /// `{name}-v{ver}-{rust_target}.tar.gz` — byteowlz Rust tools.
-    RustTarget,
-    /// `{name}_{GO_OS}_{GO_ARCH}.tar.gz` — goreleaser Go tools (sx, scrpr).
-    GoReleaser,
-    /// `oqto-v{ver}-{rust_target}.tar.gz` — the platform bundle.
-    Oqto,
 }
 
 /// A pinned component to acquire from a release artifact.
@@ -59,58 +35,31 @@ pub enum ArtifactNaming {
 pub struct Component {
     pub name: String,
     pub version: String,
-    pub naming: ArtifactNaming,
-}
-
-/// Classify a component name into its release-artifact naming scheme. Mirrors
-/// the Rust/Go split in deploy.sh `dep_install_meta` and the Docker downloader.
-pub fn classify(name: &str) -> ArtifactNaming {
-    match name {
-        "oqto" => ArtifactNaming::Oqto,
-        // Go tools published via goreleaser.
-        "sx" | "scrpr" => ArtifactNaming::GoReleaser,
-        _ => ArtifactNaming::RustTarget,
-    }
 }
 
 impl Component {
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
-        let name = name.into();
-        let naming = classify(&name);
         Self {
-            name,
+            name: name.into(),
             version: version.into(),
-            naming,
         }
     }
 
     /// The GitHub release download URL for this component on `target`, under the
-    /// `base` org URL (e.g. `https://github.com/byteowlz`).
-    pub fn artifact_url(&self, base: &str, target: TargetTriple) -> String {
+    /// `base` org URL (e.g. `https://github.com/byteowlz`). One rule for every
+    /// tool: `{base}/{name}/releases/download/v{ver}/{name}-v{ver}-{triple}.tar.gz`.
+    pub fn artifact_url(&self, base: &str, target: &str) -> String {
         let base = base.trim_end_matches('/');
         let tag = format!("v{}", self.version);
-        match self.naming {
-            ArtifactNaming::Oqto => format!(
-                "{base}/oqto/releases/download/{tag}/oqto-{tag}-{rt}.tar.gz",
-                rt = target.rust_target
-            ),
-            ArtifactNaming::RustTarget => format!(
-                "{base}/{name}/releases/download/{tag}/{name}-{tag}-{rt}.tar.gz",
-                name = self.name,
-                rt = target.rust_target
-            ),
-            ArtifactNaming::GoReleaser => format!(
-                "{base}/{name}/releases/download/{tag}/{name}_{os}_{arch}.tar.gz",
-                name = self.name,
-                os = target.go_os,
-                arch = target.go_arch
-            ),
-        }
+        format!(
+            "{base}/{name}/releases/download/{tag}/{name}-{tag}-{target}.tar.gz",
+            name = self.name,
+        )
     }
 
     /// The combined `checksums.txt` URL for this component's release. One file
     /// per release covers every arch (`<sha256>  <filename>` lines), which is
-    /// what byteowlz/oqto releases actually publish (no per-file `.sha256`).
+    /// what byteowlz/oqto releases publish (no per-file `.sha256`).
     pub fn checksums_url(&self, base: &str) -> String {
         let base = base.trim_end_matches('/');
         format!(
@@ -138,15 +87,8 @@ pub struct ArtifactRef {
 }
 
 /// Resolve every component into a concrete [`ArtifactRef`] for `target` under
-/// the `base` org URL. The checksum is the conventional `{artifact}.sha256`
-/// sibling (the same convention `scripts/install.sh` uses for `oqto-setup`);
-/// publishing those siblings for the whole bundle is the release.yml half of
-/// vemr.9.
-pub fn plan_downloads(
-    components: &[Component],
-    base: &str,
-    target: TargetTriple,
-) -> Vec<ArtifactRef> {
+/// the `base` org URL, using the single ADR-0021 naming rule.
+pub fn plan_downloads(components: &[Component], base: &str, target: &str) -> Vec<ArtifactRef> {
     components
         .iter()
         .map(|c| {
@@ -201,15 +143,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classifies_naming_schemes() {
-        assert_eq!(classify("oqto"), ArtifactNaming::Oqto);
-        assert_eq!(classify("sx"), ArtifactNaming::GoReleaser);
-        assert_eq!(classify("scrpr"), ArtifactNaming::GoReleaser);
-        assert_eq!(classify("mmry"), ArtifactNaming::RustTarget);
-        assert_eq!(classify("eaRS"), ArtifactNaming::RustTarget);
-    }
-
-    #[test]
     fn builds_rust_tool_url() {
         let c = Component::new("mmry", "0.11.0");
         assert_eq!(
@@ -219,16 +152,18 @@ mod tests {
     }
 
     #[test]
-    fn builds_go_tool_url_and_trims_trailing_slash() {
+    fn go_tools_use_the_same_naming_rule_and_trim_trailing_slash() {
+        // sx/scrpr now release via `byt release`, so they use the ADR-0021 triple
+        // naming exactly like the Rust tools — no goreleaser `_Linux_x86_64` form.
         let c = Component::new("sx", "2.4.0");
         assert_eq!(
             c.artifact_url("https://github.com/byteowlz/", Arch::X86_64.target()),
-            "https://github.com/byteowlz/sx/releases/download/v2.4.0/sx_Linux_x86_64.tar.gz"
+            "https://github.com/byteowlz/sx/releases/download/v2.4.0/sx-v2.4.0-x86_64-unknown-linux-gnu.tar.gz"
         );
     }
 
     #[test]
-    fn builds_oqto_bundle_url_for_arm() {
+    fn oqto_bundle_uses_the_same_rule_for_arm() {
         let c = Component::new("oqto", "0.4.0");
         assert_eq!(
             c.artifact_url("https://github.com/byteowlz", Arch::Aarch64.target()),
@@ -258,9 +193,6 @@ pi = "latest"
             comps.iter().all(|c| c.name != "pi"),
             "[external] tools are excluded"
         );
-        // sx classified as a Go artifact even when interleaved.
-        let sx = comps.iter().find(|c| c.name == "sx").unwrap();
-        assert_eq!(sx.naming, ArtifactNaming::GoReleaser);
     }
 
     #[test]
@@ -285,8 +217,11 @@ pi = "latest"
                 checksums_url: "https://github.com/byteowlz/mmry/releases/download/v0.11.0/checksums.txt".into(),
             }
         );
-        // Go tool keeps its goreleaser filename; checksums.txt is per-release.
-        assert_eq!(plan[1].filename, "sx_Linux_x86_64.tar.gz");
+        // Go tool now shares the exact same filename shape as the Rust tools.
+        assert_eq!(
+            plan[1].filename,
+            "sx-v2.4.0-x86_64-unknown-linux-gnu.tar.gz"
+        );
         assert_eq!(
             plan[1].checksums_url,
             "https://github.com/byteowlz/sx/releases/download/v2.4.0/checksums.txt"

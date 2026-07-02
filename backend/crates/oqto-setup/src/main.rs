@@ -232,7 +232,7 @@ fn acquire_bundle(
         let tool_tarballs: Vec<PathBuf> = components
             .iter()
             .zip(&staged)
-            .filter(|(c, _)| !matches!(c.naming, deps::ArtifactNaming::Oqto))
+            .filter(|(c, _)| c.name != "oqto")
             .map(|(_, p)| p.clone())
             .collect();
         let installed = acquire::install_staged(&tool_tarballs, bin)?;
