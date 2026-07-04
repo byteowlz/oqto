@@ -664,3 +664,4 @@
 {"id":"evt_jmw7pek6","issue_id":"oqto-kzba.1","action":"closed","timestamp":"2026-07-04T18:38:51.991832916Z"}
 {"id":"evt_k9bhn4dk","issue_id":"oqto-kzba.2","action":"closed","timestamp":"2026-07-04T18:38:52.014608325Z"}
 {"id":"evt_wv7nkz9s","issue_id":"oqto-kzba.3","action":"closed","timestamp":"2026-07-04T18:38:52.035501884Z"}
+{"id":"evt_9hmbx7g4","issue_id":"oqto-kzba","action":"updated","timestamp":"2026-07-04T18:39:03.224985233Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
