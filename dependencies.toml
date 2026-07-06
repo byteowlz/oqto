@@ -8,17 +8,19 @@ version = "0.4.0"
 description = "Main platform (this repo)"
 
 [byteowlz]
-# Core backend services
-eavs = "0.7.1"
-mmry = "0.13.1"
-trx = "0.6.2"
-agntz = "0.3.1"
-sx = "2.4.1"
-scrpr = "1.1.0"
-tmpltr = "0.3.1"
-sldr = "0.8.0"
-skdlr = "0.2.6"
-ignr = "0.1.2"
+# Core backend services. All published via the shared byt release pipeline
+# (ADR-0021): {name}-v{ver}-{triple}.tar.gz + bin/ + checksums.txt, consumed by
+# `oqto-setup acquire`. Refresh with `just update-deps`.
+eavs = "0.7.3"
+mmry = "0.13.4"
+trx = "0.6.3"
+agntz = "0.3.2"
+sx = "2.5.0"
+scrpr = "1.1.1"
+tmpltr = "0.3.2"
+sldr = "0.8.1"
+skdlr = "0.2.7"
+ignr = "0.1.3"
 
 [optional]
 # Voice mode — GPU-best; no prebuilt binaries published, build from source when

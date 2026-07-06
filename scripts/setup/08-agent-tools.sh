@@ -595,30 +595,78 @@ install_ast_grep() {
   return 1
 }
 
+# Locate the repo-root dependency manifest.
+find_deps_manifest() {
+  local c
+  for c in "${SCRIPT_DIR:-}/dependencies.toml" "${SCRIPT_DIR:-}/../dependencies.toml" \
+    "${ROOT_DIR:-}/dependencies.toml" "$(pwd)/dependencies.toml"; do
+    if [[ -n "$c" && -f "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Install the managed byteowlz agent tools through the single prebuilt,
+# checksum-verified acquisition path (`oqto-setup acquire`, ADR-0018/0021). The
+# set + pinned versions come from dependencies.toml; this replaces the per-tool
+# GitHub-download + cargo/go-build fallbacks for every managed tool. Fail-closed:
+# a missing oqto-setup or manifest, or any checksum failure, aborts.
+install_managed_agent_tools() {
+  log_step "Installing managed agent tools (oqto-setup acquire)"
+
+  if ! command_exists oqto-setup; then
+    log_error "oqto-setup not found; run the oqto bootstrap (install.sh) before setup"
+    return 1
+  fi
+  local manifest
+  if ! manifest="$(find_deps_manifest)"; then
+    log_error "dependencies.toml not found; cannot resolve the managed tool set"
+    return 1
+  fi
+  local arch_arg
+  case "$(uname -m)" in
+  x86_64 | amd64) arch_arg="x86-64" ;;
+  aarch64 | arm64) arch_arg="aarch64" ;;
+  *)
+    log_warn "unsupported architecture $(uname -m) for prebuilt tools"
+    return 1
+    ;;
+  esac
+
+  local staging
+  staging="$(mktemp -d)"
+  if sudo oqto-setup acquire --manifest "$manifest" --arch "$arch_arg" \
+    --dest "$staging" --install-bin "$TOOLS_INSTALL_DIR"; then
+    rm -rf "$staging"
+    log_success "Managed agent tools installed to $TOOLS_INSTALL_DIR"
+    return 0
+  fi
+  rm -rf "$staging"
+  log_error "oqto-setup acquire failed"
+  return 1
+}
+
 install_all_agent_tools() {
   log_step "Installing agent tools"
 
-  # External dependencies for agent tools
+  # External (non-byteowlz) dependencies for agent tools
   install_typst
   install_slidev
   install_whisper_cpp
 
-  # Core tools (Rust) - tries pre-built GitHub release first, falls back to cargo
-  # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
+  # Managed byteowlz tools: one prebuilt, checksum-verified path for the whole
+  # set (agntz, mmry(+mcp/service/tui), tmpltr, sldr, ignr, scrpr, sx, trx,
+  # skdlr, eavs) resolved from dependencies.toml.
+  install_managed_agent_tools
+
+  # hstry is legacy/interop only and intentionally NOT in the managed set
+  # (pending removal — oqto-2hyk); keep its own installer until then.
   download_or_build_tool hstry hstry hstry-cli
   download_or_build_tool hstry-tui hstry hstry-tui
   install_hstry_adapters
-  download_or_build_tool agntz
-  download_or_build_tool mmry mmry mmry-cli
-  download_or_build_tool mmry-service mmry mmry-service
-  download_or_build_tool tmpltr
-  download_or_build_tool sldr sldr sldr-cli
-  download_or_build_tool ignr
   install_ast_grep || true
-
-  # Core tools (Go) - tries pre-built GitHub release first, falls back to go install
-  download_or_build_tool scrpr scrpr "" go
-  download_or_build_tool sx sx "" go
 }
 
 select_agent_tools() {
@@ -662,15 +710,17 @@ install_agent_tools_selected() {
     return
   fi
 
-  # hstry is required for per-user chat history (systemd user service)
+  # hstry is required for per-user chat history (systemd user service); legacy,
+  # not in the managed set (pending oqto-2hyk).
   download_or_build_tool hstry hstry hstry-cli
   install_hstry_adapters
   install_ast_grep || true
 
-  # mmry is mandatory in multi-user mode (per-user mmry service + central embeddings)
+  # mmry is mandatory in multi-user mode (per-user mmry service + central
+  # embeddings). The managed acquire path installs the full set in one shot; the
+  # extra CLIs are harmless on disk and only used when configured.
   if [[ "${SELECTED_USER_MODE:-single}" == "multi" || "$INSTALL_MMRY" == "true" ]]; then
-    download_or_build_tool mmry mmry mmry-cli
-    download_or_build_tool mmry-service mmry mmry-service
+    install_managed_agent_tools
   fi
 
   # Use agntz tools install for additional tools if agntz is available
