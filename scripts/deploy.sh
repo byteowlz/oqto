@@ -455,10 +455,15 @@ PY
 # Bring the managed byteowlz tools up to their pinned versions on the target via
 # the single prebuilt, checksum-verified acquisition path (`oqto-setup acquire`,
 # ADR-0018/0021). Whole-set + idempotent: replaces the per-tool GitHub-download +
-# cargo/go source-build remediation. oqto-setup is assumed present on the target
-# (deploy already relies on it for `oqto-setup install`). The manifest is shipped
-# inline so remote hosts need nothing pre-staged; arch is resolved on the target.
-# `--tools-only` excludes the oqto platform bundle (deployed separately).
+# cargo/go source-build remediation. The manifest is shipped inline so remote
+# hosts need nothing pre-staged; arch is resolved on the target. `--tools-only`
+# excludes the oqto platform bundle (deployed separately).
+#
+# Version skew: this runs as a preflight, BEFORE `oqto-setup install` updates the
+# platform — so the target's installed oqto-setup may predate `acquire
+# --tools-only`. Use the oqto-setup FROM the artifact being deployed (the new
+# one), which the bundle ships in bin/; fall back to the target's PATH oqto-setup
+# only when no artifact is set (legacy path).
 acquire_managed_tools() {
     local is_local="$1" ssh_target="$2" name="$3"
     local manifest="${ROOT_DIR}/dependencies.toml"
@@ -471,15 +476,41 @@ acquire_managed_tools() {
     emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "start" "deps.acquire.start"
     log "  Acquiring managed tools via oqto-setup acquire on $name..."
 
+    # Make the artifact reachable on the target (local: in place; remote: copy).
+    local artifact_on_target=""
+    if [[ -n "${DEPLOY_ARTIFACT:-}" && -f "$DEPLOY_ARTIFACT" ]]; then
+        if [[ "$is_local" == "true" ]]; then
+            artifact_on_target="$DEPLOY_ARTIFACT"
+        else
+            artifact_on_target="/tmp/$(basename "$DEPLOY_ARTIFACT")"
+            if ! scp "$DEPLOY_ARTIFACT" "$ssh_target:$artifact_on_target"; then
+                err "  failed to copy deploy artifact to $name"
+                return 1
+            fi
+        fi
+    fi
+
     local script
     script="$(cat <<REMOTE_EOF
 set -euo pipefail
-if ! command -v oqto-setup >/dev/null 2>&1; then
-    echo "oqto-setup not found on target (run the oqto bootstrap first)" >&2
-    exit 1
-fi
 tmpdir="\$(mktemp -d)"
 trap 'rm -rf "\$tmpdir"' EXIT
+
+# Prefer the oqto-setup shipped in the artifact being deployed (no version skew).
+setup="oqto-setup"
+artifact="${artifact_on_target}"
+if [[ -n "\$artifact" && -f "\$artifact" ]]; then
+    if ! tar -xzf "\$artifact" -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
+        tar -xzf "\$artifact" -C "\$tmpdir" 2>/dev/null || true
+    fi
+    found="\$(find "\$tmpdir" -type f -name oqto-setup 2>/dev/null | head -1)"
+    if [[ -n "\$found" ]]; then chmod +x "\$found"; setup="\$found"; fi
+fi
+if [[ "\$setup" == "oqto-setup" ]] && ! command -v oqto-setup >/dev/null 2>&1; then
+    echo "oqto-setup not available on target (no artifact, none on PATH)" >&2
+    exit 1
+fi
+
 cat > "\$tmpdir/dependencies.toml" <<'DEPS_MANIFEST_EOF'
 $(cat "$manifest")
 DEPS_MANIFEST_EOF
@@ -488,7 +519,7 @@ case "\$(uname -m)" in
     aarch64|arm64) arch_arg="aarch64" ;;
     *) echo "unsupported architecture \$(uname -m)" >&2; exit 1 ;;
 esac
-oqto-setup acquire --manifest "\$tmpdir/dependencies.toml" --arch "\$arch_arg" \
+"\$setup" acquire --manifest "\$tmpdir/dependencies.toml" --arch "\$arch_arg" \
     --dest "\$tmpdir/acq" --install-bin /usr/local/bin --tools-only
 REMOTE_EOF
 )"
