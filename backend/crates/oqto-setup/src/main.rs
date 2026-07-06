@@ -97,6 +97,11 @@ enum Command {
         /// (e.g. /usr/local/bin) — completes the acquire -> install path.
         #[arg(long)]
         install_bin: Option<PathBuf>,
+        /// Acquire only the byteowlz tools, excluding the oqto platform bundle
+        /// (which is deployed separately via `oqto-setup install`). Used by
+        /// deploy-time dependency remediation.
+        #[arg(long)]
+        tools_only: bool,
     },
 }
 
@@ -197,7 +202,15 @@ fn main() -> Result<()> {
             base_url,
             dest,
             install_bin,
-        } => acquire_bundle(&manifest, arch, &base_url, &dest, install_bin.as_deref()),
+            tools_only,
+        } => acquire_bundle(
+            &manifest,
+            arch,
+            &base_url,
+            &dest,
+            install_bin.as_deref(),
+            tools_only,
+        ),
     }
 }
 
@@ -209,10 +222,18 @@ fn acquire_bundle(
     base_url: &str,
     dest: &Path,
     install_bin: Option<&Path>,
+    tools_only: bool,
 ) -> Result<()> {
     let contents = fs::read_to_string(manifest)
         .with_context(|| format!("Failed to read dependency manifest: {}", manifest.display()))?;
-    let components = deps::parse_dependency_manifest(&contents)?;
+    let mut components = deps::parse_dependency_manifest(&contents)?;
+    if tools_only {
+        // Drop the oqto platform bundle entirely: dependency remediation only
+        // needs the byteowlz tools, and must not fail (or re-download the large
+        // bundle) on account of the oqto release. oqto is deployed separately via
+        // `oqto-setup install`.
+        components.retain(|c| c.name != "oqto");
+    }
     let target = deps::Arch::from(arch).target();
     let plan = deps::plan_downloads(&components, base_url, target);
 

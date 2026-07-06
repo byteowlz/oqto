@@ -452,164 +452,58 @@ PY
 
 # Map tool names to their GitHub repo, cargo package, and language.
 # Format: "repo:package:lang" (package empty = same as tool, lang = rust|go)
-dep_install_meta() {
-    local dep="$1"
-    case "$dep" in
-        eavs)  echo "eavs::rust" ;;
-        hstry) echo "hstry:hstry-cli:rust" ;;
-        mmry)  echo "mmry:mmry-cli:rust" ;;
-        trx)   echo "trx:trx-cli:rust" ;;
-        agntz) echo "agntz::rust" ;;
-        sx)    echo "sx::go" ;;
-        skdlr) echo "skdlr:skdlr-cli:rust" ;;
-        *)     echo "$dep::rust" ;;
-    esac
-}
+# Bring the managed byteowlz tools up to their pinned versions on the target via
+# the single prebuilt, checksum-verified acquisition path (`oqto-setup acquire`,
+# ADR-0018/0021). Whole-set + idempotent: replaces the per-tool GitHub-download +
+# cargo/go source-build remediation. oqto-setup is assumed present on the target
+# (deploy already relies on it for `oqto-setup install`). The manifest is shipped
+# inline so remote hosts need nothing pre-staged; arch is resolved on the target.
+# `--tools-only` excludes the oqto platform bundle (deployed separately).
+acquire_managed_tools() {
+    local is_local="$1" ssh_target="$2" name="$3"
+    local manifest="${ROOT_DIR}/dependencies.toml"
 
-get_release_target() {
-    local arch os
-    arch="$(uname -m)"
-    os="$(uname -s)"
-    case "$os" in
-        Linux)
-            case "$arch" in
-                x86_64)  echo "x86_64-unknown-linux-gnu" ;;
-                aarch64) echo "aarch64-unknown-linux-gnu" ;;
-                *)       echo "" ;;
-            esac ;;
-        Darwin)
-            case "$arch" in
-                x86_64)  echo "x86_64-apple-darwin" ;;
-                arm64)   echo "aarch64-apple-darwin" ;;
-                *)       echo "" ;;
-            esac ;;
-        *) echo "" ;;
-    esac
-}
+    if [[ ! -f "$manifest" ]]; then
+        err "  dependencies.toml not found at $manifest"
+        return 1
+    fi
 
-remediate_dependency() {
-    local dep="$1" required="$2" is_local="$3" ssh_target="$4" name="$5"
-    local meta repo pkg lang
-    meta="$(dep_install_meta "$dep")"
-    IFS=':' read -r repo pkg lang <<< "$meta"
-    [[ -z "$repo" ]] && repo="$dep"
-    [[ -z "$pkg" ]] && pkg=""
-    [[ -z "$lang" ]] && lang="rust"
+    emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "start" "deps.acquire.start"
+    log "  Acquiring managed tools via oqto-setup acquire on $name..."
 
-    local tag="v${required}"
-    local BYTEOWLZ_GITHUB="https://github.com/byteowlz"
-
-    emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "start" "deps.${dep}.remediate.start"
-    log "  Remediating $dep (need >= $required)..."
-
-    # Build the install script that runs on the target host.
-    # It tries GitHub release download first, then cargo install.
-    local install_script
-    install_script="$(
-        cat <<REMEDIATE_EOF
+    local script
+    script="$(cat <<REMOTE_EOF
 set -euo pipefail
-tmpdir=\$(mktemp -d)
-trap 'rm -rf \$tmpdir' EXIT
-
-# --- Try GitHub release download ---
-downloaded=false
-arch="\$(uname -m)"
-os="\$(uname -s)"
-target=""
-case "\$os:\$arch" in
-    Linux:x86_64) target="x86_64-unknown-linux-gnu" ;;
-    Linux:aarch64) target="aarch64-unknown-linux-gnu" ;;
-    Darwin:x86_64) target="x86_64-apple-darwin" ;;
-    Darwin:arm64) target="aarch64-apple-darwin" ;;
+if ! command -v oqto-setup >/dev/null 2>&1; then
+    echo "oqto-setup not found on target (run the oqto bootstrap first)" >&2
+    exit 1
+fi
+tmpdir="\$(mktemp -d)"
+trap 'rm -rf "\$tmpdir"' EXIT
+cat > "\$tmpdir/dependencies.toml" <<'DEPS_MANIFEST_EOF'
+$(cat "$manifest")
+DEPS_MANIFEST_EOF
+case "\$(uname -m)" in
+    x86_64|amd64)  arch_arg="x86-64" ;;
+    aarch64|arm64) arch_arg="aarch64" ;;
+    *) echo "unsupported architecture \$(uname -m)" >&2; exit 1 ;;
 esac
-if [[ -n "\$target" ]]; then
-    urls=()
-    urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-\${target}.tar.gz")
-REMEDIATE_EOF
+oqto-setup acquire --manifest "\$tmpdir/dependencies.toml" --arch "\$arch_arg" \
+    --dest "\$tmpdir/acq" --install-bin /usr/local/bin --tools-only
+REMOTE_EOF
+)"
 
-        # Add Go-style URL for Go tools
-        if [[ "$lang" == "go" ]]; then
-            local go_os go_arch
-            case "$target" in
-                x86_64-unknown-linux-gnu)  go_os="Linux"; go_arch="x86_64" ;;
-                aarch64-unknown-linux-gnu) go_os="Linux"; go_arch="arm64" ;;
-                x86_64-apple-darwin)       go_os="Darwin"; go_arch="x86_64" ;;
-                aarch64-apple-darwin)       go_os="Darwin"; go_arch="arm64" ;;
-            esac
-            if [[ -n "${go_os:-}" ]]; then
-                echo "    urls+=(\"${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}_${go_os}_${go_arch}.tar.gz\")"
-            fi
-        fi
-
-        cat <<REMEDIATE_EOF
-    for url in "\${urls[@]}"; do
-        if curl -fsSL "\$url" | tar xz -C "\$tmpdir" 2>/dev/null; then
-            if [[ -x "\$tmpdir/$dep" ]]; then
-                install -m 755 "\$tmpdir/$dep" /usr/local/bin/$dep
-                downloaded=true
-                break
-            fi
-        fi
-    done
-fi
-
-if [[ "\$downloaded" == "true" ]]; then
-    version_output="\$(/usr/local/bin/$dep --version 2>&1 || true)"
-    installed_version="\$(printf '%s\n' "\$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    required_version="$required"
-    if [[ -n "\$installed_version" ]] && [[ "\$(printf '%s\n%s\n' "\$required_version" "\$installed_version" | sort -V | head -n1)" == "\$required_version" ]]; then
-        echo "INSTALLED_FROM=release"
-        exit 0
-    fi
-    echo "RELEASE_VERSION_MISMATCH=\${installed_version:-unknown}"
-    echo "RELEASE_VERSION_OUTPUT=\$version_output"
-fi
-
-# --- Fallback: cargo install from source ---
-# Remediation runs via sudo so rustup may be present without a default
-# toolchain for root. Configure a default before invoking cargo; this keeps
-# deploy self-healing on fresh hosts where user-level Rust is installed but
-# root has never run rustup.
-if [[ -f "\$HOME/.cargo/env" ]]; then
-    # shellcheck disable=SC1091
-    source "\$HOME/.cargo/env"
-fi
-if command -v rustup >/dev/null 2>&1; then
-    rustup default stable >/dev/null 2>&1 || true
-fi
-if command -v cargo >/dev/null 2>&1; then
-    sibling_repo="$ROOT_DIR/../$repo"
-    if [[ -d "\$sibling_repo" ]]; then
-REMEDIATE_EOF
-
-        # Determine cargo install path
-        if [[ -n "$pkg" ]]; then
-            echo "        cargo install --path \"\$sibling_repo/crates/$pkg\" --root /usr/local --force 2>&1"
-        else
-            echo "        cargo install --path \"\$sibling_repo\" --root /usr/local --force 2>&1"
-        fi
-
-        cat <<REMEDIATE_EOF
-        echo "INSTALLED_FROM=source"
-        exit 0
-    fi
-fi
-
-echo "REMEDIATE_FAILED=true"
-exit 1
-REMEDIATE_EOF
-    )"
-
-    if host_exec_sudo "$is_local" "$ssh_target" "$install_script"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "pass" "deps.${dep}.remediate.pass"
-        ok "  Remediated $dep on $name"
+    if host_exec_sudo "$is_local" "$ssh_target" "$script"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "pass" "deps.acquire.pass"
+        ok "  Acquired managed tools on $name"
         return 0
     else
-        emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "fail" "deps.${dep}.remediate.fail"
-        err "  Failed to remediate $dep on $name"
+        emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "fail" "deps.acquire.fail"
+        err "  Failed to acquire managed tools on $name"
         return 1
     fi
 }
+
 
 check_dependency_compatibility() {
     local name="$1" ssh_target="$2" is_local="$3" mode="$4"
@@ -657,17 +551,12 @@ check_dependency_compatibility() {
 
     # Pass 2: remediate
     if [[ "${#needs_remediation[@]}" -gt 0 ]]; then
-        log "Remediating ${#needs_remediation[@]} dependency issue(s) on $name..."
-        local failed="false"
-        for dep in "${needs_remediation[@]}"; do
-            if ! remediate_dependency "$dep" "${REQUIRED_DEP_VERSIONS[$dep]}" "$is_local" "$ssh_target" "$name"; then
-                failed="true"
-            fi
-        done
-
-        if [[ "$failed" == "true" ]]; then
+        log "Remediating ${#needs_remediation[@]} dependency issue(s) on $name via oqto-setup acquire..."
+        # One prebuilt, checksum-verified acquisition of the whole managed set
+        # (idempotent) replaces the former per-tool download/source-build path.
+        if ! acquire_managed_tools "$is_local" "$ssh_target" "$name"; then
             emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.remediation_incomplete"
-            err "Some dependencies could not be remediated on $name"
+            err "Dependency acquisition failed on $name"
             return 1
         fi
 
