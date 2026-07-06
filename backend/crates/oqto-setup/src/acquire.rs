@@ -245,15 +245,25 @@ pub fn install_staged(staged: &[PathBuf], bin_dir: &Path) -> Result<Vec<String>>
                 .unwrap_or_default()
                 .to_string();
             let dest = bin_dir.join(&bin);
-            std::fs::copy(&src, &dest)
-                .with_context(|| format!("installing {bin} -> {}", dest.display()))?;
+            // Install atomically: copy to a temp file in the same dir, chmod,
+            // then rename over the target. A direct copy fails with ETXTBSY
+            // ("Text file busy") when the destination binary is currently running
+            // — e.g. a live systemd service like mmry-service. rename swaps the
+            // directory entry and the running process keeps its old inode until
+            // it is restarted.
+            let tmp = bin_dir.join(format!(".{bin}.new"));
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::copy(&src, &tmp)
+                .with_context(|| format!("staging {bin} -> {}", tmp.display()))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mut perm = std::fs::metadata(&dest)?.permissions();
+                let mut perm = std::fs::metadata(&tmp)?.permissions();
                 perm.set_mode(0o755);
-                std::fs::set_permissions(&dest, perm)?;
+                std::fs::set_permissions(&tmp, perm)?;
             }
+            std::fs::rename(&tmp, &dest)
+                .with_context(|| format!("installing {bin} -> {}", dest.display()))?;
             installed.push(bin);
         }
         let _ = std::fs::remove_dir_all(&extract);
