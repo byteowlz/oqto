@@ -1858,46 +1858,57 @@ build_artifacts() {
 
 deploy_via_oqto_setup_install() {
     local name="$1" ssh_target="$2" is_local="$3"
-    local artifact_basename checksum_basename remote_artifact remote_checksum cmd
+    local artifact_basename remote_artifact remote_checksum
 
     artifact_basename="$(basename "$DEPLOY_ARTIFACT")"
     remote_artifact="/tmp/${artifact_basename}"
 
+    # Path of the artifact (+ optional checksum) on the host that runs install.
+    local artifact_path checksum_path=""
     if [[ "$is_local" == "true" ]]; then
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo -e "${YELLOW}  [dry-run]${NC} local :: sudo oqto-setup install --artifact '$DEPLOY_ARTIFACT' ${DEPLOY_CHECKSUM:+--checksum '$DEPLOY_CHECKSUM'}"
-            return 0
-        fi
-        cmd="sudo -n oqto-setup install --artifact '$DEPLOY_ARTIFACT'"
+        artifact_path="$DEPLOY_ARTIFACT"
+        [[ -n "$DEPLOY_CHECKSUM" ]] && checksum_path="$DEPLOY_CHECKSUM"
+    else
+        artifact_path="$remote_artifact"
         if [[ -n "$DEPLOY_CHECKSUM" ]]; then
-            cmd+=" --checksum '$DEPLOY_CHECKSUM'"
+            remote_checksum="/tmp/$(basename "$DEPLOY_CHECKSUM")"
+            checksum_path="$remote_checksum"
         fi
-        bash -lc "$cmd"
-        return 0
     fi
+
+    # Install using the oqto-setup shipped INSIDE the artifact, run by absolute
+    # path under sudo. A bare `sudo oqto-setup` is unreliable on a target that
+    # has no oqto-setup yet, or whose sudo secure_path excludes /usr/local/bin
+    # (observed: "sudo: oqto-setup: command not found"). The bundle ships
+    # bin/oqto-setup; extracting + running it also guarantees the deployed
+    # version does the install.
+    local script
+    script="$(cat <<REMOTE_EOF
+set -e
+tmpdir="\$(mktemp -d)"
+trap 'rm -rf "\$tmpdir"' EXIT
+if ! tar -xzf '$artifact_path' -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
+    tar -xzf '$artifact_path' -C "\$tmpdir"
+fi
+setup="\$(find "\$tmpdir" -type f -name oqto-setup | head -1)"
+[ -n "\$setup" ] || { echo 'oqto-setup not found in artifact' >&2; exit 1; }
+chmod +x "\$setup"
+"\$setup" install --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}
+REMOTE_EOF
+)"
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
-        if [[ -n "$DEPLOY_CHECKSUM" ]]; then
-            checksum_basename="$(basename "$DEPLOY_CHECKSUM")"
-            remote_checksum="/tmp/${checksum_basename}"
-            echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_CHECKSUM' '$ssh_target:$remote_checksum'"
-        fi
-        echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target :: sudo oqto-setup install --artifact '$remote_artifact'"
+        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
+        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}"
         return 0
     fi
 
-    scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
-
-    cmd="sudo -n oqto-setup install --artifact '$remote_artifact'"
-    if [[ -n "$DEPLOY_CHECKSUM" ]]; then
-        checksum_basename="$(basename "$DEPLOY_CHECKSUM")"
-        remote_checksum="/tmp/${checksum_basename}"
-        scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
-        cmd+=" --checksum '$remote_checksum'"
+    if [[ "$is_local" != "true" ]]; then
+        scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
+        [[ -n "$DEPLOY_CHECKSUM" ]] && scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
     fi
 
-    ssh "$ssh_target" "bash -lc $(printf '%q' "$cmd")"
+    host_exec_sudo "$is_local" "$ssh_target" "$script"
 }
 
 deploy_host() {
