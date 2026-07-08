@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Migrate legacy mmry SQLite memories to lean .mmry/mmry.jsonl.
 
-Copied from ../mmry/scripts/migrate_legacy_mmry_to_jsonl.py for deploy/update use.
+Schema-tolerant: legacy DBs span several schema versions (columns like `tags`,
+`parent_id`, `store` were added over time; `namespace` was renamed to
+`category`). We introspect the `memories` table and default any missing column,
+so an old store never fails the SELECT. Opened read-only so a running mmry
+service holding a write lock can't block the export.
 """
 
 from __future__ import annotations
@@ -35,38 +39,45 @@ def parse_json(value: Any, default: Any) -> Any:
         return default
 
 
-def is_session_dump(row: sqlite3.Row, tags: list[str], metadata: dict[str, Any], max_chars: int) -> tuple[bool, str | None]:
-    content = row["content"] or ""
+def is_session_dump(row: dict[str, Any], tags: list[str], metadata: dict[str, Any], max_chars: int) -> tuple[bool, str | None]:
+    content = row.get("content") or ""
     if len(content) > max_chars:
         return True, f"content>{max_chars}"
     if any(tag in SESSION_TAGS for tag in tags):
         return True, "hstry tag"
-    if any(tag.startswith(SESSION_TAG_PREFIXES) for tag in tags):
+    if any(isinstance(tag, str) and tag.startswith(SESSION_TAG_PREFIXES) for tag in tags):
         return True, "conversation/source tag"
     if any(key in metadata for key in SESSION_METADATA_KEYS):
         return True, "conversation metadata"
-    if row["parent_id"] is not None or row["chunk_index"] is not None or row["total_chunks"] is not None:
+    if row.get("parent_id") is not None or row.get("chunk_index") is not None or row.get("total_chunks") is not None:
         return True, "chunk/session hierarchy"
     return False, None
 
 
-def event_from_row(row: sqlite3.Row) -> dict[str, Any]:
-    tags = parse_json(row["tags"], [])
-    metadata = parse_json(row["metadata"], {})
+def event_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    tags = parse_json(row.get("tags"), [])
+    metadata = parse_json(row.get("metadata"), {})
     agent_ctx = metadata.pop("agent_ctx", {}) if isinstance(metadata, dict) else {}
-    ts = row["created_at"] or utc_now()
+    ts = row.get("created_at") or utc_now()
+    # legacy schemas name the kind column `type` (older) or `memory_type` (newer)
+    memory_type = row.get("type") or row.get("memory_type") or "semantic"
+    mem_id = row.get("id")
     return {
         "schema_version": 1,
         "id": f"evt_{uuid.uuid4()}",
         "ts": ts,
         "type": "memory.add",
-        "memory_id": f"mem_{row['id']}",
-        "content": row["content"],
-        "memory_type": row["type"] or "semantic",
+        "memory_id": f"mem_{mem_id}" if mem_id is not None else f"mem_{uuid.uuid4()}",
+        "content": row.get("content"),
+        "memory_type": memory_type,
         "tags": tags if isinstance(tags, list) else [],
         "metadata": metadata if isinstance(metadata, dict) else {},
         "agent_ctx": agent_ctx if isinstance(agent_ctx, dict) else {},
     }
+
+
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def main() -> int:
@@ -83,29 +94,37 @@ def main() -> int:
     if not args.db.exists():
         parser.error(f"database not found: {args.db}")
 
-    conn = sqlite3.connect(args.db)
+    # Read-only: a running mmry service may hold a write lock on the store.
+    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+
+    cols = table_columns(conn, "memories")
+    if not cols:
+        print(f"no 'memories' table in {args.db}", file=sys.stderr)
+        return 1
+
     where = ""
     params: list[Any] = []
-    if args.store:
+    if args.store and "store" in cols:
         where = "WHERE store = ?"
         params.append(args.store)
-    rows = conn.execute(
-        f"""
-        SELECT id, type, content, metadata, tags, created_at, parent_id, chunk_index, total_chunks, store
-        FROM memories
-        {where}
-        ORDER BY created_at ASC
-        """,
-        params,
-    ).fetchall()
+    order = "created_at" if "created_at" in cols else "rowid"
+
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM memories {where} ORDER BY {order} ASC", params
+        ).fetchall()
+    except sqlite3.Error as exc:
+        print(f"query failed on {args.db}: {exc}", file=sys.stderr)
+        return 1
 
     events: list[dict[str, Any]] = []
     skipped: dict[str, int] = {}
-    for row in rows:
-        tags = parse_json(row["tags"], [])
+    for raw in rows:
+        row = dict(raw)
+        tags = parse_json(row.get("tags"), [])
         tags = tags if isinstance(tags, list) else []
-        metadata = parse_json(row["metadata"], {})
+        metadata = parse_json(row.get("metadata"), {})
         metadata = metadata if isinstance(metadata, dict) else {}
         if not args.include_sessions:
             skip, reason = is_session_dump(row, tags, metadata, args.max_content_chars)

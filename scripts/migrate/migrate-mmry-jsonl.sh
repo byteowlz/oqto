@@ -8,24 +8,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_MIGRATE="${MMRY_MIGRATE_SCRIPT:-$SCRIPT_DIR/migrate_legacy_mmry_to_jsonl.py}"
 MODE="auto"   # auto|single|multi
 QUIET="false"
+PY_ARGS=()    # extra args passed through to the python converter
 
 usage() {
   cat <<'USAGE'
 Usage: migrate-mmry-jsonl.sh [--mode auto|single|multi] [--quiet]
+                             [--include-sessions] [--max-chars N] [--audit]
 
 Behavior:
 - single mode: migrate current $HOME workspaces under $HOME/oqto/*
 - multi mode:  migrate all /home/oqto_* workspaces under /home/<user>/oqto/*
 - auto mode:   run both (deduplicated)
 
+Filtering (why a store may come back "empty"):
+- by default, memories >2000 chars or tagged as hstry/session/chunk dumps are
+  dropped. --include-sessions keeps everything; --max-chars N raises the limit.
+- --audit: report read/write/skipped counts per store WITHOUT writing anything.
+
 Only migrates when target .mmry/mmry.jsonl does not already exist with content.
 USAGE
 }
 
+AUDIT="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="${2:-}"; shift 2 ;;
     --quiet) QUIET="true"; shift ;;
+    --include-sessions) PY_ARGS+=(--include-sessions); shift ;;
+    --max-chars) PY_ARGS+=(--max-content-chars "${2:-2000}"); shift 2 ;;
+    --audit) AUDIT="true"; PY_ARGS+=(--dry-run); shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
   esac
@@ -60,7 +71,9 @@ migrate_workspace() {
   [[ -d "$stores_dir" ]] || return 0
   [[ -d "$ws" ]] || return 0
 
-  if [[ -s "$out" ]]; then
+  # Skip already-migrated workspaces (protects any memories the live system has
+  # since written). --audit reports everything read-only, so it never skips.
+  if [[ "$AUDIT" != "true" && -s "$out" ]]; then
     return 0
   fi
 
@@ -84,15 +97,24 @@ migrate_workspace() {
 
   [[ -n "$chosen" ]] || return 0
 
-  mkdir -p "$(dirname "$out")"
-  if python3 "$PY_MIGRATE" "$chosen" -o "$out" >/dev/null 2>&1; then
-    if [[ -s "$out" ]]; then
-      log "migrated: $ws <- $(basename "$chosen")"
+  # --audit (--dry-run) reports counts without writing, so don't create dirs.
+  [[ "$AUDIT" == "true" ]] || mkdir -p "$(dirname "$out")"
+  local err summary
+  if err="$(python3 "$PY_MIGRATE" "$chosen" "${PY_ARGS[@]}" -o "$out" 2>&1)"; then
+    # condense the converter's stderr (read/write/skipped) onto one line so
+    # "empty" reveals whether the DB was truly empty (read: 0) or over-filtered.
+    summary="$(printf '%s' "$err" | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')"
+    if [[ "$AUDIT" == "true" ]]; then
+      log "audit:    $ws <- $(basename "$chosen") [$summary]"
+    elif [[ -s "$out" ]]; then
+      log "migrated: $ws <- $(basename "$chosen") [$summary]"
     else
       rm -f "$out"
+      log "empty:    $ws <- $(basename "$chosen") [$summary]"
     fi
   else
-    log "failed: $ws <- $(basename "$chosen")"
+    # Surface the converter's actual error (last line) instead of swallowing it.
+    log "failed:   $ws <- $(basename "$chosen"): ${err##*$'\n'}"
   fi
 }
 
