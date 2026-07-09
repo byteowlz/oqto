@@ -588,14 +588,25 @@ fn activate_release(
     if doctor_strict && let Err(doctor_err) = run_doctor_strict() {
         match previous.as_ref() {
             Some(prev) => {
-                atomic_symlink(&current_link, prev)?;
-                // Relink through `current` (now pointing at prev) so the stable
-                // entrypoints stay consistent with the activation path.
-                relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
-                anyhow::bail!(
-                    "Activation failed ({doctor_err}); rolled back to {}",
-                    prev.display()
-                );
+                // Best-effort rollback. A rollback error (e.g. the previous
+                // release predates the immutable/bin layout) must NOT mask the
+                // real cause — the doctor failure — so surface both.
+                let rollback = atomic_symlink(&current_link, prev).and_then(|_| {
+                    // Relink through `current` (now pointing at prev) so the
+                    // stable entrypoints stay consistent with the activation path.
+                    relink_bins(&current_link.join("immutable/bin"), bin_dir)
+                });
+                match rollback {
+                    Ok(()) => anyhow::bail!(
+                        "Activation failed ({doctor_err}); rolled back to {}",
+                        prev.display()
+                    ),
+                    Err(rb_err) => anyhow::bail!(
+                        "Activation failed ({doctor_err}); rollback to {} ALSO failed \
+                         ({rb_err}) — bins may be inconsistent, manual intervention needed",
+                        prev.display()
+                    ),
+                }
             }
             None => anyhow::bail!(
                 "Activation failed ({doctor_err}); no previous release to roll back to"
