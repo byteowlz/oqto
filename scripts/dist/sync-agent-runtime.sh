@@ -34,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --ext-repo) EXT_REPO="$2"; shift 2 ;;
     --skip-pi) DO_PI=false; shift ;;
     --skip-extensions) DO_EXT=false; shift ;;
+    --list-extensions) printf '%s\n' "${PI_DEFAULT_EXTENSIONS[@]}"; exit 0 ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac

@@ -336,6 +336,9 @@ print_summary() {
 
   echo "  Pi extensions:"
   local pi_ext_dir="$HOME/.pi/agent/extensions"
+  # Expected set comes from the shared sync script (single source of truth).
+  local -a PI_DEFAULT_EXTENSIONS=()
+  mapfile -t PI_DEFAULT_EXTENSIONS < <("${SCRIPT_DIR}/scripts/dist/sync-agent-runtime.sh" --list-extensions 2>/dev/null)
   for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
     printf "    %-22s " "${ext_name}:"
     if [[ -d "${pi_ext_dir}/${ext_name}" ]]; then

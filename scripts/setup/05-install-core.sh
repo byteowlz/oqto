@@ -65,68 +65,17 @@ ensure_bun_and_pi_global() {
     log_info "Installed bun to /usr/local/bin for multi-user access"
   fi
 
-  # Install pi (AI coding agent) if not already present
-  if ! command_exists pi || ! pi --version >/dev/null 2>&1; then
-    log_info "Installing pi coding agent..."
-    bun install -g @earendil-works/pi-coding-agent
+  # Install/update pi (system-wide) to the pinned version via the shared
+  # agent-runtime sync — the SAME script deploy runs, so setup and deploy can't
+  # drift. It handles the bun-global install, the /usr/local/lib copy, the
+  # self-links (so extensions resolve the host package), and the /usr/local/bin/pi
+  # wrapper. Pin comes from dependencies.toml.
+  if ! "${SCRIPT_DIR}/scripts/dist/sync-agent-runtime.sh" --skip-extensions; then
+    log_warn "pi sync failed; pi may not be globally accessible."
+    return 0
   fi
-
-  # Install pi system-wide so all platform users can run it.
-  # bun global installs go to ~/.bun/install/global/ which is per-user,
-  # so we copy the package to a shared location and create a wrapper.
-  local pi_src_dir="$HOME/.bun/install/global/node_modules/@earendil-works/pi-coding-agent"
-  local pi_system_dir="/usr/local/lib/pi-coding-agent"
-  if [[ -d "$pi_src_dir" ]]; then
-    # Copy the full package (with node_modules) to a system-wide location
-    sudo rm -rf "$pi_system_dir"
-    sudo cp -a "$pi_src_dir" "$pi_system_dir"
-    sudo chmod -R a+rX "$pi_system_dir"
-
-    # Install all dependencies into the system-wide copy so bun can resolve them
-    (cd "$pi_system_dir" && sudo /usr/local/bin/bun install --frozen-lockfile 2>/dev/null || sudo /usr/local/bin/bun install 2>/dev/null) || true
-
-    # Self-link the package into its own node_modules so that user-installed
-    # Pi extensions (e.g. ~/.pi/agent/git/.../*/index.ts) which import
-    # `@earendil-works/pi-coding-agent` can resolve the host package via
-    # NODE_PATH. Without this, bun's module resolution looks for
-    # node_modules/@earendil-works/pi-coding-agent and finds nothing -- the
-    # package directory IS the install, not a dependency of itself --
-    # so extension load fails with "Cannot find module" and Pi exits 0
-    # immediately, taking the runner's session down with it (trx oqto-ceb7).
-    sudo mkdir -p "$pi_system_dir/node_modules/@earendil-works"
-    sudo ln -sfn "$pi_system_dir" \
-      "$pi_system_dir/node_modules/@earendil-works/pi-coding-agent"
-
-    # Transitional self-link for older extensions that still import
-    # `@mariozechner/pi-coding-agent`.
-    sudo mkdir -p "$pi_system_dir/node_modules/@mariozechner"
-    sudo ln -sfn "$pi_system_dir" \
-      "$pi_system_dir/node_modules/@mariozechner/pi-coding-agent"
-
-    # Create wrapper that uses the system-wide copy.
-    # PI_PACKAGE_DIR tells Pi where to find themes, examples, package.json.
-    # Prefer user's bun (installed per-user by provisioning) over system bun.
-    sudo tee /usr/local/bin/pi >/dev/null <<'PIEOF'
-#!/usr/bin/env bash
-PI_PKG="/usr/local/lib/pi-coding-agent"
-if [ ! -f "$PI_PKG/dist/cli.js" ]; then
-  echo "Error: pi-coding-agent not found at $PI_PKG" >&2
-  exit 1
-fi
-BUN="${HOME}/.bun/bin/bun"
-[ -x "$BUN" ] || BUN="/usr/local/bin/bun"
-[ -x "$BUN" ] || { echo "Error: bun not found" >&2; exit 1; }
-export PI_PACKAGE_DIR="$PI_PKG"
-# Ensure Pi's node_modules is in the resolution path for extensions
-export NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"
-exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
-PIEOF
-    sudo chmod 755 /usr/local/bin/pi
-    validate_pi_rpc_smoke /usr/local/bin/pi
-    log_success "pi installed system-wide: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
-  else
-    log_warn "Could not find pi module at $pi_src_dir. Pi may not be globally accessible."
-  fi
+  validate_pi_rpc_smoke /usr/local/bin/pi
+  log_success "pi installed system-wide: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
 }
 
 install_ttyd() {
