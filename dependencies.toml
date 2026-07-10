@@ -30,7 +30,12 @@ kokorox = "0.2.3"
 
 [external]
 # Not byteowlz, but required for Oqto
-pi = "latest"  # From npm: `bun install -g @earendil-works/pi-coding-agent`
+# pi + pi-extensions are PINNED (not "latest") so deploys are deterministic; the
+# pins are advanced by the test-gated auto-bump (just check-agent-updates ->
+# scripts/dist/check-agent-runtime.sh) which only bumps a pin when a candidate
+# passes the gate. sync via scripts/dist/sync-agent-runtime.sh.
+pi = "0.80.5"  # npm @earendil-works/pi-coding-agent (pinned; auto-bump advances)
+pi-extensions = "9884c7a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
 typst = "latest"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev
 uv = "latest"  # Python package manager: https://github.com/astral-sh/uv

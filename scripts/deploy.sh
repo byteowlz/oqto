@@ -1916,6 +1916,31 @@ REMOTE_EOF
     host_exec_sudo "$is_local" "$ssh_target" "$script"
 }
 
+# Sync the agent runtime (pi + byteowlz pi-extensions) to the pinned versions
+# from dependencies.toml, system-wide + for every platform user, via the shared
+# scripts/dist/sync-agent-runtime.sh (same script setup uses).
+sync_agent_runtime_host() {
+    local is_local="$1" ssh_target="$2" name="$3"
+    local script="$ROOT_DIR/scripts/dist/sync-agent-runtime.sh"
+    local manifest="$ROOT_DIR/dependencies.toml"
+    [[ -f "$script" && -f "$manifest" ]] || { warn "  agent-runtime sync: script or manifest missing"; return 1; }
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp sync-agent-runtime.sh + dependencies.toml -> $ssh_target"
+        echo -e "${YELLOW}  [dry-run]${NC} sync-agent-runtime.sh on $name (pi @ pinned + extensions @ pinned, all users)"
+        return 0
+    fi
+
+    log "[$name] syncing agent runtime (pi + extensions) to pinned versions..."
+    if [[ "$is_local" == "true" ]]; then
+        bash "$script" --manifest "$manifest"
+    else
+        scp "$script" "$ssh_target:/tmp/sync-agent-runtime.sh" >/dev/null
+        scp "$manifest" "$ssh_target:/tmp/oqto-dependencies.toml" >/dev/null
+        ssh "$ssh_target" "bash /tmp/sync-agent-runtime.sh --manifest /tmp/oqto-dependencies.toml"
+    fi
+}
+
 deploy_host() {
     local i="$1"
     local name="${H_NAME[$i]}"
@@ -1957,6 +1982,11 @@ deploy_host() {
                 return 1
             fi
         fi
+        # Refresh the agent runtime (pi + byteowlz extensions) to the pinned
+        # versions for all users. Best-effort: a hiccup must not fail the deploy
+        # (the platform still runs on the current pi), so warn and continue.
+        sync_agent_runtime_host "$is_local" "$ssh_target" "$name" \
+            || warn "[$name] agent runtime sync incomplete (pi/extensions may be stale)"
     else
         if [[ "$ACTIVATE_ONLY" != "true" ]]; then
             if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then
