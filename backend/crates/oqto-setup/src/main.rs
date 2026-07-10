@@ -53,8 +53,10 @@ enum Command {
         /// Stable binary link directory.
         #[arg(long, default_value = "/usr/local/bin")]
         bin_dir: PathBuf,
-        /// Run strict doctor check after activation.
-        #[arg(long, default_value_t = true)]
+        /// Run strict doctor check after activation. Pass `--doctor-strict false`
+        /// when a deploy orchestrator starts services + validates health itself
+        /// (the strict gate requires services already active).
+        #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
         doctor_strict: bool,
         /// Number of superseded releases to retain when pruning. `current` and
         /// `last-good` are always preserved on top of this. 0 disables pruning.

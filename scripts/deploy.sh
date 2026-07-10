@@ -1893,13 +1893,18 @@ fi
 setup="\$(find "\$tmpdir" -type f -name oqto-setup | head -1)"
 [ -n "\$setup" ] || { echo 'oqto-setup not found in artifact' >&2; exit 1; }
 chmod +x "\$setup"
-"\$setup" install --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}
+# --doctor-strict false: the strict post-activation doctor requires the oqto
+# user services to be enabled+active, but deploy.sh starts them in the NEXT
+# phase (restart_services_ordered) and validates with health_check_host. Running
+# the gate here fails premature on a fresh host (and misdetects the profile as
+# single-user on a not-yet-configured multi-user host). deploy owns health.
+"\$setup" install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}
 REMOTE_EOF
 )"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
-        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}"
+        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}"
         return 0
     fi
 
