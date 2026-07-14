@@ -1,4 +1,4 @@
-"$schema" = "angebot.schema.json" # Quote Content File
+#:schema angebot.schema.json
 # This file contains the editable content for a quote document.
 # Edit the values below - the structure is fixed by the template.
 #

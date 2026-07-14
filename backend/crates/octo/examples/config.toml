@@ -1,7 +1,7 @@
 # Example configuration for Octo server.
 # Copy this file to $XDG_CONFIG_HOME/octo/config.toml and adjust as needed.
 
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json
 
 profile = "default"
 
