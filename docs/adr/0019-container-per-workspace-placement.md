@@ -50,15 +50,18 @@ A Workspace is a **Pod** (a podman/k8s pod — shared netns): the **runner conta
 - **eavs is "an egress endpoint"; the runner is topology-agnostic.** Shared-node-service is the default; a **per-Workspace eavs sidecar is an opt-in knob** for defense-in-depth against a bug *in eavs itself* (hostile-multi-tenant). Flipping between them is wiring, not architecture.
 - **Level-2 egress capture** (`oqto-h6hr`) works with shared eavs: the Pod's netns transparently redirects egress to the shared eavs address (a sidecar only changes the target to localhost). So level-2 does not force a sidecar.
 
-## Sandbox under in-container root
+## Sandbox inside a rootless container
 
-Because rootless userns makes in-container root host-safe, agents may run with (reduced-cap) root for tooling. `oqto-sandbox` must stay secure anyway:
+The first rootless-Podman implementation runs both runner and harness as fixed, unprivileged uid 1000 inside a user namespace. The Podman boundary applies `NO_NEW_PRIVS`, drops all capabilities before adding only the reviewed tooling subset, restricts mounts, and enforces resource limits.
+
+Do **not** run bubblewrap recursively by granting `CAP_SYS_ADMIN`: live container testing proved that nested bwrap cannot construct its namespace under the rootless/no-new-privileges boundary, and adding `SYS_ADMIN` would weaken the load-bearing cross-tenant boundary. The Workspace image therefore carries an explicit `enabled = false` runner-sandbox configuration for this mode; this is not an implicit fallback. The runner logs reduced isolation, and the outer container remains the security boundary.
+
+A future supervisor capability may select a defense-in-depth backend that works without privileged nested namespaces (for example direct Landlock/seccomp application by the trusted runner). Until that is implemented and advertised, the supported container mode is fixed-unprivileged-user plus rootless Podman isolation—not in-container root. Any in-container-root mode remains fail-closed and must provide the monotonic Landlock/seccomp layer described below before it can be enabled:
 
 - **The runner (trusted parent) installs the sandbox, then `execve`s the harness** with `NO_NEW_PRIVS`. The agent never installs or can skip its own sandbox.
-- **Landlock + seccomp are the load-bearing intra-Workspace boundaries because they are monotonic and irrevocable — even for root.** Root inside a namespace has no operation to lift a Landlock domain or remove an installed seccomp filter; both are inherited by all descendants.
-- **The container is granted *reduced-cap* root** — enough for installs (`CAP_DAC_OVERRIDE`, `CAP_CHOWN`) but **without `CAP_SYS_ADMIN`**, so the agent cannot `unshare`/remount around mount-based protections. "Root in container" = uid 0 with a trimmed cap set, not sovereignty.
-- **Two independent layers:** userns container = cross-tenant (host-safe under in-container root); runner-applied Landlock/seccomp = intra-Workspace per-work-directory (root-proof). Neither depends on the other.
-- **`oqto-sandbox` is portable and feature-gated** (Linux Landlock/seccomp/namespaces; macOS seatbelt; Windows best-effort), selecting the strongest backend at runtime. Where Landlock is unavailable, intra-Workspace isolation degrades; the runner runs the agent unprivileged or **advertises reduced isolation** (capability advertisement, cross-tenant still held by the container).
+- **Landlock + seccomp are the load-bearing intra-Workspace boundaries because they are monotonic and irrevocable—even for root.**
+- **No supported mode grants `CAP_SYS_ADMIN`.**
+- **`oqto-sandbox` is portable and feature-gated**; where its backend is unavailable, the runner stays unprivileged and advertises reduced isolation rather than silently claiming full isolation.
 
 ## Tool provisioning (containers are cattle)
 

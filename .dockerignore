@@ -4,3 +4,21 @@
 # Allow only what the Dockerfile COPYs
 !deploy/docker/Caddyfile
 !deploy/docker/entrypoint.sh
+
+# Per-Workspace image inputs (deploy/workspace/Containerfile).
+!dependencies.toml
+!deploy/workspace/
+!deploy/workspace/**
+!dist/
+!dist/immutable/
+!dist/immutable/bin/
+!dist/immutable/bin/oqto-setup
+!dist/immutable/bin/oqto-runner
+!dist/immutable/bin/oqto-sandbox
+!dist/immutable/bin/oqto-files
+!dist/immutable/seccomp/
+!dist/immutable/seccomp/default.bpf
+!dist/mutable-templates/
+!dist/mutable-templates/etc/
+!dist/mutable-templates/etc/oqto/
+!dist/mutable-templates/etc/oqto/sandbox.toml

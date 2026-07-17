@@ -36,8 +36,8 @@ kokorox = "0.2.3"
 # passes the gate. sync via scripts/dist/sync-agent-runtime.sh.
 pi = "0.80.5"  # npm @earendil-works/pi-coding-agent (pinned; auto-bump advances)
 pi-extensions = "9884c7a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
-typst = "latest"  # Required by tmpltr: https://github.com/typst/typst
+typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev
-uv = "latest"  # Python package manager: https://github.com/astral-sh/uv
+uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv
 yt-dlp = "latest"  # Media downloader: https://github.com/yt-dlp/yt-dlp
 whisper-cpp = "latest"  # Speech-to-text: https://github.com/ggerganov/whisper.cpp

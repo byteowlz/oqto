@@ -1,0 +1,8 @@
+# The Workspace container is the sandbox boundary. Running bubblewrap inside a
+# rootless user namespace is unsupported and would require adding SYS_ADMIN,
+# weakening the outer boundary. Keep runner sandbox wrapping explicitly off;
+# Podman supplies userns, no-new-privileges, dropped capabilities, mounts, and
+# resource limits.
+enabled = false
+profile = "development"
+no_new_privs = true

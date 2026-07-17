@@ -1,0 +1,90 @@
+# Per-Workspace runner image. Build from the repository root:
+# podman build -f deploy/workspace/Containerfile -t localhost/oqto-workspace:dev .
+#
+# Production components are copied from the staged Oqto bundle or acquired as
+# checksum-verified release artifacts. Nothing is compiled in this image.
+FROM ubuntu:24.04 AS tools
+
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
+    && rm -rf /var/lib/apt/lists/*
+COPY dist/immutable/bin/oqto-setup /usr/local/bin/oqto-setup
+COPY dependencies.toml /tmp/dependencies.toml
+RUN set -eux; \
+    case "$TARGETARCH" in amd64|"") arch=x86-64 ;; arm64) arch=aarch64 ;; *) exit 64 ;; esac; \
+    mkdir -p /out/bin /tmp/artifacts; \
+    oqto-setup acquire --tools-only --manifest /tmp/dependencies.toml \
+      --arch "$arch" --dest /tmp/artifacts --install-bin /out/bin
+
+FROM ubuntu:24.04 AS typst-runtime
+ARG TARGETARCH
+ARG TYPST_VERSION=0.15.1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$TARGETARCH" in \
+         amd64|"") target=x86_64-unknown-linux-musl; sha=a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c ;; \
+         arm64) target=aarch64-unknown-linux-musl; sha=5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee ;; \
+         *) exit 64 ;; \
+       esac \
+    && curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${target}.tar.xz" -o /tmp/typst.tar.xz \
+    && echo "$sha  /tmp/typst.tar.xz" | sha256sum --check --strict \
+    && tar -xJf /tmp/typst.tar.xz --strip-components=1 -C /usr/local/bin "typst-${target}/typst"
+
+FROM ghcr.io/astral-sh/uv:0.11.29 AS uv-runtime
+
+FROM node:22-bookworm-slim AS pi-runtime
+ARG PI_VERSION=0.80.5
+RUN npm install --global --omit=dev \
+      "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+      "@earendil-works/pi-agent-core@${PI_VERSION}" \
+      "@earendil-works/pi-ai@${PI_VERSION}" \
+      "@earendil-works/pi-tui@${PI_VERSION}"
+
+FROM ubuntu:24.04
+LABEL org.opencontainers.image.title="oqto-workspace" \
+      org.opencontainers.image.description="Isolated Oqto Workspace runner and curated agent toolchain" \
+      org.opencontainers.image.source="https://github.com/byteowlz/oqto"
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      bubblewrap ca-certificates coreutils curl findutils git jq openssh-client procps python3 \
+      python3-venv ripgrep tini tmux unzip xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi
+RUN if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi \
+    && groupadd --gid 1000 oqto \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash oqto
+
+# Pi and Node are copied from a pinned prebuilt runtime stage. Mutable user
+# extensions and configuration remain under /home/oqto.
+COPY --from=pi-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=pi-runtime /usr/local/lib/node_modules/ /usr/local/lib/pi-node_modules/
+RUN ln -s /usr/local/lib/pi-node_modules/@earendil-works/pi-coding-agent \
+         /usr/local/lib/pi-coding-agent \
+    && mkdir -p /usr/local/lib/pi-node_modules/@mariozechner \
+    && ln -s /usr/local/lib/pi-coding-agent \
+         /usr/local/lib/pi-node_modules/@mariozechner/pi-coding-agent
+
+COPY --from=tools /out/bin/ /usr/local/bin/
+COPY --from=typst-runtime /usr/local/bin/typst /usr/local/bin/typst
+COPY --from=uv-runtime /uv /uvx /usr/local/bin/
+COPY dist/immutable/bin/oqto-runner /usr/local/bin/oqto-runner
+COPY dist/immutable/bin/oqto-sandbox /usr/local/bin/oqto-sandbox
+COPY dist/immutable/bin/oqto-files /usr/local/bin/oqto-files
+COPY dist/immutable/seccomp/default.bpf /usr/local/share/oqto/seccomp/default.bpf
+COPY deploy/workspace/sandbox.toml /etc/oqto/sandbox.toml
+COPY deploy/workspace/pi /usr/local/bin/pi
+COPY deploy/workspace/entrypoint.sh /usr/local/bin/oqto-workspace-entrypoint
+
+RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
+    && mkdir -p /workspace /run/oqto \
+    && chown -R 1000:1000 /workspace /run/oqto /home/oqto
+
+ENV HOME=/home/oqto \
+    USER=oqto \
+    PATH=/usr/local/bin:/usr/bin:/bin:/home/oqto/.local/bin:/home/oqto/.cargo/bin \
+    PI_PACKAGE_DIR=/usr/local/lib/pi-coding-agent \
+    NODE_PATH=/usr/local/lib/pi-node_modules
+WORKDIR /workspace
+USER 1000:1000
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/oqto-workspace-entrypoint"]
+CMD ["oqto-runner", "--socket", "/run/oqto/runner.sock"]
