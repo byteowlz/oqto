@@ -189,7 +189,10 @@ pub async fn migrate_db_path(db_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn open_workspace_pool(user_home: &Path, workspace_id: &str) -> Result<sqlx::SqlitePool> {
+pub(crate) async fn open_workspace_pool(
+    user_home: &Path,
+    workspace_id: &str,
+) -> Result<sqlx::SqlitePool> {
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 
     {
@@ -232,6 +235,13 @@ pub struct AppendStats {
     pub messages_written: usize,
     pub deduped: bool,
     pub snapshot_hash: String,
+    /// The Oqto session id actually written to.
+    ///
+    /// Identity is resolved here (see `canonicalize_session_identity`), so this
+    /// need not equal the `session_id` the caller passed. Callers that go on to
+    /// read back, checkpoint, or delete-by-identity must use this value: acting
+    /// on the id they proposed can address a session that was never written.
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,6 +275,88 @@ fn stable_message_fingerprint(msg: &AgentMessage) -> String {
     hex::encode(&hasher.finalize()[..10])
 }
 
+/// True when `id` is a public Oqto session id rather than a harness-native one.
+pub fn is_canonical_session_id(id: &str) -> bool {
+    id.starts_with("oqto-")
+}
+
+/// Canonical public Oqto session id derived from a harness-native external id.
+///
+/// Deterministic and stable, so an id minted here from the same harness session
+/// is always the same id, whichever ingestion path gets there first.
+pub fn platform_id_for_external_id(external_id: &str) -> String {
+    const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
+    format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
+}
+
+/// Resolve the one public Oqto identity to persist under (ADR-0023).
+///
+/// `platform_id` is Oqto identity; harness-native ids (pi JSONL uuid, Codex
+/// thread id, ...) are binding facts belonging in `external_id` and must never
+/// become the session identity. Callers holding only a harness id used to
+/// persist under it directly, which minted a second session for a conversation
+/// that already had one and split its history across the two.
+///
+/// Resolution order:
+///   1. an existing canonical session bound to this external id wins, even over
+///      a canonical `platform_id` the caller proposes. Callers mint by
+///      different schemes (frontend random/timestamp, importer uuid-v5), so
+///      honouring the proposal would give one conversation a second identity
+///      whenever the schemes disagree. Binding-wins is the same rule
+///      `batch_upsert_session_identities` already applies;
+///   2. else a canonical `platform_id` is taken as the identity;
+///   3. else an existing session already stored under the harness id keeps it,
+///      because re-minting here would orphan the turns it already owns and
+///      split exactly the history this is meant to keep whole;
+///   4. else mint deterministically, so a conversation that has no identity yet
+///      gets a stable public one rather than a harness id.
+async fn canonicalize_session_identity(
+    tx: &mut sqlx::SqliteConnection,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+) -> Result<(String, String)> {
+    let binding = external_id
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(platform_id);
+
+    if let Some(existing) = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT session_id, platform_id
+        FROM oqto_log_sessions
+        WHERE external_id = ? AND platform_id LIKE 'oqto-%'
+        ORDER BY created_at
+        LIMIT 1
+        "#,
+    )
+    .bind(binding)
+    .fetch_optional(&mut *tx)
+    .await
+    .context("resolve existing canonical session binding")?
+    {
+        return Ok(existing);
+    }
+
+    if is_canonical_session_id(platform_id) {
+        return Ok((session_id.to_string(), platform_id.to_string()));
+    }
+
+    if let Some(existing) = sqlx::query_as::<_, (String, String)>(
+        "SELECT session_id, platform_id FROM oqto_log_sessions WHERE session_id = ? LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .context("resolve pre-existing session row")?
+    {
+        return Ok(existing);
+    }
+
+    let minted = platform_id_for_external_id(binding);
+    Ok((minted.clone(), minted))
+}
+
 pub async fn append_agent_end_snapshot(
     user_home: &Path,
     user_id: &str,
@@ -281,6 +373,10 @@ pub async fn append_agent_end_snapshot(
 
     let pool = open_workspace_pool(user_home, workspace_id).await?;
     let mut tx = pool.begin().await.context("begin oqto-log tx")?;
+
+    let (session_id, platform_id) =
+        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id).await?;
+    let (session_id, platform_id) = (session_id.as_str(), platform_id.as_str());
 
     sqlx::query(
         r#"
@@ -346,6 +442,7 @@ pub async fn append_agent_end_snapshot(
             messages_written: 0,
             deduped: true,
             snapshot_hash,
+            session_id: session_id.to_string(),
         });
     }
 
@@ -516,6 +613,7 @@ pub async fn append_agent_end_snapshot(
         messages_written,
         deduped: turns_written == 0,
         snapshot_hash,
+        session_id: session_id.to_string(),
     })
 }
 
@@ -597,6 +695,10 @@ async fn replace_session_with_snapshot_inner(
 ) -> Result<AppendStats> {
     let pool = open_workspace_pool(user_home, workspace_id).await?;
     let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
+
+    let (session_id, platform_id) =
+        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id).await?;
+    let (session_id, platform_id) = (session_id.as_str(), platform_id.as_str());
 
     sqlx::query(
         r#"
@@ -830,6 +932,7 @@ async fn replace_session_with_snapshot_inner(
         messages_written,
         deduped: false,
         snapshot_hash,
+        session_id: session_id.to_string(),
     })
 }
 
@@ -989,6 +1092,241 @@ pub async fn read_session_stats(
 mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    fn agent_msg(role: &str, content: &str) -> AgentMessage {
+        AgentMessage {
+            role: role.to_string(),
+            content: Value::String(content.to_string()),
+            timestamp: Some(1_779_363_330_601),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    async fn sessions_for_external(
+        user_home: &Path,
+        workspace_id: &str,
+        external_id: &str,
+    ) -> Vec<(String, String)> {
+        let pool = open_workspace_pool(user_home, workspace_id)
+            .await
+            .expect("open pool");
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT session_id, platform_id FROM oqto_log_sessions WHERE external_id = ? ORDER BY session_id",
+        )
+        .bind(external_id)
+        .fetch_all(&pool)
+        .await
+        .expect("query sessions")
+    }
+
+    /// One harness session must never yield two Oqto sessions: the live
+    /// agent-end path and the JSONL-import path have to land on one identity,
+    /// or a reload resolving to the other one shows a split history.
+    #[tokio::test]
+    async fn one_pi_session_yields_one_oqto_session_across_both_paths() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-identity";
+        let pi_id = "019f5f22-3777-78b7-ab0e-539863fb8232";
+
+        // Frontend-minted identity records the harness id as a binding fact.
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            "oqto-1784007500905-e4b1aea20b3398",
+            "oqto-1784007500905-e4b1aea20b3398",
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("user", "first")],
+        )
+        .await
+        .expect("seed canonical session");
+
+        // Live path holding only the harness id must resolve to that identity
+        // rather than persisting under the harness id itself.
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            pi_id,
+            pi_id,
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("assistant", "second")],
+        )
+        .await
+        .expect("live agent-end under harness id");
+
+        let sessions = sessions_for_external(temp.path(), ws, pi_id).await;
+        assert_eq!(
+            sessions,
+            vec![(
+                "oqto-1784007500905-e4b1aea20b3398".to_string(),
+                "oqto-1784007500905-e4b1aea20b3398".to_string()
+            )],
+            "harness id must bind to the existing canonical session, not mint a second one"
+        );
+    }
+
+    /// Callers mint canonical ids by different schemes: the frontend uses a
+    /// random/timestamp id, the importer a uuid-v5 of the external id. A JSONL
+    /// rebuild proposing the v5 id for a conversation the frontend already
+    /// named must land on the existing session, not open a third identity.
+    #[tokio::test]
+    async fn rebuild_with_a_different_canonical_scheme_reuses_the_bound_session() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-scheme";
+        let pi_id = "019e456b-fa00-7273-90bd-610e0afb0f03";
+        let frontend_id = "oqto-1779281160481-9bc53b6fec002";
+
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            frontend_id,
+            frontend_id,
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("user", "named by the frontend")],
+        )
+        .await
+        .expect("seed frontend-minted session");
+
+        // Importer/bootstrap re-projects the same JSONL under its own scheme.
+        let importer_id = platform_id_for_external_id(pi_id);
+        assert_ne!(importer_id, frontend_id, "schemes must actually differ");
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            &importer_id,
+            &importer_id,
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("assistant", "rebuilt from jsonl")],
+        )
+        .await
+        .expect("rebuild under importer scheme");
+
+        let sessions = sessions_for_external(temp.path(), ws, pi_id).await;
+        assert_eq!(
+            sessions,
+            vec![(frontend_id.to_string(), frontend_id.to_string())],
+            "rebuild must reuse the bound identity rather than mint a second"
+        );
+    }
+
+    /// Identity is resolved here, so callers cannot assume the id they passed
+    /// is the id that was written. `AppendStats::session_id` reports what was
+    /// actually used; a caller that reads back, checkpoints, or deletes by the
+    /// proposed id would address a session that does not exist. (Bootstrap did
+    /// exactly that and deleted every session it had just written.)
+    #[tokio::test]
+    async fn append_reports_the_session_id_it_actually_wrote() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-reported-id";
+        let pi_id = "019f6537-7677-7b2c-922b-2fef2cdf4ad3";
+
+        let stats = append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            pi_id,
+            pi_id,
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("user", "hello")],
+        )
+        .await
+        .expect("append under harness id");
+
+        assert_ne!(
+            stats.session_id, pi_id,
+            "the harness id must not be the written identity"
+        );
+        assert_eq!(stats.session_id, platform_id_for_external_id(pi_id));
+
+        // The reported id must address the session that actually exists.
+        let found = sessions_for_external(temp.path(), ws, pi_id).await;
+        assert_eq!(found, vec![(stats.session_id.clone(), stats.session_id)]);
+    }
+
+    /// With no identity yet, a harness id must still not become the identity.
+    #[tokio::test]
+    async fn harness_id_alone_mints_a_canonical_identity() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-mint";
+        let pi_id = "019f5f22-aaaa-bbbb-cccc-000000000001";
+
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            pi_id,
+            pi_id,
+            Some(pi_id),
+            pi_id,
+            &[agent_msg("user", "only")],
+        )
+        .await
+        .expect("append under harness id");
+
+        let sessions = sessions_for_external(temp.path(), ws, pi_id).await;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].1, platform_id_for_external_id(pi_id));
+        assert!(is_canonical_session_id(&sessions[0].1));
+        assert_ne!(sessions[0].0, pi_id, "harness id must not be the identity");
+    }
+
+    /// Sessions already stored under a harness id predate this rule; re-minting
+    /// would orphan the turns they own and split the history being protected.
+    #[tokio::test]
+    async fn existing_harness_id_session_keeps_its_id() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-legacy";
+        let legacy_id = "legacy-raw-session";
+
+        let pool = open_workspace_pool(temp.path(), ws).await.expect("pool");
+        sqlx::query(
+            "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(legacy_id)
+        .bind(legacy_id)
+        .bind(legacy_id)
+        .bind("user-1")
+        .bind(ws)
+        .execute(&pool)
+        .await
+        .expect("seed legacy row");
+
+        append_agent_end_snapshot(
+            temp.path(),
+            "user-1",
+            ws,
+            legacy_id,
+            legacy_id,
+            Some(legacy_id),
+            legacy_id,
+            &[agent_msg("user", "legacy turn")],
+        )
+        .await
+        .expect("append to legacy session");
+
+        let sessions = sessions_for_external(temp.path(), ws, legacy_id).await;
+        assert_eq!(
+            sessions,
+            vec![(legacy_id.to_string(), legacy_id.to_string())],
+            "existing harness-id session must keep its id, not gain a second one"
+        );
+    }
 
     #[tokio::test]
     async fn repairs_accidental_projection_migration_drift() -> Result<()> {

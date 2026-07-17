@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 integration-tests = []
+iroh-transport = ["dep:iroh"]
 
 [dependencies]
 anyhow.workspace = true
@@ -26,10 +27,13 @@ log.workspace = true
 once_cell.workspace = true
 serde.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
+rustls-pemfile.workspace = true
 toml.workspace = true
 tracing.workspace = true
 trx-core.workspace = true
 uuid.workspace = true
+iroh = { version = "1.0.2", default-features = false, features = ["tls-ring"], optional = true }
 
 oqto-history = { path = "../oqto-history" }
 serde_json.workspace = true
@@ -39,6 +43,7 @@ oqto-pi = { path = "../oqto-pi" }
 oqto-sandbox = { path = "../oqto-sandbox" }
 
 [dev-dependencies]
+rcgen = "0.13"
 tempfile.workspace = true
 
 [lints]

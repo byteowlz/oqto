@@ -4,11 +4,11 @@ use log::{debug, error, info, warn};
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::UnixListener;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -16,6 +16,8 @@ use crate::daemon::config::RunnerUserConfig;
 use crate::daemon::state::{ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent};
 use crate::pi_manager::PiSessionManager;
 use crate::protocol::*;
+use crate::transport::{RunnerListener, UnixRunnerListener};
+use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
@@ -1516,18 +1518,28 @@ impl Runner {
         let fileserver_id = format!("{}-fileserver", req.session_id);
         let ttyd_id = format!("{}-ttyd", req.session_id);
 
-        // Spawn fileserver
+        // Spawn fileserver. Its upload limit is independent from Axum's
+        // control-plane limit, so pass the deployment-wide files config when
+        // present to keep both enforcement points aligned.
+        let mut fileserver_args = vec![
+            "--port".to_string(),
+            req.fileserver_port.to_string(),
+            "--bind".to_string(),
+            "127.0.0.1".to_string(),
+            "--root".to_string(),
+            req.workspace_path.to_string_lossy().to_string(),
+        ];
+        let files_config = Path::new("/etc/oqto/files.toml");
+        if files_config.is_file() {
+            fileserver_args.extend([
+                "--config".to_string(),
+                files_config.to_string_lossy().into_owned(),
+            ]);
+        }
         let fileserver_req = SpawnProcessRequest {
             id: fileserver_id.clone(),
             binary: self.binaries.fileserver.clone(),
-            args: vec![
-                "--port".to_string(),
-                req.fileserver_port.to_string(),
-                "--bind".to_string(),
-                "127.0.0.1".to_string(),
-                "--root".to_string(),
-                req.workspace_path.to_string_lossy().to_string(),
-            ],
+            args: fileserver_args,
             cwd: req.workspace_path.clone(),
             env: HashMap::new(),
             sandboxed: false,
@@ -2520,24 +2532,24 @@ impl Runner {
         let sessions_dir = dirs::home_dir()
             .unwrap_or_default()
             .join(".pi/agent/sessions");
-        if sessions_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
-                        continue;
-                    }
-                    if let Ok(files) = std::fs::read_dir(&path) {
-                        for file in files.flatten() {
-                            let fname = file.file_name();
-                            let fname_str = fname.to_string_lossy();
-                            if fname_str.ends_with(".jsonl")
-                                && (fname_str.contains(&external_id)
-                                    || fname_str.contains(&req.session_id))
-                            {
-                                info!("Deleting Pi session file: {}", file.path().display());
-                                let _ = std::fs::remove_file(file.path());
-                            }
+        if sessions_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&sessions_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                if let Ok(files) = std::fs::read_dir(&path) {
+                    for file in files.flatten() {
+                        let fname = file.file_name();
+                        let fname_str = fname.to_string_lossy();
+                        if fname_str.ends_with(".jsonl")
+                            && (fname_str.contains(&external_id)
+                                || fname_str.contains(&req.session_id))
+                        {
+                            info!("Deleting Pi session file: {}", file.path().display());
+                            let _ = std::fs::remove_file(file.path());
                         }
                     }
                 }
@@ -3309,6 +3321,7 @@ impl Runner {
     /// Return runner-advertised capabilities for backend negotiation.
     async fn get_capabilities(&self) -> RunnerResponse {
         RunnerResponse::RunnerCapabilities(RunnerCapabilitiesResponse {
+            protocol_version: RUNNER_WIRE_VERSION,
             harnesses: vec!["pi".to_string()],
             features: RunnerFeatureFlags {
                 command_discovery: true,
@@ -3445,21 +3458,26 @@ impl Runner {
     fn serialize_response_line(
         resp: &RunnerResponse,
     ) -> std::result::Result<String, std::io::Error> {
-        serde_json::to_string(resp)
-            .map(|json| format!("{}\n", json))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        let encoded = encode_json_frame(resp)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        String::from_utf8(encoded)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 
-    async fn handle_pi_subscribe(
+    async fn handle_pi_subscribe<W>(
         &self,
         session_id: &str,
-        writer: &mut tokio::net::unix::OwnedWriteHalf,
-    ) -> Result<(), std::io::Error> {
+        resume: Option<&PiResumeCursor>,
+        writer: &mut W,
+    ) -> Result<(), std::io::Error>
+    where
+        W: AsyncWrite + Unpin + ?Sized,
+    {
         info!("handle_pi_subscribe: session_id={}", session_id);
 
         // Subscribe to the session's event stream
-        let mut rx = match self.pi_manager.subscribe(session_id).await {
-            Ok(rx) => rx,
+        let mut attachment = match self.pi_manager.subscribe(session_id, resume).await {
+            Ok(attachment) => attachment,
             Err(e) => {
                 // Session doesn't exist - send error and end
                 let resp = error_response(
@@ -3475,15 +3493,25 @@ impl Runner {
         // Send subscription confirmation
         let resp = RunnerResponse::PiSubscribed(PiSubscribedResponse {
             session_id: session_id.to_string(),
+            stream_id: attachment.stream_id.clone(),
+            attachment: attachment.status,
+            replay_floor: attachment.replay_floor,
+            current_seq: attachment.current_seq,
+            delivered_through: attachment.delivered_through,
         });
         let line = Self::serialize_response_line(&resp)?;
         writer.write_all(line.as_bytes()).await?;
 
+        for event in attachment.replay.drain(..) {
+            let line = Self::serialize_response_line(&RunnerResponse::PiEvent(Box::new(event)))?;
+            writer.write_all(line.as_bytes()).await?;
+        }
+
         // Stream events until the session closes or client disconnects.
         // The channel is unbounded per-subscriber so events are never dropped.
         // When the session ends, the sender side is dropped and recv() returns None.
-        while let Some(event_wrapper) = rx.recv().await {
-            let resp = RunnerResponse::PiEvent(event_wrapper);
+        while let Some(event_wrapper) = attachment.receiver.recv().await {
+            let resp = RunnerResponse::PiEvent(Box::new(event_wrapper));
             let line = match Self::serialize_response_line(&resp) {
                 Ok(line) => line,
                 Err(err) => {
@@ -3510,41 +3538,40 @@ impl Runner {
         Ok(())
     }
 
-    /// Handle a client connection.
-    async fn handle_connection(&self, stream: UnixStream) {
-        let (reader, mut writer) = stream.into_split();
+    /// Handle a client connection over any established bidirectional stream.
+    async fn handle_connection<S>(&self, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
-        let mut line = String::new();
 
         loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => {
-                    // EOF
+            match read_json_frame::<_, RunnerRequest>(&mut reader).await {
+                Ok(None) => {
                     debug!("Client disconnected");
                     break;
                 }
-                Ok(_) => {
-                    let req: RunnerRequest = match serde_json::from_str(&line) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let resp = error_response(
-                                ErrorCode::InvalidRequest,
-                                format!("Invalid JSON: {}", e),
-                            );
-                            if let Ok(line) = Self::serialize_response_line(&resp) {
-                                let _ = writer.write_all(line.as_bytes()).await;
-                            }
-                            continue;
-                        }
-                    };
-
+                Err(error) => {
+                    let resp = error_response(
+                        ErrorCode::InvalidRequest,
+                        format!("Invalid runner frame: {error}"),
+                    );
+                    if let Ok(line) = Self::serialize_response_line(&resp) {
+                        let _ = writer.write_all(line.as_bytes()).await;
+                    }
+                    break;
+                }
+                Ok(Some(req)) => {
                     debug!("Received request: {:?}", req);
 
                     // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
                         let session_id = sub_req.session_id.clone();
-                        if let Err(e) = self.handle_pi_subscribe(&session_id, &mut writer).await {
+                        if let Err(e) = self
+                            .handle_pi_subscribe(&session_id, sub_req.resume.as_ref(), &mut writer)
+                            .await
+                        {
                             error!("Failed to handle Pi subscription: {}", e);
                             break;
                         }
@@ -3706,10 +3733,65 @@ impl Runner {
                         break;
                     }
                 }
-                Err(e) => {
-                    error!("Error reading from client: {}", e);
+            }
+        }
+    }
+
+    async fn serve_listener<L>(&self, listener: &L)
+    where
+        L: RunnerListener,
+    {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok(stream) => {
+                            debug!("New client connection on {}", listener.endpoint_description());
+                            let runner = Runner {
+                                state: Arc::clone(&self.state),
+                                shutdown_tx: self.shutdown_tx.clone(),
+                                sandbox_config: self.sandbox_config.clone(),
+                                binaries: self.binaries.clone(),
+                                user_config: self.user_config.clone(),
+                                pi_manager: Arc::clone(&self.pi_manager),
+                            };
+                            tokio::spawn(async move {
+                                runner.handle_connection(stream).await;
+                            });
+                        }
+                        Err(error) => {
+                            error!("Accept error on {}: {}", listener.endpoint_description(), error);
+                        }
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    info!("Shutting down listener {}", listener.endpoint_description());
                     break;
                 }
+            }
+        }
+    }
+
+    /// Serve any authenticated runner transport until shutdown.
+    pub async fn run_transport<L>(&self, listener: &L) -> Result<()>
+    where
+        L: RunnerListener,
+    {
+        info!("Runner listening on {}", listener.endpoint_description());
+        sd_notify_ready();
+        self.serve_listener(listener).await;
+        self.cleanup_managed_processes().await;
+        Ok(())
+    }
+
+    async fn cleanup_managed_processes(&self) {
+        let mut state = self.state.write().await;
+        for (id, mut process) in state.processes.drain() {
+            if process.is_running() {
+                info!("Killing process '{}' on shutdown", id);
+                let _ = process.child.kill().await;
             }
         }
     }
@@ -3745,52 +3827,8 @@ impl Runner {
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o770))
             .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
 
-        info!("Runner listening on {:?}", socket_path);
-
-        // Notify systemd that we're ready (Type=notify).
-        // This unblocks `systemctl start` so callers know the socket is live.
-        sd_notify_ready();
-
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
-
-        loop {
-            tokio::select! {
-                result = listener.accept() => {
-                    match result {
-                        Ok((stream, _addr)) => {
-                            debug!("New client connection");
-                            let runner = Runner {
-                                state: Arc::clone(&self.state),
-                                shutdown_tx: self.shutdown_tx.clone(),
-                                sandbox_config: self.sandbox_config.clone(),
-                                binaries: self.binaries.clone(),
-                                user_config: self.user_config.clone(),
-                                pi_manager: Arc::clone(&self.pi_manager),
-                            };
-                            tokio::spawn(async move {
-                                runner.handle_connection(stream).await;
-                            });
-                        }
-                        Err(e) => {
-                            error!("Accept error: {}", e);
-                        }
-                    }
-                }
-                _ = shutdown_rx.recv() => {
-                    info!("Shutting down...");
-                    break;
-                }
-            }
-        }
-
-        // Cleanup: kill all managed processes
-        let mut state = self.state.write().await;
-        for (id, mut proc) in state.processes.drain() {
-            if proc.is_running() {
-                info!("Killing process '{}' on shutdown", id);
-                let _ = proc.child.kill().await;
-            }
-        }
+        let listener = UnixRunnerListener::new(listener, socket_path);
+        self.run_transport(&listener).await?;
 
         // Remove socket file
         let _ = tokio::fs::remove_file(socket_path).await;

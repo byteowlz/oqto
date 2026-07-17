@@ -588,7 +588,7 @@ mod tests {
             "user-1",
             workspace_id,
             session_id,
-            "platform-1",
+            "oqto-platform-1",
             Some("external-1"),
             "external-1",
             &records,

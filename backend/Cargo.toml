@@ -37,7 +37,9 @@ serde_yaml = "0.9"
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-stream = "0.1"
+rustls-pemfile = "2"
 tokio-tungstenite = "0.26"
 tokio-util = { version = "0.7", features = ["io"] }
 

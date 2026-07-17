@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use log::info;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -19,8 +20,17 @@ use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "listen_tls")]
     socket: Option<PathBuf>,
+    /// Listen on TCP with mandatory mutual TLS instead of a Unix socket.
+    #[arg(long, value_name = "ADDRESS")]
+    listen_tls: Option<SocketAddr>,
+    #[arg(long, requires = "listen_tls")]
+    tls_cert: Option<PathBuf>,
+    #[arg(long, requires = "listen_tls")]
+    tls_key: Option<PathBuf>,
+    #[arg(long, requires = "listen_tls")]
+    tls_client_ca: Option<PathBuf>,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -40,12 +50,15 @@ async fn main() -> Result<()> {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
-    let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
+    let socket_path = args.socket.clone().unwrap_or_else(get_default_socket_path);
 
     info!(
-        "Starting oqto-runner (user={}, socket={:?})",
+        "Starting oqto-runner (user={}, endpoint={})",
         std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-        socket_path
+        args.listen_tls.map_or_else(
+            || format!("unix:{}", socket_path.display()),
+            |address| format!("tcp+mtls://{address}")
+        )
     );
 
     load_env_file();
@@ -130,5 +143,23 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
     };
     let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
-    runner.run(&socket_path).await
+    if let Some(address) = args.listen_tls {
+        let certificate = args
+            .tls_cert
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--tls-cert is required with --listen-tls"))?;
+        let key = args
+            .tls_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--tls-key is required with --listen-tls"))?;
+        let client_ca = args
+            .tls_client_ca
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
+        let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
+        let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
+        runner.run_transport(&listener).await
+    } else {
+        runner.run(&socket_path).await
+    }
 }

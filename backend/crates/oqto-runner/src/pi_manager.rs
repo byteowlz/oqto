@@ -26,7 +26,10 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mps
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
 use crate::pi_translator::PiTranslator;
-use crate::protocol::{ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto};
+use crate::protocol::{
+    ChatMessageProto, PiAttachmentStatus, PiEventWrapper, PiResumeCursor, PiSessionInfo,
+    PiSessionState, agent_msg_to_chat_proto,
+};
 use oqto_pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
 use oqto_sandbox::{EgressGuard, SandboxConfig, configure_bwrap_pre_exec};
@@ -314,64 +317,246 @@ pub enum PiSessionCommand {
 // Event Wrapper
 // ============================================================================
 
-/// Canonical event wrapper for the event distribution channel.
-///
-/// The pi_manager translates native Pi events into canonical events using
-/// `PiTranslator` and distributes them. One native Pi event may produce
-/// multiple canonical events, so each is distributed individually.
-pub type PiEventWrapper = CanonicalEvent;
-
 // ============================================================================
 // Per-Subscriber Event Distribution
 // ============================================================================
 
-/// Thread-safe collection of per-subscriber unbounded channels.
-///
-/// Unlike `tokio::broadcast`, this guarantees **zero event loss**: each
-/// subscriber gets its own unbounded `mpsc` channel. A slow subscriber
-/// does not cause other subscribers to lose events. Dead subscribers
-/// (closed channels) are pruned lazily on each `publish()` call.
+const EVENT_REPLAY_CAPACITY: usize = 2048;
+
+struct EventStreamState {
+    stream_id: String,
+    next_seq: u64,
+    replay: VecDeque<PiEventWrapper>,
+    subscribers: Vec<mpsc::UnboundedSender<PiEventWrapper>>,
+}
+
+/// Atomic attachment result: the replay slice is captured under the same lock
+/// that installs the live subscriber, so no event can fall between replay and
+/// live delivery.
+pub struct PiEventAttachment {
+    pub receiver: mpsc::UnboundedReceiver<PiEventWrapper>,
+    pub replay: Vec<PiEventWrapper>,
+    pub stream_id: String,
+    pub status: PiAttachmentStatus,
+    pub replay_floor: u64,
+    pub current_seq: u64,
+    pub delivered_through: u64,
+}
+
+/// Sequenced event stream with bounded replay for reconnect continuity.
 #[derive(Clone)]
 pub struct EventSubscribers {
-    inner: Arc<RwLock<Vec<mpsc::UnboundedSender<PiEventWrapper>>>>,
+    inner: Arc<RwLock<EventStreamState>>,
 }
 
 impl EventSubscribers {
-    /// Create a new empty subscriber set.
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(Vec::new())),
+            inner: Arc::new(RwLock::new(EventStreamState {
+                stream_id: uuid::Uuid::new_v4().to_string(),
+                next_seq: 1,
+                replay: VecDeque::with_capacity(EVENT_REPLAY_CAPACITY),
+                subscribers: Vec::new(),
+            })),
         }
     }
 
-    /// Add a new subscriber. Returns the receiving end of the channel.
-    pub async fn subscribe(&self) -> mpsc::UnboundedReceiver<PiEventWrapper> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.inner.write().await.push(tx);
-        rx
+    pub async fn subscribe(&self, resume: Option<&PiResumeCursor>) -> PiEventAttachment {
+        let (tx, receiver) = mpsc::unbounded_channel();
+        let mut state = self.inner.write().await;
+        let replay_floor = state
+            .replay
+            .front()
+            .map_or(state.next_seq, |event| event.delivery_seq);
+        let current_seq = state.next_seq.saturating_sub(1);
+
+        let (status, replay) = match resume {
+            None => (PiAttachmentStatus::Fresh, Vec::new()),
+            Some(cursor)
+                if cursor.stream_id != state.stream_id
+                    || cursor.last_seq.saturating_add(1) < replay_floor =>
+            {
+                (PiAttachmentStatus::Drift, Vec::new())
+            }
+            Some(cursor) => (
+                PiAttachmentStatus::Resumed,
+                state
+                    .replay
+                    .iter()
+                    .filter(|event| event.delivery_seq > cursor.last_seq)
+                    .cloned()
+                    .collect(),
+            ),
+        };
+
+        let delivered_through = match (status, resume) {
+            (PiAttachmentStatus::Resumed, Some(cursor)) => cursor.last_seq.min(current_seq),
+            _ => current_seq,
+        };
+
+        state.subscribers.push(tx);
+        PiEventAttachment {
+            receiver,
+            replay,
+            stream_id: state.stream_id.clone(),
+            status,
+            replay_floor,
+            current_seq,
+            delivered_through,
+        }
     }
 
-    /// Publish an event to all subscribers. Dead subscribers are removed.
-    pub async fn publish(&self, event: &PiEventWrapper) {
-        let mut subs = self.inner.write().await;
-        subs.retain(|tx| tx.send(event.clone()).is_ok());
+    pub async fn publish(&self, event: CanonicalEvent) {
+        let mut state = self.inner.write().await;
+        let delivery_seq = state.next_seq;
+        state.next_seq = state.next_seq.saturating_add(1);
+        let wrapped = PiEventWrapper {
+            event_id: format!("{}:{delivery_seq}", state.stream_id),
+            delivery_seq,
+            event,
+        };
+        state.replay.push_back(wrapped.clone());
+        if state.replay.len() > EVENT_REPLAY_CAPACITY {
+            state.replay.pop_front();
+        }
+        state
+            .subscribers
+            .retain(|subscriber| subscriber.send(wrapped.clone()).is_ok());
     }
 
-    /// Number of active subscribers.
     pub async fn subscriber_count(&self) -> usize {
-        let subs = self.inner.read().await;
-        subs.len()
+        self.inner.read().await.subscribers.len()
     }
 
-    /// Remove all subscribers (e.g., on session shutdown).
     pub async fn clear(&self) {
-        self.inner.write().await.clear();
+        self.inner.write().await.subscribers.clear();
     }
 }
 
 impl Default for EventSubscribers {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod event_stream_tests {
+    use super::*;
+
+    fn event(index: u64) -> CanonicalEvent {
+        CanonicalEvent {
+            session_id: "session-1".to_string(),
+            runner_id: "runner-1".to_string(),
+            ts: index as i64,
+            payload: EventPayload::StreamTextDelta {
+                message_id: "message-1".to_string(),
+                delta: index.to_string(),
+                content_index: 0,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_replays_exact_suffix_then_continues_live() {
+        let subscribers = EventSubscribers::new();
+        subscribers.publish(event(1)).await;
+        subscribers.publish(event(2)).await;
+        subscribers.publish(event(3)).await;
+
+        let first = subscribers.subscribe(None).await;
+        let cursor = PiResumeCursor {
+            stream_id: first.stream_id,
+            last_seq: 1,
+        };
+        drop(first.receiver);
+
+        let mut resumed = subscribers.subscribe(Some(&cursor)).await;
+        assert_eq!(resumed.status, PiAttachmentStatus::Resumed);
+        assert_eq!(
+            resumed
+                .replay
+                .iter()
+                .map(|item| item.delivery_seq)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+
+        subscribers.publish(event(4)).await;
+        let live = resumed.receiver.recv().await.unwrap();
+        assert_eq!(live.delivery_seq, 4);
+    }
+
+    #[tokio::test]
+    async fn duplicate_resume_attempts_replay_stable_event_ids() {
+        let subscribers = EventSubscribers::new();
+        subscribers.publish(event(1)).await;
+        subscribers.publish(event(2)).await;
+        let stream_id = subscribers.subscribe(None).await.stream_id;
+        let cursor = PiResumeCursor {
+            stream_id,
+            last_seq: 0,
+        };
+
+        let first = subscribers.subscribe(Some(&cursor)).await;
+        let second = subscribers.subscribe(Some(&cursor)).await;
+        assert_eq!(
+            first
+                .replay
+                .iter()
+                .map(|item| item.event_id.as_str())
+                .collect::<Vec<_>>(),
+            second
+                .replay
+                .iter()
+                .map(|item| item.event_id.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn cursor_above_current_is_resumed_with_empty_replay() {
+        let subscribers = EventSubscribers::new();
+        subscribers.publish(event(1)).await;
+        let stream_id = subscribers.subscribe(None).await.stream_id;
+        let attachment = subscribers
+            .subscribe(Some(&PiResumeCursor {
+                stream_id,
+                last_seq: 99,
+            }))
+            .await;
+        assert_eq!(attachment.status, PiAttachmentStatus::Resumed);
+        assert!(attachment.replay.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_or_foreign_cursor_reports_drift_without_guessing() {
+        let subscribers = EventSubscribers::new();
+        subscribers.publish(event(1)).await;
+        let attachment = subscribers
+            .subscribe(Some(&PiResumeCursor {
+                stream_id: "different-incarnation".to_string(),
+                last_seq: 1,
+            }))
+            .await;
+        assert_eq!(attachment.status, PiAttachmentStatus::Drift);
+        assert!(attachment.replay.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cursor_below_replay_floor_reports_drift() {
+        let subscribers = EventSubscribers::new();
+        let stream_id = subscribers.subscribe(None).await.stream_id;
+        for index in 0..=EVENT_REPLAY_CAPACITY as u64 {
+            subscribers.publish(event(index)).await;
+        }
+        let attachment = subscribers
+            .subscribe(Some(&PiResumeCursor {
+                stream_id,
+                last_seq: 0,
+            }))
+            .await;
+        assert_eq!(attachment.status, PiAttachmentStatus::Drift);
+        assert_eq!(attachment.replay_floor, 2);
     }
 }
 
@@ -1130,7 +1315,8 @@ impl PiSessionManager {
     pub async fn subscribe(
         &self,
         session_id: &str,
-    ) -> Result<mpsc::UnboundedReceiver<PiEventWrapper>> {
+        resume: Option<&PiResumeCursor>,
+    ) -> Result<PiEventAttachment> {
         let resolved_id = self
             .resolve_session_key(session_id)
             .await
@@ -1140,7 +1326,7 @@ impl PiSessionManager {
             .get(&resolved_id)
             .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
 
-        Ok(session.subscribers.subscribe().await)
+        Ok(session.subscribers.subscribe(resume).await)
     }
 
     /// List all sessions.
@@ -3077,7 +3263,7 @@ impl PiSessionManager {
                                 phase: Some(AgentPhase::Generating),
                             },
                         };
-                        session_event_tx.publish(&error_event).await;
+                        session_event_tx.publish(error_event).await;
                         let idle_event = CanonicalEvent {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
@@ -3086,7 +3272,7 @@ impl PiSessionManager {
                                 message_version: None,
                             },
                         };
-                        session_event_tx.publish(&idle_event).await;
+                        session_event_tx.publish(idle_event).await;
                         continue;
                     }
                 }
@@ -3113,7 +3299,7 @@ impl PiSessionManager {
                                     message_version: None,
                                 },
                             };
-                            session_event_tx.publish(&idle_event).await;
+                            session_event_tx.publish(idle_event).await;
                         }
                         continue;
                     }
@@ -3145,7 +3331,7 @@ impl PiSessionManager {
                                 phase: Some(AgentPhase::Generating),
                             },
                         };
-                        session_event_tx.publish(&error_event).await;
+                        session_event_tx.publish(error_event).await;
                         let idle_event = CanonicalEvent {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
@@ -3154,7 +3340,7 @@ impl PiSessionManager {
                                 message_version: None,
                             },
                         };
-                        session_event_tx.publish(&idle_event).await;
+                        session_event_tx.publish(idle_event).await;
                     } else {
                         // Not yet at hard timeout -- send health check ping.
                         debug!(
@@ -3489,7 +3675,7 @@ impl PiSessionManager {
                                             readable_id,
                                         },
                                 };
-                                    event_tx.publish(&title_event).await;
+                                    event_tx.publish(title_event).await;
                                 }
                             }
                         }
@@ -3968,63 +4154,60 @@ impl PiSessionManager {
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) && let Some(error_text) = pending_error_text.take()
                         && !pending_error_recoverable
+                        && !pending_error_persisted_oqto
+                        && let Ok(home) = std::env::var("HOME")
                     {
-                        if !pending_error_persisted_oqto && let Ok(home) = std::env::var("HOME") {
-                            let user_id =
-                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                            let workspace_id_buf = work_dir.to_string_lossy().to_string();
-                            let workspace_id = if workspace_id_buf.trim().is_empty() {
-                                "global"
+                        let user_id =
+                            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                        let workspace_id_buf = work_dir.to_string_lossy().to_string();
+                        let workspace_id = if workspace_id_buf.trim().is_empty() {
+                            "global"
+                        } else {
+                            workspace_id_buf.as_str()
+                        };
+                        let source_session_id = {
+                            let eid = session_external_id.read().await.clone();
+                            if eid.trim().is_empty() {
+                                session_id.clone()
                             } else {
-                                workspace_id_buf.as_str()
-                            };
-                            let source_session_id = {
-                                let eid = session_external_id.read().await.clone();
-                                if eid.trim().is_empty() {
-                                    session_id.clone()
-                                } else {
-                                    eid
-                                }
-                            };
-                            let error_msg = oqto_pi::AgentMessage {
-                                role: "assistant".to_string(),
-                                content: serde_json::json!([{
-                                    "type": "text",
-                                    "text": error_text.clone()
-                                }]),
-                                timestamp: Some(
-                                    (chrono::Utc::now().timestamp_millis() / 1000) as u64,
-                                ),
-                                tool_call_id: None,
-                                tool_name: None,
-                                is_error: Some(true),
-                                api: None,
-                                provider: None,
-                                model: None,
-                                usage: None,
-                                stop_reason: Some("error".to_string()),
-                                extra: std::collections::HashMap::new(),
-                            };
-                            if let Err(e) =
-                                oqto_history::oqto_log::store::append_agent_end_snapshot(
-                                    std::path::Path::new(&home),
-                                    &user_id,
-                                    workspace_id,
-                                    &session_id,
-                                    &session_id,
-                                    Some(&source_session_id),
-                                    &source_session_id,
-                                    &[error_msg],
-                                )
-                                .await
-                            {
-                                warn!(
-                                    "Pi[{}] failed to persist buffered error to oqto-log on agent.idle: {:?}",
-                                    session_id, e
-                                );
-                            } else {
-                                pending_error_persisted_oqto = true;
+                                eid
                             }
+                        };
+                        let error_msg = oqto_pi::AgentMessage {
+                            role: "assistant".to_string(),
+                            content: serde_json::json!([{
+                                "type": "text",
+                                "text": error_text.clone()
+                            }]),
+                            timestamp: Some((chrono::Utc::now().timestamp_millis() / 1000) as u64),
+                            tool_call_id: None,
+                            tool_name: None,
+                            is_error: Some(true),
+                            api: None,
+                            provider: None,
+                            model: None,
+                            usage: None,
+                            stop_reason: Some("error".to_string()),
+                            extra: std::collections::HashMap::new(),
+                        };
+                        if let Err(e) = oqto_history::oqto_log::store::append_agent_end_snapshot(
+                            std::path::Path::new(&home),
+                            &user_id,
+                            workspace_id,
+                            &session_id,
+                            &session_id,
+                            Some(&source_session_id),
+                            &source_session_id,
+                            &[error_msg],
+                        )
+                        .await
+                        {
+                            warn!(
+                                "Pi[{}] failed to persist buffered error to oqto-log on agent.idle: {:?}",
+                                session_id, e
+                            );
+                        } else {
+                            pending_error_persisted_oqto = true;
                         }
                     }
 
@@ -4033,15 +4216,12 @@ impl PiSessionManager {
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) {
                         let message_version = if let Ok(home) = std::env::var("HOME") {
-                            match oqto_history::oqto_log::projector::read_message_version_auto(
+                            oqto_history::oqto_log::projector::read_message_version_auto(
                                 std::path::Path::new(&home),
                                 &session_id,
                             )
                             .await
-                            {
-                                Ok(v @ Some(_)) => v,
-                                _ => None,
-                            }
+                            .unwrap_or_default()
                         } else {
                             None
                         };
@@ -4066,7 +4246,7 @@ impl PiSessionManager {
                         ts,
                         payload: enriched_payload,
                     };
-                    event_tx.publish(&canonical_event).await;
+                    event_tx.publish(canonical_event).await;
 
                     if let oqto_protocol::events::EventPayload::SessionTitleChanged {
                         title, ..
@@ -4129,7 +4309,7 @@ impl PiSessionManager {
             ts: chrono::Utc::now().timestamp_millis(),
             payload: exit_event,
         };
-        event_tx.publish(&canonical_event).await;
+        event_tx.publish(canonical_event).await;
         *state.write().await = PiSessionState::Stopping;
     }
 

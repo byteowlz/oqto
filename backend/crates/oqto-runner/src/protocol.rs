@@ -451,7 +451,7 @@ pub enum RunnerResponse {
     },
 
     /// Pi event (streamed during subscription).
-    PiEvent(PiEventWrapper),
+    PiEvent(Box<PiEventWrapper>),
 
     /// Command acknowledged (for prompt, steer, follow_up, abort, compact).
     PiCommandAck {
@@ -1005,6 +1005,18 @@ pub struct PiCompactRequest {
 pub struct PiSubscribeRequest {
     /// Session ID to subscribe to.
     pub session_id: String,
+    /// Optional delivery cursor from a prior attachment.
+    #[serde(default)]
+    pub resume: Option<PiResumeCursor>,
+}
+
+/// Cursor identifying the last runner event a subscriber applied.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PiResumeCursor {
+    /// Stable ID of the in-memory runner event stream incarnation.
+    pub stream_id: String,
+    /// Last delivery sequence applied by the subscriber.
+    pub last_seq: u64,
 }
 
 /// Request to unsubscribe from a Pi session's events.
@@ -1354,9 +1366,19 @@ pub struct StdoutEndResponse {
     pub exit_code: Option<i32>,
 }
 
+/// Current compatibility wire version.
+pub const RUNNER_WIRE_VERSION: u16 = 1;
+
+fn unknown_runner_wire_version() -> u16 {
+    0
+}
+
 /// Capability surface advertised by the runner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerCapabilitiesResponse {
+    /// Runner wire version used for framing and capability negotiation.
+    #[serde(default = "unknown_runner_wire_version")]
+    pub protocol_version: u16,
     /// Harnesses supported by this runner (e.g. ["pi"]).
     pub harnesses: Vec<String>,
     /// Generic features supported by this runner transport.
@@ -2127,17 +2149,41 @@ pub struct PiStateResponse {
     pub state: PiState,
 }
 
-/// Canonical event wrapper for the runner IPC protocol.
-///
-/// Carries a canonical event from the runner to clients over Unix socket.
-/// The pi_manager translates native Pi events before broadcasting.
-pub type PiEventWrapper = oqto_protocol::events::Event;
+/// Canonical event plus transport-delivery identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiEventWrapper {
+    /// Stable within one runner event-stream incarnation.
+    pub event_id: String,
+    /// Monotonic sequence within `stream_id`.
+    pub delivery_seq: u64,
+    /// Canonical Oqto event.
+    pub event: oqto_protocol::events::Event,
+}
+
+/// Result of attaching a subscriber to a runner event stream.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PiAttachmentStatus {
+    Fresh,
+    Resumed,
+    Drift,
+}
 
 /// Response confirming Pi subscription started.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiSubscribedResponse {
     /// Session ID.
     pub session_id: String,
+    /// Current event-stream incarnation.
+    pub stream_id: String,
+    /// Result of applying the requested resume cursor.
+    pub attachment: PiAttachmentStatus,
+    /// Oldest sequence still replayable, or next sequence when the ring is empty.
+    pub replay_floor: u64,
+    /// Highest sequence allocated when the attachment was created.
+    pub current_seq: u64,
+    /// Cursor the client has effectively applied before replay begins.
+    pub delivered_through: u64,
 }
 
 /// Response when Pi subscription ends.
@@ -2443,6 +2489,13 @@ mod tests {
     }
 
     #[test]
+    fn missing_capability_version_is_unknown_not_current() {
+        let json = r#"{"harnesses":["pi"],"features":{"command_discovery":true,"model_discovery":true,"fork":true,"extension_ui":true}}"#;
+        let capabilities: RunnerCapabilitiesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(capabilities.protocol_version, 0);
+    }
+
+    #[test]
     fn test_ping_pong() {
         let req = RunnerRequest::Ping;
         let json = serde_json::to_string(&req).unwrap();
@@ -2487,16 +2540,20 @@ mod tests {
         use oqto_protocol::events::{AgentPhase, EventPayload};
 
         let canonical_event = PiEventWrapper {
-            session_id: "ses_123".to_string(),
-            runner_id: "local".to_string(),
-            ts: 1738764000000,
-            payload: EventPayload::AgentWorking {
-                phase: AgentPhase::Generating,
-                detail: None,
+            event_id: "stream-1:1".to_string(),
+            delivery_seq: 1,
+            event: oqto_protocol::events::Event {
+                session_id: "ses_123".to_string(),
+                runner_id: "local".to_string(),
+                ts: 1738764000000,
+                payload: EventPayload::AgentWorking {
+                    phase: AgentPhase::Generating,
+                    detail: None,
+                },
             },
         };
 
-        let resp = RunnerResponse::PiEvent(canonical_event);
+        let resp = RunnerResponse::PiEvent(Box::new(canonical_event));
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("pi_event"));
         assert!(json.contains("ses_123"));

@@ -6,10 +6,13 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use std::sync::Arc;
+use tokio::io::{BufReader, ReadHalf, WriteHalf};
 
 use crate::protocol::*;
+use crate::tls::TcpTlsRunnerConnector;
+use crate::transport::{BoxedRunnerIo, RunnerConnector, RunnerEndpointConfig, UnixRunnerConnector};
+use crate::wire::{read_json_frame, write_json_frame};
 
 /// Timeout for a single runner request (connect + write + read response).
 /// If the runner doesn't respond within this time, the request fails with a
@@ -28,15 +31,46 @@ pub const USER_SOCKET_PATTERN: &str = "/run/user/{uid}/oqto-runner.sock";
 /// Client for communicating with the runner daemon.
 #[derive(Clone)]
 pub struct RunnerClient {
-    socket_path: PathBuf,
+    connector: Arc<dyn RunnerConnector>,
 }
 
 impl RunnerClient {
-    /// Create a new runner client for the given socket path.
+    /// Create a new runner client for the given Unix socket path.
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        let socket_path = socket_path.into();
         Self {
-            socket_path: socket_path.into(),
+            connector: Arc::new(UnixRunnerConnector::new(socket_path)),
         }
+    }
+
+    /// Create a client from a placement-resolved endpoint descriptor.
+    pub fn from_endpoint(endpoint: &RunnerEndpointConfig) -> Result<Self> {
+        Ok(Self::with_connector(endpoint.connector()?))
+    }
+
+    /// Create a mutually authenticated TCP/TLS runner client.
+    pub fn tcp_tls(
+        address: std::net::SocketAddr,
+        server_name: impl Into<String>,
+        config: Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Self {
+        Self::with_connector(Arc::new(TcpTlsRunnerConnector::new(
+            address,
+            server_name,
+            config,
+        )))
+    }
+
+    /// Create a runner client from a transport connector.
+    ///
+    /// The connector must authenticate its peer before returning a stream.
+    pub fn with_connector(connector: Arc<dyn RunnerConnector>) -> Self {
+        Self { connector }
+    }
+
+    /// Establish a transport-independent runner byte stream.
+    async fn connect(&self) -> Result<BoxedRunnerIo> {
+        self.connector.connect().await
     }
 
     /// Create a runner client for a specific Linux user by UID.
@@ -76,13 +110,18 @@ impl RunnerClient {
         Ok(Self::new(socket_path))
     }
 
-    /// Get the socket path.
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
+    /// Get the Unix socket path when this client uses the Unix adapter.
+    pub fn unix_socket_path(&self) -> Option<&Path> {
+        self.connector.unix_socket_path()
+    }
+
+    /// Endpoint description suitable for diagnostics. Never contains secrets.
+    pub fn endpoint_description(&self) -> String {
+        self.connector.endpoint_description()
     }
 
     fn is_default_socket_path(&self) -> bool {
-        self.socket_path == Self::default().socket_path
+        self.unix_socket_path() == Self::default().unix_socket_path()
     }
 
     fn is_transient_connection_error(err: &anyhow::Error) -> bool {
@@ -102,9 +141,13 @@ impl RunnerClient {
             return Ok(false);
         }
 
-        if !self.socket_path.exists() {
+        let Some(socket_path) = self.unix_socket_path() else {
+            return Ok(false);
+        };
+
+        if !socket_path.exists() {
             tracing::warn!(
-                socket = %self.socket_path.display(),
+                socket = %socket_path.display(),
                 error = %reason,
                 "Runner socket unavailable; attempting oqto-runner auto-start"
             );
@@ -124,11 +167,12 @@ impl RunnerClient {
             }
 
             if let Ok(RunnerResponse::Pong) = self.request_once(&RunnerRequest::Ping).await
-                && let Ok(RunnerResponse::RunnerCapabilities(_)) =
+                && let Ok(RunnerResponse::RunnerCapabilities(capabilities)) =
                     self.request_once(&RunnerRequest::GetCapabilities).await
+                && capabilities.protocol_version == RUNNER_WIRE_VERSION
             {
                 tracing::info!(
-                    socket = %self.socket_path.display(),
+                    endpoint = %self.endpoint_description(),
                     attempt,
                     "Runner recovered and ready"
                 );
@@ -138,7 +182,7 @@ impl RunnerClient {
 
         anyhow::bail!(
             "runner recovery failed at {} after bounded readiness retries",
-            self.socket_path.display()
+            self.endpoint_description()
         );
     }
 
@@ -152,7 +196,16 @@ impl RunnerClient {
             match self.request_once(&RunnerRequest::Ping).await {
                 Ok(RunnerResponse::Pong) => {
                     match self.request_once(&RunnerRequest::GetCapabilities).await {
-                        Ok(RunnerResponse::RunnerCapabilities(_)) => return Ok(()),
+                        Ok(RunnerResponse::RunnerCapabilities(capabilities))
+                            if capabilities.protocol_version == RUNNER_WIRE_VERSION =>
+                        {
+                            return Ok(());
+                        }
+                        Ok(RunnerResponse::RunnerCapabilities(capabilities)) => anyhow::bail!(
+                            "unsupported runner wire version {} (client requires {})",
+                            capabilities.protocol_version,
+                            RUNNER_WIRE_VERSION
+                        ),
                         Ok(_) => anyhow::bail!(
                             "unexpected response to get_capabilities readiness handshake"
                         ),
@@ -181,8 +234,8 @@ impl RunnerClient {
         }
 
         anyhow::bail!(
-            "runner readiness failed after bounded retries (socket: {})",
-            self.socket_path.display()
+            "runner readiness failed after bounded retries (endpoint: {})",
+            self.endpoint_description()
         )
     }
 
@@ -211,7 +264,7 @@ impl RunnerClient {
                         if attempt < max_retries {
                             tracing::debug!(
                                 attempt = attempt + 1,
-                                socket = %self.socket_path.display(),
+                                endpoint = %self.endpoint_description(),
                                 error = %e,
                                 "Runner connection failed, retrying"
                             );
@@ -233,35 +286,21 @@ impl RunnerClient {
             .await
             .map_err(|_| {
                 anyhow::anyhow!(
-                    "runner request timed out after {:?} (socket: {:?})",
+                    "runner request timed out after {:?} (endpoint: {})",
                     RUNNER_REQUEST_TIMEOUT,
-                    self.socket_path,
+                    self.endpoint_description(),
                 )
             })?
     }
 
     async fn request_once_inner(&self, req: &RunnerRequest) -> Result<RunnerResponse> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+        let mut stream = self.connect().await?;
+        write_json_frame(&mut stream, req).await?;
 
-        // Send request as JSON line
-        let mut json = serde_json::to_string(req).context("serializing request")?;
-        json.push('\n');
-        stream
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
-
-        // Read response line
         let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .context("reading response")?;
-
-        let resp: RunnerResponse = serde_json::from_str(&line).context("parsing response")?;
+        let resp: RunnerResponse = read_json_frame(&mut reader)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("runner closed before sending a response"))?;
 
         // Check for error response
         if let RunnerResponse::Error(e) = &resp {
@@ -377,40 +416,27 @@ impl RunnerClient {
     /// Subscribe to stdout stream. Returns a stream and a reader that should be
     /// used together. The stream yields lines as they arrive from the process.
     pub async fn subscribe_stdout(&self, id: impl Into<String>) -> Result<StdoutSubscription> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+        let stream = self.connect().await?;
 
         let process_id = id.into();
         let req = RunnerRequest::SubscribeStdout(SubscribeStdoutRequest {
             id: process_id.clone(),
         });
 
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer) = tokio::io::split(stream);
 
         // Send subscription request
-        let mut json = serde_json::to_string(&req).context("serializing request")?;
-        json.push('\n');
-        writer
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
+        write_json_frame(&mut writer, &req).await?;
 
-        // Read subscription confirmation
-        let reader = BufReader::new(reader);
-        let mut lines = reader.lines();
-
-        let first_line = lines
-            .next_line()
-            .await
-            .context("reading subscription response")?
+        // Read bounded subscription confirmation.
+        let mut reader = BufReader::new(reader);
+        let resp: RunnerResponse = read_json_frame(&mut reader)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("connection closed"))?;
-
-        let resp: RunnerResponse = serde_json::from_str(&first_line).context("parsing response")?;
 
         match resp {
             RunnerResponse::StdoutSubscribed(_) => Ok(StdoutSubscription {
-                lines,
+                reader,
                 _writer: writer,
             }),
             RunnerResponse::Error(e) => {
@@ -995,7 +1021,15 @@ impl RunnerClient {
 
     /// Subscribe to canonical agent events.
     pub async fn agent_subscribe(&self, session_id: &str) -> Result<PiSubscription> {
-        self.pi_subscribe(session_id).await
+        self.agent_subscribe_from(session_id, None).await
+    }
+
+    pub async fn agent_subscribe_from(
+        &self,
+        session_id: &str,
+        resume: Option<PiResumeCursor>,
+    ) -> Result<PiSubscription> {
+        self.pi_subscribe_from(session_id, resume).await
     }
 
     /// Get agent state.
@@ -1240,26 +1274,39 @@ impl RunnerClient {
     /// Subscribe to events from a Pi session.
     /// Returns a subscription that yields Pi events as they arrive.
     pub async fn pi_subscribe(&self, session_id: &str) -> Result<PiSubscription> {
+        self.pi_subscribe_from(session_id, None).await
+    }
+
+    /// Subscribe with an optional cursor from a prior attachment.
+    pub async fn pi_subscribe_from(
+        &self,
+        session_id: &str,
+        resume: Option<PiResumeCursor>,
+    ) -> Result<PiSubscription> {
         // Timeout for the connect + handshake phase only. Once the subscription
         // is established, the streaming read loop runs without a global timeout
         // (individual events have their own semantics).
         let (lines, session_id, resp) = tokio::time::timeout(
             RUNNER_REQUEST_TIMEOUT,
-            self.pi_subscribe_handshake(session_id),
+            self.pi_subscribe_handshake(session_id, resume),
         )
         .await
         .map_err(|_| {
             anyhow::anyhow!(
-                "pi_subscribe handshake timed out after {:?} (socket: {:?})",
+                "pi_subscribe handshake timed out after {:?} (endpoint: {})",
                 RUNNER_REQUEST_TIMEOUT,
-                self.socket_path,
+                self.endpoint_description(),
             )
         })??;
 
         match resp {
-            RunnerResponse::PiSubscribed(_) => Ok(PiSubscription {
+            RunnerResponse::PiSubscribed(subscribed) => Ok(PiSubscription {
                 session_id,
-                lines: lines.0,
+                stream_id: subscribed.stream_id,
+                last_seq: subscribed.delivered_through,
+                attachment: subscribed.attachment,
+                replay_floor: subscribed.replay_floor,
+                reader: lines.0,
                 _writer: lines.1,
             }),
             RunnerResponse::Error(e) => {
@@ -1273,46 +1320,32 @@ impl RunnerClient {
     async fn pi_subscribe_handshake(
         &self,
         session_id: &str,
+        resume: Option<PiResumeCursor>,
     ) -> Result<(
-        (
-            tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
-            tokio::net::unix::OwnedWriteHalf,
-        ),
+        (BufReader<ReadHalf<BoxedRunnerIo>>, WriteHalf<BoxedRunnerIo>),
         String,
         RunnerResponse,
     )> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+        let stream = self.connect().await?;
 
         let session_id = session_id.to_string();
         let req = RunnerRequest::PiSubscribe(PiSubscribeRequest {
             session_id: session_id.clone(),
+            resume,
         });
 
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer) = tokio::io::split(stream);
 
         // Send subscription request
-        let mut json = serde_json::to_string(&req).context("serializing request")?;
-        json.push('\n');
-        writer
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
+        write_json_frame(&mut writer, &req).await?;
 
-        // Read subscription confirmation
-        let reader = BufReader::new(reader);
-        let mut lines = reader.lines();
-
-        let first_line = lines
-            .next_line()
-            .await
-            .context("reading subscription response")?
+        // Read bounded subscription confirmation.
+        let mut reader = BufReader::new(reader);
+        let resp: RunnerResponse = read_json_frame(&mut reader)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("connection closed"))?;
 
-        let resp: RunnerResponse = serde_json::from_str(&first_line).context("parsing response")?;
-
-        Ok(((lines, writer), session_id, resp))
+        Ok(((reader, writer), session_id, resp))
     }
 
     /// Unsubscribe from a Pi session's events.
@@ -1753,33 +1786,21 @@ impl Default for RunnerClient {
 
 /// An active stdout subscription that yields lines as they arrive.
 pub struct StdoutSubscription {
-    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    reader: BufReader<ReadHalf<BoxedRunnerIo>>,
     // Keep writer alive to maintain connection
-    _writer: tokio::net::unix::OwnedWriteHalf,
+    _writer: WriteHalf<BoxedRunnerIo>,
 }
 
 impl StdoutSubscription {
     /// Read the next event from the subscription.
     /// Returns None when the subscription ends (process exited or connection closed).
     pub async fn next(&mut self) -> Option<StdoutSubscriptionEvent> {
-        match self.lines.next_line().await {
-            Ok(Some(line)) => {
-                match serde_json::from_str::<RunnerResponse>(&line) {
-                    Ok(RunnerResponse::StdoutLine(l)) => {
-                        Some(StdoutSubscriptionEvent::Line(l.line))
-                    }
-                    Ok(RunnerResponse::StdoutEnd(_e)) => Some(StdoutSubscriptionEvent::End),
-                    Ok(_) => {
-                        // Unexpected response, skip
-                        None
-                    }
-                    Err(_) => {
-                        // Parse error, skip
-                        None
-                    }
-                }
+        match read_json_frame::<_, RunnerResponse>(&mut self.reader).await {
+            Ok(Some(RunnerResponse::StdoutLine(line))) => {
+                Some(StdoutSubscriptionEvent::Line(line.line))
             }
-            Ok(None) | Err(_) => None,
+            Ok(Some(RunnerResponse::StdoutEnd(_))) => Some(StdoutSubscriptionEvent::End),
+            Ok(Some(_)) | Ok(None) | Err(_) => None,
         }
     }
 }
@@ -1796,9 +1817,13 @@ pub enum StdoutSubscriptionEvent {
 /// An active Pi event subscription that yields events as they arrive.
 pub struct PiSubscription {
     session_id: String,
-    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    stream_id: String,
+    last_seq: u64,
+    attachment: PiAttachmentStatus,
+    replay_floor: u64,
+    reader: BufReader<ReadHalf<BoxedRunnerIo>>,
     // Keep writer alive to maintain connection
-    _writer: tokio::net::unix::OwnedWriteHalf,
+    _writer: WriteHalf<BoxedRunnerIo>,
 }
 
 impl PiSubscription {
@@ -1807,30 +1832,41 @@ impl PiSubscription {
         &self.session_id
     }
 
+    pub fn attachment_status(&self) -> PiAttachmentStatus {
+        self.attachment
+    }
+
+    pub fn replay_floor(&self) -> u64 {
+        self.replay_floor
+    }
+
+    pub fn cursor(&self) -> PiResumeCursor {
+        PiResumeCursor {
+            stream_id: self.stream_id.clone(),
+            last_seq: self.last_seq,
+        }
+    }
+
     /// Read the next event from the subscription.
     /// Returns None when the subscription ends (session closed or connection lost).
     pub async fn next(&mut self) -> Option<PiSubscriptionEvent> {
-        match self.lines.next_line().await {
-            Ok(Some(line)) => match serde_json::from_str::<RunnerResponse>(&line) {
-                Ok(RunnerResponse::PiEvent(canonical_event)) => {
-                    Some(PiSubscriptionEvent::Event(Box::new(canonical_event)))
-                }
-                Ok(RunnerResponse::PiSubscriptionEnd(end)) => {
-                    Some(PiSubscriptionEvent::End { reason: end.reason })
-                }
-                Ok(RunnerResponse::Error(e)) => Some(PiSubscriptionEvent::Error {
-                    code: e.code,
-                    message: e.message,
-                }),
-                Ok(_) => {
-                    // Unexpected response, skip and continue
-                    None
-                }
-                Err(_) => {
-                    // Parse error, skip and continue
-                    None
-                }
-            },
+        match read_json_frame::<_, RunnerResponse>(&mut self.reader).await {
+            Ok(Some(RunnerResponse::PiEvent(wrapper))) => {
+                self.last_seq = wrapper.delivery_seq;
+                Some(PiSubscriptionEvent::Event {
+                    event_id: wrapper.event_id,
+                    delivery_seq: wrapper.delivery_seq,
+                    event: Box::new(wrapper.event),
+                })
+            }
+            Ok(Some(RunnerResponse::PiSubscriptionEnd(end))) => {
+                Some(PiSubscriptionEvent::End { reason: end.reason })
+            }
+            Ok(Some(RunnerResponse::Error(error))) => Some(PiSubscriptionEvent::Error {
+                code: error.code,
+                message: error.message,
+            }),
+            Ok(Some(_)) => None,
             Ok(None) | Err(_) => Some(PiSubscriptionEvent::End {
                 reason: "connection_closed".to_string(),
             }),
@@ -1841,8 +1877,12 @@ impl PiSubscription {
 /// Event from a Pi subscription.
 #[derive(Debug, Clone)]
 pub enum PiSubscriptionEvent {
-    /// A canonical event from the session (translated from Pi native events).
-    Event(Box<oqto_protocol::events::Event>),
+    /// A canonical event plus stable delivery identity for reconnect deduplication.
+    Event {
+        event_id: String,
+        delivery_seq: u64,
+        event: Box<oqto_protocol::events::Event>,
+    },
     /// The subscription ended.
     End { reason: String },
     /// An error occurred.
@@ -1852,7 +1892,7 @@ pub enum PiSubscriptionEvent {
 impl std::fmt::Debug for RunnerClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnerClient")
-            .field("socket_path", &self.socket_path)
+            .field("endpoint", &self.connector.endpoint_description())
             .finish()
     }
 }
@@ -1905,27 +1945,79 @@ impl<T> TestUnwrap<T> for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::ConnectFuture;
+
+    #[derive(Debug)]
+    struct OneShotDuplexConnector {
+        stream: tokio::sync::Mutex<Option<tokio::io::DuplexStream>>,
+    }
+
+    impl RunnerConnector for OneShotDuplexConnector {
+        fn connect(&self) -> ConnectFuture<'_> {
+            Box::pin(async move {
+                let stream = self
+                    .stream
+                    .lock()
+                    .await
+                    .take()
+                    .ok_or_else(|| anyhow::anyhow!("test connector already consumed"))?;
+                Ok(Box::new(stream) as BoxedRunnerIo)
+            })
+        }
+
+        fn endpoint_description(&self) -> String {
+            "duplex:test".to_string()
+        }
+    }
+
+    #[tokio::test]
+    async fn request_protocol_uses_injected_transport_connector() -> Result<()> {
+        let (client_stream, server_stream) = tokio::io::duplex(256);
+        let connector = Arc::new(OneShotDuplexConnector {
+            stream: tokio::sync::Mutex::new(Some(client_stream)),
+        });
+        let client = RunnerClient::with_connector(connector);
+
+        let server_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_stream);
+            let request: RunnerRequest = read_json_frame(&mut reader)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("client closed before request"))?;
+            assert!(matches!(request, RunnerRequest::Ping));
+            write_json_frame(reader.get_mut(), &RunnerResponse::Pong).await
+        });
+
+        let response = client.request_once(&RunnerRequest::Ping).await?;
+        assert!(matches!(response, RunnerResponse::Pong));
+        server_task
+            .await
+            .context("joining injected transport server")??;
+        Ok(())
+    }
 
     #[test]
     fn test_default() {
         let client = RunnerClient::default();
         // Should use XDG_RUNTIME_DIR or /tmp
-        let path = client.socket_path();
+        let path = client.unix_socket_path().t();
         assert!(path.to_string_lossy().ends_with("oqto-runner.sock"));
     }
 
     #[test]
     fn test_custom_socket_path() {
         let client = RunnerClient::new("/tmp/test-runner.sock");
-        assert_eq!(client.socket_path(), Path::new("/tmp/test-runner.sock"));
+        assert_eq!(
+            client.unix_socket_path(),
+            Some(Path::new("/tmp/test-runner.sock"))
+        );
     }
 
     #[test]
     fn test_for_uid() {
         let client = RunnerClient::for_uid(1000);
         assert_eq!(
-            client.socket_path(),
-            Path::new("/run/user/1000/oqto-runner.sock")
+            client.unix_socket_path(),
+            Some(Path::new("/run/user/1000/oqto-runner.sock"))
         );
     }
 
@@ -1935,17 +2027,19 @@ mod tests {
         let bob = RunnerClient::for_uid(1002);
 
         // Different users should have different socket paths
-        assert_ne!(alice.socket_path(), bob.socket_path());
+        assert_ne!(alice.unix_socket_path(), bob.unix_socket_path());
 
         // Verify socket path format
         assert!(
             alice
-                .socket_path()
+                .unix_socket_path()
+                .t()
                 .to_string_lossy()
                 .contains("/run/user/1001/")
         );
         assert!(
-            bob.socket_path()
+            bob.unix_socket_path()
+                .t()
                 .to_string_lossy()
                 .contains("/run/user/1002/")
         );
@@ -2003,22 +2097,31 @@ mod tests {
                         let subscribed = serde_json::to_string(&RunnerResponse::PiSubscribed(
                             PiSubscribedResponse {
                                 session_id: req.session_id.clone(),
+                                stream_id: "stream-1".to_string(),
+                                attachment: PiAttachmentStatus::Fresh,
+                                replay_floor: 1,
+                                current_seq: 0,
+                                delivered_through: 0,
                             },
                         ))
                         .t();
                         let _ = stream.write_all(subscribed.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
 
-                        let event = RunnerResponse::PiEvent(oqto_protocol::events::Event {
-                            session_id: req.session_id,
-                            runner_id: "local".to_string(),
-                            ts: 1,
-                            payload: oqto_protocol::events::EventPayload::StreamTextDelta {
-                                message_id: "msg-1".to_string(),
-                                delta: "hello".to_string(),
-                                content_index: 0,
+                        let event = RunnerResponse::PiEvent(Box::new(PiEventWrapper {
+                            event_id: "stream-1:1".to_string(),
+                            delivery_seq: 1,
+                            event: oqto_protocol::events::Event {
+                                session_id: req.session_id,
+                                runner_id: "local".to_string(),
+                                ts: 1,
+                                payload: oqto_protocol::events::EventPayload::StreamTextDelta {
+                                    message_id: "msg-1".to_string(),
+                                    delta: "hello".to_string(),
+                                    content_index: 0,
+                                },
                             },
-                        });
+                        }));
                         let event_json = serde_json::to_string(&event).t();
                         let _ = stream.write_all(event_json.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
@@ -2055,7 +2158,7 @@ mod tests {
 
         let mut sub = client.pi_subscribe("ses-1").await.t();
         match sub.next().await {
-            Some(PiSubscriptionEvent::Event(event)) => {
+            Some(PiSubscriptionEvent::Event { event, .. }) => {
                 if let oqto_protocol::events::EventPayload::StreamTextDelta { delta, .. } =
                     event.payload
                 {
@@ -2141,6 +2244,7 @@ mod tests {
                     RunnerRequest::Ping => RunnerResponse::Pong,
                     RunnerRequest::GetCapabilities => {
                         RunnerResponse::RunnerCapabilities(RunnerCapabilitiesResponse {
+                            protocol_version: RUNNER_WIRE_VERSION,
                             harnesses: vec!["pi".to_string()],
                             features: RunnerFeatureFlags {
                                 command_discovery: true,
@@ -2295,7 +2399,7 @@ mod security_tests {
         // Alice should be able to ping her own runner
         // (assuming the test is run as user alice or root)
         // This will fail if we're not alice, which is expected
-        let alice_socket = alice_client.socket_path();
+        let alice_socket = alice_client.unix_socket_path().t();
         assert!(alice_socket.starts_with("/run/user/1001/"));
 
         // Verify we can't connect to bob's runner (should fail with permission denied)
@@ -2303,7 +2407,7 @@ mod security_tests {
         let ping_result = bob_client.request(&RunnerRequest::Ping).await;
 
         // If we're not bob/root, this should fail
-        if !ping_result.is_ok() {
+        if ping_result.is_err() {
             // Expected - we don't have permission to access bob's socket
         }
     }

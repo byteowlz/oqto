@@ -10,6 +10,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 pub enum TimelineSearchScope {
     Workdir,
     Workspace,
+    /// A single conversation, addressed by any of its ids (see `session_id`).
+    Session,
     All,
 }
 
@@ -20,6 +22,10 @@ pub struct TimelineSearchRequest<'a> {
     pub scope: TimelineSearchScope,
     pub workspace_id: Option<&'a str>,
     pub cwd: Option<&'a Path>,
+    /// Required for `Session` scope. Matched against `session_id`, `platform_id`
+    /// and `external_id`: callers hold whichever id their surface exposes, and
+    /// stored rows mix those shapes (see ADR-0023).
+    pub session_id: Option<&'a str>,
     pub limit: usize,
 }
 
@@ -74,6 +80,25 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
     }
 
     let fts_query = build_fts_query(query);
+
+    let session_scope_id = if req.scope == TimelineSearchScope::Session {
+        Some(
+            req.session_id
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .context("session_id is required for session scope")?,
+        )
+    } else {
+        None
+    };
+    // Fail closed: an unfiltered query under session scope would leak every
+    // other conversation's messages into a single session's results.
+    let session_filter = if session_scope_id.is_some() {
+        "AND (s.session_id = ? OR s.platform_id = ? OR s.external_id = ?)"
+    } else {
+        ""
+    };
+
     let db_paths = resolve_db_paths(req).await?;
     let mut results = Vec::new();
     for db_path in db_paths {
@@ -86,7 +111,7 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
             Ok(pool) => pool,
             Err(_) => continue,
         };
-        let rows = sqlx::query(
+        let sql = format!(
             r#"
             SELECT
               s.session_id AS session_id,
@@ -106,15 +131,20 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
             JOIN oqto_log_sessions s ON s.session_id = t.session_id
             LEFT JOIN oqto_log_messages m ON m.message_id = f.message_id
             WHERE oqto_log_message_fts MATCH ?
+            {session_filter}
             ORDER BY score ASC
             LIMIT ?
-            "#,
-        )
-        .bind(&fts_query)
-        .bind(req.limit.max(1) as i64)
-        .fetch_all(&pool)
-        .await
-        .with_context(|| format!("search oqto-log db: {}", db_path.display()))?;
+            "#
+        );
+        let mut stmt = sqlx::query(&sql).bind(&fts_query);
+        if let Some(session_id) = session_scope_id {
+            stmt = stmt.bind(session_id).bind(session_id).bind(session_id);
+        }
+        let rows = stmt
+            .bind(req.limit.max(1) as i64)
+            .fetch_all(&pool)
+            .await
+            .with_context(|| format!("search oqto-log db: {}", db_path.display()))?;
 
         results.extend(rows.into_iter().map(|row| TimelineSearchResult {
             session_id: row.try_get("session_id").unwrap_or_default(),
@@ -172,6 +202,11 @@ async fn resolve_db_paths(req: &TimelineSearchRequest<'_>) -> Result<Vec<PathBuf
             )?;
             Ok(if db.exists() { vec![db] } else { Vec::new() })
         }
+        // A conversation cannot be located by workspace alone: one workspace's
+        // rows are spread across several stores (the workspace->store hash has
+        // changed over time), so scan them all and let the session filter
+        // select. Results are bounded by the query's LIMIT.
+        TimelineSearchScope::Session => Ok(list_existing_db_paths(req.user_home).await),
         TimelineSearchScope::All => Ok(list_existing_db_paths(req.user_home).await),
     }
 }
@@ -229,13 +264,99 @@ mod tests {
             "user-1",
             workspace_id,
             session_id,
-            &format!("platform-{session_id}"),
+            &format!("oqto-platform-{session_id}"),
             Some(&format!("external-{session_id}")),
             &format!("external-{session_id}"),
             &messages,
         )
         .await
         .expect("seed oqto-log session");
+    }
+
+    /// Session scope must return only the addressed conversation. A missing
+    /// filter here would surface other sessions' messages inside one chat.
+    #[tokio::test]
+    async fn session_scope_returns_only_that_sessions_messages() {
+        let temp = tempfile::tempdir().expect("temp home");
+        seed_session(temp.path(), "/tmp/ws-a", "alpha", "needle lives here").await;
+        seed_session(temp.path(), "/tmp/ws-a", "beta", "needle lives here too").await;
+        seed_session(
+            temp.path(),
+            "/tmp/ws-b",
+            "gamma",
+            "needle in another workspace",
+        )
+        .await;
+
+        let response = search_timeline(&TimelineSearchRequest {
+            user_home: temp.path(),
+            query: "needle",
+            scope: TimelineSearchScope::Session,
+            workspace_id: None,
+            cwd: None,
+            session_id: Some("alpha"),
+            limit: 50,
+        })
+        .await
+        .expect("session search");
+
+        assert!(!response.results.is_empty(), "should find the seeded match");
+        assert!(
+            response.results.iter().all(|r| r.session_id == "alpha"),
+            "session scope leaked other sessions: {:?}",
+            response
+                .results
+                .iter()
+                .map(|r| r.session_id.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Surfaces hold different ids for one conversation, and stored rows mix
+    /// the shapes, so any of them must address the session.
+    #[tokio::test]
+    async fn session_scope_accepts_platform_or_external_id() {
+        let temp = tempfile::tempdir().expect("temp home");
+        seed_session(temp.path(), "/tmp/ws-a", "alpha", "needle lives here").await;
+
+        for id in ["alpha", "oqto-platform-alpha", "external-alpha"] {
+            let response = search_timeline(&TimelineSearchRequest {
+                user_home: temp.path(),
+                query: "needle",
+                scope: TimelineSearchScope::Session,
+                workspace_id: None,
+                cwd: None,
+                session_id: Some(id),
+                limit: 50,
+            })
+            .await
+            .expect("session search");
+            assert!(
+                !response.results.is_empty(),
+                "id {id} should address the session"
+            );
+            assert!(response.results.iter().all(|r| r.session_id == "alpha"));
+        }
+    }
+
+    /// Fail closed: without an id, session scope must error rather than run
+    /// unfiltered and return every conversation.
+    #[tokio::test]
+    async fn session_scope_without_session_id_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp home");
+        seed_session(temp.path(), "/tmp/ws-a", "alpha", "needle lives here").await;
+
+        let err = search_timeline(&TimelineSearchRequest {
+            user_home: temp.path(),
+            query: "needle",
+            scope: TimelineSearchScope::Session,
+            workspace_id: None,
+            cwd: None,
+            session_id: None,
+            limit: 50,
+        })
+        .await;
+        assert!(err.is_err(), "must not run an unfiltered session search");
     }
 
     #[tokio::test]
@@ -246,6 +367,7 @@ mod tests {
             scope: TimelineSearchScope::All,
             workspace_id: None,
             cwd: None,
+            session_id: None,
             limit: 10,
         })
         .await
@@ -278,6 +400,7 @@ mod tests {
             scope: TimelineSearchScope::All,
             workspace_id: None,
             cwd: None,
+            session_id: None,
             limit: 10,
         })
         .await
@@ -318,6 +441,7 @@ mod tests {
             scope: TimelineSearchScope::All,
             workspace_id: None,
             cwd: None,
+            session_id: None,
             limit: 10,
         })
         .await

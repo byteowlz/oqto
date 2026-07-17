@@ -754,6 +754,216 @@ pub async fn delete_session(user_home: &Path, session_or_platform_id: &str) -> R
     Ok(deleted)
 }
 
+/// A harness session that was persisted under two Oqto identities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessSessionSplit {
+    pub external_id: String,
+    /// The canonical Oqto session that is kept.
+    pub keep_session_id: String,
+    /// Sessions stored under a harness-native id, superseded by `keep_session_id`.
+    pub duplicate_session_ids: Vec<String>,
+    /// Whether `keep_session_id` actually holds turns.
+    ///
+    /// Identity-sync creates canonical rows with no turns, so the canonical side
+    /// of a split is not always the side holding the conversation. Collapsing
+    /// onto an empty keeper would delete the only copy of that history.
+    pub keep_has_turns: bool,
+}
+
+/// Find harness sessions that own both a canonical Oqto session and one keyed
+/// by the harness id itself. Each pair is one conversation whose history is
+/// split across two identities, so a reload resolving to the other one renders
+/// an incomplete timeline.
+pub async fn find_harness_session_splits(user_home: &Path) -> Result<Vec<HarnessSessionSplit>> {
+    let mut splits = Vec::new();
+    for db in list_db_paths(user_home) {
+        splits.extend(find_harness_session_splits_in_db(&db).await);
+    }
+    splits.sort_by(|a, b| a.external_id.cmp(&b.external_id));
+    Ok(splits)
+}
+
+async fn find_harness_session_splits_in_db(db: &Path) -> Vec<HarnessSessionSplit> {
+    let options = SqliteConnectOptions::new().filename(db).read_only(true);
+    let Ok(pool) = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+    else {
+        return Vec::new();
+    };
+
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT external_id, session_id, platform_id
+        FROM oqto_log_sessions
+        WHERE external_id IS NOT NULL AND trim(external_id) != ''
+          AND external_id IN (
+            SELECT external_id FROM oqto_log_sessions
+            WHERE external_id IS NOT NULL AND trim(external_id) != ''
+            GROUP BY external_id
+            HAVING SUM(platform_id LIKE 'oqto-%') > 0
+               AND SUM(platform_id NOT LIKE 'oqto-%') > 0
+          )
+        ORDER BY external_id, created_at
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let mut by_external: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for (external_id, session_id, platform_id) in rows {
+        let entry = by_external.entry(external_id).or_default();
+        if crate::oqto_log::store::is_canonical_session_id(&platform_id) {
+            // First canonical row wins, matching how writes resolve bindings.
+            if entry.0.is_none() {
+                entry.0 = Some(session_id);
+            }
+        } else {
+            entry.1.push(session_id);
+        }
+    }
+
+    let mut splits = Vec::new();
+    for (external_id, (keep, duplicates)) in by_external {
+        let Some(keep_session_id) = keep else {
+            continue;
+        };
+        if duplicates.is_empty() {
+            continue;
+        }
+        let keep_turns = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM oqto_log_turns WHERE session_id = ?",
+        )
+        .bind(&keep_session_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+        splits.push(HarnessSessionSplit {
+            external_id,
+            keep_session_id,
+            duplicate_session_ids: duplicates,
+            keep_has_turns: keep_turns > 0,
+        });
+    }
+    splits
+}
+
+/// Delete sessions by exact `session_id`, in one transaction with a single FTS
+/// rebuild for the whole batch.
+///
+/// Unlike `delete_session`, this never matches on `platform_id`/`external_id`:
+/// the two sides of a split share an external id, so a broader match would take
+/// the surviving session with it.
+async fn delete_sessions_by_session_id_exact(
+    db: &Path,
+    session_ids: &[String],
+) -> Result<Vec<String>> {
+    if session_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(db))
+        .await?;
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_ad")
+        .execute(&mut *tx)
+        .await?;
+
+    let mut deleted = Vec::new();
+    for session_id in session_ids {
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM oqto_log_sessions WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if exists == 0 {
+            continue;
+        }
+
+        sqlx::query("DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT turn_id FROM oqto_log_turns WHERE session_id = ?)")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM oqto_log_turns WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM oqto_log_branches WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM oqto_log_sessions WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+        deleted.push(session_id.clone());
+    }
+
+    sqlx::query("INSERT INTO oqto_log_message_fts(oqto_log_message_fts) VALUES('rebuild')")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(deleted)
+}
+
+/// Outcome of collapsing split harness sessions onto their canonical identity.
+#[derive(Debug, Default, Clone)]
+pub struct UnsplitOutcome {
+    /// Harness-id duplicates removed because the canonical session holds the
+    /// same conversation.
+    pub removed_session_ids: Vec<String>,
+    /// Splits left alone because the canonical session holds no turns; the
+    /// harness-id row is the only copy and must be re-projected first.
+    pub skipped_empty_keepers: Vec<HarnessSessionSplit>,
+}
+
+/// Collapse split harness sessions onto their canonical Oqto identity.
+///
+/// A duplicate is only removed when the canonical session actually holds turns.
+/// The canonical row is not always the one with the conversation: identity-sync
+/// creates canonical rows with no turns, and for those the harness-id row is the
+/// only copy, so collapsing onto it would delete the history outright.
+pub async fn unsplit_harness_sessions(user_home: &Path, dry_run: bool) -> Result<UnsplitOutcome> {
+    let mut outcome = UnsplitOutcome::default();
+
+    // Resolve and delete per store: a duplicate only ever lives in the store its
+    // split was found in, so this stays one pass and one FTS rebuild per store.
+    for db in list_db_paths(user_home) {
+        let (collapsible, empty_keepers): (Vec<_>, Vec<_>) = find_harness_session_splits_in_db(&db)
+            .await
+            .into_iter()
+            .partition(|split| split.keep_has_turns);
+
+        outcome.skipped_empty_keepers.extend(empty_keepers);
+
+        let duplicates: Vec<String> = collapsible
+            .into_iter()
+            .flat_map(|split| split.duplicate_session_ids)
+            .collect();
+        if duplicates.is_empty() {
+            continue;
+        }
+        if dry_run {
+            outcome.removed_session_ids.extend(duplicates);
+            continue;
+        }
+        outcome
+            .removed_session_ids
+            .extend(delete_sessions_by_session_id_exact(&db, &duplicates).await?);
+    }
+
+    outcome.removed_session_ids.sort();
+    Ok(outcome)
+}
+
 pub async fn find_session_by_external(
     user_home: &Path,
     external_id: &str,
@@ -1081,6 +1291,183 @@ mod tests {
         assert_eq!(sessions_table, 1);
     }
 
+    /// Identity-sync creates canonical rows with no turns. When the canonical
+    /// side is empty, the harness-id row is the only copy of the conversation
+    /// and collapsing onto the keeper would delete that history outright.
+    #[tokio::test]
+    async fn unsplit_skips_split_whose_canonical_session_has_no_turns() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-empty-keeper";
+        let pi_id = "019e456b-fa00-7273-90bd-610e0afb0f03";
+        let canonical = "oqto-1779281160481-9bc53b6fec002";
+
+        let pool = crate::oqto_log::store::open_workspace_pool(temp.path(), ws)
+            .await
+            .expect("pool");
+
+        // Identity-only canonical row: bound to the harness session, no turns.
+        sqlx::query(
+            "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(canonical)
+        .bind(canonical)
+        .bind(pi_id)
+        .bind("user-1")
+        .bind(ws)
+        .execute(&pool)
+        .await
+        .expect("seed identity-only canonical row");
+
+        // The harness-id row carries the actual conversation. Seeded directly
+        // because this shape is legacy data written before the identity rule:
+        // going through the store now resolves the harness id onto the
+        // canonical row instead of reproducing the split.
+        sqlx::query(
+            "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(pi_id)
+        .bind(pi_id)
+        .bind(pi_id)
+        .bind("user-1")
+        .bind(ws)
+        .execute(&pool)
+        .await
+        .expect("seed harness-id row");
+        let branch_id = format!("branch:{pi_id}:main");
+        sqlx::query(
+            "INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)",
+        )
+        .bind(&branch_id)
+        .bind(pi_id)
+        .execute(&pool)
+        .await
+        .expect("seed branch");
+        sqlx::query(
+            "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES (?, ?, ?, 1, 'user', 'committed')",
+        )
+        .bind(format!("turn:{pi_id}:1"))
+        .bind(pi_id)
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .expect("seed harness-id turn");
+
+        let outcome = unsplit_harness_sessions(temp.path(), false)
+            .await
+            .expect("unsplit");
+
+        assert!(
+            outcome.removed_session_ids.is_empty(),
+            "must not delete the only copy of the history"
+        );
+        assert_eq!(outcome.skipped_empty_keepers.len(), 1);
+        assert_eq!(outcome.skipped_empty_keepers[0].keep_session_id, canonical);
+
+        let turns = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM oqto_log_turns WHERE session_id = ?",
+        )
+        .bind(pi_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count turns");
+        assert_eq!(turns, 1, "harness-id turns must survive");
+    }
+
+    /// The two sides of a split share an external id, so the cleanup must key
+    /// strictly on session_id: a broader match would delete the survivor too.
+    #[tokio::test]
+    async fn unsplit_removes_harness_duplicate_and_keeps_canonical() {
+        let temp = tempfile::tempdir().expect("temp home");
+        let ws = "/tmp/ws-unsplit";
+        let pi_id = "019f5f22-3777-78b7-ab0e-539863fb8232";
+        let canonical = "oqto-1784007500905-e4b1aea20b3398";
+
+        // Seed the split directly: a canonical session and a harness-id session
+        // for the same conversation, as produced before the identity fix. Both
+        // carry turns, which is the case where the duplicate is redundant.
+        let pool = crate::oqto_log::store::open_workspace_pool(temp.path(), ws)
+            .await
+            .expect("pool");
+        for (session_id, platform_id) in [(canonical, canonical), (pi_id, pi_id)] {
+            sqlx::query(
+                "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(session_id)
+            .bind(platform_id)
+            .bind(pi_id)
+            .bind("user-1")
+            .bind(ws)
+            .execute(&pool)
+            .await
+            .expect("seed split row");
+
+            let branch_id = format!("branch:{session_id}:main");
+            sqlx::query(
+                "INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)",
+            )
+            .bind(&branch_id)
+            .bind(session_id)
+            .execute(&pool)
+            .await
+            .expect("seed branch");
+            sqlx::query(
+                "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES (?, ?, ?, 1, 'user', 'committed')",
+            )
+            .bind(format!("turn:{session_id}:1"))
+            .bind(session_id)
+            .bind(&branch_id)
+            .execute(&pool)
+            .await
+            .expect("seed turn");
+        }
+
+        let found = find_harness_session_splits(temp.path())
+            .await
+            .expect("find splits");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].keep_session_id, canonical);
+        assert_eq!(found[0].duplicate_session_ids, vec![pi_id.to_string()]);
+
+        let planned = unsplit_harness_sessions(temp.path(), true)
+            .await
+            .expect("dry run");
+        assert_eq!(planned.removed_session_ids, vec![pi_id.to_string()]);
+        assert!(planned.skipped_empty_keepers.is_empty());
+        assert!(
+            get_session(temp.path(), canonical)
+                .await
+                .expect("dry run keeps canonical")
+                .is_some(),
+            "dry run must not delete anything"
+        );
+
+        let outcome = unsplit_harness_sessions(temp.path(), false)
+            .await
+            .expect("unsplit");
+        assert_eq!(outcome.removed_session_ids, vec![pi_id.to_string()]);
+
+        let remaining = sqlx::query_as::<_, (String,)>(
+            "SELECT session_id FROM oqto_log_sessions WHERE external_id = ?",
+        )
+        .bind(pi_id)
+        .fetch_all(&pool)
+        .await
+        .expect("query remaining");
+        assert_eq!(
+            remaining,
+            vec![(canonical.to_string(),)],
+            "only the canonical session may survive"
+        );
+
+        assert!(
+            find_harness_session_splits(temp.path())
+                .await
+                .expect("re-scan")
+                .is_empty(),
+            "unsplit must be idempotent"
+        );
+    }
+
     #[tokio::test]
     async fn list_get_delete_sessions_use_oqto_log_only() {
         let temp = tempfile::tempdir().expect("temp home");
@@ -1088,8 +1475,8 @@ mod tests {
             temp.path(),
             "user-1",
             "/tmp/ws",
-            "session-1",
-            "platform-1",
+            "oqto-session-1",
+            "oqto-platform-1",
             Some("external-1"),
             "external-1",
             &[msg("hello oqto-log")],
@@ -1099,8 +1486,8 @@ mod tests {
 
         let all = list_sessions(temp.path(), None).await.expect("list all");
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0].session_id, "session-1");
-        assert_eq!(all[0].platform_id, "platform-1");
+        assert_eq!(all[0].session_id, "oqto-session-1");
+        assert_eq!(all[0].platform_id, "oqto-platform-1");
         assert_eq!(all[0].external_id.as_deref(), Some("external-1"));
         // list_sessions is a sidebar hot path and intentionally avoids
         // message-count joins; callers that need exact counts use get_session.
@@ -1111,27 +1498,27 @@ mod tests {
             .expect("list workspace");
         assert_eq!(filtered.len(), 1);
 
-        let by_platform = get_session(temp.path(), "platform-1")
+        let by_platform = get_session(temp.path(), "oqto-platform-1")
             .await
             .expect("get by platform")
             .expect("session");
-        assert_eq!(by_platform.session_id, "session-1");
+        assert_eq!(by_platform.session_id, "oqto-session-1");
         assert_eq!(by_platform.messages, 1);
 
         assert_eq!(
-            find_external_by_session(temp.path(), "platform-1")
+            find_external_by_session(temp.path(), "oqto-platform-1")
                 .await
                 .as_deref(),
             Some("external-1")
         );
 
         assert!(
-            delete_session(temp.path(), "platform-1")
+            delete_session(temp.path(), "oqto-platform-1")
                 .await
                 .expect("delete")
         );
         assert!(
-            get_session(temp.path(), "platform-1")
+            get_session(temp.path(), "oqto-platform-1")
                 .await
                 .expect("get after delete")
                 .is_none()

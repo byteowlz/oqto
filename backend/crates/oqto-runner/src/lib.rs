@@ -7,6 +7,11 @@
 pub mod agent_browser;
 pub mod client;
 pub mod daemon;
+#[cfg(feature = "iroh-transport")]
+pub mod iroh_transport;
 pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;
+pub mod tls;
+pub mod transport;
+pub mod wire;
