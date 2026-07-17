@@ -63,8 +63,8 @@ pub use admin::{
 // User management (admin)
 pub use admin::{
     activate_user, catalog_lookup, create_user, deactivate_user, delete_eavs_provider, delete_user,
-    get_user, get_user_stats, list_eavs_providers, list_users, sync_all_models, sync_user_configs,
-    update_user, upsert_eavs_provider,
+    get_user, get_user_stats, list_eavs_providers, list_users, probe_eavs_provider,
+    sync_all_models, sync_user_configs, update_user, upsert_eavs_provider,
 };
 
 // OAuth handlers
@@ -90,7 +90,7 @@ pub use trx::{close_trx_issue, create_trx_issue, list_trx_issues, sync_trx, upda
 // Misc handlers and types
 pub use misc::{
     codexbar_usage, features, fetch_feed, health, scheduler_delete, scheduler_overview,
-    search_sessions, ws_debug,
+    search_in_session, search_sessions, ws_debug,
 };
 
 // Shared workspace handlers

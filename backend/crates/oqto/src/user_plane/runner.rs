@@ -47,7 +47,9 @@ impl RunnerUserPlane {
     /// to opportunistically route through the runner when available.
     pub fn new_default() -> Result<Self> {
         let client = RunnerClient::default();
-        let path = client.socket_path();
+        let path = client
+            .unix_socket_path()
+            .context("default runner does not use a Unix endpoint")?;
         if !path.exists() {
             anyhow::bail!("runner socket not found at {:?}", path);
         }
@@ -433,6 +435,7 @@ mod tests {
                     RunnerRequest::Ping => RunnerResponse::Pong,
                     RunnerRequest::GetCapabilities => {
                         RunnerResponse::RunnerCapabilities(RunnerCapabilitiesResponse {
+                            protocol_version: RUNNER_WIRE_VERSION,
                             harnesses: vec!["pi".to_string()],
                             features: RunnerFeatureFlags {
                                 command_discovery: true,

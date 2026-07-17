@@ -125,6 +125,22 @@ impl EavsClient {
         self.handle_response(response).await
     }
 
+    /// Probe an unsaved provider configuration without activating it.
+    pub async fn probe_provider(
+        &self,
+        request: ProviderProbeRequest,
+    ) -> EavsResult<ProviderProbeResponse> {
+        let url = format!("{}/admin/providers/probe", self.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.master_key))
+            .json(&request)
+            .send()
+            .await?;
+        self.handle_response(response).await
+    }
+
     /// Start an OAuth login flow for a provider.
     pub async fn oauth_login(
         &self,

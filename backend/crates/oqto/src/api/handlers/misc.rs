@@ -694,6 +694,83 @@ pub struct SearchResponse {
     pub cursor: Option<String>,
 }
 
+/// Query parameters for in-session search.
+#[derive(Debug, Deserialize)]
+pub struct InSessionSearchQuery {
+    /// Search query string.
+    pub q: String,
+    /// Maximum number of results.
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+/// One match inside a single conversation.
+///
+/// Keyed by `message_id`: oqto-log stores a timeline, not a file, so there is
+/// no line number to scroll to.
+#[derive(Debug, Serialize)]
+pub struct InSessionSearchHit {
+    pub message_id: String,
+    pub turn_id: String,
+    pub role: String,
+    pub snippet: String,
+    pub score: f64,
+    pub created_at: Option<String>,
+}
+
+fn resolve_search_user_home(state: &AppState, user: &CurrentUser) -> ApiResult<PathBuf> {
+    if state.user_isolation_enabled() {
+        let effective_user = state.effective_linux_username(user.id());
+        Ok(PathBuf::from(format!("/home/{effective_user}")))
+    } else {
+        dirs::home_dir().ok_or_else(|| ApiError::internal("could not resolve user home for search"))
+    }
+}
+
+/// Search within one conversation.
+#[instrument(skip(state))]
+pub async fn search_in_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<InSessionSearchQuery>,
+) -> ApiResult<Json<Vec<InSessionSearchHit>>> {
+    if query.q.trim().is_empty() || session_id.trim().is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let user_home = resolve_search_user_home(&state, &user)?;
+
+    let response = oqto_history::oqto_log::search::search_timeline(
+        &oqto_history::oqto_log::search::TimelineSearchRequest {
+            user_home: &user_home,
+            query: &query.q,
+            scope: oqto_history::oqto_log::search::TimelineSearchScope::Session,
+            workspace_id: None,
+            cwd: None,
+            session_id: Some(&session_id),
+            limit: query.limit.max(1),
+        },
+    )
+    .await
+    .map_err(|e| ApiError::internal(format!("in-session search failed: {e}")))?;
+
+    Ok(Json(
+        response
+            .results
+            .into_iter()
+            .map(|hit| InSessionSearchHit {
+                message_id: hit.message_id,
+                turn_id: hit.turn_id,
+                role: hit.role,
+                snippet: hit.snippet,
+                score: hit.score,
+                created_at: hit.created_at,
+            })
+            .collect(),
+    ))
+}
+
 /// Search across coding agent sessions using oqto-log.
 #[instrument(skip(state))]
 pub async fn search_sessions(
@@ -710,13 +787,7 @@ pub async fn search_sessions(
         }));
     }
 
-    let effective_user = state.effective_linux_username(user.id());
-    let user_home = if state.user_isolation_enabled() {
-        std::path::PathBuf::from(format!("/home/{effective_user}"))
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| ApiError::internal("could not resolve user home for search"))?
-    };
+    let user_home = resolve_search_user_home(&state, &user)?;
 
     let response = oqto_history::oqto_log::search::search_timeline(
         &oqto_history::oqto_log::search::TimelineSearchRequest {
@@ -725,6 +796,7 @@ pub async fn search_sessions(
             scope: oqto_history::oqto_log::search::TimelineSearchScope::All,
             workspace_id: None,
             cwd: None,
+            session_id: None,
             limit: query.limit.max(1),
         },
     )

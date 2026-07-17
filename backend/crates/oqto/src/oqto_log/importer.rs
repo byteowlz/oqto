@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::pi::AgentMessage;
 
-use super::store::append_agent_end_snapshot;
+use super::store::{append_agent_end_snapshot, platform_id_for_external_id};
 use oqto_history::oqto_log::store::PiJsonlMessageRecord;
 
 #[derive(Debug, Default, Clone)]
@@ -127,11 +127,6 @@ fn path_is_inside_root(path: &str, root: &Path) -> bool {
         .to_string();
     normalized_path == normalized_root
         || normalized_path.starts_with(&format!("{normalized_root}/"))
-}
-
-fn platform_id_for_external_id(external_id: &str) -> String {
-    const NS: uuid::Uuid = uuid::uuid!("7a0b6c2e-74b2-4d2f-a4d3-6d5f7a9d1c31");
-    format!("oqto-{}", uuid::Uuid::new_v5(&NS, external_id.as_bytes()))
 }
 
 fn parse_pi_jsonl_filename_datetime(path: &Path) -> Option<String> {
@@ -665,6 +660,12 @@ pub async fn bootstrap_import_from_pi_jsonl(
         }
 
         if let Some(mut append_stats) = appended {
+            // The store resolves identity, so the session may have been written
+            // under an id other than the one proposed above. Everything from
+            // here on must address the id it actually wrote, or it reads back,
+            // checkpoints, and collapses against a session that does not exist.
+            let session_id = append_stats.session_id.clone();
+
             if let Ok(sess_stats) = oqto_history::oqto_log::store::read_session_stats(
                 user_home,
                 &workspace_id,
@@ -739,9 +740,13 @@ pub async fn bootstrap_import_from_pi_jsonl(
             if let Some(fp) = current_fp.clone() {
                 importer_state.files.insert(path_key, fp);
             }
+            // Validation keys sessions by the harness id parsed from the JSONL
+            // filename, so record that rather than the resolved Oqto id —
+            // otherwise the changed-set filter never matches and the session is
+            // silently skipped by the deploy gate instead of checked.
             imported_sessions_this_run.push(ImportedSession {
                 workspace_id: workspace_id.clone(),
-                session_id: session_id.clone(),
+                session_id: pi_session_id.clone(),
             });
             stats.imported_sessions += 1;
             stats.imported_messages += append_stats.messages_written;

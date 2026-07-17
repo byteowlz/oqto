@@ -345,6 +345,10 @@ fn create_router_with_config_and_auth(
             post(handlers::upsert_eavs_provider),
         )
         .route(
+            "/admin/eavs/providers/probe",
+            post(handlers::probe_eavs_provider),
+        )
+        .route(
             "/admin/eavs/providers/{name}",
             delete(handlers::delete_eavs_provider),
         )
@@ -413,6 +417,11 @@ fn create_router_with_config_and_auth(
         // the multiplexed WebSocket (agent channel)
         // HSTRY (chat history) search routes
         .route("/search", get(handlers::search_sessions))
+        // In-session (single conversation) search
+        .route(
+            "/agents/sessions/{session_id}/search",
+            get(handlers::search_in_session),
+        )
         // Scheduler (skdlr) overview
         .route("/scheduler/overview", get(handlers::scheduler_overview))
         .route("/scheduler/jobs/{name}", delete(handlers::scheduler_delete))

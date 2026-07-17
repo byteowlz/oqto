@@ -925,6 +925,7 @@ pub async fn list_eavs_providers(
                     .and_then(|cfg| cfg.api_version.clone())
                     .or_else(|| p.api_version.clone()),
                 deployment: configured.and_then(|cfg| cfg.deployment.clone()),
+                supports_developer_role: configured.and_then(|cfg| cfg.supports_developer_role),
                 model_count: p.models.len(),
                 models: p
                     .models
@@ -1000,6 +1001,8 @@ pub struct EavsProviderSummary {
     pub api_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deployment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_developer_role: Option<bool>,
     pub model_count: usize,
     pub models: Vec<EavsModelSummary>,
 }
@@ -1045,6 +1048,8 @@ pub struct UpsertEavsProviderRequest {
     pub api_version: Option<String>,
     /// Azure deployment name.
     pub deployment: Option<String>,
+    /// Whether this endpoint accepts OpenAI `developer` messages.
+    pub supports_developer_role: Option<bool>,
     /// Curated model shortlist for this provider.
     #[serde(default)]
     pub models: Vec<UpsertModelEntry>,
@@ -1072,6 +1077,51 @@ pub struct UpsertModelEntry {
     pub cost_cache_read: f64,
     #[serde(default)]
     pub compat: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Probe an unsaved provider draft through EAVS without changing live config.
+#[instrument(skip(state, _user, request))]
+pub async fn probe_eavs_provider(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Json(request): Json<UpsertEavsProviderRequest>,
+) -> ApiResult<Json<oqto_eavs::ProviderProbeResponse>> {
+    let eavs_client = state
+        .eavs_client
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
+    let model = request
+        .models
+        .first()
+        .map(|model| model.id.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| ApiError::bad_request("Add at least one model before testing."))?;
+
+    let provider_name = request.name;
+    let probe = oqto_eavs::ProviderProbeRequest {
+        provider_name: Some(provider_name),
+        config: oqto_eavs::ProviderProbeConfig {
+            type_: request.type_,
+            // Empty on edit means "reuse the saved provider credential". EAVS
+            // resolves it internally; Oqto must not read or shuttle stored keys.
+            api_key: request.api_key.unwrap_or_default(),
+            base_url: request.base_url.filter(|value| !value.trim().is_empty()),
+            api_version: request.api_version.filter(|value| !value.trim().is_empty()),
+            deployment: request.deployment.filter(|value| !value.trim().is_empty()),
+            compat: request
+                .supports_developer_role
+                .map(|value| oqto_eavs::ProviderProbeCompat {
+                    supports_developer_role: Some(value),
+                }),
+        },
+        model,
+    };
+
+    let result = eavs_client
+        .probe_provider(probe)
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Provider test failed: {error}")))?;
+    Ok(Json(result))
 }
 
 /// Add or update a provider in the eavs config.
@@ -1167,6 +1217,15 @@ pub async fn upsert_eavs_provider(
         .or_else(|| existing_provider.and_then(|provider| provider.deployment.as_ref()));
     if let Some(deployment) = deployment {
         provider_toml.push_str(&format!("deployment = \"{}\"\n", deployment));
+    }
+    let supports_developer_role = request
+        .supports_developer_role
+        .or_else(|| existing_provider.and_then(|provider| provider.supports_developer_role));
+    if let Some(supports_developer_role) = supports_developer_role {
+        provider_toml.push_str(&format!(
+            "\n[providers.{}.compat]\nsupports_developer_role = {}\n",
+            request.name, supports_developer_role
+        ));
     }
 
     let merged_models: Vec<UpsertModelEntry> = request
@@ -1343,6 +1402,7 @@ struct ExistingProviderConfig {
     base_url: Option<String>,
     api_version: Option<String>,
     deployment: Option<String>,
+    supports_developer_role: Option<bool>,
     models: std::collections::HashMap<String, UpsertModelEntry>,
 }
 
@@ -1420,6 +1480,11 @@ fn parse_existing_providers_config(
                     .get("deployment")
                     .and_then(|value| value.as_str())
                     .map(str::to_string),
+                supports_developer_role: provider_table
+                    .get("compat")
+                    .and_then(|value| value.as_table())
+                    .and_then(|compat| compat.get("supports_developer_role"))
+                    .and_then(|value| value.as_bool()),
                 ..ExistingProviderConfig::default()
             };
 

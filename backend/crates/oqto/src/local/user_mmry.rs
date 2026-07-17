@@ -313,11 +313,11 @@ impl UserMmryManager {
         let process_id = Self::process_id_for_user(user_id);
 
         info!(
-            "Spawning mmry for user {} (linux user {}, port {}, runner socket {:?})",
+            "Spawning mmry for user {} (linux user {}, port {}, runner endpoint {})",
             user_id,
             linux_username,
             port,
-            client.socket_path()
+            client.endpoint_description()
         );
 
         if let Err(err) = self
@@ -450,11 +450,11 @@ impl UserMmryManager {
         let process_id = Self::process_id_for_user(user_id);
 
         info!(
-            "Spawning pinned mmry for user {} (linux user {}, port {}, runner socket {:?})",
+            "Spawning pinned mmry for user {} (linux user {}, port {}, runner endpoint {})",
             user_id,
             linux_username,
             port,
-            client.socket_path()
+            client.endpoint_description()
         );
 
         if let Err(err) = self

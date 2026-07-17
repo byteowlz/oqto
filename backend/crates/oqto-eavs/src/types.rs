@@ -306,6 +306,72 @@ pub struct ProviderModelCost {
     pub cache_read: f64,
 }
 
+/// Side-effect-free provider draft probe request.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderProbeRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+    pub config: ProviderProbeConfig,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderProbeConfig {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compat: Option<ProviderProbeCompat>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ProviderProbeCompat {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_developer_role: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderProbeResponse {
+    pub provider_type: String,
+    pub base_url: String,
+    pub model: String,
+    pub ok: bool,
+    pub capabilities: ProviderProbeCapabilities,
+    pub stages: Vec<ProviderProbeStage>,
+    pub recommendations: Vec<ProviderProbeRecommendation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderProbeCapabilities {
+    pub reachable: bool,
+    pub authenticated: bool,
+    pub model_available: Option<bool>,
+    pub developer_role_supported: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderProbeStage {
+    pub name: String,
+    pub status: String,
+    pub latency_ms: Option<u64>,
+    pub upstream_status: Option<u16>,
+    pub detail: String,
+    pub upstream_body_excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderProbeRecommendation {
+    pub field: String,
+    pub value: serde_json::Value,
+    pub reason: String,
+}
+
 /// OAuth login response from EAVS.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OAuthLoginResponse {
