@@ -80,7 +80,7 @@ pub(super) async fn handle_agent_command(
         };
 
         if let Some(ovr) = override_runner {
-            tracing::debug!(session_id = %session_id, socket = ?ovr.socket_path(), "using stored runner override");
+            tracing::debug!(session_id = %session_id, endpoint = %ovr.endpoint_description(), "using stored runner override");
             ovr
         } else if let CommandPayload::SessionCreate { ref config } = cmd.payload {
             // For session.create, check if cwd is inside a shared workspace
@@ -92,11 +92,12 @@ pub(super) async fn handle_agent_command(
             };
 
             if let Some((sw, target)) = sw_runner {
-                tracing::info!(session_id = %session_id, socket = ?sw.socket_path(), "routing session to shared workspace runner");
+                tracing::info!(session_id = %session_id, endpoint = %sw.endpoint_description(), "routing session to shared workspace runner");
                 resolved_target_for_command = Some(target.clone());
                 // Store override for subsequent commands on this session
-                let is_different =
-                    runner_client.is_none_or(|r| r.socket_path() != sw.socket_path());
+                let is_different = runner_client.is_none_or(|runner| {
+                    runner.endpoint_description() != sw.endpoint_description()
+                });
                 if is_different {
                     let mut state_guard = conn_state.lock().await;
                     state_guard
@@ -105,15 +106,33 @@ pub(super) async fn handle_agent_command(
                 }
                 sw
             } else {
-                resolved_target_for_command = Some(ExecutionTarget::Personal);
-                match runner_client {
-                    Some(r) => r.clone(),
-                    None => {
+                let target = ExecutionTarget::Personal;
+                resolved_target_for_command = Some(target.clone());
+                match resolve_runner_for_target(state, user_id, &target).await {
+                    Ok(Some(client)) => {
+                        let mut state_guard = conn_state.lock().await;
+                        state_guard
+                            .session_runner_overrides
+                            .insert(session_id.clone(), client.clone());
+                        client
+                    }
+                    Ok(None) => match runner_client {
+                        Some(r) => r.clone(),
+                        None => {
+                            return Some(agent_response(
+                                &session_id,
+                                id,
+                                "error",
+                                Err("Runner not available".into()),
+                            ));
+                        }
+                    },
+                    Err(error) => {
                         return Some(agent_response(
                             &session_id,
                             id,
                             "error",
-                            Err("Runner not available".into()),
+                            Err(format!("Placement runner unavailable: {error:#}")),
                         ));
                     }
                 }

@@ -278,12 +278,16 @@ enum SearchCommand {
 struct SearchTimelineCommand {
     /// Query string to search for
     query: String,
-    /// Search scope: workdir | workspace | all
+    /// Search scope: workdir | workspace | session | all
     #[arg(long, default_value = "workdir")]
     scope: String,
     /// Workspace id/path to search. Defaults to current directory for workdir scope.
     #[arg(long = "workspace-id")]
     workspace_id: Option<String>,
+    /// Session to search. Required for session scope; accepts the Oqto session
+    /// id, platform id, or the harness (external) id.
+    #[arg(long = "session-id")]
+    session_id: Option<String>,
     /// Maximum number of results
     #[arg(long, default_value_t = 20)]
     limit: usize,
@@ -310,6 +314,7 @@ enum RunnerCommand {
 #[derive(Debug, Clone, Args)]
 struct RunnerMigrateOqtoLogCommand {
     /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
+    /// | unsplit | unsplit-dry-run
     #[arg(long, default_value = "bootstrap")]
     mode: String,
     /// Restrict Pi JSONL import/validation to this workspace root.
@@ -1360,9 +1365,10 @@ async fn handle_search(command: SearchCommand) -> Result<()> {
             let scope = match cmd.scope.as_str() {
                 "workdir" => oqto_history::oqto_log::search::TimelineSearchScope::Workdir,
                 "workspace" => oqto_history::oqto_log::search::TimelineSearchScope::Workspace,
+                "session" => oqto_history::oqto_log::search::TimelineSearchScope::Session,
                 "all" => oqto_history::oqto_log::search::TimelineSearchScope::All,
                 other => anyhow::bail!(
-                    "unsupported timeline search scope '{other}'; expected workdir|workspace|all"
+                    "unsupported timeline search scope '{other}'; expected workdir|workspace|session|all"
                 ),
             };
             let workspace_id_owned = match (scope, cmd.workspace_id) {
@@ -1382,6 +1388,7 @@ async fn handle_search(command: SearchCommand) -> Result<()> {
                     scope,
                     workspace_id: workspace_id_owned.as_deref(),
                     cwd: Some(&cwd),
+                    session_id: cmd.session_id.as_deref(),
                     limit: cmd.limit,
                 },
             )
@@ -1751,8 +1758,47 @@ WantedBy=default.target
                     }
                     Ok(())
                 }
+                "unsplit" | "unsplit-dry-run" => {
+                    let dry_run = cmd.mode == "unsplit-dry-run";
+                    let splits = rt.block_on(async {
+                        crate::oqto_log::ops::find_harness_session_splits(Path::new(&home)).await
+                    })?;
+
+                    for split in &splits {
+                        println!(
+                            "oqto-log split: external_id={} keep={} duplicates={}",
+                            split.external_id,
+                            split.keep_session_id,
+                            split.duplicate_session_ids.join(",")
+                        );
+                    }
+
+                    let outcome = rt.block_on(async {
+                        crate::oqto_log::ops::unsplit_harness_sessions(Path::new(&home), dry_run)
+                            .await
+                    })?;
+
+                    for skipped in &outcome.skipped_empty_keepers {
+                        println!(
+                            "oqto-log unsplit SKIPPED (canonical session has no turns; harness row is the only copy): external_id={} keep={} kept_duplicates={}",
+                            skipped.external_id,
+                            skipped.keep_session_id,
+                            skipped.duplicate_session_ids.join(",")
+                        );
+                    }
+
+                    println!(
+                        "oqto-log unsplit {}: splits_found={}, duplicate_sessions_{}={}, skipped_empty_keepers={}",
+                        if dry_run { "dry run" } else { "complete" },
+                        splits.len(),
+                        if dry_run { "to_remove" } else { "removed" },
+                        outcome.removed_session_ids.len(),
+                        outcome.skipped_empty_keepers.len()
+                    );
+                    Ok(())
+                }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|sync-identities",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|sync-identities|unsplit|unsplit-dry-run",
                     other
                 )),
             }
@@ -2175,12 +2221,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         let runner = oqto_runner::client::RunnerClient::default();
         match runner.ensure_ready_with_recovery().await {
             Ok(()) => info!(
-                "Single-user runner readiness verified (socket={})",
-                runner.socket_path().display()
+                "Single-user runner readiness verified (endpoint={})",
+                runner.endpoint_description()
             ),
             Err(err) => warn!(
-                "Single-user runner not ready at startup (socket={}, error={}); runtime requests will retry with bounded recovery",
-                runner.socket_path().display(),
+                "Single-user runner not ready at startup (endpoint={}, error={}); runtime requests will retry with bounded recovery",
+                runner.endpoint_description(),
                 err
             ),
         }
@@ -2551,6 +2597,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         max_proxy_body_bytes,
     );
     state = state.with_feedback_config(ctx.config.feedback.clone());
+    let placement_store =
+        oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
+            .await
+            .context("initializing placement registry")?;
+    state = state.with_placement_store(Arc::new(placement_store));
 
     if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
         warn!("Failed to initialize feedback directories: {}", err);

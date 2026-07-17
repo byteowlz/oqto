@@ -317,8 +317,10 @@ pub struct AppState {
     pub max_proxy_body_bytes: usize,
     /// Linux user isolation configuration (for multi-user mode).
     pub linux_users: Option<LinuxUsersConfig>,
-    /// Runner socket pattern for multi-user mode (e.g., "/run/oqto/runner-sockets/{user}/oqto-runner.sock").
+    /// Runner socket pattern for legacy/local multi-user placement.
     pub runner_socket_pattern: Option<String>,
+    /// Placement registry used to resolve workspaces to typed runner endpoints.
+    pub placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
     /// Audit logger for user-facing events.
@@ -405,6 +407,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             runner_socket_pattern: None,
+            placement_store: None,
             session_targets: Arc::new(session_targets),
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
@@ -484,6 +487,11 @@ impl AppState {
     /// Set the runner socket pattern for multi-user mode.
     pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
         self.runner_socket_pattern = pattern;
+        self
+    }
+
+    pub fn with_placement_store(mut self, store: Arc<dyn oqto_placement::PlacementStore>) -> Self {
+        self.placement_store = Some(store);
         self
     }
 

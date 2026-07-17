@@ -1,0 +1,23 @@
+[package]
+name = "oqto-placement"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Placement supervisor and runner reachability contracts for Oqto"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+oqto-runner = { path = "../oqto-runner" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

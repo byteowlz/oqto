@@ -37,6 +37,23 @@ pub async fn resolve_runner_for_target(
     user_id: &str,
     target: &ExecutionTarget,
 ) -> Result<Option<RunnerClient>> {
+    if let Some(store) = &state.placement_store {
+        let workspace_id = match target {
+            ExecutionTarget::Personal => user_id,
+            ExecutionTarget::SharedWorkspace { workspace_id } => workspace_id,
+        };
+        if let Some(endpoint) = store.resolve_workspace(workspace_id).await? {
+            let client = RunnerClient::from_endpoint(&endpoint).with_context(|| {
+                format!("building runner endpoint for workspace {workspace_id}")
+            })?;
+            client
+                .ensure_ready_with_recovery()
+                .await
+                .with_context(|| format!("runner not ready for workspace {workspace_id}"))?;
+            return Ok(Some(client));
+        }
+    }
+
     match target {
         ExecutionTarget::Personal => resolve_personal_runner(state, user_id).await,
         ExecutionTarget::SharedWorkspace { workspace_id } => {

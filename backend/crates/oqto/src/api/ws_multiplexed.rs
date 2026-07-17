@@ -2021,72 +2021,128 @@ async fn forward_pi_events(
     session_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
-    sub_ready_tx: Option<oneshot::Sender<()>>,
+    mut sub_ready_tx: Option<oneshot::Sender<()>>,
     runner_id: String,
 ) -> anyhow::Result<()> {
-    info!(
-        "forward_pi_events: connecting subscription for session {}",
-        session_id
-    );
-    let mut subscription = runner.agent_subscribe(session_id).await?;
-    info!(
-        "forward_pi_events: subscription established for session {}",
-        session_id
-    );
+    const MAX_RECONNECT_ATTEMPTS: u32 = 5;
 
-    // Signal that the subscription is ready
-    if let Some(tx) = sub_ready_tx {
-        let _ = tx.send(());
-    }
+    let mut cursor = None;
+    let mut reconnect_attempt = 0_u32;
+    let mut seen_event_ids = std::collections::HashSet::new();
+    let mut seen_event_order = std::collections::VecDeque::new();
 
     loop {
-        match subscription.next().await {
-            Some(PiSubscriptionEvent::Event(canonical_event)) => {
-                // Any real agent event means the command made progress.
-                clear_response_watchdog(&conn_state, session_id).await;
+        info!(
+            "forward_pi_events: attaching session {} (attempt {})",
+            session_id, reconnect_attempt
+        );
+        let mut subscription = runner
+            .agent_subscribe_from(session_id, cursor.clone())
+            .await?;
 
-                if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
-                    // WebSocket closed
-                    break;
+        if subscription.attachment_status() == oqto_runner::protocol::PiAttachmentStatus::Drift {
+            let resync_event = oqto_protocol::events::Event {
+                session_id: session_id.to_string(),
+                runner_id: runner_id.clone(),
+                ts: chrono::Utc::now().timestamp_millis(),
+                payload: oqto_protocol::events::EventPayload::StreamResyncRequired {
+                    dropped_count: cursor.as_ref().map_or(0, |prior| {
+                        subscription
+                            .replay_floor()
+                            .saturating_sub(prior.last_seq.saturating_add(1))
+                    }),
+                    reason: "runner resume cursor is outside the replay window; reload the durable timeline before converging with the live tail".to_string(),
+                },
+            };
+            if event_tx
+                .send(WsEvent::Agent(Box::new(resync_event)))
+                .is_err()
+            {
+                return Ok(());
+            }
+            seen_event_ids.clear();
+            seen_event_order.clear();
+        }
+
+        if let Some(tx) = sub_ready_tx.take() {
+            let _ = tx.send(());
+        }
+
+        let reconnect = loop {
+            match subscription.next().await {
+                Some(PiSubscriptionEvent::Event {
+                    event_id,
+                    event: canonical_event,
+                    ..
+                }) => {
+                    if !seen_event_ids.insert(event_id.clone()) {
+                        continue;
+                    }
+                    seen_event_order.push_back(event_id);
+                    if seen_event_order.len() > 4096
+                        && let Some(expired) = seen_event_order.pop_front()
+                    {
+                        seen_event_ids.remove(&expired);
+                    }
+                    clear_response_watchdog(&conn_state, session_id).await;
+                    if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
+                        return Ok(());
+                    }
+                }
+                Some(PiSubscriptionEvent::End { reason }) if reason == "connection_closed" => {
+                    cursor = Some(subscription.cursor());
+                    break true;
+                }
+                Some(PiSubscriptionEvent::End { reason }) => {
+                    clear_response_watchdog(&conn_state, session_id).await;
+                    debug!(
+                        "Pi subscription ended for session {}: {}",
+                        session_id, reason
+                    );
+                    return Ok(());
+                }
+                Some(PiSubscriptionEvent::Error { code, message }) => {
+                    clear_response_watchdog(&conn_state, session_id).await;
+                    error!(
+                        "Pi subscription error for session {}: {:?} - {}",
+                        session_id, code, message
+                    );
+                    let error_event = oqto_protocol::events::Event {
+                        session_id: session_id.to_string(),
+                        runner_id: runner_id.clone(),
+                        ts: chrono::Utc::now().timestamp_millis(),
+                        payload: oqto_protocol::events::EventPayload::AgentError {
+                            error: format!("Subscription error ({:?}): {}", code, message),
+                            recoverable: false,
+                            phase: None,
+                        },
+                    };
+                    let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
+                    return Ok(());
+                }
+                None => {
+                    cursor = Some(subscription.cursor());
+                    break true;
                 }
             }
-            Some(PiSubscriptionEvent::End { reason }) => {
-                clear_response_watchdog(&conn_state, session_id).await;
-                debug!(
-                    "Pi subscription ended for session {}: {}",
-                    session_id, reason
-                );
-                break;
-            }
-            Some(PiSubscriptionEvent::Error { code, message }) => {
-                clear_response_watchdog(&conn_state, session_id).await;
-                error!(
-                    "Pi subscription error for session {}: {:?} - {}",
-                    session_id, code, message
-                );
-                // Emit error as canonical agent.error event
-                let error_event = oqto_protocol::events::Event {
-                    session_id: session_id.to_string(),
-                    runner_id: runner_id.clone(),
-                    ts: chrono::Utc::now().timestamp_millis(),
-                    payload: oqto_protocol::events::EventPayload::AgentError {
-                        error: format!("Subscription error ({:?}): {}", code, message),
-                        recoverable: false,
-                        phase: None,
-                    },
-                };
-                let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
-                break;
-            }
-            None => {
-                clear_response_watchdog(&conn_state, session_id).await;
-                debug!("Pi subscription stream ended for session {}", session_id);
-                break;
-            }
-        }
-    }
+        };
 
-    Ok(())
+        if !reconnect {
+            return Ok(());
+        }
+        reconnect_attempt = reconnect_attempt.saturating_add(1);
+        if reconnect_attempt > MAX_RECONNECT_ATTEMPTS {
+            anyhow::bail!(
+                "runner event subscription for session {} failed after {} reconnect attempts",
+                session_id,
+                MAX_RECONNECT_ATTEMPTS
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(
+            200 * u64::from(reconnect_attempt),
+        ))
+        .await;
+    }
 }
 
 // NOTE: The old pi_event_to_ws_event() function has been removed.
