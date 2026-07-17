@@ -1,4 +1,4 @@
 {
-  "defaultModel": "glm-5.2",
-  "defaultProvider": "Z-AI"
+  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "openai-codex"
 }

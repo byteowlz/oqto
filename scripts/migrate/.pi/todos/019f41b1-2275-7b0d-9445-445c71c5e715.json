@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "a1943960",
+      "content": "Draft detailed Pi-first oqto-log reliability epic and child scopes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "edd136c7",
+      "content": "Create trx epic and children with dependencies and proof criteria",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5b2c33e4",
+      "content": "Verify issue tree and summarize IDs",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-07-17T11:29:01.195Z"
+}
