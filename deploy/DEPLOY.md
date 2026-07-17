@@ -7,6 +7,7 @@ Transactional release deployment with strict preflight gates, canary support, an
 ```bash
 just deploy                                 # Build (local cargo) + prepare + activate on all hosts
 just deploy --remote-build                  # Use remote-build for backend binaries
+just deploy --host archvm --mode dev        # Preserve target-installed external tools
 just deploy --canary                        # Deploy only hosts with canary=true
 just deploy --canary-then-fleet             # Canary first, then remaining hosts
 just deploy --prepare-only                  # Stage release, no activation
@@ -15,6 +16,32 @@ just deploy --resume --release-id X         # Resume interrupted deployment
 just deploy --status --release-id X         # Show per-host state
 just deploy-dry-run                         # Preview commands
 ```
+
+## Dependency modes
+
+The default `release` mode enforces the versions pinned in `dependencies.toml`
+and acquires missing or outdated managed tools:
+
+```bash
+just deploy --host archvm
+# equivalent to: just deploy --host archvm --mode release
+```
+
+Development mode is intended for tools installed directly on the target from a
+local checkout with commands such as `just install`:
+
+```bash
+just deploy --host archvm --mode dev
+```
+
+In development mode Oqto itself still builds and deploys normally, but managed
+external tools (`eavs`, `mmry`, `trx`, `agntz`, `sx`, and `skdlr`) are never
+downloaded, replaced, or downgraded. Deploy verifies that each required binary
+exists and prints its installed version, but does not enforce the manifest pin.
+A missing binary fails preflight with instructions to install it. The mode does
+not build sibling repositories implicitly.
+
+Use release mode again to restore deterministic pinned dependencies.
 
 ## Host Configuration
 
@@ -49,8 +76,9 @@ For each host, deploy executes these phases:
    - Disk space gate (`--min-free-mb`, default 1024 MB)
    - Required tooling gate (`systemctl`, `install`)
    - Dependency compatibility gates (from `dependencies.toml`):
-     - `eavs`, `hstry`, `mmry`, `trx`, `agntz`, `sx`, `skdlr`
-     - Host versions must satisfy `installed >= required`.
+     - `eavs`, `mmry`, `trx`, `agntz`, `sx`, `skdlr`
+     - Release mode: host versions must satisfy `installed >= required` and are remediated when necessary.
+     - Development mode: binaries must exist; installed versions are preserved and reported without reconciliation.
      - `hstry adapters --help` must succeed (adapter CLI compatibility guard).
      - If hstry DB exists, `conversations.parent_conversation_id` and `conversations.fork_type` must exist (session-tree schema guard).
    - Multi-user security gates:

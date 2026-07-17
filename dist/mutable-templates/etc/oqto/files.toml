@@ -1,0 +1,5 @@
+# Oqto per-workspace file service configuration.
+# Keep this limit aligned with [server].max_upload_size_mb in config.toml.
+
+# Maximum accepted file upload size in bytes (default: 100 MiB).
+max_upload_size = 104857600

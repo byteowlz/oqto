@@ -38,10 +38,18 @@ generate_dev_password() {
 write_skdlr_agent_config() {
   local skdlr_config="/etc/oqto/skdlr-agent.toml"
   local sandbox_config="/etc/oqto/sandbox.toml"
+  local files_config="/etc/oqto/files.toml"
 
   log_info "Writing skdlr agent config to $skdlr_config"
 
   sudo mkdir -p /etc/oqto
+
+  # Ensure mutable service configs exist without overwriting operator changes.
+  if [[ ! -f "$files_config" ]]; then
+    log_info "Creating default files config at $files_config"
+    sudo cp "$SCRIPT_DIR/dist/mutable-templates/etc/oqto/files.toml" "$files_config"
+    sudo chmod 644 "$files_config"
+  fi
 
   # Ensure sandbox config exists for oqto-sandbox
   if [[ ! -f "$sandbox_config" ]]; then

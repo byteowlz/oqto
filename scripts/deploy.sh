@@ -44,6 +44,9 @@ RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
 RELEASES_ROOT="/var/lib/oqto/releases"
 DEPENDENCY_POLICY_FILE="$ROOT_DIR/dependencies.toml"
+# release: enforce dependencies.toml and remediate through oqto-setup acquire.
+# dev: preserve target-installed managed tools; require presence but ignore version.
+DEPLOY_MODE="release"
 
 # Colors
 RED='\033[0;31m'
@@ -81,6 +84,9 @@ Usage:
 
 Options:
   --host NAME              Deploy only to this host (can be repeated)
+  --mode MODE              Dependency policy: release (default) or dev
+                           dev preserves target-installed external tools and
+                           skips version reconciliation
   --release-id ID          Explicit release ID (default: timestamp-gitsha)
   --skip-build             Skip local build phase
   --skip-frontend          Skip frontend staging and deploy
@@ -122,6 +128,7 @@ declare -A REQUIRED_DEP_VERSIONS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host) HOST_FILTER+=("$2"); shift 2 ;;
+        --mode) DEPLOY_MODE="$2"; shift 2 ;;
         --release-id) RELEASE_ID="$2"; shift 2 ;;
         --skip-build) SKIP_BUILD=true; shift ;;
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
@@ -150,6 +157,14 @@ while [[ $# -gt 0 ]]; do
         *) err "Unknown option: $1"; usage ;;
     esac
 done
+
+case "$DEPLOY_MODE" in
+    release|dev) ;;
+    *)
+        err "Invalid --mode '$DEPLOY_MODE' (expected: release or dev)"
+        exit 1
+        ;;
+esac
 
 if [[ ! -f "$CONFIG" ]]; then
     err "Config not found: $CONFIG"
@@ -540,6 +555,33 @@ check_dependency_compatibility() {
     local name="$1" ssh_target="$2" is_local="$3" mode="$4"
 
     if [[ "${#REQUIRED_DEP_BINARIES[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$DEPLOY_MODE" == "dev" ]]; then
+        local dep installed output
+        log "  Development dependency mode: preserving target-installed tools"
+        for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
+            if [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "${YELLOW}  [dry-run]${NC} dependency presence gate: $dep (installed version preserved)"
+                continue
+            fi
+            if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep' || command -v '$dep' >/dev/null" 2>/dev/null; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.missing_dev"
+                err "  $dep is required but not installed on $name"
+                err "  Dev mode never installs external tools; install $dep on the target (for example with its 'just install') and retry."
+                return 1
+            fi
+            output="$(host_exec "$is_local" "$ssh_target" "{ /usr/local/bin/$dep --version 2>/dev/null || $dep --version 2>/dev/null; } | head -1" 2>/dev/null || true)"
+            installed="$(printf '%s' "$output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+            if [[ -n "$installed" ]]; then
+                log "  $dep: $installed installed (preserved; pin ${REQUIRED_DEP_VERSIONS[$dep]} not enforced)"
+            elif [[ -n "$output" ]]; then
+                log "  $dep: installed (preserved; version reported: $output)"
+            else
+                log "  $dep: installed (preserved; version unknown)"
+            fi
+        done
         return 0
     fi
 

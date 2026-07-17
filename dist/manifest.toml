@@ -159,6 +159,18 @@ mode = "0640"
 profiles = ["team"]
 
 [[assets]]
+id = "etc-files-template"
+class = "mutable_copy_once"
+kind = "config-template"
+source = "dist/mutable-templates/etc/oqto/files.toml"
+install_path = "/etc/oqto/files.toml"
+install_method = "copy_if_missing"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["team"]
+
+[[assets]]
 id = "etc-sandbox-template"
 class = "mutable_copy_once"
 kind = "config-template"

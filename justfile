@@ -805,6 +805,10 @@ deploy-host-debug-dir name trace_dir *ARGS:
 deploy-quick *ARGS:
     ./scripts/deploy.sh --skip-build {{ARGS}}
 
+# Verify release/dev dependency policy behavior without deploying
+test-deploy-mode:
+    ./scripts/tests/deploy-mode-test.sh
+
 # Deploy only backend binaries (skip frontend)
 deploy-backend *ARGS:
     ./scripts/deploy.sh --skip-frontend {{ARGS}}
