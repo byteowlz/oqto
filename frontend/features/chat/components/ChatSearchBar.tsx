@@ -12,7 +12,7 @@ export type ChatSearchBarProps = {
 	/** Session ID to search within */
 	sessionId: string | null;
 	/** Callback when a result is selected */
-	onResultSelect: (result: { lineNumber: number; messageId?: string }) => void;
+	onResultSelect: (result: { messageId: string }) => void;
 	/** Class name for container */
 	className?: string;
 	/** Whether search is expanded/visible */
@@ -78,10 +78,7 @@ export function ChatSearchBar({
 	const currentResult = results[currentResultIndex];
 	useEffect(() => {
 		if (currentResult) {
-			onResultSelect({
-				lineNumber: currentResult.line_number,
-				messageId: currentResult.message_id,
-			});
+			onResultSelect({ messageId: currentResult.message_id });
 		}
 	}, [currentResult, onResultSelect]);
 

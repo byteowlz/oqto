@@ -630,6 +630,7 @@ export type EavsProviderSummary = {
 	base_url?: string;
 	api_version?: string;
 	deployment?: string;
+	supports_developer_role?: boolean;
 	model_count: number;
 	models: EavsModelSummary[];
 };
@@ -724,7 +725,34 @@ export type UpsertEavsProviderRequest = {
 	base_url?: string;
 	api_version?: string;
 	deployment?: string;
+	supports_developer_role?: boolean;
 	models?: UpsertModelEntry[];
+};
+
+export type ProviderProbeResponse = {
+	provider_type: string;
+	base_url: string;
+	model: string;
+	ok: boolean;
+	capabilities: {
+		reachable: boolean;
+		authenticated: boolean;
+		model_available: boolean | null;
+		developer_role_supported: boolean | null;
+	};
+	stages: Array<{
+		name: string;
+		status: string;
+		latency_ms?: number;
+		upstream_status?: number;
+		detail: string;
+		upstream_body_excerpt?: string;
+	}>;
+	recommendations: Array<{
+		field: string;
+		value: unknown;
+		reason: string;
+	}>;
 };
 
 export type SyncAllModelsResponse = {
@@ -748,6 +776,35 @@ async function upsertEavsProvider(
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+async function probeEavsProvider(
+	request: UpsertEavsProviderRequest,
+): Promise<ProviderProbeResponse> {
+	const res = await fetch(
+		controlPlaneApiUrl("/api/admin/eavs/providers/probe"),
+		{
+			method: "POST",
+			headers: {
+				...getAuthHeaders(),
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(request),
+		},
+	);
+	if (!res.ok) {
+		const text = await res.text();
+		try {
+			const body = JSON.parse(text) as { error?: string };
+			throw new Error(body.error || `HTTP ${res.status}`);
+		} catch (error) {
+			if (error instanceof SyntaxError) {
+				throw new Error(text || `HTTP ${res.status}`);
+			}
+			throw error;
+		}
 	}
 	return res.json();
 }
@@ -794,6 +851,13 @@ export function useUpsertEavsProvider() {
 				queryKey: adminKeys.eavsProviders(),
 			});
 		},
+	});
+}
+
+export function useProbeEavsProvider() {
+	return useMutation({
+		mutationFn: (request: UpsertEavsProviderRequest) =>
+			probeEavsProvider(request),
 	});
 }
 

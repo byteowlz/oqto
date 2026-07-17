@@ -1502,14 +1502,15 @@ export const SessionScreen = memo(function SessionScreen() {
 									</button>
 								</div>
 								{!isOverviewActive && isSearchOpen && (
-									<div className="mb-3 pr-16">
+									/* Clears the absolutely positioned header buttons above:
+									   4 buttons (28px each) + gaps = 124px, offset by right-4
+									   (right-6 at xl). Anything narrower renders the search
+									   bar's own controls underneath them. */
+									<div className="mb-3 pr-36 xl:pr-40">
 										<ChatSearchBar
-											sessionId={selectedChatSessionId ?? undefined}
-											onResultSelect={({ lineNumber, messageId }) => {
-												const target =
-													messageId ??
-													(lineNumber ? `line-${lineNumber}` : null);
-												if (target) setScrollToMessageId(target);
+											sessionId={selectedChatSessionId ?? null}
+											onResultSelect={({ messageId }) => {
+												if (messageId) setScrollToMessageId(messageId);
 											}}
 											isOpen={isSearchOpen}
 											onToggle={() => setIsSearchOpen(false)}

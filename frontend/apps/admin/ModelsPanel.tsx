@@ -33,6 +33,7 @@ import {
 	type SyncAllModelsResponse,
 	useDeleteEavsProvider,
 	useEavsProviders,
+	useProbeEavsProvider,
 	useSyncAllModels,
 	useUpsertEavsProvider,
 } from "@/hooks/use-admin";
@@ -423,6 +424,7 @@ function ProviderDialog({
 		base_url?: string;
 		api_version?: string;
 		deployment?: string;
+		supports_developer_role?: boolean;
 		models: ModelEntry[];
 	}) => void;
 	isPending: boolean;
@@ -433,6 +435,7 @@ function ProviderDialog({
 		base_url?: string;
 		api_version?: string;
 		deployment?: string;
+		supports_developer_role?: boolean;
 		models: ModelEntry[];
 	};
 }) {
@@ -447,6 +450,10 @@ function ProviderDialog({
 	const [pendingDraftModel, setPendingDraftModel] = useState<ModelDraft | null>(
 		null,
 	);
+	const [supportsDeveloperRole, setSupportsDeveloperRole] = useState<
+		boolean | undefined
+	>(initial?.supports_developer_role);
+	const probeMutation = useProbeEavsProvider();
 
 	const resetForm = useCallback(() => {
 		if (!initial) {
@@ -461,15 +468,13 @@ function ProviderDialog({
 		}
 	}, [initial]);
 
-	const handleSubmit = (e: React.FormEvent) => {
-		e.preventDefault();
-
-		let submittedModels = models;
+	const submittedModels = () => {
+		let result = models;
 		if (
 			pendingDraftModel?.id &&
 			!models.some((m) => m.id === pendingDraftModel.id)
 		) {
-			submittedModels = [
+			result = [
 				...models,
 				{
 					id: pendingDraftModel.id,
@@ -483,17 +488,32 @@ function ProviderDialog({
 				},
 			];
 		}
+		return result;
+	};
 
-		onSubmit({
-			name: isEdit ? name : name.toLowerCase().replace(/\s+/g, "-"),
-			type: type_,
-			api_key: apiKey || undefined,
-			base_url: baseUrl || undefined,
-			api_version: apiVersion || undefined,
-			deployment: deployment || undefined,
-			models: submittedModels,
-		});
+	const providerPayload = () => ({
+		name: isEdit ? name : name.toLowerCase().replace(/\s+/g, "-"),
+		type: type_,
+		api_key: apiKey || undefined,
+		base_url: baseUrl || undefined,
+		api_version: apiVersion || undefined,
+		deployment: deployment || undefined,
+		supports_developer_role: supportsDeveloperRole,
+		models: submittedModels(),
+	});
+
+	const handleSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		onSubmit(providerPayload());
 		resetForm();
+	};
+
+	const handleProbe = async () => {
+		try {
+			await probeMutation.mutateAsync(providerPayload());
+		} catch {
+			// The mutation error is rendered in the diagnostic panel.
+		}
 	};
 
 	const showBaseUrl = TYPES_NEED_BASE_URL.includes(type_) || baseUrl.length > 0;
@@ -624,6 +644,98 @@ function ProviderDialog({
 						onChange={setModels}
 						onDraftChange={setPendingDraftModel}
 					/>
+
+					<div className="rounded-md border border-border p-3 space-y-2">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<div className="text-sm font-medium">Test configuration</div>
+								<div className="text-xs text-muted-foreground">
+									Sends a tiny request through EAVS without saving changes.
+								</div>
+							</div>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={handleProbe}
+								disabled={
+									probeMutation.isPending ||
+									!name.trim() ||
+									submittedModels().length === 0
+								}
+							>
+								{probeMutation.isPending ? (
+									<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+								) : (
+									<Zap className="w-3 h-3 mr-1" />
+								)}
+								Test
+							</Button>
+						</div>
+
+						{probeMutation.error && (
+							<div className="text-xs text-destructive">
+								{probeMutation.error instanceof Error
+									? probeMutation.error.message
+									: "Provider test failed"}
+							</div>
+						)}
+
+						{probeMutation.data && (
+							<div className="space-y-2 text-xs">
+								<div
+									className={
+										probeMutation.data.ok
+											? "text-green-600 dark:text-green-400"
+											: "text-destructive"
+									}
+								>
+									{probeMutation.data.ok
+										? `Connection verified for ${probeMutation.data.model}`
+										: "Configuration is not usable yet"}
+								</div>
+								{probeMutation.data.stages.map((stage) => (
+									<div key={stage.name} className="rounded bg-muted/40 p-2">
+										<div className="flex justify-between gap-2">
+											<span className="font-medium">{stage.detail}</span>
+											<span className="text-muted-foreground">
+												{stage.upstream_status &&
+													`HTTP ${stage.upstream_status}`}
+												{stage.latency_ms !== undefined &&
+													` · ${stage.latency_ms}ms`}
+											</span>
+										</div>
+										{stage.upstream_body_excerpt && (
+											<pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+												{stage.upstream_body_excerpt}
+											</pre>
+										)}
+									</div>
+								))}
+								{probeMutation.data.recommendations.map((recommendation) => (
+									<div
+										key={recommendation.field}
+										className="rounded border border-amber-500/40 bg-amber-500/10 p-2"
+									>
+										<div>{recommendation.reason}</div>
+										{recommendation.field ===
+											"compat.supports_developer_role" &&
+											recommendation.value === false && (
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													className="mt-2 h-7"
+													onClick={() => setSupportsDeveloperRole(false)}
+												>
+													Apply compatibility fix
+												</Button>
+											)}
+									</div>
+								))}
+							</div>
+						)}
+					</div>
 
 					{error && (
 						<div className="text-sm text-destructive flex items-center gap-2">
@@ -834,6 +946,7 @@ export function ModelsPanel() {
 		base_url?: string;
 		api_version?: string;
 		deployment?: string;
+		supports_developer_role?: boolean;
 		models: ModelEntry[];
 	}) => {
 		try {
@@ -1038,6 +1151,7 @@ export function ModelsPanel() {
 						base_url: editTarget.base_url,
 						api_version: editTarget.api_version,
 						deployment: editTarget.deployment,
+						supports_developer_role: editTarget.supports_developer_role,
 						models: editTarget.models.map((m) => ({
 							id: m.id,
 							name: m.name,

@@ -127,8 +127,11 @@ class WsConnectionManager {
 	// Connection state handlers
 	private connectionStateHandlers: Set<ConnectionStateHandler> = new Set();
 
-	// Agent session subscriptions (session_id -> handlers)
-	private agentSessionHandlers: Map<string, Set<WsEventHandler<AgentWsEvent>>> =
+	// Agent session subscriptions are single-owner per session. Chat deltas are
+	// additive, so fanning one event out to overlapping handlers corrupts the
+	// timeline (for example `word` becomes `wordword`). Re-subscribing replaces
+	// the previous owner; stale unsubscribe closures cannot remove the new one.
+	private agentSessionHandlers: Map<string, WsEventHandler<AgentWsEvent>> =
 		new Map();
 	// Track sessions that have completed session.create
 	private sessionReady: Set<string> = new Set();
@@ -679,31 +682,22 @@ class WsConnectionManager {
 		);
 		const shouldCreate = options?.create !== false;
 
-		// Add handler locally
-		let handlers = this.agentSessionHandlers.get(sessionId);
-		if (!handlers) {
-			handlers = new Set();
-			this.agentSessionHandlers.set(sessionId, handlers);
-		}
-		handlers.add(handler);
-
-		// Warn about potential duplicate handler registrations
-		if (handlers.size > 1) {
-			console.warn(
-				`[ws-mux] WARNING: ${handlers.size} handlers registered for session ${sessionId} after subscribeAgentSession. This may cause duplicate event processing. Stack:`,
-				new Error().stack,
-			);
-		}
+		// A session has one timeline owner in this tab. Replacing an overlapping
+		// registration is safe because each useChat subscription delegates to its
+		// latest callback through a ref; invoking both would apply additive deltas
+		// twice. Keep handler identity in cleanup so an old unsubscribe cannot
+		// remove a newer replacement.
+		this.agentSessionHandlers.set(sessionId, handler);
+		const unsubscribeLocal = () => {
+			if (this.agentSessionHandlers.get(sessionId) === handler) {
+				this.agentSessionHandlers.delete(sessionId);
+			}
+		};
 
 		if (!shouldCreate) {
 			// Track the subscription for reconnection, but do not send session.create.
 			this.subscribedSessions.set(sessionId, { config, create: false });
-			return () => {
-				handlers?.delete(handler);
-				if (handlers?.size === 0) {
-					this.agentSessionHandlers.delete(sessionId);
-				}
-			};
+			return unsubscribeLocal;
 		}
 
 		// Track subscription (store config and create intent for reconnection).
@@ -760,15 +754,7 @@ class WsConnectionManager {
 		// double-invoke and HMR from triggering redundant session.create calls
 		// (old effect cleanup removes handler, new effect re-subscribes and would
 		// see the session as new if we cleared these maps).
-		return () => {
-			handlers?.delete(handler);
-			if (handlers?.size === 0) {
-				this.agentSessionHandlers.delete(sessionId);
-				// Don't clear subscribedSessions/sessionReady — the session
-				// stays alive on the backend and we want to reuse it on
-				// re-subscription. Only agentCloseSession clears these.
-			}
-		};
+		return unsubscribeLocal;
 	}
 
 	/**
@@ -1491,24 +1477,15 @@ class WsConnectionManager {
 			const agentEvent = event as AgentWsEvent;
 			const sessionId = agentEvent.session_id;
 			if (sessionId) {
-				const sessionHandlers = this.agentSessionHandlers.get(sessionId);
-				if (sessionHandlers) {
-					// Warn if multiple handlers exist for a single session
-					// (indicates a double-subscription bug causing duplicate events)
-					if (sessionHandlers.size > 1 && isWsMuxDebugEnabled()) {
-						console.warn(
-							`[ws-mux] DUPLICATE HANDLERS: ${sessionHandlers.size} handlers for session ${sessionId}, event: ${agentEvent.event}`,
+				const sessionHandler = this.agentSessionHandlers.get(sessionId);
+				if (sessionHandler) {
+					try {
+						sessionHandler(agentEvent);
+					} catch (err) {
+						console.error(
+							"[ws-mux] Error in agent session event handler:",
+							err,
 						);
-					}
-					for (const handler of sessionHandlers) {
-						try {
-							handler(agentEvent);
-						} catch (err) {
-							console.error(
-								"[ws-mux] Error in agent session event handler:",
-								err,
-							);
-						}
 					}
 				}
 			}

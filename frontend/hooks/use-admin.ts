@@ -56,11 +56,13 @@ export {
 	type UpsertEavsProviderRequest,
 	type UpsertModelEntry,
 	type SyncAllModelsResponse,
+	type ProviderProbeResponse,
 	type CatalogModelInfo,
 	catalogLookup,
 	useEavsProviders,
 	useSyncUserConfigs,
 	useUpsertEavsProvider,
+	useProbeEavsProvider,
 	useDeleteEavsProvider,
 	useSyncAllModels,
 } from "@/features/admin/hooks/useAdmin";

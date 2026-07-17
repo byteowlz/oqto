@@ -390,6 +390,11 @@ export async function uploadFileMux(
 	await uploadFileHttp(workspacePath, destPath, file, onProgress, signal);
 }
 
+// Large uploads can spend substantial time buffered by the control-plane proxy
+// after browser transfer progress reaches 100%. Keep a finite safety timeout,
+// but allow enough time for a 1 GiB upload on slower connections.
+export const FILE_UPLOAD_TIMEOUT_MS = 30 * 60_000;
+
 export async function uploadFileHttp(
 	workspacePath: string,
 	destPath: string,
@@ -417,6 +422,9 @@ export async function uploadFileHttp(
 		}
 		xhr.open("POST", url.toString());
 		xhr.withCredentials = true;
+		// A stalled proxy/fileserver previously left the paperclip spinner active
+		// forever because XMLHttpRequest has no timeout by default.
+		xhr.timeout = FILE_UPLOAD_TIMEOUT_MS;
 		xhr.upload.onprogress = (event) => {
 			if (event.lengthComputable) {
 				onProgress?.(event.loaded, event.total);
@@ -437,6 +445,14 @@ export async function uploadFileHttp(
 		xhr.onerror = () => {
 			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
 			reject(new Error("Upload failed: network error"));
+		};
+		xhr.ontimeout = () => {
+			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+			reject(
+				new Error(
+					`Upload timed out after ${Math.round(FILE_UPLOAD_TIMEOUT_MS / 60_000)} minutes`,
+				),
+			);
 		};
 		xhr.onabort = () => {
 			if (onAbort && signal) signal.removeEventListener("abort", onAbort);

@@ -207,22 +207,25 @@ export type PiSearchResponse = {
 	total: number;
 };
 
-/** In-session search result from oqto-log */
+/**
+ * In-session search result from oqto-log.
+ *
+ * Matches are addressed by `message_id`: oqto-log stores a timeline, not a
+ * file, so there is no line number to navigate to.
+ */
 export type InSessionSearchResult = {
-	/** Line number in the source file */
-	line_number: number;
-	/** Match score */
-	score: number;
-	/** Short snippet around the match */
-	snippet?: string;
-	/** Session title */
-	title?: string;
-	/** Match type (exact, fuzzy) */
-	match_type?: string;
-	/** Timestamp when the message was created */
-	created_at?: number;
 	/** Message ID for direct navigation */
-	message_id?: string;
+	message_id: string;
+	/** Turn the match belongs to */
+	turn_id: string;
+	/** Role of the matching message */
+	role: string;
+	/** Short snippet around the match */
+	snippet: string;
+	/** BM25 score (lower is a better match) */
+	score: number;
+	/** Timestamp when the message was created */
+	created_at?: string;
 };
 
 // ============================================================================
