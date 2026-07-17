@@ -1,7 +1,7 @@
 # Portable Oqto install configuration.
 # Use this to hydrate per-app config files during setup.
 
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.install.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.install.schema.json
 
 [install]
 # Apply updates by merging into existing config files (or overwrite).

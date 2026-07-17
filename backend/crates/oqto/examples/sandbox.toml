@@ -21,7 +21,7 @@
 # - Linux: bubblewrap (bwrap) for namespace isolation
 # - macOS: sandbox-exec with Seatbelt profiles
 
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json
 
 # Enable process sandboxing (default: false)
 enabled = true
