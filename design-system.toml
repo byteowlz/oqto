@@ -1,0 +1,6 @@
+# Vendored design-system snapshot — managed by `byt design-system sync`.
+# Do NOT hand-edit frontend/vendor/design-system/; re-sync instead.
+ref    = "v0.1.0"
+impl   = "shadcn-ts"
+path   = "frontend/vendor/design-system"
+build_cmd = "bun run build"

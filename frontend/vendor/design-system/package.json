@@ -1,0 +1,38 @@
+{
+  "name": "@byteowlz/design-system",
+  "version": "0.1.0",
+  "description": "Reusable, tool-agnostic base24 design-system mechanism (slots + closed role layer + concentric radius). shadcn/ui TypeScript implementation.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bunx tsc -p tsconfig.build.json",
+    "lint": "biome check src",
+    "format": "biome format --write src"
+  },
+  "keywords": [
+    "base16",
+    "base24",
+    "tinted-theming",
+    "design-system",
+    "shadcn",
+    "theming",
+    "design-tokens"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

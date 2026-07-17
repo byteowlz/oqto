@@ -1,0 +1,32 @@
+{
+	"id": "ember",
+	"name": "Ember (demo)",
+	"mode": "dark",
+	"system": "base24",
+	"slots": {
+		"base00": "#1c1815",
+		"base01": "#272019",
+		"base02": "#362c22",
+		"base03": "#8a7a68",
+		"base04": "#b8a690",
+		"base05": "#e8dccb",
+		"base06": "#f2ebe0",
+		"base07": "#fbf7f0",
+		"base08": "#d9534f",
+		"base09": "#e08a3c",
+		"base0A": "#e0c04a",
+		"base0B": "#a3b85c",
+		"base0C": "#5cb8a3",
+		"base0D": "#5c92b8",
+		"base0E": "#b87fc7",
+		"base0F": "#a3754f",
+		"base10": "#16120f",
+		"base11": "#0f0c0a",
+		"base12": "#e8736f",
+		"base13": "#f0d46a",
+		"base14": "#bdd47a",
+		"base15": "#7ad4bd",
+		"base16": "#7ab2d4",
+		"base17": "#d49fe0"
+	}
+}
