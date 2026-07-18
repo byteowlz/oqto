@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use log::{debug, warn};
 use oqto_history::oqto_log::index::{self, IngestCursor};
+use oqto_history::oqto_log::store::platform_id_for_external_id;
 use oqto_history::oqto_log::{ops, store};
 use tokio::sync::mpsc;
 
@@ -108,37 +109,49 @@ async fn handle_nudge(home: &Path, user_id: &str, id: &str) {
     else {
         return;
     };
-    let workspace_hint = path
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|name| name.to_str())
-        .and_then(super::server::decode_workspace_path_from_safe_dirname);
-    maybe_ingest(
-        home,
-        user_id,
-        &external_id,
-        &path,
-        workspace_hint.as_deref(),
-    )
-    .await;
+    maybe_ingest(home, user_id, &external_id, &path).await;
+}
+
+/// Read the workspace path from the JSONL session header line.
+///
+/// This is the only exact source: the safe dirname encoding is lossy (a '-'
+/// in a real path segment is indistinguishable from a '/'), and decoding it
+/// has historically mis-filed sessions into bogus workspaces.
+pub(crate) fn read_session_cwd(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+
+    #[derive(serde::Deserialize)]
+    struct Header {
+        #[serde(rename = "type")]
+        entry_type: String,
+        cwd: Option<String>,
+    }
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().map_while(Result::ok).take(5) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(header) = serde_json::from_str::<Header>(trimmed)
+            && header.entry_type == "session"
+        {
+            return header.cwd.filter(|cwd| !cwd.is_empty());
+        }
+    }
+    None
 }
 
 async fn sweep(home: &Path, user_id: &str) {
     let started = Instant::now();
     let mut checked = 0usize;
-    for (path, workspace_hint) in list_session_files_with_workspace(home) {
+    for path in list_session_files(home) {
         let Some(external_id) = super::server::parse_pi_session_id_from_path(&path) else {
             continue;
         };
         checked += 1;
-        maybe_ingest(
-            home,
-            user_id,
-            &external_id,
-            &path,
-            workspace_hint.as_deref(),
-        )
-        .await;
+        maybe_ingest(home, user_id, &external_id, &path).await;
     }
     debug!(
         "jsonl ingest sweep: checked {} session files in {:?}",
@@ -147,7 +160,7 @@ async fn sweep(home: &Path, user_id: &str) {
     );
 }
 
-fn list_session_files_with_workspace(home: &Path) -> Vec<(PathBuf, Option<String>)> {
+fn list_session_files(home: &Path) -> Vec<PathBuf> {
     let base = home.join(".pi/agent/sessions");
     let Ok(workspaces) = std::fs::read_dir(base) else {
         return Vec::new();
@@ -158,30 +171,20 @@ fn list_session_files_with_workspace(home: &Path) -> Vec<(PathBuf, Option<String
         if !dir.is_dir() {
             continue;
         }
-        let workspace_hint = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(super::server::decode_workspace_path_from_safe_dirname);
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-                out.push((path, workspace_hint.clone()));
+                out.push(path);
             }
         }
     }
     out
 }
 
-async fn maybe_ingest(
-    home: &Path,
-    user_id: &str,
-    external_id: &str,
-    path: &Path,
-    workspace_hint: Option<&str>,
-) {
+async fn maybe_ingest(home: &Path, user_id: &str, external_id: &str, path: &Path) {
     let Ok(meta) = std::fs::metadata(path) else {
         return;
     };
@@ -204,7 +207,7 @@ async fn maybe_ingest(
     if index::get_ingest_cursor(home, external_id).await == Some(current) {
         return;
     }
-    ingest_file(home, user_id, external_id, path, workspace_hint, current).await;
+    ingest_file(home, user_id, external_id, path, current).await;
 }
 
 async fn ingest_file(
@@ -212,7 +215,6 @@ async fn ingest_file(
     user_id: &str,
     external_id: &str,
     path: &Path,
-    workspace_hint: Option<&str>,
     cursor: IngestCursor,
 ) {
     let path_owned = path.to_path_buf();
@@ -233,12 +235,16 @@ async fn ingest_file(
         return;
     }
 
+    let workspace_from_header = read_session_cwd(path);
     let (session_id, workspace_id) = match ops::find_session_by_external(home, external_id).await {
         Some((id, ws)) if !ws.is_empty() => (id, ws),
-        Some((id, _)) => (id, workspace_hint.unwrap_or("global").to_string()),
+        Some((id, _)) => (
+            id,
+            workspace_from_header.unwrap_or_else(|| "global".to_string()),
+        ),
         None => (
-            external_id.to_string(),
-            workspace_hint.unwrap_or("global").to_string(),
+            platform_id_for_external_id(external_id),
+            workspace_from_header.unwrap_or_else(|| "global".to_string()),
         ),
     };
 
@@ -288,7 +294,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create sessions dir");
         let path = dir.join(format!("2026-07-18T12-00-00-000Z_{external_id}.jsonl"));
         let mut lines = vec![format!(
-            r#"{{"type":"session","id":"{external_id}","timestamp":"2026-07-18T12:00:00.000Z","cwd":"/tmp/ingesttest"}}"#
+            r#"{{"type":"session","id":"{external_id}","timestamp":"2026-07-18T12:00:00.000Z","cwd":"/tmp/ingest-test"}}"#
         )];
         for (idx, text) in messages.iter().enumerate() {
             let role = if idx % 2 == 0 { "user" } else { "assistant" };
@@ -320,7 +326,8 @@ mod tests {
         let found = ops::find_session_by_external(home, external_id)
             .await
             .expect("session ingested into oqto-log");
-        assert_eq!(found.1, "/tmp/ingesttest");
+        assert_eq!(found.1, "/tmp/ingest-test");
+        assert_eq!(found.0, platform_id_for_external_id(external_id));
         let cursor = index::get_ingest_cursor(home, external_id)
             .await
             .expect("cursor recorded");

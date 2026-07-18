@@ -40,7 +40,20 @@ This made reads write. Consequences observed in production:
      converged with `replace_session_with_pi_jsonl_records` (keyed by source
      entry ids, idempotent). No append-then-maybe-replace: append of
      re-ingested content duplicates messages.
-3. **Explicit repair remains explicit**: the `RepairWorkspaceChatHistory`
+3. **Workspace identity comes from the JSONL header `cwd`, never from the
+   session directory name.** The safe-dirname encoding maps both `/` and `-`
+   to `-`, so decoding is lossy for any path containing a hyphen
+   (`.../comfyui-lab` decoded to `.../comfyui/lab` and created a bogus
+   workspace DB). Ingest, import, and validation read the header line;
+   the decode survives only as a last-resort fallback in offline import.
+   Unknown sessions are persisted under the canonical minted id
+   (`platform_id_for_external_id`), never under the raw harness id.
+4. **Bulk backfill is explicit-only, including in the frontend.** The chat UI
+   no longer auto-fires a workspace-wide backfill when a session projects
+   empty; each such open ran a >120s bulk repair that timed out and held
+   long write transactions (`database is locked` storms, multi-second
+   opens). Empty projections heal via the read-path nudge instead.
+5. **Explicit repair remains explicit**: the `RepairWorkspaceChatHistory`
    runner op and `/api/chat-history/backfill` stay as user-invoked bulk
    operations.
 

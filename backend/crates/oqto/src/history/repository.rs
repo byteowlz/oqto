@@ -553,8 +553,3 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
 
     parts
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

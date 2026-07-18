@@ -369,7 +369,7 @@ fn read_jsonl_agent_messages(path: &Path) -> Vec<AgentMessage> {
 
 fn find_session_jsonl_path(
     user_home: &Path,
-    workspace_id: &str,
+    _workspace_id: &str,
     session_id: &str,
 ) -> Option<PathBuf> {
     let base = user_home.join(".pi").join("agent").join("sessions");
@@ -377,18 +377,12 @@ fn find_session_jsonl_path(
         return None;
     };
 
+    // Match by session id only: the safe dirname encoding is lossy for
+    // paths containing '-', so a decoded-dirname == workspace filter would
+    // wrongly skip hyphenated workspaces. Session ids are globally unique.
     for workspace in workspaces.flatten() {
         let workspace_dir_path = workspace.path();
         if !workspace_dir_path.is_dir() {
-            continue;
-        }
-
-        let decoded = workspace_dir_path
-            .file_name()
-            .and_then(|v| v.to_str())
-            .and_then(decode_workspace_path_from_safe_dirname)
-            .unwrap_or_else(|| "global".to_string());
-        if decoded != workspace_id {
             continue;
         }
 
@@ -570,7 +564,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
             continue;
         }
 
-        let workspace_id = workspace_dir_path
+        let fallback_workspace_id = workspace_dir_path
             .file_name()
             .and_then(|v| v.to_str())
             .and_then(decode_workspace_path_from_safe_dirname)
@@ -582,7 +576,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|v| v.to_str()) == Some("jsonl") {
-                files.push((path, workspace_id.clone()));
+                files.push((path, fallback_workspace_id.clone()));
             }
         }
     }
@@ -591,7 +585,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
 
     let mut imported_sessions_this_run: Vec<ImportedSession> = Vec::new();
 
-    for (path, workspace_id) in files {
+    for (path, fallback_workspace_id) in files {
         stats.scanned_files += 1;
         let path_key = path.to_string_lossy().to_string();
         let current_fp = file_fingerprint(&path);
@@ -616,6 +610,12 @@ pub async fn bootstrap_import_from_pi_jsonl(
             continue;
         }
 
+        // The JSONL header cwd is the exact workspace; the safe dirname
+        // decode is lossy for paths containing '-'.
+        let workspace_id = read_pi_jsonl_session_metadata(&path)
+            .cwd
+            .unwrap_or(fallback_workspace_id);
+
         // If an oqto-log session already exists with this Pi ID as its
         // external_id (created at runtime under an oqto-* session_id),
         // merge into that session instead of creating a duplicate.
@@ -629,7 +629,10 @@ pub async fn bootstrap_import_from_pi_jsonl(
                     (existing_id, existing_ws)
                 }
                 Some((existing_id, _)) => (existing_id, workspace_id),
-                None => (pi_session_id.clone(), workspace_id),
+                None => (
+                    oqto_history::oqto_log::store::platform_id_for_external_id(&pi_session_id),
+                    workspace_id,
+                ),
             };
 
         let last_offset = (messages.len() as i64).saturating_sub(1);

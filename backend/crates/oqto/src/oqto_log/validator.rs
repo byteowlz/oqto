@@ -263,6 +263,32 @@ async fn count_oqto_log_session_messages(
     .max(0) as usize
 }
 
+fn read_session_header_cwd(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+
+    #[derive(serde::Deserialize)]
+    struct Header {
+        #[serde(rename = "type")]
+        entry_type: String,
+        cwd: Option<String>,
+    }
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().map_while(Result::ok).take(5) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(header) = serde_json::from_str::<Header>(trimmed)
+            && header.entry_type == "session"
+        {
+            return header.cwd.filter(|cwd| !cwd.is_empty());
+        }
+    }
+    None
+}
+
 fn collect_session_files(user_home: &Path) -> HashMap<(String, String), PathBuf> {
     let base = user_home.join(".pi").join("agent").join("sessions");
     let Ok(workspaces) = std::fs::read_dir(base) else {
@@ -276,7 +302,7 @@ fn collect_session_files(user_home: &Path) -> HashMap<(String, String), PathBuf>
             continue;
         }
 
-        let workspace_id = workspace_dir_path
+        let fallback_workspace_id = workspace_dir_path
             .file_name()
             .and_then(|v| v.to_str())
             .and_then(decode_workspace_path_from_safe_dirname)
@@ -294,7 +320,10 @@ fn collect_session_files(user_home: &Path) -> HashMap<(String, String), PathBuf>
             let Some(session_id) = parse_pi_session_id_from_path(&path) else {
                 continue;
             };
-            session_files.insert((workspace_id.clone(), session_id), path);
+            // Header cwd is exact; the safe dirname decode is lossy for '-'.
+            let workspace_id =
+                read_session_header_cwd(&path).unwrap_or_else(|| fallback_workspace_id.clone());
+            session_files.insert((workspace_id, session_id), path);
         }
     }
     session_files

@@ -139,18 +139,6 @@ fn project_name_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-pub(crate) fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
-    let trimmed = dirname.trim();
-    let core = trimmed
-        .strip_prefix("--")
-        .and_then(|v| v.strip_suffix("--"))
-        .unwrap_or(trimmed);
-    if core.is_empty() {
-        return None;
-    }
-    Some(format!("/{}", core.replace('-', "/")))
-}
-
 fn select_authoritative_workspace_chat_messages(
     authoritative_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
@@ -355,29 +343,24 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
         return outcome;
     };
 
-    let mut files: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
     for workspace in workspaces.flatten() {
         let workspace_dir_path = workspace.path();
         if !workspace_dir_path.is_dir() {
             continue;
         }
-        let workspace_path = workspace_dir_path
-            .file_name()
-            .and_then(|v| v.to_str())
-            .and_then(decode_workspace_path_from_safe_dirname);
-
         let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|v| v.to_str()) == Some("jsonl") {
-                files.push((path, workspace_path.clone()));
+                files.push(path);
             }
         }
     }
 
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort();
     files.reverse();
 
     if let Some(limit) = limit
@@ -386,13 +369,17 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
         files.truncate(limit);
     }
 
-    for (path, workspace_path) in files {
+    for path in files {
         outcome.scanned_files += 1;
 
         let Some(external_id) = parse_pi_session_id_from_path(&path) else {
             outcome.skipped_files += 1;
             continue;
         };
+
+        // The safe dirname encoding is lossy for paths containing '-';
+        // the JSONL header cwd is the exact workspace.
+        let workspace_path = super::jsonl_ingest::read_session_cwd(&path);
 
         let metadata = std::fs::metadata(&path);
         let modified_ms = metadata

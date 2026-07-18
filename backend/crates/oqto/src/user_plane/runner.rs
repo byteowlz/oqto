@@ -393,9 +393,9 @@ mod tests {
         FileStatResponse, FileWrittenResponse, GetSessionRequest, ListDirectoryRequest,
         MainChatMessage, MainChatMessagesResponse, MainChatSessionInfo,
         MainChatSessionListResponse, MemoryAddedResponse, MemoryDeletedResponse, MemoryEntry,
-        MemorySearchResultsResponse, PathDeletedResponse, RunnerCapabilitiesResponse,
-        RunnerFeatureFlags, RunnerRequest, RunnerResponse, SessionInfo, SessionListResponse,
-        SessionResponse, SessionStartedResponse, SessionStoppedResponse,
+        MemorySearchResultsResponse, PathDeletedResponse, RUNNER_WIRE_VERSION,
+        RunnerCapabilitiesResponse, RunnerFeatureFlags, RunnerRequest, RunnerResponse, SessionInfo,
+        SessionListResponse, SessionResponse, SessionStartedResponse, SessionStoppedResponse,
         StartSessionRequest as RunnerStartSessionRequest, StatRequest, StopSessionRequest,
         WriteFileRequest,
     };
