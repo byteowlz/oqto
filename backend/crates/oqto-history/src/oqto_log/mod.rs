@@ -1,5 +1,6 @@
 pub mod event_assembler;
 pub mod ids;
+pub mod index;
 pub mod native_projector;
 pub mod ops;
 pub mod paths;

@@ -106,44 +106,33 @@ async fn list_workspace_hash_dirs(user_home: &Path) -> Vec<PathBuf> {
     out
 }
 
-pub async fn project_session_messages_auto(
-    user_home: &Path,
+async fn project_session_messages_in_db(
+    db_path: &Path,
     session_id: &str,
     limit: Option<usize>,
-) -> Result<Option<Vec<ProjectedChatMessage>>> {
-    let dirs = list_workspace_hash_dirs(user_home).await;
-    for dir in dirs {
-        let db_path = dir.join("oqto-log.sqlite");
-        if !db_path.exists() {
-            continue;
-        }
-
-        let options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .read_only(true);
-        let pool = match SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(_) => continue,
-        };
-
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?",
-        )
-        .bind(session_id)
-        .fetch_one(&pool)
+) -> Option<Vec<ProjectedChatMessage>> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
         .await
-        .unwrap_or(0);
+        .ok()?;
 
-        if exists <= 0 {
-            continue;
-        }
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
 
-        let query = format!(
-            r#"
+    if exists <= 0 {
+        return None;
+    }
+
+    let query = format!(
+        r#"
             SELECT
               m.message_id AS message_id,
               t.parent_turn_id AS parent_turn_id,
@@ -156,74 +145,88 @@ pub async fn project_session_messages_auto(
             WHERE t.session_id = ?
             ORDER BY t.turn_version ASC, m.seq ASC
             "#,
-            projected_created_at_ms_sql(),
-        );
-        let mut rows = sqlx::query(&query)
-            .bind(session_id)
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default();
+        projected_created_at_ms_sql(),
+    );
+    let mut rows = sqlx::query(&query)
+        .bind(session_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
 
-        if let Some(l) = limit
-            && rows.len() > l
-        {
-            rows = rows.split_off(rows.len() - l);
-        }
+    if let Some(l) = limit
+        && rows.len() > l
+    {
+        rows = rows.split_off(rows.len() - l);
+    }
 
-        let mapped = rows
-            .into_iter()
-            .enumerate()
-            .map(|(idx, row)| row_to_projected_message(idx, session_id, row))
-            .collect();
+    let mapped = rows
+        .into_iter()
+        .enumerate()
+        .map(|(idx, row)| row_to_projected_message(idx, session_id, row))
+        .collect();
 
+    Some(mapped)
+}
+
+pub async fn project_session_messages_auto(
+    user_home: &Path,
+    session_id: &str,
+    limit: Option<usize>,
+) -> Result<Option<Vec<ProjectedChatMessage>>> {
+    if let Some(db_path) = crate::oqto_log::index::lookup_db_path(user_home, session_id).await
+        && let Some(mapped) = project_session_messages_in_db(&db_path, session_id, limit).await
+    {
         return Ok(Some(mapped));
     }
 
-    Ok(None)
-}
-
-pub async fn project_session_tree_auto(
-    user_home: &Path,
-    session_id: &str,
-) -> Result<Option<Vec<ProjectedTurnTreeNode>>> {
     let dirs = list_workspace_hash_dirs(user_home).await;
     for dir in dirs {
         let db_path = dir.join("oqto-log.sqlite");
         if !db_path.exists() {
             continue;
         }
-
-        let options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .read_only(true);
-        let pool = match SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(_) => continue,
-        };
-
-        let rows = sqlx::query(
-            r#"
-            SELECT turn_id, parent_turn_id, branch_id, role, turn_version
-            FROM oqto_log_turns
-            WHERE session_id = ?
-            ORDER BY turn_version ASC
-            "#,
-        )
-        .bind(session_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-
-        if rows.is_empty() {
-            continue;
+        if let Some(mapped) = project_session_messages_in_db(&db_path, session_id, limit).await {
+            crate::oqto_log::index::record_scan_hit(user_home, &db_path, session_id, None, None)
+                .await;
+            return Ok(Some(mapped));
         }
+    }
 
-        let tree = rows
-            .into_iter()
+    Ok(None)
+}
+
+async fn project_session_tree_in_db(
+    db_path: &Path,
+    session_id: &str,
+) -> Option<Vec<ProjectedTurnTreeNode>> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .ok()?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT turn_id, parent_turn_id, branch_id, role, turn_version
+        FROM oqto_log_turns
+        WHERE session_id = ?
+        ORDER BY turn_version ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    Some(
+        rows.into_iter()
             .map(|row| ProjectedTurnTreeNode {
                 turn_id: row.try_get::<String, _>("turn_id").unwrap_or_default(),
                 parent_turn_id: row
@@ -234,9 +237,31 @@ pub async fn project_session_tree_auto(
                 role: row.try_get::<String, _>("role").unwrap_or_default(),
                 turn_version: row.try_get::<i64, _>("turn_version").unwrap_or_default(),
             })
-            .collect();
+            .collect(),
+    )
+}
 
+pub async fn project_session_tree_auto(
+    user_home: &Path,
+    session_id: &str,
+) -> Result<Option<Vec<ProjectedTurnTreeNode>>> {
+    if let Some(db_path) = crate::oqto_log::index::lookup_db_path(user_home, session_id).await
+        && let Some(tree) = project_session_tree_in_db(&db_path, session_id).await
+    {
         return Ok(Some(tree));
+    }
+
+    let dirs = list_workspace_hash_dirs(user_home).await;
+    for dir in dirs {
+        let db_path = dir.join("oqto-log.sqlite");
+        if !db_path.exists() {
+            continue;
+        }
+        if let Some(tree) = project_session_tree_in_db(&db_path, session_id).await {
+            crate::oqto_log::index::record_scan_hit(user_home, &db_path, session_id, None, None)
+                .await;
+            return Ok(Some(tree));
+        }
     }
 
     Ok(None)

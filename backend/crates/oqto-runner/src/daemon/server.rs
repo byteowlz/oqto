@@ -3781,6 +3781,24 @@ impl Runner {
     {
         info!("Runner listening on {}", listener.endpoint_description());
         sd_notify_ready();
+
+        // One-time index bootstrap: session lookups are O(1) via the oqto-log
+        // session index; build it in the background if this home predates it.
+        if let Some(home) = dirs::home_dir()
+            && !oqto_history::oqto_log::index::index_exists(&home)
+        {
+            tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                match oqto_history::oqto_log::index::rebuild(&home).await {
+                    Ok(count) => info!(
+                        "oqto-log session index built: {} sessions in {:?}",
+                        count,
+                        started.elapsed()
+                    ),
+                    Err(err) => warn!("oqto-log session index rebuild failed: {err:#}"),
+                }
+            });
+        }
         self.serve_listener(listener).await;
         self.cleanup_managed_processes().await;
         Ok(())

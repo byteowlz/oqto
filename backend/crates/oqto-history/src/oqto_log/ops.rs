@@ -233,6 +233,18 @@ pub async fn upsert_session_identity(
         .context("upsert oqto_log main branch identity")?;
 
     tx.commit().await.context("commit oqto-log identity tx")?;
+
+    if let Err(err) = crate::oqto_log::index::upsert_for_workspace_id(
+        user_home,
+        workspace_id,
+        session_id,
+        platform_id,
+        external_id,
+    )
+    .await
+    {
+        tracing::debug!("oqto-log index upsert failed for {session_id}: {err:#}");
+    }
     Ok(())
 }
 
@@ -351,6 +363,7 @@ pub async fn batch_upsert_session_identities(
         .await
         .context("begin oqto-log identity batch tx")?;
     let mut upserted = 0usize;
+    let mut index_entries: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     for identity in identities {
         let (session_id, platform_id) = existing_by_external
             .get(&identity.external_id)
@@ -399,12 +412,27 @@ pub async fn batch_upsert_session_identities(
         .execute(&mut *tx)
         .await
         .context("batch upsert oqto_log main branch identity")?;
+        index_entries.push((
+            session_id,
+            Some(platform_id),
+            Some(identity.external_id.clone()),
+        ));
         upserted += 1;
     }
 
     tx.commit()
         .await
         .context("commit oqto-log identity batch tx")?;
+
+    if let Err(err) = crate::oqto_log::index::upsert_many_for_workspace_id(
+        user_home,
+        workspace_id,
+        &index_entries,
+    )
+    .await
+    {
+        tracing::debug!("oqto-log index batch upsert failed: {err:#}");
+    }
     Ok(upserted)
 }
 
@@ -618,21 +646,21 @@ pub async fn list_sessions(
     Ok(sessions)
 }
 
-pub async fn get_session(
-    user_home: &Path,
+async fn get_session_in_db(
+    db: &Path,
     session_or_platform_id: &str,
 ) -> Result<Option<OqtoLogSessionRow>> {
-    for db in list_db_paths(user_home) {
-        crate::oqto_log::store::migrate_db_path(&db).await?;
-        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
-        let pool = match SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(_) => continue,
-        };
+    crate::oqto_log::store::migrate_db_path(db).await?;
+    let options = SqliteConnectOptions::new().filename(db).read_only(true);
+    let pool = match SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+    {
+        Ok(pool) => pool,
+        Err(_) => return Ok(None),
+    };
+    {
         let has_title_column = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'title'",
         )
@@ -699,6 +727,33 @@ pub async fn get_session(
     Ok(None)
 }
 
+pub async fn get_session(
+    user_home: &Path,
+    session_or_platform_id: &str,
+) -> Result<Option<OqtoLogSessionRow>> {
+    if let Some(db) =
+        crate::oqto_log::index::lookup_db_path(user_home, session_or_platform_id).await
+        && let Ok(Some(row)) = get_session_in_db(&db, session_or_platform_id).await
+    {
+        return Ok(Some(row));
+    }
+
+    for db in list_db_paths(user_home) {
+        if let Some(row) = get_session_in_db(&db, session_or_platform_id).await? {
+            crate::oqto_log::index::record_scan_hit(
+                user_home,
+                &db,
+                &row.session_id,
+                Some(&row.platform_id),
+                row.external_id.as_deref(),
+            )
+            .await;
+            return Ok(Some(row));
+        }
+    }
+    Ok(None)
+}
+
 pub async fn delete_session(user_home: &Path, session_or_platform_id: &str) -> Result<bool> {
     let mut deleted = false;
     for db in list_db_paths(user_home) {
@@ -750,6 +805,12 @@ pub async fn delete_session(user_home: &Path, session_or_platform_id: &str) -> R
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+    }
+    if deleted
+        && let Err(err) =
+            crate::oqto_log::index::remove_session(user_home, session_or_platform_id).await
+    {
+        tracing::debug!("oqto-log index delete failed for {session_or_platform_id}: {err:#}");
     }
     Ok(deleted)
 }
@@ -1122,6 +1183,10 @@ pub async fn delete_session_in_workspace(
         .context("rebuild fts after delete")?;
 
     tx.commit().await.context("commit session delete")?;
+
+    if let Err(err) = crate::oqto_log::index::remove_session(user_home, session_id).await {
+        tracing::debug!("oqto-log index delete failed for {session_id}: {err:#}");
+    }
     Ok(true)
 }
 
@@ -1129,10 +1194,38 @@ pub async fn delete_session_in_workspace(
 ///
 /// Accepts either `session_id` or `platform_id` and returns the non-empty
 /// `external_id` when available.
+async fn query_session_by_id_in_db(
+    db: &Path,
+    session_or_platform_id: &str,
+) -> Option<(String, String, Option<String>)> {
+    let options = SqliteConnectOptions::new().filename(db).read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .ok()?;
+    sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT session_id, COALESCE(workspace_id, ''), external_id FROM oqto_log_sessions WHERE (session_id = ? OR platform_id = ?) LIMIT 1",
+    )
+    .bind(session_or_platform_id)
+    .bind(session_or_platform_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+}
+
 pub async fn find_session_by_id(
     user_home: &Path,
     session_or_platform_id: &str,
 ) -> Option<(String, String, Option<String>)> {
+    if let Some(db) =
+        crate::oqto_log::index::lookup_db_path(user_home, session_or_platform_id).await
+        && let Some(row) = query_session_by_id_in_db(&db, session_or_platform_id).await
+    {
+        return Some(row);
+    }
+
     let dbs = list_db_paths(user_home);
 
     for db in dbs {
@@ -1155,6 +1248,14 @@ pub async fn find_session_by_id(
         .await;
 
         if let Ok(Some(row)) = row {
+            crate::oqto_log::index::record_scan_hit(
+                user_home,
+                &db,
+                &row.0,
+                Some(session_or_platform_id),
+                row.2.as_deref(),
+            )
+            .await;
             return Some(row);
         }
     }
@@ -1166,6 +1267,26 @@ pub async fn find_external_by_session(
     user_home: &Path,
     session_or_platform_id: &str,
 ) -> Option<String> {
+    if let Some(db) =
+        crate::oqto_log::index::lookup_db_path(user_home, session_or_platform_id).await
+    {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        if let Ok(pool) = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            && let Ok(Some(external_id)) = sqlx::query_scalar::<_, String>(
+                "SELECT external_id FROM oqto_log_sessions WHERE (session_id = ? OR platform_id = ?) AND external_id IS NOT NULL AND trim(external_id) != '' LIMIT 1",
+            )
+            .bind(session_or_platform_id)
+            .bind(session_or_platform_id)
+            .fetch_optional(&pool)
+            .await
+        {
+            return Some(external_id);
+        }
+    }
+
     let dbs = list_db_paths(user_home);
 
     for db in dbs {
@@ -1188,6 +1309,14 @@ pub async fn find_external_by_session(
         .await;
 
         if let Ok(Some(external_id)) = row {
+            crate::oqto_log::index::record_scan_hit(
+                user_home,
+                &db,
+                session_or_platform_id,
+                Some(session_or_platform_id),
+                Some(&external_id),
+            )
+            .await;
             return Some(external_id);
         }
     }
@@ -1196,6 +1325,23 @@ pub async fn find_external_by_session(
 }
 
 pub async fn find_platform_by_external(user_home: &Path, external_id: &str) -> Option<String> {
+    if let Some(db) = crate::oqto_log::index::lookup_db_path(user_home, external_id).await {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        if let Ok(pool) = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            && let Ok(Some(platform_id)) = sqlx::query_scalar::<_, String>(
+                "SELECT platform_id FROM oqto_log_sessions WHERE external_id = ? AND platform_id IS NOT NULL AND trim(platform_id) != '' LIMIT 1",
+            )
+            .bind(external_id)
+            .fetch_optional(&pool)
+            .await
+        {
+            return Some(platform_id);
+        }
+    }
+
     let dbs = list_db_paths(user_home);
 
     for db in dbs {
@@ -1217,6 +1363,14 @@ pub async fn find_platform_by_external(user_home: &Path, external_id: &str) -> O
         .await;
 
         if let Ok(Some(platform_id)) = row {
+            crate::oqto_log::index::record_scan_hit(
+                user_home,
+                &db,
+                &platform_id,
+                Some(&platform_id),
+                Some(external_id),
+            )
+            .await;
             return Some(platform_id);
         }
     }

@@ -1711,6 +1711,13 @@ WantedBy=default.target
                     );
                     Ok(())
                 }
+                "index-rebuild" => {
+                    let indexed = rt.block_on(async {
+                        oqto_history::oqto_log::index::rebuild(Path::new(&home)).await
+                    })?;
+                    println!("oqto-log session index rebuilt: sessions={}", indexed);
+                    Ok(())
+                }
                 "sync-identities" => {
                     let stats = rt.block_on(async {
                         let stats = crate::oqto_log::importer::fast_import_identities_from_pi_jsonl(
@@ -1798,7 +1805,7 @@ WantedBy=default.target
                     Ok(())
                 }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|sync-identities|unsplit|unsplit-dry-run",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|index-rebuild|sync-identities|unsplit|unsplit-dry-run",
                     other
                 )),
             }

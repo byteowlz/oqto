@@ -608,6 +608,19 @@ pub async fn append_agent_end_snapshot(
     .context("update oqto_log_sessions timestamps from source timestamps")?;
 
     tx.commit().await.context("commit oqto-log tx")?;
+
+    if let Err(err) = crate::oqto_log::index::upsert_for_workspace_id(
+        user_home,
+        workspace_id,
+        session_id,
+        Some(platform_id),
+        external_id,
+    )
+    .await
+    {
+        tracing::debug!("oqto-log index upsert failed for {session_id}: {err:#}");
+    }
+
     Ok(AppendStats {
         turns_written,
         messages_written,
@@ -926,6 +939,18 @@ async fn replace_session_with_snapshot_inner(
         .context("rebuild FTS index (replace)")?;
 
     tx.commit().await.context("commit oqto-log replace tx")?;
+
+    if let Err(err) = crate::oqto_log::index::upsert_for_workspace_id(
+        user_home,
+        workspace_id,
+        session_id,
+        Some(platform_id),
+        external_id,
+    )
+    .await
+    {
+        tracing::debug!("oqto-log index upsert failed for {session_id}: {err:#}");
+    }
 
     Ok(AppendStats {
         turns_written,
