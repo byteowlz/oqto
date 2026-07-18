@@ -1601,7 +1601,7 @@ run_oqto_log_deploy_gate() {
     local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
     local oqto_log_current_fp oqto_log_previous_fp
     oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
-    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f '$oqto_log_state_file' && cat '$oqto_log_state_file' || true" 2>/dev/null || true)"
+    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f \"$oqto_log_state_file\" && cat \"$oqto_log_state_file\" || true" 2>/dev/null || true)"
 
     local identity_start identity_end
     identity_start="$(epoch_ms)"
@@ -1669,7 +1669,7 @@ run_oqto_log_deploy_gate() {
     fi
 
     if [[ "$oqto_log_converged" == "true" ]]; then
-        host_exec "$is_local" "$ssh_target" "mkdir -p '$oqto_log_state_dir' && printf '%s\n' '$oqto_log_current_fp' > '$oqto_log_state_file'" >/dev/null 2>&1 || true
+        host_exec "$is_local" "$ssh_target" "mkdir -p \"$oqto_log_state_dir\" && printf '%s\n' '$oqto_log_current_fp' > \"$oqto_log_state_file\"" >/dev/null 2>&1 || true
     else
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
         warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name"
@@ -1725,7 +1725,7 @@ activate_host() {
     local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
     local oqto_log_current_fp oqto_log_previous_fp
     oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
-    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f '$oqto_log_state_file' && cat '$oqto_log_state_file' || true" 2>/dev/null || true)"
+    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f \"$oqto_log_state_file\" && cat \"$oqto_log_state_file\" || true" 2>/dev/null || true)"
 
     local identity_start identity_end
     identity_start="$(epoch_ms)"
@@ -1797,7 +1797,7 @@ activate_host() {
     fi
 
     if [[ "$oqto_log_converged" == "true" ]]; then
-        host_exec "$is_local" "$ssh_target" "mkdir -p '$oqto_log_state_dir' && printf '%s\n' '$oqto_log_current_fp' > '$oqto_log_state_file'" >/dev/null 2>&1 || true
+        host_exec "$is_local" "$ssh_target" "mkdir -p \"$oqto_log_state_dir\" && printf '%s\n' '$oqto_log_current_fp' > \"$oqto_log_state_file\"" >/dev/null 2>&1 || true
     else
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
         warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name, attempting rollback..."
