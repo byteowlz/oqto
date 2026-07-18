@@ -227,6 +227,16 @@ type ForkPoint = {
 	preview: string;
 };
 
+export const INITIAL_VISIBLE_MESSAGE_COUNT = 30;
+export const LOAD_MORE_MESSAGE_COUNT = 30;
+
+export function nextVisibleMessageCount(
+	current: number,
+	total: number,
+): number {
+	return Math.min(current + LOAD_MORE_MESSAGE_COUNT, total);
+}
+
 export interface ChatViewProps {
 	/** Current locale */
 	locale?: "en" | "de";
@@ -679,13 +689,17 @@ export function ChatView({
 		});
 	}, []);
 
-	const LOAD_MORE_COUNT = 30;
+	// Keep initial chat paint bounded. The previous Math.max(messages.length,
+	// 30) initialized and expanded this window to the complete history, making
+	// the "load more" path unreachable and rendering multi-megabyte chats in
+	// one main-thread task.
 	const [visibleCount, setVisibleCount] = useState(
-		Math.max(messages.length, 30),
+		INITIAL_VISIBLE_MESSAGE_COUNT,
 	);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the session id is intentionally the reset trigger even though the reset value is constant.
 	useEffect(() => {
-		setVisibleCount((prev) => Math.max(prev, messages.length));
-	}, [messages.length]);
+		setVisibleCount(INITIAL_VISIBLE_MESSAGE_COUNT);
+	}, [selectedSessionId]);
 
 	// A2UI integration - adapt Pi messages to expected format
 	const a2uiMessagesRef = useRef<Array<{ info: { id: string; role: string } }>>(
@@ -1519,9 +1533,7 @@ export function ChatView({
 		// Load more when near top
 		if (container.scrollTop < 100 && visibleCount < messages.length) {
 			const prevScrollHeight = container.scrollHeight;
-			setVisibleCount((prev) =>
-				Math.min(prev + LOAD_MORE_COUNT, messages.length),
-			);
+			setVisibleCount((prev) => nextVisibleMessageCount(prev, messages.length));
 			requestAnimationFrame(() => {
 				programmaticScrollRef.current = true;
 				container.scrollTop = container.scrollHeight - prevScrollHeight;
