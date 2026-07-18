@@ -1769,20 +1769,19 @@ impl Runner {
         };
 
         let workspace_path = row.workspace_id.unwrap_or_else(|| "global".to_string());
-        let session_info_name = row
-            .external_id
-            .as_deref()
-            .and_then(|external_id| oqto_pi::session_files::find_session_file(external_id, None))
-            .and_then(|path| read_last_session_info_name(&path));
-        let parsed_title = session_info_name
+        // oqto-log is the read authority; never scan Pi JSONL on this hot path.
+        let parsed_title = row
+            .title
             .as_deref()
             .map(oqto_pi::session_parser::ParsedTitle::parse);
         let title = parsed_title
             .as_ref()
             .map(|parsed| parsed.display_title().to_string())
             .filter(|title| !title.is_empty());
-        let readable_id = parsed_title
-            .and_then(|parsed| parsed.readable_id)
+        let readable_id = row
+            .readable_id
+            .clone()
+            .or_else(|| parsed_title.and_then(|parsed| parsed.readable_id))
             .unwrap_or_default();
         let project_name = project_name_from_path(&workspace_path);
         let session = WorkspaceChatSessionInfo {

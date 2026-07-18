@@ -1,4 +1,3 @@
-#![cfg(feature = "iroh-transport")]
 
 use anyhow::{Context, Result};
 use iroh::endpoint::presets::N0;

@@ -48,3 +48,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "iroh_probe"
+required-features = ["iroh-transport"]

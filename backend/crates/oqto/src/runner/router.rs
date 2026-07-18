@@ -67,11 +67,9 @@ async fn ensure_runner_healthy(
     linux_user: &str,
     client: RunnerClient,
 ) -> Result<RunnerClient> {
-    if client
-        .list_workspace_chat_sessions(None, false, Some(1))
-        .await
-        .is_ok()
-    {
+    // Health must be O(1): a data-listing probe here scanned every workspace
+    // database on each request and dominated chat-open latency.
+    if client.ensure_ready_with_recovery().await.is_ok() {
         return Ok(client);
     }
 
