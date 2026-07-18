@@ -41,6 +41,8 @@ pub struct Runner {
     user_config: RunnerUserConfig,
     /// Pi session manager (manages Pi agent processes).
     pi_manager: Arc<PiSessionManager>,
+    /// Background Pi JSONL -> oqto-log ingest task.
+    jsonl_ingest: super::jsonl_ingest::IngestHandle,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -104,7 +106,7 @@ struct JsonlScanOutcome {
     sessions: Vec<JsonlSessionMetadata>,
 }
 
-fn parse_pi_session_id_from_path(path: &std::path::Path) -> Option<String> {
+pub(crate) fn parse_pi_session_id_from_path(path: &std::path::Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
     let (_, session_id) = stem.rsplit_once('_')?;
     if session_id.is_empty() {
@@ -137,7 +139,7 @@ fn project_name_from_path(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
+pub(crate) fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     let trimmed = dirname.trim();
     let core = trimmed
         .strip_prefix("--")
@@ -174,91 +176,6 @@ fn select_richest_authoritative_messages(
     }
 }
 
-async fn repair_oqto_log_from_jsonl_if_richer(
-    user_home: &std::path::Path,
-    user_id: &str,
-    requested_session_id: &str,
-    projected_count: usize,
-    external_id: &str,
-    recovered_messages: &[oqto_pi::AgentMessage],
-    records: Option<&[oqto_history::oqto_log::store::PiJsonlMessageRecord]>,
-) -> Option<Vec<ChatMessageProto>> {
-    if recovered_messages.len() <= projected_count {
-        return None;
-    }
-
-    let (session_id, workspace_id, stored_external_id) = if requested_session_id
-        .starts_with("oqto-")
-    {
-        oqto_history::oqto_log::ops::find_session_by_id(user_home, requested_session_id).await?
-    } else {
-        let (session_id, workspace_id) =
-            oqto_history::oqto_log::ops::find_session_by_external(user_home, requested_session_id)
-                .await?;
-        (
-            session_id,
-            workspace_id,
-            Some(requested_session_id.to_string()),
-        )
-    };
-
-    let external_for_store = stored_external_id.as_deref().or(Some(external_id));
-    let replace_result = if let Some(records) = records {
-        oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
-            user_home,
-            user_id,
-            &workspace_id,
-            &session_id,
-            &session_id,
-            external_for_store,
-            external_id,
-            records,
-        )
-        .await
-    } else {
-        oqto_history::oqto_log::store::replace_session_with_snapshot(
-            user_home,
-            user_id,
-            &workspace_id,
-            &session_id,
-            &session_id,
-            external_for_store,
-            external_id,
-            recovered_messages,
-        )
-        .await
-    };
-    if let Err(err) = replace_result {
-        warn!(
-            "oqto-log validation repair failed session={} external_id={} projected_count={} jsonl_count={}: {:?}",
-            requested_session_id,
-            external_id,
-            projected_count,
-            recovered_messages.len(),
-            err
-        );
-        return None;
-    }
-
-    match oqto_history::oqto_log::projector::project_session_messages_auto(
-        user_home,
-        requested_session_id,
-        None,
-    )
-    .await
-    {
-        Ok(Some(messages)) => Some(messages),
-        Ok(None) => None,
-        Err(err) => {
-            warn!(
-                "oqto-log validation repair re-read failed session={} external_id={}: {:?}",
-                requested_session_id, external_id, err
-            );
-            None
-        }
-    }
-}
-
 fn select_live_workspace_chat_messages(
     live_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
@@ -267,113 +184,6 @@ fn select_live_workspace_chat_messages(
     }
 
     (Vec::new(), "live_buffer")
-}
-
-async fn resolve_external_session_id(
-    user_home: &std::path::Path,
-    requested_session_id: &str,
-) -> Option<String> {
-    if !requested_session_id.starts_with("oqto-") {
-        return Some(requested_session_id.to_string());
-    }
-
-    if let Some(id) =
-        oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id).await
-    {
-        return Some(id);
-    }
-
-    None
-}
-
-fn spawn_oqto_log_repair_from_jsonl(
-    user_home: std::path::PathBuf,
-    user_id: String,
-    requested_session_id: String,
-    projected_count: usize,
-) {
-    tokio::spawn(async move {
-        let Some((external_id, records)) =
-            load_pi_jsonl_records_for_session(&user_home, &requested_session_id).await
-        else {
-            return;
-        };
-        let messages = records
-            .iter()
-            .map(|record| record.message.clone())
-            .collect::<Vec<_>>();
-        let _ = repair_oqto_log_from_jsonl_if_richer(
-            &user_home,
-            &user_id,
-            &requested_session_id,
-            projected_count,
-            &external_id,
-            &messages,
-            Some(&records),
-        )
-        .await;
-    });
-}
-
-async fn load_pi_jsonl_records_for_session(
-    user_home: &std::path::Path,
-    requested_session_id: &str,
-) -> Option<(
-    String,
-    Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord>,
-)> {
-    let external_id = resolve_external_session_id(user_home, requested_session_id).await?;
-    let session_file =
-        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await?;
-    let records = tokio::task::spawn_blocking(move || read_jsonl_message_records(&session_file))
-        .await
-        .ok()?;
-
-    if records.is_empty() {
-        return None;
-    }
-
-    Some((external_id, records))
-}
-
-async fn load_pi_jsonl_agent_messages_for_session(
-    user_home: &std::path::Path,
-    requested_session_id: &str,
-) -> Option<(String, Vec<oqto_pi::AgentMessage>)> {
-    let (external_id, records) =
-        load_pi_jsonl_records_for_session(user_home, requested_session_id).await?;
-    Some((
-        external_id,
-        records.into_iter().map(|record| record.message).collect(),
-    ))
-}
-
-fn pi_jsonl_agent_messages_to_proto(
-    requested_session_id: &str,
-    recovered_messages: &[oqto_pi::AgentMessage],
-) -> Vec<ChatMessageProto> {
-    recovered_messages
-        .iter()
-        .enumerate()
-        .map(|(idx, msg)| {
-            let mut proto =
-                crate::protocol::agent_msg_to_chat_proto(msg, idx, requested_session_id);
-            proto.id = format!("pi_jsonl_{}", idx);
-            proto
-        })
-        .collect()
-}
-
-async fn load_pi_jsonl_messages_for_session(
-    user_home: &std::path::Path,
-    requested_session_id: &str,
-) -> Option<Vec<ChatMessageProto>> {
-    let (_external_id, recovered_messages) =
-        load_pi_jsonl_agent_messages_for_session(user_home, requested_session_id).await?;
-    Some(pi_jsonl_agent_messages_to_proto(
-        requested_session_id,
-        &recovered_messages,
-    ))
 }
 
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
@@ -483,7 +293,7 @@ struct JsonlMessageEntry {
     message: Option<oqto_pi::AgentMessage>,
 }
 
-fn read_jsonl_message_records(
+pub(crate) fn read_jsonl_message_records(
     path: &std::path::Path,
 ) -> Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord> {
     use std::io::BufRead;
@@ -649,6 +459,7 @@ impl Runner {
             binaries,
             user_config,
             pi_manager,
+            jsonl_ingest: super::jsonl_ingest::spawn(),
         }
     }
 
@@ -1837,35 +1648,11 @@ impl Runner {
                         };
 
                     if req.limit.is_none() {
-                        if let Some(projected_messages) =
-                            projected.filter(|messages| !messages.is_empty())
-                        {
-                            // Keep chat opens instant, but still pull newer Pi JSONL
-                            // content into oqto-log in the background.
-                            let projected_count = projected_messages.len();
-                            let user_id =
-                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                            spawn_oqto_log_repair_from_jsonl(
-                                home_path.to_path_buf(),
-                                user_id,
-                                req.session_id.clone(),
-                                projected_count,
-                            );
-                            Some(projected_messages)
-                        } else {
-                            // Keep chat opens instant. Missing oqto-log history is
-                            // synced from Pi JSONL in the background; do not parse
-                            // JSONL synchronously on the request path.
-                            let user_id =
-                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                            spawn_oqto_log_repair_from_jsonl(
-                                home_path.to_path_buf(),
-                                user_id,
-                                req.session_id.clone(),
-                                0,
-                            );
-                            None
-                        }
+                        // Reads are read-only: nudge the serialized background
+                        // ingest task to stat this session's JSONL for
+                        // out-of-band (bare pi) changes.
+                        self.jsonl_ingest.nudge(&req.session_id);
+                        projected.filter(|messages| !messages.is_empty())
                     } else {
                         projected
                     }
@@ -3755,6 +3542,7 @@ impl Runner {
                                 binaries: self.binaries.clone(),
                                 user_config: self.user_config.clone(),
                                 pi_manager: Arc::clone(&self.pi_manager),
+                                jsonl_ingest: self.jsonl_ingest.clone(),
                             };
                             tokio::spawn(async move {
                                 runner.handle_connection(stream).await;

@@ -82,8 +82,71 @@ async fn open_index(user_home: &Path, create: bool) -> Result<SqlitePool> {
     .execute(&pool)
     .await
     .context("create oqto-log session index external index")?;
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS oqto_log_ingest_cursors (
+          external_id TEXT PRIMARY KEY,
+          file_size INTEGER NOT NULL,
+          file_mtime_ms INTEGER NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .context("create oqto-log ingest cursor table")?;
 
     Ok(pool)
+}
+
+/// Fingerprint of a Pi JSONL session file at the time it was last ingested
+/// into oqto-log. Comparing against a fresh `stat()` decides whether the
+/// file needs re-ingestion without parsing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngestCursor {
+    pub file_size: i64,
+    pub file_mtime_ms: i64,
+}
+
+pub async fn get_ingest_cursor(user_home: &Path, external_id: &str) -> Option<IngestCursor> {
+    let pool = open_index(user_home, false).await.ok()?;
+    sqlx::query_as::<_, (i64, i64)>(
+        "SELECT file_size, file_mtime_ms FROM oqto_log_ingest_cursors WHERE external_id = ?",
+    )
+    .bind(external_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|(file_size, file_mtime_ms)| IngestCursor {
+        file_size,
+        file_mtime_ms,
+    })
+}
+
+pub async fn upsert_ingest_cursor(
+    user_home: &Path,
+    external_id: &str,
+    cursor: IngestCursor,
+) -> Result<()> {
+    let pool = open_index(user_home, true).await?;
+    sqlx::query(
+        r#"
+        INSERT INTO oqto_log_ingest_cursors (external_id, file_size, file_mtime_ms, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(external_id) DO UPDATE SET
+          file_size = excluded.file_size,
+          file_mtime_ms = excluded.file_mtime_ms,
+          updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(external_id)
+    .bind(cursor.file_size)
+    .bind(cursor.file_mtime_ms)
+    .execute(&pool)
+    .await
+    .context("upsert oqto-log ingest cursor")?;
+    Ok(())
 }
 
 /// Record that a session lives in the workspace database identified by
@@ -403,6 +466,29 @@ mod tests {
         let count = rebuild(temp.path()).await.expect("rebuild");
         assert!(count >= 1);
         assert_eq!(lookup_db_path(temp.path(), "oqto-s2").await, Some(db_path));
+    }
+
+    #[tokio::test]
+    async fn ingest_cursor_roundtrip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        assert_eq!(get_ingest_cursor(home, "ext-1").await, None);
+        let cursor = IngestCursor {
+            file_size: 42,
+            file_mtime_ms: 1_700_000_000_000,
+        };
+        upsert_ingest_cursor(home, "ext-1", cursor)
+            .await
+            .expect("upsert");
+        assert_eq!(get_ingest_cursor(home, "ext-1").await, Some(cursor));
+        let newer = IngestCursor {
+            file_size: 43,
+            file_mtime_ms: 1_700_000_000_500,
+        };
+        upsert_ingest_cursor(home, "ext-1", newer)
+            .await
+            .expect("update");
+        assert_eq!(get_ingest_cursor(home, "ext-1").await, Some(newer));
     }
 
     #[tokio::test]
