@@ -19,7 +19,8 @@
 			"node_modules",
 			"public/visual-runtime/vendor",
 			"src-tauri/gen",
-			"src-tauri/target"
+			"src-tauri/target",
+			"vendor"
 		]
 	}
 }
