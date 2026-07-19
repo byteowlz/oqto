@@ -133,6 +133,7 @@ pub struct ValidationReport {
     pub sessions_checked: usize,
     pub sessions_ok: usize,
     pub sessions_mismatch: usize,
+    pub sessions_unstable: usize,
     pub jsonl_messages_total: usize,
     pub oqto_log_messages_total: usize,
     pub mismatches: Vec<String>,
@@ -336,7 +337,29 @@ pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationRep
 #[derive(Debug, serde::Deserialize)]
 struct ImporterStateView {
     #[serde(default)]
+    files: HashMap<String, FileFingerprintView>,
+    #[serde(default)]
     last_imported_sessions: Vec<ImportedSessionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct FileFingerprintView {
+    mtime_secs: u64,
+    size: u64,
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprintView> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime_secs = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(FileFingerprintView {
+        mtime_secs,
+        size: meta.len(),
+    })
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -365,12 +388,20 @@ pub async fn validate_bootstrap_import_changed(user_home: &Path) -> Result<Valid
     for s in state.last_imported_sessions {
         filter.insert((s.workspace_id, s.session_id));
     }
-    validate_bootstrap_import_filtered(user_home, Some(&filter)).await
+    validate_bootstrap_import_filtered_inner(user_home, Some(&filter), Some(&state.files)).await
 }
 
 pub async fn validate_bootstrap_import_filtered(
     user_home: &Path,
     only_sessions: Option<&HashSet<(String, String)>>,
+) -> Result<ValidationReport> {
+    validate_bootstrap_import_filtered_inner(user_home, only_sessions, None).await
+}
+
+async fn validate_bootstrap_import_filtered_inner(
+    user_home: &Path,
+    only_sessions: Option<&HashSet<(String, String)>>,
+    expected_fingerprints: Option<&HashMap<String, FileFingerprintView>>,
 ) -> Result<ValidationReport> {
     let mut report = ValidationReport::default();
     let session_files = collect_session_files(user_home);
@@ -380,6 +411,13 @@ pub async fn validate_bootstrap_import_filtered(
             && !filter.contains(&(workspace_id.clone(), session_id.clone()))
         {
             continue;
+        }
+        if let Some(expected) = expected_fingerprints {
+            let path_key = path.to_string_lossy().to_string();
+            if expected.get(&path_key) != file_fingerprint(&path).as_ref() {
+                report.sessions_unstable += 1;
+                continue;
+            }
         }
         let jsonl_count = count_jsonl_message_entries(&path);
         if jsonl_count == 0 {

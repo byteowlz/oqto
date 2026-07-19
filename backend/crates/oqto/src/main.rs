@@ -1638,10 +1638,11 @@ WantedBy=default.target
                     })?;
 
                     println!(
-                        "oqto-log validation: sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        "oqto-log validation: sessions_checked={}, sessions_ok={}, sessions_mismatch={}, sessions_unstable={}, jsonl_messages_total={}, oqto_log_messages_total={}",
                         report.sessions_checked,
                         report.sessions_ok,
                         report.sessions_mismatch,
+                        report.sessions_unstable,
                         report.jsonl_messages_total,
                         report.oqto_log_messages_total
                     );
@@ -1667,10 +1668,11 @@ WantedBy=default.target
                     })?;
 
                     println!(
-                        "oqto-log validation (changed): sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        "oqto-log validation (changed): sessions_checked={}, sessions_ok={}, sessions_mismatch={}, sessions_unstable={}, jsonl_messages_total={}, oqto_log_messages_total={}",
                         report.sessions_checked,
                         report.sessions_ok,
                         report.sessions_mismatch,
+                        report.sessions_unstable,
                         report.jsonl_messages_total,
                         report.oqto_log_messages_total
                     );

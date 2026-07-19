@@ -59,7 +59,7 @@ struct ImportedSession {
     session_id: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct FileFingerprint {
     mtime_secs: u64,
     size: u64,
@@ -669,6 +669,18 @@ pub async fn bootstrap_import_from_pi_jsonl(
             // checkpoints, and collapses against a session that does not exist.
             let session_id = append_stats.session_id.clone();
 
+            // Remove competing rows before an exact replace. Otherwise their
+            // source tuples satisfy the global uniqueness index, INSERT OR
+            // IGNORE skips those entries in the canonical row, and deleting
+            // duplicates afterward leaves canonical history permanently short.
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &pi_session_id,
+                &session_id,
+            )
+            .await;
+
             if let Ok(sess_stats) = oqto_history::oqto_log::store::read_session_stats(
                 user_home,
                 &workspace_id,
@@ -740,17 +752,22 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 Some(&append_stats.snapshot_hash),
             )
             .await;
-            if let Some(fp) = current_fp.clone() {
-                importer_state.files.insert(path_key, fp);
+            let final_fp = file_fingerprint(&path);
+            if current_fp.is_some() && current_fp == final_fp {
+                if let Some(fp) = final_fp {
+                    importer_state.files.insert(path_key.clone(), fp);
+                }
+                // Validation keys sessions by the harness id parsed from the
+                // JSONL filename. Only stable files enter the deploy gate: an
+                // active Pi process may append while bootstrap reads it, and a
+                // moving source cannot have an exact point-in-time count.
+                imported_sessions_this_run.push(ImportedSession {
+                    workspace_id: workspace_id.clone(),
+                    session_id: pi_session_id.clone(),
+                });
+            } else {
+                importer_state.files.remove(&path_key);
             }
-            // Validation keys sessions by the harness id parsed from the JSONL
-            // filename, so record that rather than the resolved Oqto id —
-            // otherwise the changed-set filter never matches and the session is
-            // silently skipped by the deploy gate instead of checked.
-            imported_sessions_this_run.push(ImportedSession {
-                workspace_id: workspace_id.clone(),
-                session_id: pi_session_id.clone(),
-            });
             stats.imported_sessions += 1;
             stats.imported_messages += append_stats.messages_written;
         } else {
@@ -770,9 +787,19 @@ pub async fn bootstrap_import_from_pi_jsonl(
         }
     }
 
-    // Post-pass repair: if validator still reports mismatches, force-replace
-    // those sessions from JSONL to guarantee deploy gate consistency.
-    if let Ok(report) = crate::oqto_log::validator::validate_bootstrap_import(user_home).await
+    // Post-pass repair only the stable sessions touched by this invocation.
+    // Validating all ~2.5k JSONLs made a five-session deploy pass take minutes
+    // and raced active files that necessarily changed during the scan.
+    let stable_filter: std::collections::HashSet<(String, String)> = imported_sessions_this_run
+        .iter()
+        .map(|session| (session.workspace_id.clone(), session.session_id.clone()))
+        .collect();
+    if !stable_filter.is_empty()
+        && let Ok(report) = crate::oqto_log::validator::validate_bootstrap_import_filtered(
+            user_home,
+            Some(&stable_filter),
+        )
+        .await
         && report.sessions_mismatch > 0
     {
         for row in report.mismatches {
@@ -780,31 +807,39 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 continue;
             };
 
-            let resolved =
-                oqto_history::oqto_log::ops::find_session_by_id(user_home, &mismatch_session_id)
-                    .await;
-            let (target_session_id, target_external_id) =
-                if let Some((session_id, _ws, ext)) = resolved {
-                    (
-                        session_id,
-                        ext.unwrap_or_else(|| mismatch_session_id.clone()),
-                    )
-                } else if let Some((session_id, _ws)) =
-                    oqto_history::oqto_log::ops::find_session_by_external(
-                        user_home,
-                        &mismatch_session_id,
-                    )
-                    .await
-                {
-                    (session_id, mismatch_session_id.clone())
-                } else {
-                    (mismatch_session_id.clone(), mismatch_session_id.clone())
-                };
+            // Validation keys by Pi external id. Select the canonical row
+            // deterministically within the reported workspace, then delete all
+            // competing bindings *before* rebuilding its exact snapshot.
+            let target_external_id = mismatch_session_id.clone();
+            let candidates = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
+                user_home,
+                &workspace_id,
+                &target_external_id,
+            )
+            .await
+            .unwrap_or_default();
+            let target_session_id = candidates.first().cloned().unwrap_or_else(|| {
+                oqto_history::oqto_log::store::platform_id_for_external_id(&target_external_id)
+            });
+            let _ = collapse_duplicate_external_sessions(
+                user_home,
+                &workspace_id,
+                &target_external_id,
+                &target_session_id,
+            )
+            .await;
 
             let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &target_external_id)
             else {
                 continue;
             };
+            let path_key = path.to_string_lossy().to_string();
+            if file_fingerprint(&path) != importer_state.files.get(&path_key).cloned() {
+                // Source moved after import; background ingest or the next
+                // deploy pass will converge it once quiescent.
+                importer_state.files.remove(&path_key);
+                continue;
+            }
             let records = read_jsonl_message_records(&path);
             if records.is_empty() {
                 continue;
