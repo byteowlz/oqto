@@ -1193,6 +1193,9 @@ pub struct PiForkRequest {
     pub session_id: String,
     /// Entry ID of the message to fork from.
     pub entry_id: String,
+    /// Stable caller operation id for replay-safe Fork creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
 }
 
 /// Request to get messages available for forking.

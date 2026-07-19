@@ -940,6 +940,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			onTodosChange={setLatestTodos}
 			onMessageSent={refreshChatHistory}
 			onMessageComplete={refreshChatHistory}
+			onSessionForked={refreshChatHistory}
 			hideHeader
 			pendingFileAttachment={pendingFileAttachment}
 			onPendingFileAttachmentConsumed={handlePendingFileAttachmentConsumed}

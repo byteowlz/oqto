@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -636,6 +636,140 @@ pub struct PiJsonlMessageRecord {
     pub parent_source_entry_id: Option<String>,
     pub source_sequence: i64,
     pub message: AgentMessage,
+}
+
+/// Persist immutable provenance for a hard-copy Fork.
+///
+/// Both sessions must already exist in the same work-directory database. A
+/// retry with the identical lineage is idempotent; rebinding a child to a
+/// different parent or cutoff fails closed.
+pub async fn find_session_fork_by_operation(
+    user_home: &Path,
+    workspace_id: &str,
+    operation_id: &str,
+) -> Result<Option<(String, String)>> {
+    let pool = open_workspace_pool(user_home, workspace_id).await?;
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
+        r#"
+        SELECT COALESCE(NULLIF(platform_id, ''), session_id), fork_prompt_text
+        FROM oqto_log_sessions
+        WHERE fork_operation_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(operation_id)
+    .fetch_optional(&pool)
+    .await
+    .context("look up fork operation")?;
+    Ok(row.map(|(session_id, text)| (session_id, text.unwrap_or_default())))
+}
+
+pub async fn record_session_fork(
+    user_home: &Path,
+    workspace_id: &str,
+    child_session_id: &str,
+    parent_session_id: &str,
+    forked_from_entry_id: &str,
+    operation_id: Option<&str>,
+    prompt_text: Option<&str>,
+) -> Result<()> {
+    if child_session_id == parent_session_id {
+        bail!("fork child cannot be its own parent: {child_session_id}");
+    }
+    if forked_from_entry_id.trim().is_empty() {
+        bail!("fork source entry id must not be empty");
+    }
+
+    let pool = open_workspace_pool(user_home, workspace_id).await?;
+    let mut tx = pool.begin().await.context("begin fork lineage tx")?;
+
+    for (label, session_id) in [("parent", parent_session_id), ("child", child_session_id)] {
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM oqto_log_sessions WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await
+        .with_context(|| format!("look up fork {label} session"))?;
+        if exists != 1 {
+            bail!("fork {label} session not found in workspace: {session_id}");
+        }
+    }
+
+    // A Session has at most one immutable fork parent. This also rejects a
+    // two-node cycle; longer cycles cannot arise when only an unparented child
+    // may receive lineage.
+    let existing = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT parent_session_id, forked_from_entry_id FROM oqto_log_sessions WHERE session_id = ?",
+    )
+    .bind(child_session_id)
+    .fetch_one(&mut *tx)
+    .await
+    .context("read existing fork lineage")?;
+    match existing {
+        (Some(parent), entry)
+            if parent == parent_session_id && entry.as_deref() == Some(forked_from_entry_id) =>
+        {
+            tx.commit()
+                .await
+                .context("commit idempotent fork lineage")?;
+            return Ok(());
+        }
+        (Some(parent), entry) => {
+            bail!(
+                "fork child {child_session_id} already belongs to parent {parent} at entry {}",
+                entry.as_deref().unwrap_or("<unknown>")
+            );
+        }
+        (None, _) => {}
+    }
+
+    let parent_has_child_as_ancestor = sqlx::query_scalar::<_, i64>(
+        r#"
+        WITH RECURSIVE ancestors(session_id, parent_session_id) AS (
+          SELECT session_id, parent_session_id
+          FROM oqto_log_sessions
+          WHERE session_id = ?
+          UNION ALL
+          SELECT s.session_id, s.parent_session_id
+          FROM oqto_log_sessions s
+          JOIN ancestors a ON s.session_id = a.parent_session_id
+          WHERE a.parent_session_id IS NOT NULL
+        )
+        SELECT COUNT(1) FROM ancestors WHERE session_id = ?
+        "#,
+    )
+    .bind(parent_session_id)
+    .bind(child_session_id)
+    .fetch_one(&mut *tx)
+    .await
+    .context("validate fork lineage cycle")?;
+    if parent_has_child_as_ancestor > 0 {
+        bail!("fork lineage would create a cycle: {parent_session_id} -> {child_session_id}");
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_sessions
+        SET parent_session_id = ?,
+            forked_from_entry_id = ?,
+            forked_at = datetime('now'),
+            fork_operation_id = ?,
+            fork_prompt_text = ?
+        WHERE session_id = ? AND parent_session_id IS NULL
+        "#,
+    )
+    .bind(parent_session_id)
+    .bind(forked_from_entry_id)
+    .bind(operation_id)
+    .bind(prompt_text)
+    .bind(child_session_id)
+    .execute(&mut *tx)
+    .await
+    .context("persist fork lineage")?;
+
+    tx.commit().await.context("commit fork lineage tx")?;
+    Ok(())
 }
 
 fn message_source_hash(message: &AgentMessage) -> String {
@@ -1351,6 +1485,94 @@ mod tests {
             vec![(legacy_id.to_string(), legacy_id.to_string())],
             "existing harness-id session must keep its id, not gain a second one"
         );
+    }
+
+    #[tokio::test]
+    async fn fork_lineage_is_immutable_idempotent_and_acyclic() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = "/tmp/fork-lineage";
+        let pool = open_workspace_pool(temp.path(), workspace).await?;
+        for id in ["oqto-parent", "oqto-child", "oqto-other"] {
+            sqlx::query(
+                "INSERT INTO oqto_log_sessions (session_id, platform_id, user_id, workspace_id) VALUES (?, ?, 'user', ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(workspace)
+            .execute(&pool)
+            .await?;
+        }
+
+        record_session_fork(
+            temp.path(),
+            workspace,
+            "oqto-child",
+            "oqto-parent",
+            "entry-42",
+            Some("operation-1"),
+            Some("retry this prompt"),
+        )
+        .await?;
+        // Identical delivery is safe to retry.
+        record_session_fork(
+            temp.path(),
+            workspace,
+            "oqto-child",
+            "oqto-parent",
+            "entry-42",
+            Some("operation-1"),
+            Some("retry this prompt"),
+        )
+        .await?;
+
+        let lineage = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+            "SELECT parent_session_id, forked_from_entry_id, forked_at FROM oqto_log_sessions WHERE session_id = 'oqto-child'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(lineage.0.as_deref(), Some("oqto-parent"));
+        assert_eq!(lineage.1.as_deref(), Some("entry-42"));
+        assert!(lineage.2.is_some());
+        assert_eq!(
+            find_session_fork_by_operation(temp.path(), workspace, "operation-1").await?,
+            Some(("oqto-child".to_string(), "retry this prompt".to_string()))
+        );
+        let projected_child = crate::oqto_log::ops::get_session(temp.path(), "oqto-child")
+            .await?
+            .expect("child session row");
+        assert_eq!(
+            projected_child.parent_session_id.as_deref(),
+            Some("oqto-parent")
+        );
+        assert_eq!(
+            projected_child.forked_from_entry_id.as_deref(),
+            Some("entry-42")
+        );
+
+        let conflict = record_session_fork(
+            temp.path(),
+            workspace,
+            "oqto-child",
+            "oqto-other",
+            "entry-99",
+            Some("operation-conflict"),
+            None,
+        )
+        .await;
+        assert!(conflict.is_err(), "a child cannot be rebound");
+
+        let cycle = record_session_fork(
+            temp.path(),
+            workspace,
+            "oqto-parent",
+            "oqto-child",
+            "entry-cycle",
+            Some("operation-cycle"),
+            None,
+        )
+        .await;
+        assert!(cycle.is_err(), "fork lineage must remain acyclic");
+        Ok(())
     }
 
     #[tokio::test]

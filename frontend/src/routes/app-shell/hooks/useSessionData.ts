@@ -91,7 +91,7 @@ export function useSessionData({
 			childSessionsByParent.set(
 				parentId,
 				children.sort(
-					(a, b) => b.updated_at - a.updated_at || a.id.localeCompare(b.id),
+					(a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
 				),
 			);
 		}

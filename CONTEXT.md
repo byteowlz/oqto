@@ -43,5 +43,21 @@ _Avoid_: agent (ambiguous), backend (wrong layer)
 The level of network/process containment a session runs under: open, level-2 (captured egress — netns redirect to the eavs egress firewall + domain ACL), level-3 (microVM). A runner-side per-session policy, advertised as a placement capability, not a backend runtime mode (see ADR-0001, ADR-0007).
 _Avoid_: sandbox profile (that is the bwrap/landlock file-access config, a different axis), network mode
 
+**Session**:
+One durable harness conversation identified publicly by one Oqto session id. A Session may contain an in-session entry tree, but remains one Session until explicitly forked.
+_Avoid_: conversation (ambiguous), process (one Session may have many runtime incarnations)
+
+**Fork**:
+A hard-copy operation that copies one selected root-to-entry path from a parent Session into a new, independent child Session with its own Oqto and harness identities. Fork provenance is immutable and child Sessions appear beneath their parent in Session listings.
+_Avoid_: branch (a Branch remains inside one Session)
+
+**Branch**:
+One root-to-leaf path inside a Session's entry tree. Changing Branch changes the active leaf without creating a Session.
+_Avoid_: fork, child session
+
+**Session Tree**:
+The complete in-session tree of harness entries formed by stable entry ids and parent-entry links. Distinct from Fork lineage, which relates separate Sessions.
+_Avoid_: session hierarchy (that means Fork lineage in Session listings)
+
 **Canonical Protocol**:
 The harness-agnostic message/event/command format spoken between frontend, backend, and runner. Messages are durable; events are ephemeral UI signals; commands flow from frontend toward runners.

@@ -1619,7 +1619,10 @@ pub(super) async fn handle_agent_command(
                 "agent fork: user={}, session_id={}, entry_id={}",
                 user_id, session_id, entry_id
             );
-            match runner.agent_fork(&session_id, &entry_id).await {
+            match runner
+                .agent_fork(&session_id, &entry_id, id.as_deref())
+                .await
+            {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,

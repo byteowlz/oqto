@@ -52,36 +52,135 @@ struct PiJsonlEntryLite {
     id: Option<String>,
 }
 
-fn validate_fork_cutoff(session_file: &std::path::Path, requested_entry_id: &str) -> Result<()> {
-    let raw = std::fs::read_to_string(session_file)
-        .with_context(|| format!("read forked session file {}", session_file.display()))?;
-    let mut ids: Vec<String> = Vec::new();
-    for line in raw.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(entry) = serde_json::from_str::<PiJsonlEntryLite>(line)
-            && entry.entry_type.as_deref() == Some("assistant")
-            && let Some(id) = entry.id
-        {
-            ids.push(id);
-        }
+fn validate_fork_copy(
+    parent_file: &std::path::Path,
+    child_file: &std::path::Path,
+    requested_entry_id: &str,
+) -> Result<()> {
+    #[derive(Debug, serde::Deserialize)]
+    struct ForkEntry {
+        #[serde(rename = "type")]
+        entry_type: String,
+        id: String,
+        #[serde(rename = "parentId")]
+        parent_id: Option<String>,
+        message: Option<serde_json::Value>,
     }
 
-    if ids.is_empty() {
-        anyhow::bail!("fork validation failed: child session has no assistant entries");
+    fn read_entries(path: &std::path::Path) -> Result<Vec<ForkEntry>> {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read fork session file {}", path.display()))?;
+        let mut entries = Vec::new();
+        for (line_idx, line) in raw.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(line).with_context(|| {
+                format!(
+                    "parse fork session {} line {}",
+                    path.display(),
+                    line_idx + 1
+                )
+            })?;
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("session") {
+                continue;
+            }
+            entries.push(serde_json::from_value(value).with_context(|| {
+                format!("decode fork entry {} line {}", path.display(), line_idx + 1)
+            })?);
+        }
+        Ok(entries)
     }
-    if !ids.iter().any(|id| id == requested_entry_id) {
+
+    let child_header: serde_json::Value = std::fs::read_to_string(child_file)
+        .with_context(|| format!("read fork child header {}", child_file.display()))?
+        .lines()
+        .next()
+        .and_then(|line| serde_json::from_str(line).ok())
+        .ok_or_else(|| anyhow::anyhow!("fork child has no valid session header"))?;
+    let recorded_parent = child_header
+        .get("parentSession")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("fork child header has no parentSession"))?;
+    let expected_parent = std::fs::canonicalize(parent_file)
+        .with_context(|| format!("canonicalize fork parent {}", parent_file.display()))?;
+    let recorded_parent = std::fs::canonicalize(recorded_parent)
+        .with_context(|| format!("canonicalize recorded fork parent {recorded_parent}"))?;
+    if recorded_parent != expected_parent {
         anyhow::bail!(
-            "fork validation failed: requested entry '{}' not present in child session",
-            requested_entry_id
+            "fork child parentSession mismatch: expected {}, got {}",
+            expected_parent.display(),
+            recorded_parent.display()
         );
     }
-    if ids.last().map(|s| s.as_str()) != Some(requested_entry_id) {
+
+    let parent_entries = read_entries(parent_file)?;
+    let parent_by_id: std::collections::HashMap<&str, &ForkEntry> = parent_entries
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry))
+        .collect();
+    let requested = parent_by_id.get(requested_entry_id).ok_or_else(|| {
+        anyhow::anyhow!("fork source entry not found in parent: {requested_entry_id}")
+    })?;
+    let requested_role = requested
+        .message
+        .as_ref()
+        .and_then(|message| message.get("role"))
+        .and_then(serde_json::Value::as_str);
+    if requested.entry_type != "message" || requested_role != Some("user") {
+        anyhow::bail!("fork source entry is not a user message: {requested_entry_id}");
+    }
+
+    // Pi's `fork` command uses position="before": it copies the complete path
+    // ending at the selected user's parent and returns the selected prompt text
+    // for the new editor. Label entries are recreated separately and therefore
+    // do not belong to the copied path comparison.
+    let mut expected_ids = Vec::new();
+    let mut cursor = requested.parent_id.as_deref();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = cursor {
+        if !seen.insert(id.to_string()) {
+            anyhow::bail!("cycle in parent fork path at entry {id}");
+        }
+        let entry = parent_by_id
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("fork path references missing parent entry {id}"))?;
+        if entry.entry_type != "label" {
+            expected_ids.push(entry.id.clone());
+        }
+        cursor = entry.parent_id.as_deref();
+    }
+    expected_ids.reverse();
+
+    let child_entries = read_entries(child_file)?;
+    let copied_entries: Vec<&ForkEntry> = child_entries
+        .iter()
+        .filter(|entry| entry.entry_type != "label")
+        .collect();
+    let actual_ids: Vec<String> = copied_entries
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
+    for (idx, entry) in copied_entries.iter().enumerate() {
+        let expected_parent_id = idx
+            .checked_sub(1)
+            .map(|parent_idx| actual_ids[parent_idx].as_str());
+        if entry.parent_id.as_deref() != expected_parent_id {
+            anyhow::bail!(
+                "fork child path is not linear at entry '{}': expected parent {:?}, got {:?}",
+                entry.id,
+                expected_parent_id,
+                entry.parent_id
+            );
+        }
+    }
+    if actual_ids != expected_ids {
         anyhow::bail!(
-            "fork validation failed: child tip '{}' != requested entry '{}'",
-            ids.last().cloned().unwrap_or_default(),
-            requested_entry_id
+            "fork copy path mismatch: expected {} entries ending at '{}', got {} ending at '{}'",
+            expected_ids.len(),
+            expected_ids.last().map(String::as_str).unwrap_or("<root>"),
+            actual_ids.len(),
+            actual_ids.last().map(String::as_str).unwrap_or("<root>")
         );
     }
     Ok(())
@@ -1514,6 +1613,7 @@ impl Runner {
             let title = row.title;
             let readable_id = row.readable_id.unwrap_or_default();
             let project_name = project_name_from_path(&workspace_path);
+            let parent_id = row.parent_session_id.clone();
             sessions.push(WorkspaceChatSessionInfo {
                 id: if row.platform_id.is_empty() {
                     row.session_id
@@ -1522,13 +1622,13 @@ impl Runner {
                 },
                 readable_id,
                 title,
-                parent_id: None,
+                parent_id,
                 workspace_path,
                 project_name,
                 created_at: parse_sqlite_datetime_ms(&row.created_at),
                 updated_at: parse_sqlite_datetime_ms(&row.updated_at),
                 version: Some(row.messages.max(0).to_string()),
-                is_child: false,
+                is_child: row.parent_session_id.is_some(),
                 model: None,
                 provider: None,
             });
@@ -1582,6 +1682,7 @@ impl Runner {
             .or_else(|| parsed_title.and_then(|parsed| parsed.readable_id))
             .unwrap_or_default();
         let project_name = project_name_from_path(&workspace_path);
+        let parent_id = row.parent_session_id.clone();
         let session = WorkspaceChatSessionInfo {
             id: if row.platform_id.is_empty() {
                 row.session_id
@@ -1590,13 +1691,13 @@ impl Runner {
             },
             readable_id,
             title,
-            parent_id: None,
+            parent_id,
             workspace_path,
             project_name,
             created_at: parse_sqlite_datetime_ms(&row.created_at),
             updated_at: parse_sqlite_datetime_ms(&row.updated_at),
             version: Some(row.messages.max(0).to_string()),
-            is_child: false,
+            is_child: row.parent_session_id.is_some(),
             model: None,
             provider: None,
         };
@@ -2894,6 +2995,68 @@ impl Runner {
             }
         };
 
+        let old_config = match self.pi_manager.get_session_config(&req.session_id).await {
+            Some(cfg) => cfg,
+            None => {
+                return error_response(
+                    ErrorCode::PiSessionNotFound,
+                    format!("Fork parent session is not active: {}", req.session_id),
+                );
+            }
+        };
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let home_path = std::path::Path::new(&home);
+        let parent_row =
+            match oqto_history::oqto_log::ops::get_session(home_path, &req.session_id).await {
+                Ok(Some(row)) => row,
+                Ok(None) => {
+                    return error_response(
+                        ErrorCode::Internal,
+                        format!("Fork parent is missing from oqto-log: {}", req.session_id),
+                    );
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::Internal,
+                        format!("Failed to resolve fork parent in oqto-log: {e:#}"),
+                    );
+                }
+            };
+        let workspace_id = parent_row
+            .workspace_id
+            .clone()
+            .unwrap_or_else(|| old_config.cwd.to_string_lossy().to_string());
+
+        if let Some(operation_id) = req.operation_id.as_deref() {
+            match oqto_history::oqto_log::store::find_session_fork_by_operation(
+                home_path,
+                &workspace_id,
+                operation_id,
+            )
+            .await
+            {
+                Ok(Some((child_session_id, prompt_text))) => {
+                    info!(
+                        "Fork operation '{}' replayed; returning existing child '{}'",
+                        operation_id, child_session_id
+                    );
+                    return RunnerResponse::PiForkResult(PiForkResultResponse {
+                        session_id: req.session_id,
+                        text: prompt_text,
+                        cancelled: false,
+                        new_session_id: Some(child_session_id),
+                    });
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::Internal,
+                        format!("Failed to resolve fork operation replay: {e:#}"),
+                    );
+                }
+            }
+        }
+
         let fork_result = match self.pi_manager.fork(&req.session_id, &req.entry_id).await {
             Ok(r) => r,
             Err(e) => {
@@ -2913,20 +3076,6 @@ impl Runner {
             });
         }
 
-        // Spawn a new Pi process for the forked session.
-        // Get the old session's config to reuse workspace/env.
-        let old_config = match self.pi_manager.get_session_config(&req.session_id).await {
-            Some(cfg) => cfg,
-            None => {
-                return error_response(
-                    ErrorCode::PiSessionNotFound,
-                    format!(
-                        "Failed to create child session after fork: parent session '{}' not active",
-                        req.session_id
-                    ),
-                );
-            }
-        };
         let new_oqto_id = format!("oqto-{}", uuid::Uuid::new_v4());
 
         let fork_session_file = if let Some(ref file) = fork_result.new_session_file {
@@ -2944,46 +3093,127 @@ impl Runner {
             );
         };
 
-        if let Err(e) = validate_fork_cutoff(&fork_session_file, &req.entry_id) {
+        let parent_session_file = match self.pi_manager.get_state(&req.session_id).await {
+            Ok(state) => match state.session_file {
+                Some(path) => std::path::PathBuf::from(path),
+                None => {
+                    return error_response(
+                        ErrorCode::Internal,
+                        "Fork succeeded but parent session file could not be resolved",
+                    );
+                }
+            },
+            Err(e) => {
+                return error_response(
+                    ErrorCode::Internal,
+                    format!("Fork succeeded but parent state could not be reloaded: {e}"),
+                );
+            }
+        };
+        if let Err(e) = validate_fork_copy(&parent_session_file, &fork_session_file, &req.entry_id)
+        {
             return error_response(
                 ErrorCode::PiSessionInvalidState,
-                format!("Fork cutoff verification failed: {}", e),
+                format!("Fork copy verification failed: {e:#}"),
+            );
+        }
+
+        // Make the child durable and readable before exposing its id. The
+        // copied JSONL is Pi's authority; oqto-log stores the canonical child
+        // identity, copied history, and immutable Fork provenance.
+        let Some(child_external_id) = parse_pi_session_id_from_path(&fork_session_file) else {
+            return error_response(
+                ErrorCode::Internal,
+                format!(
+                    "Forked session file has no Pi session id: {}",
+                    fork_session_file.display()
+                ),
+            );
+        };
+        let child_path_for_read = fork_session_file.clone();
+        let records = match tokio::task::spawn_blocking(move || {
+            read_jsonl_message_records(&child_path_for_read)
+        })
+        .await
+        {
+            Ok(records) => records,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::Internal,
+                    format!("Failed to read forked session history: {e}"),
+                );
+            }
+        };
+        let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let imported = match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+            home_path,
+            &user_id,
+            &workspace_id,
+            &new_oqto_id,
+            &new_oqto_id,
+            Some(&child_external_id),
+            &child_external_id,
+            &records,
+        )
+        .await
+        {
+            Ok(stats) => stats,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::Internal,
+                    format!("Failed to persist forked session history: {e:#}"),
+                );
+            }
+        };
+        if let Err(e) = oqto_history::oqto_log::store::record_session_fork(
+            home_path,
+            &workspace_id,
+            &imported.session_id,
+            &parent_row.session_id,
+            &req.entry_id,
+            req.operation_id.as_deref(),
+            Some(&fork_result.text),
+        )
+        .await
+        {
+            return error_response(
+                ErrorCode::Internal,
+                format!("Failed to persist fork lineage: {e:#}"),
             );
         }
 
         let mut child_config = old_config;
-        // Point at the forked JSONL so the new process resumes from it
         child_config.session_file = Some(fork_session_file.clone());
-        child_config.continue_session = None; // session_file takes precedence
-        let _child_workspace = child_config.cwd.to_string_lossy().to_string();
+        child_config.continue_session = None;
 
-        let new_session_id = match self
+        // The durable Fork already succeeded. Starting its Pi process is a
+        // readiness optimization; if it fails, navigation can resume the child
+        // from its persisted JSONL instead of encouraging a duplicate retry.
+        if let Err(e) = self
             .pi_manager
-            .create_session(new_oqto_id.clone(), child_config)
+            .create_session(imported.session_id.clone(), child_config)
             .await
         {
-            Ok(sid) => sid,
-            Err(e) => {
-                return error_response(
-                    ErrorCode::Internal,
-                    format!("Failed to create child session after fork: {}", e),
-                );
-            }
-        };
+            warn!(
+                "Fork child '{}' persisted but eager Pi start failed: {e:#}",
+                imported.session_id
+            );
+        }
 
         info!(
-            "Fork: created child session '{}' (pi_id={:?}, file={:?}) from parent '{}'",
-            new_session_id,
-            fork_result.new_session_id,
-            fork_result.new_session_file,
-            req.session_id
+            "Fork: persisted child session '{}' (pi_id={}, file={}) from parent '{}' at entry '{}'",
+            imported.session_id,
+            child_external_id,
+            fork_session_file.display(),
+            req.session_id,
+            req.entry_id
         );
 
         RunnerResponse::PiForkResult(PiForkResultResponse {
             session_id: req.session_id,
             text: fork_result.text,
             cancelled: false,
-            new_session_id: Some(new_session_id),
+            new_session_id: Some(imported.session_id),
         })
     }
 
@@ -3724,6 +3954,51 @@ fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_copy_validation_matches_pi_position_before_semantics() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let parent = temp.path().join("parent.jsonl");
+        let child = temp.path().join("child.jsonl");
+        std::fs::write(
+            &parent,
+            concat!(
+                "{\"type\":\"session\",\"id\":\"parent\"}\n",
+                "{\"type\":\"message\",\"id\":\"u1\",\"parentId\":null,\"message\":{\"role\":\"user\"}}\n",
+                "{\"type\":\"message\",\"id\":\"a1\",\"parentId\":\"u1\",\"message\":{\"role\":\"assistant\"}}\n",
+                "{\"type\":\"message\",\"id\":\"u2\",\"parentId\":\"a1\",\"message\":{\"role\":\"user\"}}\n",
+                "{\"type\":\"message\",\"id\":\"a2\",\"parentId\":\"u2\",\"message\":{\"role\":\"assistant\"}}\n",
+            ),
+        )?;
+        let child_header = serde_json::json!({
+            "type": "session",
+            "id": "child",
+            "parentSession": parent,
+        });
+        std::fs::write(
+            &child,
+            format!(
+                "{}\n{}{}",
+                child_header,
+                "{\"type\":\"message\",\"id\":\"u1\",\"parentId\":null,\"message\":{\"role\":\"user\"}}\n",
+                "{\"type\":\"message\",\"id\":\"a1\",\"parentId\":\"u1\",\"message\":{\"role\":\"assistant\"}}\n",
+            ),
+        )?;
+        validate_fork_copy(&parent, &child, "u2")?;
+
+        std::fs::write(
+            &child,
+            format!(
+                "{}\n{}{}{}",
+                child_header,
+                "{\"type\":\"message\",\"id\":\"u1\",\"parentId\":null,\"message\":{\"role\":\"user\"}}\n",
+                "{\"type\":\"message\",\"id\":\"a1\",\"parentId\":\"u1\",\"message\":{\"role\":\"assistant\"}}\n",
+                "{\"type\":\"message\",\"id\":\"u2\",\"parentId\":\"a1\",\"message\":{\"role\":\"user\"}}\n",
+            ),
+        )?;
+        assert!(validate_fork_copy(&parent, &child, "u2").is_err());
+        Ok(())
+    }
 
     fn proto(id: &str, role: &str, created_at: i64) -> ChatMessageProto {
         ChatMessageProto {

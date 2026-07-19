@@ -12,6 +12,9 @@ pub struct OqtoLogSessionRow {
     pub external_id: Option<String>,
     pub user_id: String,
     pub workspace_id: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub forked_from_entry_id: Option<String>,
+    pub forked_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub messages: i64,
@@ -577,13 +580,13 @@ pub async fn list_sessions(
         };
 
         let base_select = format!(
-            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
+            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    COALESCE((SELECT NULLIF(p.platform_id, '') FROM oqto_log_sessions p WHERE p.session_id = s.parent_session_id), s.parent_session_id) AS parent_session_id, s.forked_from_entry_id, s.forked_at,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
             title_expr, readable_id_expr
         );
 
         let rows = if let Some(workspace) = workspace {
             let query = format!(
-                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND EXISTS (\n                       SELECT 1\n                       FROM oqto_log_turns t\n                       JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                       WHERE t.session_id = s.session_id\n                   )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       s.parent_session_id IS NOT NULL\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<
@@ -593,6 +596,9 @@ pub async fn list_sessions(
                     String,
                     Option<String>,
                     String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
                     Option<String>,
                     String,
                     String,
@@ -607,7 +613,7 @@ pub async fn list_sessions(
             .await?
         } else {
             let query = format!(
-                "{}\n                 WHERE EXISTS (\n                     SELECT 1\n                     FROM oqto_log_turns t\n                     JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                     WHERE t.session_id = s.session_id\n                 )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE s.parent_session_id IS NOT NULL\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<
@@ -617,6 +623,9 @@ pub async fn list_sessions(
                     String,
                     Option<String>,
                     String,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
                     Option<String>,
                     String,
                     String,
@@ -635,11 +644,14 @@ pub async fn list_sessions(
             external_id: row.2,
             user_id: row.3,
             workspace_id: row.4,
-            created_at: row.5,
-            updated_at: row.6,
-            title: row.7,
-            readable_id: row.8,
-            messages: row.9,
+            parent_session_id: row.5,
+            forked_from_entry_id: row.6,
+            forked_at: row.7,
+            created_at: row.8,
+            updated_at: row.9,
+            title: row.10,
+            readable_id: row.11,
+            messages: row.12,
         }));
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -686,7 +698,7 @@ async fn get_session_in_db(
             "NULL AS readable_id"
         };
         let query = format!(
-            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    COUNT(m.message_id) AS messages\n             FROM oqto_log_sessions s\n             LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id\n             LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n             WHERE s.session_id = ? OR s.platform_id = ? OR s.external_id = ?\n             GROUP BY s.session_id\n             LIMIT 1",
+            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    COALESCE((SELECT NULLIF(p.platform_id, '') FROM oqto_log_sessions p WHERE p.session_id = s.parent_session_id), s.parent_session_id) AS parent_session_id, s.forked_from_entry_id, s.forked_at,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    COUNT(m.message_id) AS messages\n             FROM oqto_log_sessions s\n             LEFT JOIN oqto_log_turns t ON t.session_id = s.session_id\n             LEFT JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n             WHERE s.session_id = ? OR s.platform_id = ? OR s.external_id = ?\n             GROUP BY s.session_id\n             LIMIT 1",
             title_expr, readable_id_expr
         );
         let row = sqlx::query_as::<
@@ -696,6 +708,9 @@ async fn get_session_in_db(
                 String,
                 Option<String>,
                 String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
                 Option<String>,
                 String,
                 String,
@@ -716,11 +731,14 @@ async fn get_session_in_db(
                 external_id: row.2,
                 user_id: row.3,
                 workspace_id: row.4,
-                created_at: row.5,
-                updated_at: row.6,
-                title: row.7,
-                readable_id: row.8,
-                messages: row.9,
+                parent_session_id: row.5,
+                forked_from_entry_id: row.6,
+                forked_at: row.7,
+                created_at: row.8,
+                updated_at: row.9,
+                title: row.10,
+                readable_id: row.11,
+                messages: row.12,
             }));
         }
     }

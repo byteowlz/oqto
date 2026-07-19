@@ -1,6 +1,6 @@
 # One public Oqto session id; harness ids are adapter-local bindings
 
-Status: proposed (2026-07-03). Companion to ADR-0013 and prerequisite for the Work Session read model / attach contract ADR.
+Status: accepted (2026-07-19). Companion to ADR-0013 and prerequisite for the Work Session read model / attach contract ADR.
 
 Oqto has previously been hurt by multiple competing session ids: frontend-generated generic ids, backend platform ids, and harness-native ids from pi or other agents. That ambiguity caused fragile joins, reconnect bugs, and message reconciliation mistakes. As Oqto expands from pi to Claude Code, Codex, OpenCode, Hermes, and app-server-backed integrations, the identity rule must be explicit and mechanically enforceable.
 
@@ -10,7 +10,7 @@ Use exactly one public session identity across Oqto: the **Oqto session id**.
 
 - The Oqto session id is the only id used by public surfaces: frontend routes, CLI / `oqtoctl`, backend REST/WS APIs, `oqto-log` keys, gvnr/govnr references, and human-facing links.
 - The backend session authority mints the Oqto session id once. It is not re-minted across reconnect, resume, harness restart, process restart, or placement move.
-- Forks create a new Oqto session id and record lineage with `parent_id`; they do not reuse the parent id.
+- Forks create a new Oqto session id and record immutable lineage with the parent Oqto session id and selected harness entry id; they do not reuse the parent id. Fork lineage relates independent Sessions and is distinct from Branches inside one Session.
 - Harness/runtime ids are adapter-local bindings: pi JSONL session id, Claude Code session id, Codex thread id, ACP handle, tmux pane id, pid, PTY id, and similar values. They may be stored as external binding facts, but never become route params, public ids, or cross-component join keys.
 - After a runtime binding exists, every persisted record and session event must carry `oqto_session_id`. External ids may be included as annotations, but are not sufficient for joining.
 - Oqto-session-to-external-id mappings are append-only, auditable facts with provenance (`kind`, `external_id`, `source`, `first_seen`, optional `last_seen`). Rebinding appends a new fact rather than mutating identity in place.

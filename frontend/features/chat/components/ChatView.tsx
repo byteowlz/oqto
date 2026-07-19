@@ -272,6 +272,8 @@ export interface ChatViewProps {
 	onMessageSent?: () => void;
 	/** Callback when an assistant message completes (for sidebar refresh) */
 	onMessageComplete?: () => void;
+	/** Callback after a Fork is durably visible as a child Session. */
+	onSessionForked?: () => void;
 	/** Callback when todos change (extracted from Pi todowrite tool calls) */
 	onTodosChange?: (todos: TodoItem[]) => void;
 	/** Pending file attachment to add (e.g. from canvas "Save & add to chat") */
@@ -305,6 +307,7 @@ export function ChatView({
 	onScrollToMessageComplete,
 	onMessageSent,
 	onMessageComplete,
+	onSessionForked,
 	onTodosChange,
 	pendingFileAttachment,
 	onPendingFileAttachmentConsumed,
@@ -478,9 +481,22 @@ export function ChatView({
 				}
 				setForkListOpen(false);
 				if (result.new_session_id && onSelectedSessionIdChange) {
-					// Navigate to the newly created child session
+					// Pi forks before the selected user prompt and returns that
+					// prompt for editing in the independent child Session. Persist
+					// it under the child's draft key before changing selection so
+					// the session-change draft loader cannot erase it.
+					if (result.text && typeof window !== "undefined") {
+						localStorage.setItem(
+							buildSessionDraftStorageKey(
+								resolvedStorageKeyPrefix,
+								result.new_session_id,
+							),
+							result.text,
+						);
+					}
+					onSessionForked?.();
 					onSelectedSessionIdChange(result.new_session_id);
-					toast.success("Forked to new session.");
+					toast.success("Forked to a new independent session.");
 				} else {
 					await refresh();
 					toast.success("Fork created.");
@@ -493,7 +509,13 @@ export function ChatView({
 				setForkingEntryId(null);
 			}
 		},
-		[selectedSessionId, refresh, onSelectedSessionIdChange],
+		[
+			selectedSessionId,
+			refresh,
+			onSelectedSessionIdChange,
+			onSessionForked,
+			resolvedStorageKeyPrefix,
+		],
 	);
 
 	// Consume pending chat input from external source (e.g. browser "Send to chat")
@@ -3018,7 +3040,7 @@ export function ChatView({
 							<DialogDescription>
 								{t(
 									"chat.forkListDescription",
-									"Choose a user message to fork from. A new branch will continue from that point.",
+									"Choose a user message to copy into a new independent session.",
 								)}
 							</DialogDescription>
 						</DialogHeader>

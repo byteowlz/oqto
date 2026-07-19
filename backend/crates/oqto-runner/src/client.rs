@@ -1152,8 +1152,9 @@ impl RunnerClient {
         &self,
         session_id: &str,
         entry_id: &str,
+        operation_id: Option<&str>,
     ) -> Result<PiForkResultResponse> {
-        self.pi_fork(session_id, entry_id).await
+        self.pi_fork(session_id, entry_id, operation_id).await
     }
 
     // ========================================================================
@@ -1640,10 +1641,16 @@ impl RunnerClient {
     }
 
     /// Fork from a previous message.
-    pub async fn pi_fork(&self, session_id: &str, entry_id: &str) -> Result<PiForkResultResponse> {
+    pub async fn pi_fork(
+        &self,
+        session_id: &str,
+        entry_id: &str,
+        operation_id: Option<&str>,
+    ) -> Result<PiForkResultResponse> {
         let req = RunnerRequest::PiFork(PiForkRequest {
             session_id: session_id.to_string(),
             entry_id: entry_id.to_string(),
+            operation_id: operation_id.map(ToString::to_string),
         });
 
         let resp = self.request(&req).await?;
