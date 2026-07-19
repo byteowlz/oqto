@@ -471,10 +471,14 @@ export function ChatView({
 			}
 			setForkingEntryId(entryId);
 			try {
-				const result = await getWsManager().agentFork(
-					selectedSessionId,
-					entryId,
-				);
+				// History-only sessions are not necessarily live in the runner.
+				// Fork must wait for session.create readiness; sending both
+				// concurrently races and the runner correctly rejects the fork as
+				// PiSessionNotFound. Keep this preflight on every fork entry point.
+				const ws = getWsManager();
+				ws.agentCreateSession(selectedSessionId);
+				await ws.waitForSessionReady(selectedSessionId, 6000);
+				const result = await ws.agentFork(selectedSessionId, entryId);
 				if (result.cancelled) {
 					toast.info("Fork cancelled.");
 					return;
