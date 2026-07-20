@@ -2956,11 +2956,30 @@ impl Runner {
     }
 
     /// Fork from a previous message.
-    async fn pi_fork(&self, req: PiForkRequest) -> RunnerResponse {
+    async fn pi_fork(&self, mut req: PiForkRequest) -> RunnerResponse {
         debug!(
             "pi_fork: session_id={}, entry_id={}",
             req.session_id, req.entry_id
         );
+
+        // The chat projection exposes oqto-log message IDs for stable UI
+        // identity, while Pi fork requires the native JSONL entry ID. Resolve
+        // that adapter boundary inside the per-user runner, whose HOME owns
+        // the authoritative oqto-log shard. Native source IDs pass through.
+        if let Ok(home) = std::env::var("HOME")
+            && let Some(source_entry_id) = oqto_history::oqto_log::ops::resolve_source_entry_id(
+                std::path::Path::new(&home),
+                &req.session_id,
+                &req.entry_id,
+            )
+            .await
+        {
+            debug!(
+                "pi_fork: resolved oqto-log entry {} to native source entry {}",
+                req.entry_id, source_entry_id
+            );
+            req.entry_id = source_entry_id;
+        }
 
         // Fail closed for non-Pi synthetic IDs. Fork must target a real
         // Pi entry identifier from get_fork_messages.

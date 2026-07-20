@@ -1281,6 +1281,55 @@ pub async fn find_session_by_id(
     None
 }
 
+async fn source_entry_id_from_db(db: &Path, session_id: &str, entry_id: &str) -> Option<String> {
+    let options = SqliteConnectOptions::new().filename(db).read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .ok()?;
+    sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT t.source_entry_id
+        FROM oqto_log_turns t
+        JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+        WHERE t.session_id = ?
+          AND (m.message_id = ? OR t.turn_id = ? OR t.source_entry_id = ?)
+          AND t.source_entry_id IS NOT NULL
+          AND trim(t.source_entry_id) != ''
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(entry_id)
+    .bind(entry_id)
+    .bind(entry_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()?
+}
+
+/// Resolve an oqto-log message/turn ID to the native source entry ID required
+/// by harness operations such as Pi fork. Native IDs pass through unchanged.
+pub async fn resolve_source_entry_id(
+    user_home: &Path,
+    session_id: &str,
+    entry_id: &str,
+) -> Option<String> {
+    if let Some(db) = crate::oqto_log::index::lookup_db_path(user_home, session_id).await
+        && let Some(source_id) = source_entry_id_from_db(&db, session_id, entry_id).await
+    {
+        return Some(source_id);
+    }
+
+    for db in list_db_paths(user_home) {
+        if let Some(source_id) = source_entry_id_from_db(&db, session_id, entry_id).await {
+            return Some(source_id);
+        }
+    }
+    None
+}
+
 pub async fn find_external_by_session(
     user_home: &Path,
     session_or_platform_id: &str,
@@ -1682,6 +1731,35 @@ mod tests {
                 .await
                 .as_deref(),
             Some("external-1")
+        );
+
+        let db =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), "/tmp/ws")
+                .expect("workspace db path");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite:{}", db.display()))
+            .await
+            .expect("open seeded db");
+        let (message_id, source_entry_id): (String, String) = sqlx::query_as(
+            "SELECT m.message_id, t.source_entry_id FROM oqto_log_turns t JOIN oqto_log_messages m ON m.turn_id = t.turn_id WHERE t.session_id = ? LIMIT 1",
+        )
+        .bind("oqto-session-1")
+        .fetch_one(&pool)
+        .await
+        .expect("seeded message identity");
+        assert_eq!(
+            resolve_source_entry_id(temp.path(), "oqto-session-1", &message_id)
+                .await
+                .as_deref(),
+            Some(source_entry_id.as_str())
+        );
+        assert_eq!(
+            resolve_source_entry_id(temp.path(), "oqto-session-1", &source_entry_id)
+                .await
+                .as_deref(),
+            Some(source_entry_id.as_str()),
+            "native source ids must pass through"
         );
 
         assert!(
