@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-PI_PKG="${PI_PACKAGE_DIR:-/usr/local/lib/pi-coding-agent}"
-export NODE_PATH="${NODE_PATH:-$PI_PKG/node_modules}"
-exec /usr/local/bin/node "$PI_PKG/dist/cli.js" "$@"

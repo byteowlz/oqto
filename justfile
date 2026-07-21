@@ -276,6 +276,22 @@ install-system:
 # Dependencies
 # =============================================================================
 
+# Deterministically compatibility-test the latest Pi release (no changes)
+check-agent-updates:
+    ./scripts/dist/check-agent-runtime.sh
+
+# Test latest Pi and update the lock only when the candidate passes
+promote-agent-update:
+    ./scripts/dist/check-agent-runtime.sh --update-lock
+
+# Exercise the deterministic runtime installer against a local fake release
+_test-pi-runtime:
+    ./scripts/dist/test-pi-runtime.sh
+
+# Re-verify installer behavior plus the currently pinned Pi runtime/checksums
+verify-agent-runtime: _test-pi-runtime
+    ./scripts/dist/check-agent-runtime.sh --verify-current
+
 # Update external dependencies manifest from local repos and git tags
 update-deps:
     #!/usr/bin/env bash
@@ -684,7 +700,7 @@ check-updates:
         echo ""
     done
 
-    echo "Note: pi is installed from npm as @earendil-works/pi-coding-agent, sx has no tags yet"
+    echo "Note: pi uses the checksummed official standalone release; sx has no tags yet"
 
 # =============================================================================
 # Version
@@ -857,17 +873,14 @@ admin-templates *ARGS:
 admin-sync-all *ARGS:
     ./scripts/admin/oqto-admin sync-all {{ARGS}}
 
-# Update Pi coding agent to latest version (system-wide)
+# Deterministically test, lock, and atomically promote the latest Pi runtime
 update-pi:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Updating Pi coding agent..."
-    bun install -g @earendil-works/pi-coding-agent@latest
-    source scripts/setup/05-install-core.sh
-    ensure_bun_and_pi_global
-    echo "Restarting oqto-runner..."
+    ./scripts/dist/check-agent-runtime.sh --update-lock
+    ./scripts/dist/sync-agent-runtime.sh --skip-extensions
     systemctl --user restart oqto-runner
-    echo "Done. Pi version: $(/usr/local/bin/pi --version 2>/dev/null)"
+    echo "Done. Pi version: $(/var/lib/oqto/pi-runtimes/current/pi --version)"
 
 # =============================================================================
 # Agent Quality Gate

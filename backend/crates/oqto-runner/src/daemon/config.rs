@@ -172,15 +172,11 @@ impl RunnerUserConfig {
 
 /// Resolve the Pi binary the runner should spawn.
 ///
-/// If `configured` is a path (contains `/`), it is honored verbatim. A bare
-/// name is resolved via `which`, falling back to common system locations.
-///
-/// Setup (`scripts/setup/05-install-core.sh`) installs Pi at
-/// `/usr/local/lib/pi-coding-agent` with a self-link in its own
-/// `node_modules/@earendil-works/pi-coding-agent` so user extensions can resolve
-/// the host package. As long as setup ran, the system wrapper at
-/// `/usr/local/bin/pi` is the correct binary regardless of any per-user
-/// `~/.bun/bin/pi` that may also exist.
+/// If `configured` is an explicit path (contains `/`), it is honored first.
+/// Otherwise the runner prefers Oqto's checksummed, atomically promoted
+/// standalone runtime. Legacy system paths remain migration fallbacks; a
+/// user-global package-manager install is deliberately not a candidate because
+/// its independently resolved dependencies are not part of the deployed release.
 fn resolve_pi_binary(configured: &str, home: &str) -> (String, String) {
     let candidates = pi_binary_candidates(configured, home);
     for candidate in &candidates {
@@ -213,10 +209,21 @@ fn resolve_pi_binary(configured: &str, home: &str) -> (String, String) {
     (fallback, version)
 }
 
-fn pi_binary_candidates(configured: &str, home: &str) -> Vec<String> {
+fn pi_binary_candidates(configured: &str, _home: &str) -> Vec<String> {
     let mut candidates = Vec::new();
-    push_candidate(&mut candidates, resolve_configured_pi(configured));
-    push_candidate(&mut candidates, Some(format!("{home}/.bun/bin/pi")));
+    if configured.contains('/') {
+        push_candidate(&mut candidates, Some(configured.to_string()));
+    } else {
+        push_candidate(
+            &mut candidates,
+            Some("/var/lib/oqto/pi-runtimes/current/pi".to_string()),
+        );
+        // The default bare name must not resolve through the invoking user's
+        // package-manager PATH. Custom bare executable names remain supported.
+        if configured != "pi" {
+            push_candidate(&mut candidates, resolve_configured_pi(configured));
+        }
+    }
     push_candidate(&mut candidates, Some("/usr/local/bin/pi".to_string()));
     push_candidate(&mut candidates, Some("/usr/bin/pi".to_string()));
     candidates
@@ -298,6 +305,25 @@ fn pi_binary_version(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_pi_prefers_canonical_runtime_and_excludes_user_global_install() {
+        let candidates = pi_binary_candidates("pi", "/home/alice");
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some("/var/lib/oqto/pi-runtimes/current/pi")
+        );
+        assert!(!candidates.iter().any(|path| path.contains("/.bun/")));
+    }
+
+    #[test]
+    fn explicit_pi_path_remains_first_candidate() {
+        let candidates = pi_binary_candidates("/opt/custom/pi", "/home/alice");
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some("/opt/custom/pi")
+        );
+    }
 
     #[test]
     fn local_section_defaults_do_not_enable_linux_isolation() {

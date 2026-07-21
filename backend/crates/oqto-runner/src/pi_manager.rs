@@ -65,15 +65,15 @@ impl Default for PiManagerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
-        // Prefer /usr/local/bin/pi (wrapper that sets PI_PACKAGE_DIR and uses bun)
-        // over ~/.bun/bin/pi (symlink with #!/usr/bin/env node shebang that fails
-        // when node is not installed).
+        // Prefer Oqto's checksummed, atomically promoted standalone runtime.
+        // The /usr/local/bin fallback is retained for containers and upgrades
+        // from the legacy package-manager installation.
         let pi_binary = {
-            let system_pi = PathBuf::from("/usr/local/bin/pi");
-            if system_pi.exists() {
-                system_pi
+            let canonical = PathBuf::from("/var/lib/oqto/pi-runtimes/current/pi");
+            if canonical.exists() {
+                canonical
             } else {
-                PathBuf::from(&home).join(".bun/bin/pi")
+                PathBuf::from("/usr/local/bin/pi")
             }
         };
 

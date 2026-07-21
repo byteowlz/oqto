@@ -206,26 +206,31 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh \
 # Install zoxide (smart cd)
 RUN curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
 
-# Install Pi (AI agent runtime) + agent-browser CLI
-# The self-link below makes the package resolvable as
-# `@earendil-works/pi-coding-agent` from within itself; user-installed Pi
-# extensions import that name and fail without it (trx oqto-ceb7).
-RUN bun install -g @earendil-works/pi-coding-agent agent-browser \
-    && PI_PKG="/root/.bun/install/global/node_modules/@earendil-works/pi-coding-agent" \
-    && mkdir -p /usr/local/lib/pi-coding-agent \
-    && cp -a "$PI_PKG/." /usr/local/lib/pi-coding-agent/ \
-    && cd /usr/local/lib/pi-coding-agent && bun install 2>/dev/null || true \
-    && mkdir -p /usr/local/lib/pi-coding-agent/node_modules/@earendil-works \
-    && ln -sfn /usr/local/lib/pi-coding-agent /usr/local/lib/pi-coding-agent/node_modules/@earendil-works/pi-coding-agent \
-    && mkdir -p /usr/local/lib/pi-coding-agent/node_modules/@mariozechner \
-    && ln -sfn /usr/local/lib/pi-coding-agent /usr/local/lib/pi-coding-agent/node_modules/@mariozechner/pi-coding-agent \
-    && printf '#!/bin/sh\nPI_PKG="/usr/local/lib/pi-coding-agent"\nexport PI_PACKAGE_DIR="$PI_PKG"\nexport NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"\nexec /usr/local/bin/bun "$PI_PKG/dist/cli.js" "$@"\n' > /usr/local/bin/pi \
-    && chmod 755 /usr/local/bin/pi \
-    && if [ -f /root/.bun/bin/agent-browser ]; then cp /root/.bun/bin/agent-browser /usr/local/bin/agent-browser; fi \
-    && chmod 755 /usr/local/bin/agent-browser 2>/dev/null || true \
+# Install the official checksummed standalone Pi runtime. Agent-browser still
+# uses Bun, but cannot influence Pi's internal dependency graph.
+ARG TARGETARCH
+COPY dependencies.toml /tmp/pi-dependencies.toml
+RUN version="$(sed -n '/^\[external\]/,/^\[/{s/^pi *= *"\([^"]*\)".*/\1/p}' /tmp/pi-dependencies.toml | head -1)" \
+    && case "$TARGETARCH" in \
+      amd64|"") asset=pi-linux-x64.tar.gz; key=pi-linux-x64-sha256 ;; \
+      arm64) asset=pi-linux-arm64.tar.gz; key=pi-linux-arm64-sha256 ;; \
+      *) exit 64 ;; \
+    esac \
+    && sha="$(sed -n '/^\[external\]/,/^\[/{s/^'"$key"' *= *"\([^"]*\)".*/\1/p}' /tmp/pi-dependencies.toml | head -1)" \
+    && test -n "$version" && test -n "$sha" \
+    && curl -fsSL --retry 3 \
+      "https://github.com/earendil-works/pi/releases/download/v${version}/${asset}" \
+      -o /tmp/pi.tar.gz \
+    && echo "$sha  /tmp/pi.tar.gz" | sha256sum --check --strict \
+    && tar -xzf /tmp/pi.tar.gz -C /tmp \
+    && install -m 0755 /tmp/pi/pi /usr/local/bin/pi \
+    && bun install -g agent-browser \
+    && test -f /root/.bun/bin/agent-browser \
+    && cp /root/.bun/bin/agent-browser /usr/local/bin/agent-browser \
+    && chmod 755 /usr/local/bin/agent-browser \
     && printf '#!/bin/sh\nexec /usr/local/bin/agent-browser "$@"\n' > /usr/local/bin/oqto-browser \
     && chmod 755 /usr/local/bin/oqto-browser \
-    && rm -rf /root/.bun/install
+    && rm -rf /root/.bun/install /tmp/pi /tmp/pi.tar.gz /tmp/pi-dependencies.toml
 
 # --- Copy binaries from downloader stage ---
 COPY --from=downloader /out/bin/ /usr/local/bin/

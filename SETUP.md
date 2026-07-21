@@ -272,8 +272,10 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 
 **Installation**:
 ```bash
-bun install -g @earendil-works/pi-coding-agent
+./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
+
+This stages the pinned official standalone release, verifies its SHA-256 and RPC model discovery, then atomically promotes `/var/lib/oqto/pi-runtimes/current`. It does not resolve npm dependencies or modify user-global Bun packages.
 
 **Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
 
@@ -378,11 +380,11 @@ The main chat/LLM interface used by Oqto for AI conversations.
 
 **Installation**:
 ```bash
-bun install -g @earendil-works/pi-coding-agent
+./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
 
 **Configuration**:
-Pi is spawned by oqto-runner and configured via runner settings. The runner locates the pi binary from your PATH.
+Pi is spawned by oqto-runner and configured via runner settings. By default the runner uses `/var/lib/oqto/pi-runtimes/current/pi`; explicit `[pi].executable` paths remain supported.
 
 Session directories are configured in `~/.config/oqto/config.toml`:
 
@@ -405,7 +407,7 @@ pi_sessions_dir = "~/.local/share/pi/sessions"
 Runs all components as native processes on the host.
 
 **Prerequisites**:
-- pi binary (install: `bun install -g @earendil-works/pi-coding-agent`)
+- checksummed standalone Pi runtime (`./scripts/dist/sync-agent-runtime.sh --skip-extensions`)
 - fileserver binary (build from this repo)
 - ttyd binary (install via package manager)
 
@@ -869,8 +871,8 @@ which oqto
 which fileserver
 which ttyd
 
-# Check pi (installed via bun/npm)
-which pi || echo "Pi not in PATH - check: bun list -g | grep pi-coding-agent"
+# Check the atomically promoted standalone Pi runtime
+/var/lib/oqto/pi-runtimes/current/pi --version
 
 # Check agent tools
 which agntz
@@ -939,14 +941,15 @@ kill -9 <PID>
 
 Error: `pi: command not found` or Pi sessions fail to start
 
-Solution: Install Pi:
+Solution: stage, verify, and promote the pinned standalone Pi runtime:
 ```bash
-bun install -g @earendil-works/pi-coding-agent
+./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
 
 Verify installation:
 ```bash
-pi --version
+/var/lib/oqto/pi-runtimes/current/pi --version
+./scripts/dist/check-agent-runtime.sh --verify-current
 ```
 
 ### Permission prompts or errors not showing (UI)

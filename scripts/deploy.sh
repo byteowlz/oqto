@@ -1964,12 +1964,16 @@ REMOTE_EOF
 sync_agent_runtime_host() {
     local is_local="$1" ssh_target="$2" name="$3"
     local script="$ROOT_DIR/scripts/dist/sync-agent-runtime.sh"
+    local pi_runtime_script="$ROOT_DIR/scripts/dist/pi-runtime.sh"
     local manifest="$ROOT_DIR/dependencies.toml"
-    [[ -f "$script" && -f "$manifest" ]] || { warn "  agent-runtime sync: script or manifest missing"; return 1; }
+    [[ -f "$script" && -x "$pi_runtime_script" && -f "$manifest" ]] || {
+        warn "  agent-runtime sync: script, Pi runtime installer, or manifest missing"
+        return 1
+    }
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp sync-agent-runtime.sh + dependencies.toml -> $ssh_target"
-        echo -e "${YELLOW}  [dry-run]${NC} sync-agent-runtime.sh on $name (pi @ pinned + extensions @ pinned, all users)"
+        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp sync-agent-runtime.sh + pi-runtime.sh + dependencies.toml -> $ssh_target"
+        echo -e "${YELLOW}  [dry-run]${NC} sync-agent-runtime.sh on $name (checksummed standalone Pi + extensions, all users)"
         return 0
     fi
 
@@ -1978,8 +1982,9 @@ sync_agent_runtime_host() {
         bash "$script" --manifest "$manifest"
     else
         scp "$script" "$ssh_target:/tmp/sync-agent-runtime.sh" >/dev/null
+        scp "$pi_runtime_script" "$ssh_target:/tmp/pi-runtime.sh" >/dev/null
         scp "$manifest" "$ssh_target:/tmp/oqto-dependencies.toml" >/dev/null
-        ssh "$ssh_target" "bash /tmp/sync-agent-runtime.sh --manifest /tmp/oqto-dependencies.toml"
+        ssh "$ssh_target" "chmod 755 /tmp/pi-runtime.sh && PI_RUNTIME_SCRIPT=/tmp/pi-runtime.sh bash /tmp/sync-agent-runtime.sh --manifest /tmp/oqto-dependencies.toml"
     fi
 }
 

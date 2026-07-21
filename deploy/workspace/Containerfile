@@ -32,13 +32,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 FROM ghcr.io/astral-sh/uv:0.11.29 AS uv-runtime
 
-FROM node:22-bookworm-slim AS pi-runtime
-ARG PI_VERSION=0.80.10
-RUN npm install --global --omit=dev \
-      "@earendil-works/pi-coding-agent@${PI_VERSION}" \
-      "@earendil-works/pi-agent-core@${PI_VERSION}" \
-      "@earendil-works/pi-ai@${PI_VERSION}" \
-      "@earendil-works/pi-tui@${PI_VERSION}"
+FROM ubuntu:24.04 AS pi-runtime
+ARG TARGETARCH
+COPY dependencies.toml /tmp/pi-dependencies.toml
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar \
+    && rm -rf /var/lib/apt/lists/* \
+    && version="$(sed -n '/^\[external\]/,/^\[/{s/^pi *= *"\([^"]*\)".*/\1/p}' /tmp/pi-dependencies.toml | head -1)" \
+    && case "$TARGETARCH" in \
+         amd64|"") asset=pi-linux-x64.tar.gz; key=pi-linux-x64-sha256 ;; \
+         arm64) asset=pi-linux-arm64.tar.gz; key=pi-linux-arm64-sha256 ;; \
+         *) exit 64 ;; \
+       esac \
+    && sha="$(sed -n '/^\[external\]/,/^\[/{s/^'"$key"' *= *"\([^"]*\)".*/\1/p}' /tmp/pi-dependencies.toml | head -1)" \
+    && test -n "$version" && test -n "$sha" \
+    && curl -fsSL --retry 3 \
+         "https://github.com/earendil-works/pi/releases/download/v${version}/${asset}" \
+         -o /tmp/pi.tar.gz \
+    && echo "$sha  /tmp/pi.tar.gz" | sha256sum --check --strict \
+    && mkdir -p /out \
+    && tar -xzf /tmp/pi.tar.gz -C /tmp \
+    && install -m 0755 /tmp/pi/pi /out/pi
+
+FROM node:22-bookworm-slim AS node-runtime
 
 FROM ubuntu:24.04
 LABEL org.opencontainers.image.title="oqto-workspace" \
@@ -54,15 +69,10 @@ RUN if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi \
     && groupadd --gid 1000 oqto \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash oqto
 
-# Pi and Node are copied from a pinned prebuilt runtime stage. Mutable user
-# extensions and configuration remain under /home/oqto.
-COPY --from=pi-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=pi-runtime /usr/local/lib/node_modules/ /usr/local/lib/pi-node_modules/
-RUN ln -s /usr/local/lib/pi-node_modules/@earendil-works/pi-coding-agent \
-         /usr/local/lib/pi-coding-agent \
-    && mkdir -p /usr/local/lib/pi-node_modules/@mariozechner \
-    && ln -s /usr/local/lib/pi-coding-agent \
-         /usr/local/lib/pi-node_modules/@mariozechner/pi-coding-agent
+# Pi is the official checksummed standalone Bun executable. Node remains for
+# workspace tools, but Pi no longer depends on host npm resolution.
+COPY --from=pi-runtime /out/pi /usr/local/bin/pi
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=typst-runtime /usr/local/bin/typst /usr/local/bin/typst
@@ -72,7 +82,6 @@ COPY dist/immutable/bin/oqto-sandbox /usr/local/bin/oqto-sandbox
 COPY dist/immutable/bin/oqto-files /usr/local/bin/oqto-files
 COPY dist/immutable/seccomp/default.bpf /usr/local/share/oqto/seccomp/default.bpf
 COPY deploy/workspace/sandbox.toml /etc/oqto/sandbox.toml
-COPY deploy/workspace/pi /usr/local/bin/pi
 COPY deploy/workspace/entrypoint.sh /usr/local/bin/oqto-workspace-entrypoint
 
 RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
@@ -81,9 +90,7 @@ RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
 
 ENV HOME=/home/oqto \
     USER=oqto \
-    PATH=/usr/local/bin:/usr/bin:/bin:/home/oqto/.local/bin:/home/oqto/.cargo/bin \
-    PI_PACKAGE_DIR=/usr/local/lib/pi-coding-agent \
-    NODE_PATH=/usr/local/lib/pi-node_modules
+    PATH=/usr/local/bin:/usr/bin:/bin:/home/oqto/.local/bin:/home/oqto/.cargo/bin
 WORKDIR /workspace
 USER 1000:1000
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/oqto-workspace-entrypoint"]
