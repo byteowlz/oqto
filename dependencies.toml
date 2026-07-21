@@ -34,7 +34,7 @@ kokorox = "0.2.3"
 # pins are advanced by the test-gated auto-bump (just check-agent-updates ->
 # scripts/dist/check-agent-runtime.sh) which only bumps a pin when a candidate
 # passes the gate. sync via scripts/dist/sync-agent-runtime.sh.
-pi = "0.80.5"  # npm @earendil-works/pi-coding-agent (pinned; auto-bump advances)
+pi = "0.80.10"  # coherent @earendil-works/pi-* set; deploy verifies exact versions + RPC
 pi-extensions = "9884c7a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev

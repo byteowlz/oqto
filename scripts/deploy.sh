@@ -2018,17 +2018,19 @@ deploy_host() {
             return 1
         fi
         run_mmry_jsonl_migration "$is_local" "$ssh_target" "$mode"
+        # Refresh and verify the agent runtime before restarting the runner.
+        # Starting services first can leave the new runner bound to a broken Pi
+        # while the HTTP-only health check still passes.
+        if ! sync_agent_runtime_host "$is_local" "$ssh_target" "$name"; then
+            err "[$name] agent runtime sync or RPC verification failed"
+            return 1
+        fi
         if [[ "$DRY_RUN" != "true" ]]; then
             restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
             if ! health_check_host "$is_local" "$ssh_target" "$mode"; then
                 return 1
             fi
         fi
-        # Refresh the agent runtime (pi + byteowlz extensions) to the pinned
-        # versions for all users. Best-effort: a hiccup must not fail the deploy
-        # (the platform still runs on the current pi), so warn and continue.
-        sync_agent_runtime_host "$is_local" "$ssh_target" "$name" \
-            || warn "[$name] agent runtime sync incomplete (pi/extensions may be stale)"
     else
         if [[ "$ACTIVATE_ONLY" != "true" ]]; then
             if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then

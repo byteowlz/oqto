@@ -61,24 +61,90 @@ resolve_bun() {
 }
 
 # --- pi (system-wide) ---------------------------------------------------------
+verify_pi_packages() {
+  local root="$1" expected="$2" label="$3" pkg actual
+  for pkg in pi-coding-agent pi-agent-core pi-ai pi-tui; do
+    actual="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$root/@earendil-works/$pkg/package.json" | head -1)"
+    [[ "$actual" == "$expected" ]] || {
+      err "$label package mismatch: $pkg expected=$expected actual=${actual:-missing}"
+      return 1
+    }
+  done
+}
+
+verify_pi_rpc() {
+  local bin="$1" expected="$2" label="$3"
+  local version output errors
+  version="$($bin --version 2>/dev/null | head -1)"
+  [[ "$version" == "$expected" ]] || {
+    err "$label version check failed: expected=$expected actual=${version:-unavailable}"
+    return 1
+  }
+
+  output="$(mktemp)"; errors="$(mktemp)"
+  if ! printf '%s\n' '{"id":"agent-sync-smoke","type":"get_available_models"}' \
+      | timeout 30 "$bin" --mode rpc --no-session >"$output" 2>"$errors"; then
+    err "$label RPC process failed: $(tail -3 "$errors" | tr '\n' ' ')"
+    rm -f "$output" "$errors"
+    return 1
+  fi
+  if ! python3 - "$output" <<'PY'
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if (row.get("type") == "response" and row.get("id") == "agent-sync-smoke"
+            and row.get("success") is True
+            and isinstance((row.get("data") or {}).get("models"), list)
+            and len((row.get("data") or {}).get("models")) > 0):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    err "$label RPC model-discovery smoke test returned no successful response"
+    tail -3 "$errors" >&2 || true
+    rm -f "$output" "$errors"
+    return 1
+  fi
+  rm -f "$output" "$errors"
+  log "$label verified: pi $version + RPC model discovery"
+}
+
 sync_pi() {
   local version="$1"
   [[ -n "$version" && "$version" != "latest" ]] || { err "pi version not pinned (got '${version:-}')"; return 1; }
   local bun; bun="$(resolve_bun)" || { err "bun not found; cannot install pi"; return 1; }
 
-  log "installing pi @earendil-works/pi-coding-agent@${version}"
-  "$bun" install -g "@earendil-works/pi-coding-agent@${version}"
+  # Pin the whole directly-coupled Pi package family. Installing only the CLI
+  # leaves its caret dependencies free to reuse a newer hoisted pi-ai, which
+  # can remove exports and make every Pi process fail during module loading.
+  log "installing coherent pi package set @ ${version}"
+  "$bun" install -g \
+    "@earendil-works/pi-coding-agent@${version}" \
+    "@earendil-works/pi-agent-core@${version}" \
+    "@earendil-works/pi-ai@${version}" \
+    "@earendil-works/pi-tui@${version}"
 
-  local src="$HOME/.bun/install/global/node_modules/@earendil-works/pi-coding-agent"
+  local global_root="$HOME/.bun/install/global/node_modules"
+  local src="$global_root/@earendil-works/pi-coding-agent"
   local sys="/usr/local/lib/pi-coding-agent"
   [[ -d "$src" ]] || { err "pi global install not found at $src"; return 1; }
+  verify_pi_packages "$global_root" "$version" "user-global pi" || return 1
+  verify_pi_rpc "$HOME/.bun/bin/pi" "$version" "user-global pi" || return 1
 
   log "syncing pi to $sys (system-wide)"
   sudo rm -rf "$sys"
   sudo cp -a "$src" "$sys"
   sudo chmod -R a+rX "$sys"
   ( cd "$sys" && sudo /usr/local/bin/bun install --frozen-lockfile 2>/dev/null \
-      || sudo /usr/local/bin/bun install 2>/dev/null ) || true
+      || sudo /usr/local/bin/bun install 2>/dev/null )
+  # Override caret-resolved direct Pi dependencies with the exact coherent set.
+  ( cd "$sys" && sudo /usr/local/bin/bun add --exact \
+      "@earendil-works/pi-agent-core@${version}" \
+      "@earendil-works/pi-ai@${version}" \
+      "@earendil-works/pi-tui@${version}" >/dev/null )
 
   # Self-links so user extensions importing the host package resolve (see 05).
   sudo mkdir -p "$sys/node_modules/@earendil-works" "$sys/node_modules/@mariozechner"
@@ -100,7 +166,8 @@ export NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"
 exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
 PIEOF
   sudo chmod 755 /usr/local/bin/pi
-  log "pi synced: $(/usr/local/bin/pi --version 2>/dev/null | head -1 || echo unknown)"
+  verify_pi_packages "$sys/node_modules" "$version" "system pi" || return 1
+  verify_pi_rpc /usr/local/bin/pi "$version" "system pi" || return 1
 }
 
 # --- extensions (system + every user) ----------------------------------------

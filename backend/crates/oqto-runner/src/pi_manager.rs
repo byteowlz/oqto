@@ -9,6 +9,7 @@
 //! - Persistence to oqto-log on AgentEnd
 
 use std::collections::{HashMap, VecDeque};
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -37,6 +38,18 @@ use oqto_sandbox::{EgressGuard, SandboxConfig, configure_bwrap_pre_exec};
 // ============================================================================
 // Configuration
 // ============================================================================
+
+fn agent_runtime_path(home: &Path, inherited: Option<&OsStr>) -> Result<OsString> {
+    let mut paths = vec![
+        home.join(".local/bin"),
+        home.join(".bun/bin"),
+        home.join(".cargo/bin"),
+    ];
+    if let Some(inherited) = inherited {
+        paths.extend(std::env::split_paths(inherited));
+    }
+    std::env::join_paths(paths).context("construct agent runtime PATH")
+}
 
 /// Configuration for the Pi session manager.
 #[derive(Debug, Clone)]
@@ -921,8 +934,21 @@ impl PiSessionManager {
             cmd
         };
 
-        // Set environment variables
+        // Set environment variables. User-level harness bridges (Claude Code,
+        // Codex, Bun packages) live outside systemd's minimal /usr/local/bin +
+        // /usr/bin PATH. The sandbox already binds these directories; expose
+        // them to spawned Pi processes unless the caller explicitly overrides
+        // PATH.
         cmd.envs(&config.env);
+        if !config.env.contains_key("PATH")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            let inherited = std::env::var_os("PATH");
+            cmd.env(
+                "PATH",
+                agent_runtime_path(Path::new(&home), inherited.as_deref())?,
+            );
+        }
         if !config.env.contains_key("AGENT_BROWSER_SOCKET_DIR") {
             cmd.env("AGENT_BROWSER_SOCKET_DIR", &session_socket_dir_str);
         }
@@ -1871,12 +1897,10 @@ impl PiSessionManager {
                     .filter_map(|p| p.strip_prefix("eavs-"))
                     .collect();
 
-                // Direct Pi OAuth providers are configured in Pi auth storage,
-                // not in oqto-managed models.json. Keep them visible even when
-                // disk models are present (e.g. default/eavs-only disk config).
-                let direct_pi_oauth_providers: std::collections::HashSet<&str> =
-                    ["openai-codex"].into_iter().collect();
-
+                // Direct Pi OAuth and configured extension providers are not
+                // represented in oqto-managed models.json. Keep them visible
+                // when live Pi reports them; absent/unconfigured extensions do
+                // not report models and therefore add nothing.
                 let filter_by_provider = |value: &serde_json::Value| -> serde_json::Value {
                     let filtered = value
                         .as_array()
@@ -1888,7 +1912,7 @@ impl PiSessionManager {
                                         .map(|p| {
                                             allowed_providers.contains(p)
                                                 || allowed_bare.contains(p)
-                                                || direct_pi_oauth_providers.contains(p)
+                                                || is_direct_pi_provider(p)
                                         })
                                         .unwrap_or(false)
                                 })
@@ -5010,6 +5034,10 @@ fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
     Ok(last_name)
 }
 
+fn is_direct_pi_provider(provider: &str) -> bool {
+    matches!(provider, "openai-codex" | "claude-bridge")
+}
+
 fn model_available_for_provider(
     models: &serde_json::Value,
     provider: &str,
@@ -5040,6 +5068,26 @@ mod tests {
         AgentIdleBroadcast,
     }
 
+    #[test]
+    fn agent_runtime_path_exposes_user_harness_bins_before_system_path() {
+        let path = agent_runtime_path(
+            Path::new("/home/alice"),
+            Some(OsStr::new("/usr/local/bin:/usr/bin")),
+        )
+        .expect("runtime path");
+        let parts: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            parts,
+            vec![
+                PathBuf::from("/home/alice/.local/bin"),
+                PathBuf::from("/home/alice/.bun/bin"),
+                PathBuf::from("/home/alice/.cargo/bin"),
+                PathBuf::from("/usr/local/bin"),
+                PathBuf::from("/usr/bin"),
+            ]
+        );
+    }
+
     fn idle_emitted_before_persist(steps: &[PersistenceContractStep]) -> bool {
         let mut persist_seen = false;
         for step in steps {
@@ -5050,6 +5098,13 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn direct_pi_providers_include_oauth_and_configured_bridge_models() {
+        assert!(is_direct_pi_provider("openai-codex"));
+        assert!(is_direct_pi_provider("claude-bridge"));
+        assert!(!is_direct_pi_provider("unconfigured-catalog"));
     }
 
     #[test]
