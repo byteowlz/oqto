@@ -121,7 +121,8 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
-        let (pi_binary, pi_version) = resolve_pi_binary(&config_file.pi.executable, &home);
+        let (pi_binary, pi_version) =
+            resolve_pi_binary(&config_file.pi.executable, &home, &data_dir);
         info!("Pi binary: {} (v{})", pi_binary, pi_version);
 
         let runner_id = config_file
@@ -177,8 +178,8 @@ impl RunnerUserConfig {
 /// standalone runtime. Legacy system paths remain migration fallbacks; a
 /// user-global package-manager install is deliberately not a candidate because
 /// its independently resolved dependencies are not part of the deployed release.
-fn resolve_pi_binary(configured: &str, home: &str) -> (String, String) {
-    let candidates = pi_binary_candidates(configured, home);
+fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> (String, String) {
+    let candidates = pi_binary_candidates(configured, home, data_dir);
     for candidate in &candidates {
         let path = Path::new(candidate);
         if !path.exists() && candidate.contains('/') {
@@ -209,11 +210,20 @@ fn resolve_pi_binary(configured: &str, home: &str) -> (String, String) {
     (fallback, version)
 }
 
-fn pi_binary_candidates(configured: &str, _home: &str) -> Vec<String> {
+fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<String> {
     let mut candidates = Vec::new();
     if configured.contains('/') {
         push_candidate(&mut candidates, Some(configured.to_string()));
     } else {
+        push_candidate(
+            &mut candidates,
+            Some(
+                data_dir
+                    .join("oqto/pi-runtimes/current/pi")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        );
         push_candidate(
             &mut candidates,
             Some("/var/lib/oqto/pi-runtimes/current/pi".to_string()),
@@ -308,9 +318,14 @@ mod tests {
 
     #[test]
     fn bare_pi_prefers_canonical_runtime_and_excludes_user_global_install() {
-        let candidates = pi_binary_candidates("pi", "/home/alice");
+        let candidates =
+            pi_binary_candidates("pi", "/home/alice", Path::new("/home/alice/.local/share"));
         assert_eq!(
             candidates.first().map(String::as_str),
+            Some("/home/alice/.local/share/oqto/pi-runtimes/current/pi")
+        );
+        assert_eq!(
+            candidates.get(1).map(String::as_str),
             Some("/var/lib/oqto/pi-runtimes/current/pi")
         );
         assert!(!candidates.iter().any(|path| path.contains("/.bun/")));
@@ -318,7 +333,11 @@ mod tests {
 
     #[test]
     fn explicit_pi_path_remains_first_candidate() {
-        let candidates = pi_binary_candidates("/opt/custom/pi", "/home/alice");
+        let candidates = pi_binary_candidates(
+            "/opt/custom/pi",
+            "/home/alice",
+            Path::new("/home/alice/.local/share"),
+        );
         assert_eq!(
             candidates.first().map(String::as_str),
             Some("/opt/custom/pi")

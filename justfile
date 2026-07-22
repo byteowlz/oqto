@@ -280,9 +280,14 @@ install-system:
 check-agent-updates:
     ./scripts/dist/check-agent-runtime.sh
 
-# Test latest Pi and update the lock only when the candidate passes
+# Test latest Pi and update the Git bootstrap lock (manual release maintenance)
 promote-agent-update:
     ./scripts/dist/check-agent-runtime.sh --update-lock
+
+# Rootless local channel: verify and atomically promote latest, without Git changes
+update-pi-local:
+    ./scripts/dist/check-agent-runtime.sh --install-user
+    systemctl --user try-restart oqto-runner
 
 # Exercise the deterministic runtime installer against a local fake release
 _test-pi-runtime:
@@ -873,14 +878,8 @@ admin-templates *ARGS:
 admin-sync-all *ARGS:
     ./scripts/admin/oqto-admin sync-all {{ARGS}}
 
-# Deterministically test, lock, and atomically promote the latest Pi runtime
-update-pi:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ./scripts/dist/check-agent-runtime.sh --update-lock
-    ./scripts/dist/sync-agent-runtime.sh --skip-extensions
-    systemctl --user restart oqto-runner
-    echo "Done. Pi version: $(/var/lib/oqto/pi-runtimes/current/pi --version)"
+# Alias for the rootless local update channel
+update-pi: update-pi-local
 
 # =============================================================================
 # Agent Quality Gate

@@ -5,17 +5,18 @@ set -euo pipefail
 
 VERSION=""
 EXPECTED_SHA256=""
-INSTALL=false
-RUNTIME_ROOT="${PI_RUNTIME_ROOT:-/var/lib/oqto/pi-runtimes}"
+INSTALL_MODE=""
+RUNTIME_ROOT="${PI_RUNTIME_ROOT:-}"
 BASE_URL="${PI_RELEASE_BASE_URL:-https://github.com/earendil-works/pi/releases/download}"
 
 usage() {
   cat <<'EOF'
-Usage: pi-runtime.sh --version VERSION --sha256 SHA256 [--install]
+Usage: pi-runtime.sh --version VERSION --sha256 SHA256 [--install|--install-user]
                      [--runtime-root PATH] [--base-url URL]
 
-Without --install, downloads and verifies the candidate without changing the host.
-With --install, atomically promotes it under /var/lib/oqto/pi-runtimes/current.
+Without an install flag, verifies the candidate without changing the host.
+--install promotes the root-owned system fallback under /var/lib/oqto.
+--install-user promotes a rootless per-user runtime under XDG_DATA_HOME.
 EOF
 }
 
@@ -23,7 +24,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --sha256) EXPECTED_SHA256="$2"; shift 2 ;;
-    --install) INSTALL=true; shift ;;
+    --install) INSTALL_MODE="system"; shift ;;
+    --install-user) INSTALL_MODE="user"; shift ;;
     --runtime-root) RUNTIME_ROOT="$2"; shift 2 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -39,6 +41,13 @@ done
   echo "pi-runtime: invalid or missing SHA-256" >&2
   exit 2
 }
+if [[ -z "$RUNTIME_ROOT" ]]; then
+  if [[ "$INSTALL_MODE" == "user" ]]; then
+    RUNTIME_ROOT="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}/oqto/pi-runtimes"
+  else
+    RUNTIME_ROOT="/var/lib/oqto/pi-runtimes"
+  fi
+fi
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) ASSET="pi-linux-x64.tar.gz" ;;
@@ -172,7 +181,7 @@ PY
 
 verify_runtime "$CANDIDATE" "candidate"
 
-if [[ "$INSTALL" != "true" ]]; then
+if [[ -z "$INSTALL_MODE" ]]; then
   echo "pi-runtime: candidate passed; no host changes requested"
   exit 0
 fi
@@ -182,36 +191,47 @@ STAGE_DIR="$RUNTIME_ROOT/.staging-$VERSION-$$"
 CURRENT_LINK="$RUNTIME_ROOT/current"
 PREVIOUS_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || true)"
 
-sudo install -d -m 0755 "$RUNTIME_ROOT"
-sudo rm -rf "$STAGE_DIR"
-sudo cp -a "$TMP/pi" "$STAGE_DIR"
-sudo chmod -R a+rX "$STAGE_DIR"
+if [[ "$INSTALL_MODE" == "system" ]]; then
+  PRIVILEGED=(sudo)
+else
+  PRIVILEGED=()
+fi
+
+"${PRIVILEGED[@]}" install -d -m 0755 "$RUNTIME_ROOT"
+"${PRIVILEGED[@]}" rm -rf "$STAGE_DIR"
+"${PRIVILEGED[@]}" cp -a "$TMP/pi" "$STAGE_DIR"
+"${PRIVILEGED[@]}" chmod -R a+rX "$STAGE_DIR"
+printf '{"version":"%s","asset":"%s","archive_sha256":"%s"}\n' \
+  "$VERSION" "$ASSET" "$EXPECTED_SHA256" \
+  | "${PRIVILEGED[@]}" tee "$STAGE_DIR/oqto-runtime.json" >/dev/null
 
 # Preserve a verified immutable version directory. If an earlier interrupted
 # install left the same version corrupt, quarantine it rather than deleting
 # evidence, then promote the freshly verified staging directory.
 if [[ -d "$RELEASE_DIR" ]] && verify_runtime "$RELEASE_DIR/pi" "existing runtime"; then
-  sudo rm -rf "$STAGE_DIR"
+  "${PRIVILEGED[@]}" rm -rf "$STAGE_DIR"
 else
   if [[ -e "$RELEASE_DIR" ]]; then
-    sudo mv "$RELEASE_DIR" "$RUNTIME_ROOT/.invalid-$VERSION-$(date +%s)"
+    "${PRIVILEGED[@]}" mv "$RELEASE_DIR" "$RUNTIME_ROOT/.invalid-$VERSION-$(date +%s)"
   fi
-  sudo mv "$STAGE_DIR" "$RELEASE_DIR"
+  "${PRIVILEGED[@]}" mv "$STAGE_DIR" "$RELEASE_DIR"
 fi
 
 NEW_LINK="$RUNTIME_ROOT/.current-$$"
-sudo ln -s "$VERSION" "$NEW_LINK"
-sudo mv -Tf "$NEW_LINK" "$CURRENT_LINK"
-sudo ln -sfn "$CURRENT_LINK/pi" /usr/local/bin/pi
+"${PRIVILEGED[@]}" ln -s "$VERSION" "$NEW_LINK"
+"${PRIVILEGED[@]}" mv -Tf "$NEW_LINK" "$CURRENT_LINK"
+if [[ "$INSTALL_MODE" == "system" ]]; then
+  sudo ln -sfn "$CURRENT_LINK/pi" /usr/local/bin/pi
+fi
 
 if ! verify_runtime "$CURRENT_LINK/pi" "promoted runtime"; then
   echo "pi-runtime: promoted runtime verification failed; rolling back" >&2
   if [[ -n "$PREVIOUS_TARGET" ]]; then
     ROLLBACK_LINK="$RUNTIME_ROOT/.rollback-$$"
-    sudo ln -s "$PREVIOUS_TARGET" "$ROLLBACK_LINK"
-    sudo mv -Tf "$ROLLBACK_LINK" "$CURRENT_LINK"
+    "${PRIVILEGED[@]}" ln -s "$PREVIOUS_TARGET" "$ROLLBACK_LINK"
+    "${PRIVILEGED[@]}" mv -Tf "$ROLLBACK_LINK" "$CURRENT_LINK"
   else
-    sudo rm -f "$CURRENT_LINK"
+    "${PRIVILEGED[@]}" rm -f "$CURRENT_LINK"
   fi
   exit 1
 fi

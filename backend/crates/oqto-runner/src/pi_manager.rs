@@ -65,13 +65,19 @@ impl Default for PiManagerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
-        // Prefer Oqto's checksummed, atomically promoted standalone runtime.
-        // The /usr/local/bin fallback is retained for containers and upgrades
-        // from the legacy package-manager installation.
+        // Prefer the user's rootless, checksummed runtime channel; deployments
+        // provide the root-owned baseline as a fallback. This lets local
+        // deterministic updates advance without a later Oqto deploy downgrade.
         let pi_binary = {
-            let canonical = PathBuf::from("/var/lib/oqto/pi-runtimes/current/pi");
-            if canonical.exists() {
-                canonical
+            let data_dir = std::env::var("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(&home).join(".local/share"));
+            let user_runtime = data_dir.join("oqto/pi-runtimes/current/pi");
+            let system_runtime = PathBuf::from("/var/lib/oqto/pi-runtimes/current/pi");
+            if user_runtime.exists() {
+                user_runtime
+            } else if system_runtime.exists() {
+                system_runtime
             } else {
                 PathBuf::from("/usr/local/bin/pi")
             }

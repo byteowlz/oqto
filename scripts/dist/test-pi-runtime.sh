@@ -27,15 +27,27 @@ chmod 755 "$RELEASE/payload/pi/pi"
 tar -czf "$RELEASE/pi-linux-x64.tar.gz" -C "$RELEASE/payload" pi
 SHA="$(sha256sum "$RELEASE/pi-linux-x64.tar.gz" | awk '{print $1}')"
 
-HOME="$TMP/home" "$SCRIPT_DIR/pi-runtime.sh" \
+HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
+  "$SCRIPT_DIR/pi-runtime.sh" \
   --version "$VERSION" \
   --sha256 "$SHA" \
   --base-url "file://$TMP/releases" \
   >/dev/null
 
+HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
+  "$SCRIPT_DIR/pi-runtime.sh" \
+  --version "$VERSION" \
+  --sha256 "$SHA" \
+  --base-url "file://$TMP/releases" \
+  --install-user >/dev/null
+USER_RUNTIME="$TMP/home/.local/share/oqto/pi-runtimes/current"
+[[ "$("$USER_RUNTIME/pi" --version)" == "$VERSION" ]]
+grep -q "\"archive_sha256\":\"$SHA\"" "$USER_RUNTIME/oqto-runtime.json"
+
 wrong_sha="${SHA%?}0"
 [[ "$wrong_sha" != "$SHA" ]] || wrong_sha="${SHA%?}1"
-if HOME="$TMP/home" "$SCRIPT_DIR/pi-runtime.sh" \
+if HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
+  "$SCRIPT_DIR/pi-runtime.sh" \
   --version "$VERSION" \
   --sha256 "$wrong_sha" \
   --base-url "file://$TMP/releases" \
@@ -66,6 +78,7 @@ pi-linux-x64-sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 pi-linux-arm64-sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 TOML
 HOME="$TMP/home" \
+XDG_DATA_HOME="$TMP/home/.local/share" \
 PI_RELEASE_API_URL="file://$TMP/release.json" \
 PI_RELEASE_BASE_URL="file://$TMP/releases" \
   "$SCRIPT_DIR/check-agent-runtime.sh" \

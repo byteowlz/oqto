@@ -275,7 +275,7 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 ./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
 
-This stages the pinned official standalone release, verifies its SHA-256 and RPC model discovery, then atomically promotes `/var/lib/oqto/pi-runtimes/current`. It does not resolve npm dependencies or modify user-global Bun packages.
+This stages the pinned official standalone release, verifies its SHA-256 and RPC model discovery, then atomically promotes the root-owned deployment baseline. `just update-pi-local` maintains the preferred rootless channel under `~/.local/share/oqto/pi-runtimes/current` without Git changes. Neither path resolves npm dependencies or modifies user-global Bun packages.
 
 **Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
 
@@ -384,7 +384,7 @@ The main chat/LLM interface used by Oqto for AI conversations.
 ```
 
 **Configuration**:
-Pi is spawned by oqto-runner and configured via runner settings. By default the runner uses `/var/lib/oqto/pi-runtimes/current/pi`; explicit `[pi].executable` paths remain supported.
+Pi is spawned by oqto-runner and configured via runner settings. By default the runner prefers `~/.local/share/oqto/pi-runtimes/current/pi`, then falls back to `/var/lib/oqto/pi-runtimes/current/pi`; explicit `[pi].executable` paths remain supported.
 
 Session directories are configured in `~/.config/oqto/config.toml`:
 
@@ -871,8 +871,8 @@ which oqto
 which fileserver
 which ttyd
 
-# Check the atomically promoted standalone Pi runtime
-/var/lib/oqto/pi-runtimes/current/pi --version
+# Check the preferred rootless standalone Pi runtime
+~/.local/share/oqto/pi-runtimes/current/pi --version
 
 # Check agent tools
 which agntz
@@ -941,14 +941,14 @@ kill -9 <PID>
 
 Error: `pi: command not found` or Pi sessions fail to start
 
-Solution: stage, verify, and promote the pinned standalone Pi runtime:
+Solution: deterministically promote the latest standalone Pi into the rootless local channel:
 ```bash
-./scripts/dist/sync-agent-runtime.sh --skip-extensions
+just update-pi-local
 ```
 
 Verify installation:
 ```bash
-/var/lib/oqto/pi-runtimes/current/pi --version
+~/.local/share/oqto/pi-runtimes/current/pi --version
 ./scripts/dist/check-agent-runtime.sh --verify-current
 ```
 

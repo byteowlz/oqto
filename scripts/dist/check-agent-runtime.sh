@@ -7,15 +7,18 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MANIFEST="$ROOT_DIR/dependencies.toml"
 UPDATE_LOCK=false
 VERIFY_CURRENT=false
+INSTALL_USER=false
 API_URL="${PI_RELEASE_API_URL:-https://api.github.com/repos/earendil-works/pi/releases/latest}"
 
 usage() {
   cat <<'EOF'
 Usage: check-agent-runtime.sh [--manifest PATH] [--update-lock] [--verify-current]
+                              [--install-user]
 
 Default: report whether a newer Pi release exists and compatibility-test it.
 --update-lock updates Pi version and Linux checksums only after the test passes.
 --verify-current tests the currently pinned release even when no update exists.
+--install-user atomically promotes latest into the rootless local runtime channel.
 EOF
 }
 
@@ -24,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --manifest) MANIFEST="$2"; shift 2 ;;
     --update-lock) UPDATE_LOCK=true; shift ;;
     --verify-current) VERIFY_CURRENT=true; shift ;;
+    --install-user) INSTALL_USER=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -75,7 +79,7 @@ PY
 }
 
 echo "agent-check: pinned=$CURRENT latest=$LATEST"
-if [[ "$LATEST" == "$CURRENT" && "$VERIFY_CURRENT" != "true" ]]; then
+if [[ "$LATEST" == "$CURRENT" && "$VERIFY_CURRENT" != "true" && "$INSTALL_USER" != "true" ]]; then
   echo "agent-check: pin is current"
   exit 0
 fi
@@ -126,7 +130,29 @@ case "$(uname -m)" in
   *) echo "agent-check: unsupported local architecture: $(uname -m)" >&2; exit 2 ;;
 esac
 
-HOME="$check_home" "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA"
+if [[ "$INSTALL_USER" == "true" ]]; then
+  user_runtime_root="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}/oqto/pi-runtimes"
+  if python3 - "$user_runtime_root/current/oqto-runtime.json" "$user_runtime_root/current/pi" "$LATEST" "$LOCAL_SHA" <<'PY'
+import json, pathlib, subprocess, sys
+manifest_path, binary_path = map(pathlib.Path, sys.argv[1:3])
+version, checksum = sys.argv[3:]
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    installed = subprocess.check_output([binary_path, "--version"], text=True).strip()
+except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if (installed == version
+                       and manifest.get("version") == version
+                       and manifest.get("archive_sha256") == checksum) else 1)
+PY
+  then
+    echo "agent-check: local Pi runtime $LATEST already verified and current"
+    exit 0
+  fi
+  "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA" --install-user
+else
+  HOME="$check_home" "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA"
+fi
 echo "agent-check: candidate $LATEST passed deterministic runtime compatibility gate"
 
 if [[ "$UPDATE_LOCK" == "true" ]]; then
