@@ -78,27 +78,4 @@ pub trait UserPlane: Send + Sync {
         session_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<MainChatMessage>>;
-
-    // ========================================================================
-    // Memory Operations
-    // ========================================================================
-
-    /// Search memories.
-    async fn search_memories(
-        &self,
-        query: &str,
-        limit: usize,
-        category: Option<&str>,
-    ) -> Result<MemorySearchResults>;
-
-    /// Add a new memory.
-    async fn add_memory(
-        &self,
-        content: &str,
-        category: Option<&str>,
-        importance: Option<u8>,
-    ) -> Result<String>;
-
-    /// Delete a memory by ID.
-    async fn delete_memory(&self, memory_id: &str) -> Result<()>;
 }

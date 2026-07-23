@@ -32,6 +32,7 @@ rustls-pemfile.workspace = true
 toml.workspace = true
 tracing.workspace = true
 trx-core.workspace = true
+mmry-core.workspace = true
 uuid.workspace = true
 iroh = { version = "1.0.2", default-features = false, features = ["tls-ring"], optional = true }
 

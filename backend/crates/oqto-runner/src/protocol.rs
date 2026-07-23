@@ -131,11 +131,17 @@ pub enum RunnerRequest {
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
+    /// List memories in a workspace.
+    ListMemories(ListMemoriesRequest),
+
     /// Search memories.
     SearchMemories(SearchMemoriesRequest),
 
     /// Add a new memory.
     AddMemory(AddMemoryRequest),
+
+    /// Update (deprecate + re-add) a memory.
+    UpdateMemory(UpdateMemoryRequest),
 
     /// Delete a memory by ID.
     DeleteMemory(DeleteMemoryRequest),
@@ -408,11 +414,17 @@ pub enum RunnerResponse {
     // ========================================================================
     // Memory Responses
     // ========================================================================
+    /// Memory list.
+    MemoryList(MemoryListResponse),
+
     /// Memory search results.
     MemorySearchResults(MemorySearchResultsResponse),
 
     /// Memory added.
     MemoryAdded(MemoryAddedResponse),
+
+    /// Memory updated.
+    MemoryUpdated(MemoryAddedResponse),
 
     /// Memory deleted.
     MemoryDeleted(MemoryDeletedResponse),
@@ -805,9 +817,24 @@ pub struct RepairWorkspaceChatHistoryRequest {
 // Memory Request Types
 // ============================================================================
 
+/// Request to list memories in a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListMemoriesRequest {
+    /// Workspace whose `.mmry/mmry.jsonl` ledger to read.
+    pub workspace_path: PathBuf,
+    /// Maximum results to return.
+    #[serde(default = "default_memory_limit")]
+    pub limit: usize,
+    /// Result offset for pagination.
+    #[serde(default)]
+    pub offset: usize,
+}
+
 /// Request to search memories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchMemoriesRequest {
+    /// Workspace whose `.mmry/mmry.jsonl` ledger to search.
+    pub workspace_path: PathBuf,
     /// Search query.
     pub query: String,
     /// Maximum results to return.
@@ -825,6 +852,8 @@ fn default_memory_limit() -> usize {
 /// Request to add a memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddMemoryRequest {
+    /// Workspace whose `.mmry/mmry.jsonl` ledger to append to.
+    pub workspace_path: PathBuf,
     /// Memory content.
     pub content: String,
     /// Category (e.g., "api", "architecture", "debugging").
@@ -833,11 +862,42 @@ pub struct AddMemoryRequest {
     /// Importance level (1-10).
     #[serde(default)]
     pub importance: Option<u8>,
+    /// Memory type ("semantic", "episodic", "procedural").
+    #[serde(default)]
+    pub memory_type: Option<String>,
+    /// Freeform tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Request to update (deprecate + re-add) a memory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateMemoryRequest {
+    /// Workspace whose `.mmry/mmry.jsonl` ledger to update.
+    pub workspace_path: PathBuf,
+    /// Memory ID to replace.
+    pub memory_id: String,
+    /// New content.
+    pub content: String,
+    /// Category.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Importance level (1-10).
+    #[serde(default)]
+    pub importance: Option<u8>,
+    /// Memory type ("semantic", "episodic", "procedural").
+    #[serde(default)]
+    pub memory_type: Option<String>,
+    /// Freeform tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Request to delete a memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteMemoryRequest {
+    /// Workspace whose `.mmry/mmry.jsonl` ledger to update.
+    pub workspace_path: PathBuf,
     /// Memory ID.
     pub memory_id: String,
 }
@@ -2024,10 +2084,33 @@ pub struct MemoryEntry {
     pub category: Option<String>,
     /// Importance level.
     pub importance: Option<u8>,
+    /// Memory type ("semantic", "episodic", "procedural").
+    pub memory_type: String,
+    /// Freeform tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Full metadata blob from the ledger entry.
+    #[serde(default)]
+    pub metadata: serde_json::Value,
     /// Created at timestamp (RFC3339).
     pub created_at: String,
+    /// Updated at timestamp (RFC3339).
+    pub updated_at: String,
     /// Relevance score (for search results).
     pub score: Option<f64>,
+}
+
+/// Response listing memories in a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryListResponse {
+    /// Memories in the requested window.
+    pub memories: Vec<MemoryEntry>,
+    /// Total memories available.
+    pub total: usize,
+    /// Offset applied.
+    pub offset: usize,
+    /// Limit applied.
+    pub limit: usize,
 }
 
 /// Response with memory search results.
@@ -2044,8 +2127,8 @@ pub struct MemorySearchResultsResponse {
 /// Response when memory is added.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryAddedResponse {
-    /// Assigned memory ID.
-    pub memory_id: String,
+    /// The created memory entry.
+    pub memory: MemoryEntry,
 }
 
 /// Response when memory is deleted.

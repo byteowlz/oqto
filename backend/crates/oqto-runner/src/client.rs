@@ -781,13 +781,35 @@ impl RunnerClient {
     // ========================================================================
 
     /// Search memories.
+    pub async fn list_memories(
+        &self,
+        workspace_path: impl Into<PathBuf>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<MemoryListResponse> {
+        let req = RunnerRequest::ListMemories(ListMemoriesRequest {
+            workspace_path: workspace_path.into(),
+            limit,
+            offset,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MemoryList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_memories"),
+        }
+    }
+
+    /// Search memories in a workspace.
     pub async fn search_memories(
         &self,
+        workspace_path: impl Into<PathBuf>,
         query: impl Into<String>,
         limit: usize,
         category: Option<String>,
     ) -> Result<MemorySearchResultsResponse> {
         let req = RunnerRequest::SearchMemories(SearchMemoriesRequest {
+            workspace_path: workspace_path.into(),
             query: query.into(),
             limit,
             category,
@@ -800,17 +822,24 @@ impl RunnerClient {
         }
     }
 
-    /// Add a new memory.
+    /// Add a new memory to a workspace.
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_memory(
         &self,
+        workspace_path: impl Into<PathBuf>,
         content: impl Into<String>,
         category: Option<String>,
         importance: Option<u8>,
+        memory_type: Option<String>,
+        tags: Vec<String>,
     ) -> Result<MemoryAddedResponse> {
         let req = RunnerRequest::AddMemory(AddMemoryRequest {
+            workspace_path: workspace_path.into(),
             content: content.into(),
             category,
             importance,
+            memory_type,
+            tags,
         });
 
         let resp = self.request(&req).await?;
@@ -820,12 +849,43 @@ impl RunnerClient {
         }
     }
 
-    /// Delete a memory by ID.
+    /// Update (deprecate + re-add) a memory in a workspace.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_memory(
+        &self,
+        workspace_path: impl Into<PathBuf>,
+        memory_id: impl Into<String>,
+        content: impl Into<String>,
+        category: Option<String>,
+        importance: Option<u8>,
+        memory_type: Option<String>,
+        tags: Vec<String>,
+    ) -> Result<MemoryAddedResponse> {
+        let req = RunnerRequest::UpdateMemory(UpdateMemoryRequest {
+            workspace_path: workspace_path.into(),
+            memory_id: memory_id.into(),
+            content: content.into(),
+            category,
+            importance,
+            memory_type,
+            tags,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::MemoryUpdated(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to update_memory"),
+        }
+    }
+
+    /// Delete a memory by ID from a workspace.
     pub async fn delete_memory(
         &self,
+        workspace_path: impl Into<PathBuf>,
         memory_id: impl Into<String>,
     ) -> Result<MemoryDeletedResponse> {
         let req = RunnerRequest::DeleteMemory(DeleteMemoryRequest {
+            workspace_path: workspace_path.into(),
             memory_id: memory_id.into(),
         });
 

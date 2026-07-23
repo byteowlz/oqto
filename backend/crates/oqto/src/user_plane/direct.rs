@@ -278,36 +278,6 @@ impl UserPlane for DirectUserPlane {
         // TODO: Parse Pi session .jsonl file
         Ok(Vec::new())
     }
-
-    // Memory operations
-
-    async fn search_memories(
-        &self,
-        _query: &str,
-        _limit: usize,
-        _category: Option<&str>,
-    ) -> Result<MemorySearchResults> {
-        // TODO: Search mmry database
-        Ok(MemorySearchResults {
-            memories: Vec::new(),
-            total: 0,
-        })
-    }
-
-    async fn add_memory(
-        &self,
-        _content: &str,
-        _category: Option<&str>,
-        _importance: Option<u8>,
-    ) -> Result<String> {
-        // TODO: Add to mmry database
-        anyhow::bail!("Memory operations not implemented for DirectUserPlane")
-    }
-
-    async fn delete_memory(&self, _memory_id: &str) -> Result<()> {
-        // TODO: Delete from mmry database
-        anyhow::bail!("Memory operations not implemented for DirectUserPlane")
-    }
 }
 
 #[cfg(test)]

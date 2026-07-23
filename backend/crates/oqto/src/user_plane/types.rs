@@ -134,29 +134,3 @@ pub struct MainChatMessage {
     /// Timestamp (Unix ms).
     pub timestamp: i64,
 }
-
-/// Memory entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryEntry {
-    /// Memory ID.
-    pub id: String,
-    /// Memory content.
-    pub content: String,
-    /// Category.
-    pub category: Option<String>,
-    /// Importance level.
-    pub importance: Option<u8>,
-    /// Created at timestamp (RFC3339).
-    pub created_at: String,
-    /// Relevance score.
-    pub score: Option<f64>,
-}
-
-/// Memory search results.
-#[derive(Debug, Clone)]
-pub struct MemorySearchResults {
-    /// Matching memories.
-    pub memories: Vec<MemoryEntry>,
-    /// Total matches available.
-    pub total: usize,
-}

@@ -316,70 +316,6 @@ impl UserPlane for RunnerUserPlane {
             })
             .collect())
     }
-
-    async fn search_memories(
-        &self,
-        query: &str,
-        limit: usize,
-        category: Option<&str>,
-    ) -> Result<MemorySearchResults> {
-        self.client
-            .ensure_ready_with_recovery()
-            .await
-            .context("runner readiness")?;
-        let response = self
-            .client
-            .search_memories(query, limit, category.map(String::from))
-            .await
-            .context("runner search_memories")?;
-
-        Ok(MemorySearchResults {
-            memories: response
-                .memories
-                .into_iter()
-                .map(|m| MemoryEntry {
-                    id: m.id,
-                    content: m.content,
-                    category: m.category,
-                    importance: m.importance,
-                    created_at: m.created_at,
-                    score: m.score,
-                })
-                .collect(),
-            total: response.total,
-        })
-    }
-
-    async fn add_memory(
-        &self,
-        content: &str,
-        category: Option<&str>,
-        importance: Option<u8>,
-    ) -> Result<String> {
-        self.client
-            .ensure_ready_with_recovery()
-            .await
-            .context("runner readiness")?;
-        let response = self
-            .client
-            .add_memory(content, category.map(String::from), importance)
-            .await
-            .context("runner add_memory")?;
-
-        Ok(response.memory_id)
-    }
-
-    async fn delete_memory(&self, memory_id: &str) -> Result<()> {
-        self.client
-            .ensure_ready_with_recovery()
-            .await
-            .context("runner readiness")?;
-        self.client
-            .delete_memory(memory_id)
-            .await
-            .context("runner delete_memory")?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -392,8 +328,7 @@ mod tests {
         DirEntry, DirectoryCreatedResponse, DirectoryListingResponse, FileContentResponse,
         FileStatResponse, FileWrittenResponse, GetSessionRequest, ListDirectoryRequest,
         MainChatMessage, MainChatMessagesResponse, MainChatSessionInfo,
-        MainChatSessionListResponse, MemoryAddedResponse, MemoryDeletedResponse, MemoryEntry,
-        MemorySearchResultsResponse, PathDeletedResponse, RUNNER_WIRE_VERSION,
+        MainChatSessionListResponse, PathDeletedResponse, RUNNER_WIRE_VERSION,
         RunnerCapabilitiesResponse, RunnerFeatureFlags, RunnerRequest, RunnerResponse, SessionInfo,
         SessionListResponse, SessionResponse, SessionStartedResponse, SessionStoppedResponse,
         StartSessionRequest as RunnerStartSessionRequest, StatRequest, StopSessionRequest,
@@ -544,30 +479,6 @@ mod tests {
                             path: req.path,
                         })
                     }
-                    RunnerRequest::SearchMemories(req) => {
-                        RunnerResponse::MemorySearchResults(MemorySearchResultsResponse {
-                            query: req.query,
-                            memories: vec![MemoryEntry {
-                                id: "mem-1".to_string(),
-                                content: "runner memory".to_string(),
-                                category: Some("backend".to_string()),
-                                importance: Some(7),
-                                created_at: "2026-03-17T00:00:00Z".to_string(),
-                                score: Some(0.99),
-                            }],
-                            total: 1,
-                        })
-                    }
-                    RunnerRequest::AddMemory(_) => {
-                        RunnerResponse::MemoryAdded(MemoryAddedResponse {
-                            memory_id: "mem-1".to_string(),
-                        })
-                    }
-                    RunnerRequest::DeleteMemory(req) => {
-                        RunnerResponse::MemoryDeleted(MemoryDeletedResponse {
-                            memory_id: req.memory_id,
-                        })
-                    }
                     RunnerRequest::ListMainChatSessions => {
                         RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
                             sessions: vec![MainChatSessionInfo {
@@ -639,7 +550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_file_and_memory_ops_via_user_plane() {
+    async fn integration_file_ops_via_user_plane() {
         let temp = tempdir().expect("tempdir");
         let socket_path = temp.path().join("oqto-runner.sock");
         let server = spawn_mock_runner(socket_path.clone()).await;
@@ -674,20 +585,6 @@ mod tests {
         up.delete_path(Path::new("/tmp/workspace/dir"), true)
             .await
             .expect("delete");
-
-        let memory = up
-            .search_memories("runner", 5, Some("backend"))
-            .await
-            .expect("search memories");
-        assert_eq!(memory.total, 1);
-
-        let memory_id = up
-            .add_memory("runner memory", Some("backend"), Some(7))
-            .await
-            .expect("add memory");
-        assert_eq!(memory_id, "mem-1");
-
-        up.delete_memory("mem-1").await.expect("delete memory");
 
         server.abort();
     }

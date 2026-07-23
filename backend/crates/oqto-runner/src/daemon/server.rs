@@ -1783,26 +1783,134 @@ impl Runner {
     // Memory Operations (user-plane)
     // ========================================================================
 
-    async fn search_memories(&self, req: SearchMemoriesRequest) -> RunnerResponse {
-        // TODO: Search mmry database
-        let _ = req;
-        RunnerResponse::MemorySearchResults(MemorySearchResultsResponse {
-            query: req.query,
-            memories: Vec::new(),
-            total: 0,
+    async fn list_memories(&self, req: ListMemoriesRequest) -> RunnerResponse {
+        let (offset, limit) = (req.offset, req.limit);
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<(Vec<MemoryEntry>, usize)> {
+            let file = open_workspace_memory(&req.workspace_path)?;
+            let all = file.active_memories()?;
+            let total = all.len();
+            let window = all
+                .into_iter()
+                .skip(req.offset)
+                .take(req.limit)
+                .map(|m| memory_entry_to_wire(m, None))
+                .collect();
+            Ok((window, total))
         })
+        .await
+        {
+            Ok(Ok((memories, total))) => RunnerResponse::MemoryList(MemoryListResponse {
+                memories,
+                total,
+                offset,
+                limit,
+            }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("list memories failed: {e}")),
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("list memories join error: {e}"),
+            ),
+        }
+    }
+
+    async fn search_memories(&self, req: SearchMemoriesRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<(String, Vec<MemoryEntry>)> {
+            let file = open_workspace_memory(&req.workspace_path)?;
+            let hits = file.search(&req.query, req.limit)?;
+            let memories = hits
+                .into_iter()
+                .map(|h| memory_entry_to_wire(h.memory, Some(h.score as f64)))
+                .collect();
+            Ok((req.query, memories))
+        })
+        .await
+        {
+            Ok(Ok((query, memories))) => {
+                let total = memories.len();
+                RunnerResponse::MemorySearchResults(MemorySearchResultsResponse {
+                    query,
+                    memories,
+                    total,
+                })
+            }
+            Ok(Err(e)) => {
+                error_response(ErrorCode::Internal, format!("search memories failed: {e}"))
+            }
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("search memories join error: {e}"),
+            ),
+        }
     }
 
     async fn add_memory(&self, req: AddMemoryRequest) -> RunnerResponse {
-        // TODO: Add to mmry database
-        let _ = req;
-        error_response(ErrorCode::Internal, "Memory operations not yet implemented")
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<MemoryEntry> {
+            let file = open_workspace_memory(&req.workspace_path)?;
+            let mut event = mmry_core::memory_file::MemoryEvent::add(
+                req.content,
+                parse_wire_memory_type(req.memory_type.as_deref()),
+                req.tags,
+                &mmry_core::agent_ctx::AgentCtx::from_env(),
+            );
+            apply_memory_metadata(&mut event, req.category, req.importance);
+            file.append(&event)?;
+            find_wire_memory(&file, &event.memory_id)
+        })
+        .await
+        {
+            Ok(Ok(memory)) => RunnerResponse::MemoryAdded(MemoryAddedResponse { memory }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("add memory failed: {e}")),
+            Err(e) => error_response(ErrorCode::Internal, format!("add memory join error: {e}")),
+        }
+    }
+
+    async fn update_memory(&self, req: UpdateMemoryRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<MemoryEntry> {
+            let file = open_workspace_memory(&req.workspace_path)?;
+            let ctx = mmry_core::agent_ctx::AgentCtx::from_env();
+            file.append(&mmry_core::memory_file::MemoryEvent::deprecate(
+                req.memory_id,
+                &ctx,
+            ))?;
+            let mut event = mmry_core::memory_file::MemoryEvent::add(
+                req.content,
+                parse_wire_memory_type(req.memory_type.as_deref()),
+                req.tags,
+                &ctx,
+            );
+            apply_memory_metadata(&mut event, req.category, req.importance);
+            file.append(&event)?;
+            find_wire_memory(&file, &event.memory_id)
+        })
+        .await
+        {
+            Ok(Ok(memory)) => RunnerResponse::MemoryUpdated(MemoryAddedResponse { memory }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("update memory failed: {e}")),
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("update memory join error: {e}"),
+            ),
+        }
     }
 
     async fn delete_memory(&self, req: DeleteMemoryRequest) -> RunnerResponse {
-        // TODO: Delete from mmry database
-        let _ = req;
-        error_response(ErrorCode::Internal, "Memory operations not yet implemented")
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let file = open_workspace_memory(&req.workspace_path)?;
+            file.append(&mmry_core::memory_file::MemoryEvent::deprecate(
+                req.memory_id.clone(),
+                &mmry_core::agent_ctx::AgentCtx::from_env(),
+            ))?;
+            Ok(req.memory_id)
+        })
+        .await
+        {
+            Ok(Ok(memory_id)) => RunnerResponse::MemoryDeleted(MemoryDeletedResponse { memory_id }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("delete memory failed: {e}")),
+            Err(e) => error_response(
+                ErrorCode::Internal,
+                format!("delete memory join error: {e}"),
+            ),
+        }
     }
 
     // ========================================================================
@@ -3906,6 +4014,79 @@ fn sd_notify_ready() {
 /// via `trx init --prefix X` before any oqto-side trx call.
 const TRX_DEFAULT_PREFIX: &str = "trx";
 
+/// Open (init-if-missing) the workspace `.mmry/mmry.jsonl` memory ledger.
+fn open_workspace_memory(
+    workspace_path: &std::path::Path,
+) -> anyhow::Result<mmry_core::memory_file::MemoryFile> {
+    if workspace_path.as_os_str().is_empty() {
+        anyhow::bail!("empty workspace path");
+    }
+    let file = mmry_core::memory_file::MemoryFile::open_workspace(workspace_path);
+    file.init(false)
+        .map_err(|e| anyhow::anyhow!("init memory file: {e}"))?;
+    Ok(file)
+}
+
+fn parse_wire_memory_type(memory_type: Option<&str>) -> mmry_core::memory::MemoryType {
+    match memory_type.unwrap_or("semantic").to_lowercase().as_str() {
+        "episodic" => mmry_core::memory::MemoryType::Episodic,
+        "procedural" => mmry_core::memory::MemoryType::Procedural,
+        _ => mmry_core::memory::MemoryType::Semantic,
+    }
+}
+
+fn apply_memory_metadata(
+    event: &mut mmry_core::memory_file::MemoryEvent,
+    category: Option<String>,
+    importance: Option<u8>,
+) {
+    if let Some(category) = category {
+        event.metadata["category"] = serde_json::Value::String(category);
+    }
+    if let Some(importance) = importance {
+        event.metadata["importance"] = serde_json::Value::Number(importance.into());
+    }
+}
+
+fn memory_entry_to_wire(
+    entry: mmry_core::memory_file::MemoryEntry,
+    score: Option<f64>,
+) -> MemoryEntry {
+    let category = entry
+        .metadata
+        .get("category")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let importance = entry
+        .metadata
+        .get("importance")
+        .and_then(serde_json::Value::as_u64)
+        .map(|v| v as u8);
+    MemoryEntry {
+        id: entry.memory_id,
+        content: entry.content,
+        category,
+        importance,
+        memory_type: format!("{:?}", entry.memory_type).to_lowercase(),
+        tags: entry.tags,
+        metadata: entry.metadata,
+        created_at: entry.created_at.to_rfc3339(),
+        updated_at: entry.updated_at.to_rfc3339(),
+        score,
+    }
+}
+
+fn find_wire_memory(
+    file: &mmry_core::memory_file::MemoryFile,
+    memory_id: &str,
+) -> anyhow::Result<MemoryEntry> {
+    file.active_memories()?
+        .into_iter()
+        .find(|m| m.memory_id == memory_id)
+        .map(|m| memory_entry_to_wire(m, None))
+        .ok_or_else(|| anyhow::anyhow!("memory {memory_id} not found after write"))
+}
+
 /// Open the trx store at `root`, auto-initializing when not yet initialized.
 fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::Store> {
     let store_root = find_trx_root(root).unwrap_or_else(|| root.to_path_buf());
@@ -4049,6 +4230,51 @@ mod tests {
                 tool_title: None,
             }],
         }
+    }
+
+    #[test]
+    fn workspace_memory_round_trips_through_ledger_helpers() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let ws = temp.path();
+
+        let file = open_workspace_memory(ws)?;
+        let ctx = mmry_core::agent_ctx::AgentCtx::from_env();
+        let mut event = mmry_core::memory_file::MemoryEvent::add(
+            "runner memory".to_string(),
+            parse_wire_memory_type(Some("semantic")),
+            vec!["backend".to_string()],
+            &ctx,
+        );
+        apply_memory_metadata(&mut event, Some("architecture".to_string()), Some(7));
+        file.append(&event)?;
+        let memory_id = event.memory_id.clone();
+
+        // Reopen to prove durability across handles.
+        let reopened = open_workspace_memory(ws)?;
+        let wire = find_wire_memory(&reopened, &memory_id)?;
+        assert_eq!(wire.content, "runner memory");
+        assert_eq!(wire.category.as_deref(), Some("architecture"));
+        assert_eq!(wire.importance, Some(7));
+        assert_eq!(wire.memory_type, "semantic");
+        assert_eq!(wire.tags, vec!["backend".to_string()]);
+
+        // Search finds it.
+        let hits = reopened.search("runner", 10)?;
+        assert!(hits.iter().any(|h| h.memory.memory_id == memory_id));
+
+        // Deprecation removes it from the active set.
+        reopened.append(&mmry_core::memory_file::MemoryEvent::deprecate(
+            memory_id.clone(),
+            &ctx,
+        ))?;
+        let after = open_workspace_memory(ws)?;
+        assert!(
+            after
+                .active_memories()?
+                .iter()
+                .all(|m| m.memory_id != memory_id)
+        );
+        Ok(())
     }
 
     #[test]

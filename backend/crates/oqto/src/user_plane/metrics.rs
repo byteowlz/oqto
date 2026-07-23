@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    DirEntry, FileContent, FileStat, MainChatMessage, MainChatSessionInfo, MemorySearchResults,
-    SessionInfo, StartSessionRequest, StartSessionResponse, UserPlane,
+    DirEntry, FileContent, FileStat, MainChatMessage, MainChatSessionInfo, SessionInfo,
+    StartSessionRequest, StartSessionResponse, UserPlane,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -207,36 +207,5 @@ impl UserPlane for MeteredUserPlane {
             self.inner.get_main_chat_messages(session_id, limit),
         )
         .await
-    }
-
-    async fn search_memories(
-        &self,
-        query: &str,
-        limit: usize,
-        category: Option<&str>,
-    ) -> Result<MemorySearchResults> {
-        self.metered(
-            "search_memories",
-            self.inner.search_memories(query, limit, category),
-        )
-        .await
-    }
-
-    async fn add_memory(
-        &self,
-        content: &str,
-        category: Option<&str>,
-        importance: Option<u8>,
-    ) -> Result<String> {
-        self.metered(
-            "add_memory",
-            self.inner.add_memory(content, category, importance),
-        )
-        .await
-    }
-
-    async fn delete_memory(&self, memory_id: &str) -> Result<()> {
-        self.metered("delete_memory", self.inner.delete_memory(memory_id))
-            .await
     }
 }

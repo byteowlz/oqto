@@ -41,8 +41,10 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
             super::sessions::handle_request(runner, req).await
         }
 
-        req @ (RunnerRequest::SearchMemories(_)
+        req @ (RunnerRequest::ListMemories(_)
+        | RunnerRequest::SearchMemories(_)
         | RunnerRequest::AddMemory(_)
+        | RunnerRequest::UpdateMemory(_)
         | RunnerRequest::DeleteMemory(_)) => super::memories::handle_request(runner, req).await,
 
         req @ (RunnerRequest::TrxList(_)
