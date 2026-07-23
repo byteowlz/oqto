@@ -534,7 +534,6 @@ struct AppConfig {
     container: ContainerRuntimeConfig,
     local: LocalModeConfig,
     eavs: Option<EavsConfig>,
-    mmry: MmryConfig,
     voice: VoiceConfig,
     sessions: SessionUiConfig,
     auth: auth::AuthConfig,
@@ -652,7 +651,6 @@ impl Default for AppConfig {
             container: ContainerRuntimeConfig::default(),
             local: LocalModeConfig::default(),
             eavs: None,
-            mmry: MmryConfig::default(),
             sldr: SldrConfig::default(),
             voice: VoiceConfig::default(),
             sessions: SessionUiConfig::default(),
@@ -842,63 +840,6 @@ impl Default for SessionUiConfig {
             idle_timeout_minutes: session::SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
             chat_prefetch_limit: 8,
-        }
-    }
-}
-
-/// mmry (memory system) configuration.
-///
-/// Supports two modes:
-/// 1. Single-user local: Proxy to user's existing mmry service (no process management)
-/// 2. Multi-user: Per-user mmry instances with isolated databases and ports
-///
-/// In multi-user mode, a hub-spoke architecture is used where a central host service
-/// handles embeddings/reranking while per-user lean instances maintain isolated databases.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MmryConfig {
-    /// Whether mmry integration is enabled.
-    pub enabled: bool,
-    /// URL of the user's local mmry service for single-user mode.
-    /// In single-user local mode, we proxy directly to this URL.
-    /// Default: "http://localhost:8081"
-    pub local_service_url: String,
-    /// URL of the central mmry service for embeddings in multi-user mode.
-    /// This service handles heavy embedding/reranking operations for all users.
-    /// Per-user instances delegate embeddings to this service.
-    pub host_service_url: String,
-    /// API key for authenticating with the host mmry service.
-    pub host_api_key: Option<String>,
-    /// Default embedding model name.
-    pub default_model: String,
-    /// Embedding dimension (must match the model).
-    pub dimension: u16,
-    /// Path to mmry binary (for spawning per-user instances in multi-user mode).
-    pub binary: String,
-    /// URL for containers to reach the host mmry service.
-    /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
-    pub container_url: Option<String>,
-
-    /// Dedicated base port for per-user mmry instances (local multi-user mode).
-    pub user_base_port: u16,
-    /// Size of the per-user mmry port range (local multi-user mode).
-    pub user_port_range: u16,
-}
-
-impl Default for MmryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            local_service_url: "http://localhost:8081".to_string(),
-            host_service_url: "http://localhost:8081".to_string(),
-            host_api_key: None,
-            default_model: "nomic-ai/nomic-embed-text-v1.5".to_string(),
-            dimension: 768,
-            binary: "mmry".to_string(),
-            container_url: None,
-
-            user_base_port: 48_000,
-            user_port_range: 1_000,
         }
     }
 }
@@ -2267,8 +2208,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         runtime_mode,
         local_config: local_runtime_config,
         single_user,
-        mmry_enabled: ctx.config.mmry.enabled,
-        mmry_container_url: ctx.config.mmry.container_url.clone(),
         max_concurrent_sessions: ctx.config.sessions.max_concurrent_sessions,
         idle_timeout_minutes: ctx.config.sessions.idle_timeout_minutes,
         idle_check_interval_seconds: ctx.config.sessions.idle_check_interval_seconds,
@@ -2353,7 +2292,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     // Create session service based on runtime mode
-    let mut session_service = if local_mode {
+    let session_service = if local_mode {
         let Some(local_rt) = local_runtime else {
             anyhow::bail!("local runtime should be set in local mode");
         };
@@ -2391,30 +2330,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     let mut sldr_users: Option<local::UserSldrManager> = None;
-
-    // Enable per-user mmry instances in local multi-user mode.
-    if local_mode
-        && !single_user
-        && ctx.config.mmry.enabled
-        && let Some(ref local_cfg) = session_config.local_config
-    {
-        if !local_cfg.linux_users.enabled {
-            warn!("mmry per-user instances require local.linux_users.enabled=true (skipping)");
-        } else {
-            let linux_users = local_cfg.linux_users.clone();
-            let user_mmry = local::UserMmryManager::new(
-                local::UserMmryConfig {
-                    mmry_binary: ctx.config.mmry.binary.clone(),
-                    base_port: ctx.config.mmry.user_base_port,
-                    port_range: ctx.config.mmry.user_port_range,
-                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
-                },
-                move |user_id| linux_users.linux_username(user_id),
-                user_repo_for_services.clone(),
-            );
-            session_service = session_service.with_user_mmry(user_mmry);
-        }
-    }
 
     // Enable per-user sldr instances in local multi-user mode.
     if local_mode
@@ -2468,19 +2383,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Clone session_service before creating state for shutdown handler
     let session_service_for_shutdown = session_service.clone();
-
-    // Build mmry state based on configuration
-    let mmry_state = api::MmryState {
-        enabled: ctx.config.mmry.enabled,
-        single_user,
-        local_service_url: ctx.config.mmry.local_service_url.clone(),
-        host_service_url: ctx.config.mmry.host_service_url.clone(),
-        host_api_key: ctx.config.mmry.host_api_key.clone(),
-        default_model: ctx.config.mmry.default_model.clone(),
-        dimension: ctx.config.mmry.dimension,
-        user_base_port: ctx.config.mmry.user_base_port,
-        user_port_range: ctx.config.mmry.user_port_range,
-    };
 
     // Build voice state based on configuration
     let voice_state = api::VoiceState {
@@ -2540,32 +2442,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let settings_oqto = settings::SettingsService::new(oqto_schema, oqto_config_dir, "config.toml")
         .context("Failed to create oqto settings service")?;
 
-    // Create mmry settings service if mmry is enabled
-    let settings_mmry = if ctx.config.mmry.enabled {
-        // mmry config is at ~/.config/mmry/config.toml
-        let mmry_config_dir = default_config_dir()?
-            .parent()
-            .map(|p| p.join("mmry"))
-            .unwrap_or_else(|| PathBuf::from("~/.config/mmry"));
-
-        // Try to load mmry schema if it exists, otherwise create minimal schema
-        let mmry_schema = std::fs::read_to_string(mmry_config_dir.join("config.schema.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| {
-                serde_json::json!({
-                    "$schema": "http://json-schema.org/draft-07/schema#",
-                    "title": "mmry Configuration",
-                    "type": "object",
-                    "properties": {}
-                })
-            });
-
-        settings::SettingsService::new(mmry_schema, mmry_config_dir, "config.toml").ok()
-    } else {
-        None
-    };
-
     // Create Pi agent settings services (settings.json + models.json)
     // Schemas are embedded at compile time so they work on any deployment.
     let pi_settings_schema: serde_json::Value =
@@ -2598,13 +2474,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         invite_repo,
         api_key_repo,
         auth_state,
-        mmry_state,
         voice_state,
         session_ui_state,
         templates_state.clone(),
         session_target_repo,
         max_proxy_body_bytes,
     );
+    state = state.with_single_user(single_user);
     state = state.with_feedback_config(ctx.config.feedback.clone());
     let placement_store =
         oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
@@ -2623,9 +2499,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Add settings services to state
     state = state.with_settings_oqto(settings_oqto);
-    if let Some(mmry_settings) = settings_mmry {
-        state = state.with_settings_mmry(mmry_settings);
-    }
     if let Some(pi_settings) = settings_pi_agent {
         state = state.with_settings_pi_agent(pi_settings);
     }

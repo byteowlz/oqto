@@ -283,7 +283,6 @@ pub struct SyncUserConfigResult {
     pub linux_username: Option<String>,
     pub runner_configured: bool,
     pub shell_configured: bool,
-    pub mmry_configured: bool,
     pub eavs_configured: bool,
     pub error: Option<String>,
 }
@@ -324,7 +323,6 @@ pub async fn sync_user_configs(
             linux_username: user.linux_username.clone(),
             runner_configured: false,
             shell_configured: false,
-            mmry_configured: false,
             eavs_configured: false,
             error: None,
         };
@@ -627,7 +625,7 @@ pub async fn update_user(
 /// Delete a user (admin only).
 ///
 /// In multi-user mode, also deletes the Linux user via oqto-usermgr.
-/// This stops user services (runner, mmry), disables linger,
+/// This stops user services (runner), disables linger,
 /// removes the home directory, and cleans up the runner socket.
 #[instrument(skip(state, _user))]
 pub async fn delete_user(
@@ -1294,7 +1292,7 @@ pub async fn upsert_eavs_provider(
         .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
 
     // Restart eavs service
-    restart_eavs_service(state.mmry.single_user).await?;
+    restart_eavs_service(state.single_user).await?;
 
     Ok(Json(
         serde_json::json!({"ok": true, "provider": request.name}),
@@ -1339,7 +1337,7 @@ pub async fn delete_eavs_provider(
     }
 
     // Restart eavs service
-    restart_eavs_service(state.mmry.single_user).await?;
+    restart_eavs_service(state.single_user).await?;
 
     Ok(Json(serde_json::json!({"ok": true, "deleted": name})))
 }

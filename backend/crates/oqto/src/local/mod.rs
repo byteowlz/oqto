@@ -9,8 +9,6 @@ pub mod linux_users {
     pub use oqto_host::linux_users::*;
 }
 
-mod user_mmry;
 mod user_sldr;
 
-pub use user_mmry::{UserMmryConfig, UserMmryManager};
 pub use user_sldr::{UserSldrConfig, UserSldrManager};

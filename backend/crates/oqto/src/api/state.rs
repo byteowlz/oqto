@@ -31,47 +31,6 @@ use crate::templates::OnboardingTemplatesService;
 use crate::user::UserService;
 use crate::ws::WsHub;
 
-/// Mmry configuration for the API layer.
-#[derive(Clone, Debug)]
-pub struct MmryState {
-    /// Whether mmry integration is enabled.
-    pub enabled: bool,
-    /// Whether we're in single-user mode (proxy to local service).
-    pub single_user: bool,
-    /// URL of the local mmry service (for single-user mode).
-    pub local_service_url: String,
-    /// URL of the central mmry service (for multi-user mode).
-    pub host_service_url: String,
-    /// API key for authenticating with host mmry (optional).
-    pub host_api_key: Option<String>,
-    /// Default embedding model name for per-user config.
-    pub default_model: String,
-    /// Embedding dimension for per-user config.
-    pub dimension: u16,
-
-    /// Dedicated base port for per-user mmry instances (local multi-user mode).
-    pub user_base_port: u16,
-    /// Size of the per-user mmry port range (local multi-user mode).
-    pub user_port_range: u16,
-}
-
-impl Default for MmryState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            single_user: true,
-            local_service_url: "http://localhost:8081".to_string(),
-            host_service_url: "http://localhost:8081".to_string(),
-            host_api_key: None,
-            default_model: "Xenova/all-MiniLM-L6-v2".to_string(),
-            dimension: 384,
-
-            user_base_port: 48_000,
-            user_port_range: 1_000,
-        }
-    }
-}
-
 /// Voice mode configuration for the API layer.
 ///
 /// Frontend clients connect to STT/TTS through backplane WebSocket proxies.
@@ -286,9 +245,9 @@ pub struct AppState {
     pub auth: AuthState,
     /// HTTP client for proxying requests to per-session services.
     pub http_client: Client<HttpConnector, Body>,
+    /// Whether the deployment is single-user (local) rather than multi-user.
+    pub single_user: bool,
 
-    /// Mmry (memory service) configuration.
-    pub mmry: MmryState,
     /// Voice mode configuration.
     pub voice: VoiceState,
     /// Session UX configuration.
@@ -299,8 +258,6 @@ pub struct AppState {
     pub sldr_users: Option<Arc<UserSldrManager>>,
     /// Settings service for oqto config.
     pub settings_oqto: Option<Arc<SettingsService>>,
-    /// Settings service for mmry config.
-    pub settings_mmry: Option<Arc<SettingsService>>,
     /// Settings service for Pi agent settings.json.
     pub settings_pi_agent: Option<Arc<SettingsService>>,
     /// Settings service for Pi agent models.json.
@@ -374,7 +331,6 @@ impl AppState {
         invites: InviteCodeRepository,
         api_keys: ApiKeyRepository,
         auth: AuthState,
-        mmry: MmryState,
         voice: VoiceState,
         session_ui: SessionUiState,
         templates: TemplatesState,
@@ -391,13 +347,12 @@ impl AppState {
             api_keys: Arc::new(api_keys),
             auth,
             http_client,
-            mmry,
+            single_user: false,
             voice,
             session_ui,
             templates,
             sldr_users: None,
             settings_oqto: None,
-            settings_mmry: None,
             settings_pi_agent: None,
             settings_pi_models: None,
             onboarding: None,
@@ -458,9 +413,9 @@ impl AppState {
         self
     }
 
-    /// Set the mmry settings service.
-    pub fn with_settings_mmry(mut self, service: SettingsService) -> Self {
-        self.settings_mmry = Some(Arc::new(service));
+    /// Set whether this is a single-user (local) deployment.
+    pub fn with_single_user(mut self, single_user: bool) -> Self {
+        self.single_user = single_user;
         self
     }
 

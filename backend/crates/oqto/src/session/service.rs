@@ -41,7 +41,7 @@ impl BrowserAction {
 }
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
-use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
+use crate::local::{LocalRuntime, LocalRuntimeConfig};
 use crate::wordlist;
 use oqto_runner::client::RunnerClient;
 
@@ -176,11 +176,6 @@ pub struct SessionServiceConfig {
     /// Enable single-user mode. When true, the platform operates with a single user
     /// and uses simplified paths without user_id subdirectories.
     pub single_user: bool,
-    /// Whether mmry integration is enabled.
-    pub mmry_enabled: bool,
-    /// URL for containers to reach the host mmry service.
-    /// e.g., "http://host.docker.internal:8081" or "http://host.containers.internal:8081"
-    pub mmry_container_url: Option<String>,
     /// Maximum concurrent running sessions per user.
     pub max_concurrent_sessions: i64,
     /// Idle timeout in minutes before stopping a session.
@@ -218,8 +213,6 @@ impl Default for SessionServiceConfig {
             runtime_mode: RuntimeMode::Container,
             local_config: None,
             single_user: false,
-            mmry_enabled: false,
-            mmry_container_url: None,
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
@@ -331,10 +324,6 @@ impl<'a> UserSessionService<'a> {
         self.svc.check_all_for_updates_for_user(self.user_id).await
     }
 
-    pub async fn ensure_user_mmry_pinned(&self) -> Result<u16> {
-        self.svc.ensure_user_mmry_pinned(self.user_id).await
-    }
-
     pub async fn validate_workspace_path(&self, path: &str) -> Result<std::path::PathBuf> {
         self.svc.resolve_workspace_path(self.user_id, path).await
     }
@@ -376,7 +365,6 @@ pub struct SessionService {
     readiness: Arc<dyn SessionReadiness>,
     agent_browser: AgentBrowserManager,
     config: SessionServiceConfig,
-    user_mmry: Option<Arc<UserMmryManager>>,
 }
 
 impl SessionService {
@@ -406,7 +394,6 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
-            user_mmry: None,
         }
     }
 
@@ -428,7 +415,6 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
-            user_mmry: None,
         }
     }
 
@@ -453,7 +439,6 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
-            user_mmry: None,
         }
     }
 
@@ -476,14 +461,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             config,
-            user_mmry: None,
         }
-    }
-
-    /// Enable per-user mmry instances (local multi-user mode).
-    pub fn with_user_mmry(mut self, manager: UserMmryManager) -> Self {
-        self.user_mmry = Some(Arc::new(manager));
-        self
     }
 
     /// Get runner client for a user.
@@ -518,13 +496,6 @@ impl SessionService {
                 RunnerClient::for_user(&linux_user)
             }
         }
-    }
-
-    async fn ensure_user_mmry_pinned(&self, user_id: &str) -> Result<u16> {
-        let Some(ref user_mmry) = self.user_mmry else {
-            anyhow::bail!("UserMmryManager not configured");
-        };
-        user_mmry.pin_user_mmry(user_id).await
     }
 
     async fn stop_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
@@ -1061,21 +1032,13 @@ impl SessionService {
     /// Maximum number of sub-agents per session.
     const DEFAULT_MAX_AGENTS: i64 = 10;
 
-    fn required_ports_for_range(
-        base_port: i64,
-        max_agents: i64,
-        include_mmry_port: bool,
-    ) -> Vec<u16> {
-        let mut ports =
-            Vec::with_capacity((3 + max_agents + if include_mmry_port { 1 } else { 0 }) as usize);
+    fn required_ports_for_range(base_port: i64, max_agents: i64) -> Vec<u16> {
+        let mut ports = Vec::with_capacity((3 + max_agents) as usize);
         ports.push(base_port as u16);
         ports.push((base_port + 1) as u16);
         ports.push((base_port + 2) as u16);
 
-        let agent_base = base_port + if include_mmry_port { 4 } else { 3 };
-        if include_mmry_port {
-            ports.push((base_port + 3) as u16);
-        }
+        let agent_base = base_port + 3;
         for i in 0..max_agents {
             ports.push((agent_base + i) as u16);
         }
@@ -1086,13 +1049,8 @@ impl SessionService {
         &self,
         start_port: i64,
         max_agents: i64,
-        include_mmry_port: bool,
     ) -> Result<i64> {
-        let ports_per_session = if include_mmry_port {
-            4 + max_agents
-        } else {
-            3 + max_agents
-        };
+        let ports_per_session = 3 + max_agents;
 
         let mut search_start = start_port;
         for _ in 0..32 {
@@ -1100,7 +1058,7 @@ impl SessionService {
                 .repo
                 .find_free_port_range_with_agents(search_start, max_agents)
                 .await?;
-            let required = Self::required_ports_for_range(candidate, max_agents, include_mmry_port);
+            let required = Self::required_ports_for_range(candidate, max_agents);
             if crate::local::are_ports_available(&required) {
                 return Ok(candidate);
             }
@@ -1130,36 +1088,21 @@ impl SessionService {
         let container_name = format!("{}{}", CONTAINER_NAME_PREFIX, &session_id[..8]);
 
         // Find available ports (agent, fileserver, ttyd, + sub-agent ports). On retry, offset the search window.
-        // Container mode may also reserve a per-session mmry port when enabled.
         // Port layout:
         //   base+0: agent (reserved for future use)
         //   base+1: fileserver
         //   base+2: ttyd
-        //   base+3+: sub-agents (local mode)
-        //   base+3: mmry, base+4+: sub-agents (container mode, if mmry enabled)
+        //   base+3+: sub-agents
         let max_agents = Self::DEFAULT_MAX_AGENTS;
-        let include_mmry_port = self.config.runtime_mode == RuntimeMode::Container
-            && self.config.mmry_enabled
-            && !self.config.single_user;
-        let ports_per_session = if include_mmry_port {
-            4 + max_agents
-        } else {
-            3 + max_agents
-        };
+        let ports_per_session = 3 + max_agents;
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
         let base_port = self
-            .find_usable_port_range_with_agents(search_start, max_agents, include_mmry_port)
+            .find_usable_port_range_with_agents(search_start, max_agents)
             .await?;
         let agent_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
-        // mmry port is only allocated per-session for container mode.
-        // For local multi-user mode, mmry_port is assigned at session start from the per-user manager.
-        let (mmry_port, agent_base_port) = if include_mmry_port {
-            (Some(base_port + 3), Some(base_port + 4))
-        } else {
-            (None, Some(base_port + 3))
-        };
+        let agent_base_port = Some(base_port + 3);
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
             match self.create_eavs_key(&session_id).await {
@@ -1199,7 +1142,6 @@ impl SessionService {
             eavs_key_id,
             eavs_key_hash,
             eavs_virtual_key: None,
-            mmry_port,
             status: SessionStatus::Pending,
             runtime_mode: self.config.runtime_mode,
             created_at: now.clone(),
@@ -1378,20 +1320,6 @@ impl SessionService {
             config = config.env("EAVS_API_KEY", virtual_key);
         }
 
-        // Pass mmry config to container if enabled
-        if self.config.mmry_enabled {
-            // Internal port is fixed at 41823 (set in Dockerfile)
-            config = config.env("MMRY_PORT", "41823");
-            if let Some(ref mmry_url) = self.config.mmry_container_url {
-                config = config.env("MMRY_HOST_URL", mmry_url);
-            }
-            // Map mmry port if allocated (multi-user mode)
-            if let Some(mmry_port) = session.mmry_port {
-                config = config.port(mmry_port as u16, 41823);
-                info!("Mapped mmry port: external {} -> internal 41823", mmry_port);
-            }
-        }
-
         // Pass pi-bridge config to container if enabled
         // pi-bridge runs inside the container and provides HTTP/WS access to Pi
         if self.config.pi_bridge_enabled {
@@ -1469,34 +1397,6 @@ impl SessionService {
         let agent_port = session.agent_port as u16;
         let fileserver_port = session.fileserver_port as u16;
         let ttyd_port = session.ttyd_port as u16;
-
-        // Ensure per-user mmry is running (local multi-user mode).
-        //
-        // This is best-effort: if mmry fails to start, we still want fileserver/ttyd
-        // to be usable. The mmry proxy will return 503 for memory endpoints until mmry is up.
-        if self.config.mmry_enabled && !self.config.single_user {
-            if let Some(ref user_mmry) = self.user_mmry {
-                match user_mmry.ensure_user_mmry(&session.user_id).await {
-                    Ok(mmry_port) => {
-                        let _ = self
-                            .repo
-                            .set_mmry_port(&session.id, Some(mmry_port as i64))
-                            .await;
-                    }
-                    Err(err) => {
-                        warn!(
-                            "Failed to ensure per-user mmry for user {}: {:?}",
-                            session.user_id, err
-                        );
-                        let _ = self.repo.set_mmry_port(&session.id, None).await;
-                    }
-                }
-            } else {
-                warn!(
-                    "mmry enabled in local multi-user mode but UserMmryManager is not configured"
-                );
-            }
-        }
 
         // Build environment variables for the processes.
         // This is the SINGLE authority for what env vars the agent sees.
@@ -1656,18 +1556,6 @@ impl SessionService {
                         warn!("Failed to get runner for user {}: {:?}", session.user_id, e);
                     }
                 }
-
-                // Release per-user mmry after stopping session processes.
-                if self.config.mmry_enabled
-                    && !self.config.single_user
-                    && let Some(ref user_mmry) = self.user_mmry
-                    && let Err(e) = user_mmry.release_user_mmry(&session.user_id).await
-                {
-                    warn!(
-                        "Failed to release per-user mmry for user {}: {:?}",
-                        session.user_id, e
-                    );
-                }
             }
         }
 
@@ -1757,29 +1645,11 @@ impl SessionService {
     async fn reassign_ports_for_resume(&self, session: &mut Session) -> Result<()> {
         let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
 
-        // Container mode uses a per-session mmry port (base+3) when enabled.
-        // Local mode uses a per-user mmry port that must NOT be reassigned here.
-        let include_mmry_port = session.runtime_mode == RuntimeMode::Container
-            && self.config.mmry_enabled
-            && !self.config.single_user
-            && session.mmry_port.is_some();
-
         let base_port = self
-            .find_usable_port_range_with_agents(
-                self.config.base_port,
-                max_agents,
-                include_mmry_port,
-            )
+            .find_usable_port_range_with_agents(self.config.base_port, max_agents)
             .await?;
 
-        let new_mmry_port = if include_mmry_port {
-            Some(base_port + 3)
-        } else {
-            session.mmry_port
-        };
-        let new_agent_base_port = session
-            .agent_base_port
-            .map(|_| base_port + if include_mmry_port { 4 } else { 3 });
+        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 3);
 
         self.repo
             .update_ports(
@@ -1787,7 +1657,6 @@ impl SessionService {
                 base_port,
                 base_port + 1,
                 base_port + 2,
-                new_mmry_port,
                 new_agent_base_port,
             )
             .await?;
@@ -1795,7 +1664,6 @@ impl SessionService {
         session.agent_port = base_port;
         session.fileserver_port = base_port + 1;
         session.ttyd_port = base_port + 2;
-        session.mmry_port = new_mmry_port;
         session.agent_base_port = new_agent_base_port;
 
         info!(
@@ -1878,16 +1746,11 @@ impl SessionService {
                     );
                     let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
                     let base_port = self
-                        .find_usable_port_range_with_agents(
-                            self.config.base_port,
-                            max_agents,
-                            false,
-                        )
+                        .find_usable_port_range_with_agents(self.config.base_port, max_agents)
                         .await?;
                     let new_agent_port = base_port as u16;
                     let new_fileserver_port = (base_port + 1) as u16;
                     let new_ttyd_port = (base_port + 2) as u16;
-                    let new_mmry_port = session.mmry_port;
                     let new_agent_base_port = session.agent_base_port.map(|_| base_port + 3);
 
                     self.repo
@@ -1896,7 +1759,6 @@ impl SessionService {
                             base_port,
                             base_port + 1,
                             base_port + 2,
-                            new_mmry_port,
                             new_agent_base_port,
                         )
                         .await?;
@@ -1915,7 +1777,6 @@ impl SessionService {
                     session.agent_port = base_port;
                     session.fileserver_port = base_port + 1;
                     session.ttyd_port = base_port + 2;
-                    session.mmry_port = new_mmry_port;
                     session.agent_base_port = new_agent_base_port;
                     agent_port = new_agent_port;
                     fileserver_port = new_fileserver_port;
@@ -3142,7 +3003,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Pending,
             runtime_mode: RuntimeMode::Local,
             created_at: "now".to_string(),
@@ -3369,8 +3229,6 @@ mod tests {
             runtime_mode: RuntimeMode::Container,
             local_config: None,
             single_user: false,
-            mmry_enabled: false,
-            mmry_container_url: None,
             max_concurrent_sessions: SessionService::DEFAULT_MAX_CONCURRENT_SESSIONS,
             idle_timeout_minutes: SessionService::DEFAULT_IDLE_TIMEOUT_MINUTES,
             idle_check_interval_seconds: 5 * 60,
@@ -3439,7 +3297,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Running,
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),
@@ -3780,7 +3637,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Stopped,
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),
@@ -3844,7 +3700,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Stopped,
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),
@@ -3899,7 +3754,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Running, // Already running!
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),
@@ -3971,7 +3825,6 @@ mod tests {
             eavs_key_id: None,
             eavs_key_hash: None,
             eavs_virtual_key: None,
-            mmry_port: None,
             status: SessionStatus::Stopped,
             runtime_mode: RuntimeMode::Container,
             created_at: Utc::now().to_rfc3339(),

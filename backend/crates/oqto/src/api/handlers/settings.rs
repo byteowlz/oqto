@@ -155,7 +155,6 @@ async fn resolve_settings_service(
 fn get_settings_service(state: &AppState, app: &str) -> ApiResult<Arc<SettingsService>> {
     match app {
         "oqto" => state.settings_oqto.as_ref().map(Arc::clone),
-        "mmry" => state.settings_mmry.as_ref().map(Arc::clone),
         "pi-agent" => state.settings_pi_agent.as_ref().map(Arc::clone),
         "pi-models" => state.settings_pi_models.as_ref().map(Arc::clone),
         _ => None,

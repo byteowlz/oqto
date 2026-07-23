@@ -22,6 +22,6 @@ pub mod ws_multiplexed;
 pub use error::{ApiError, ApiResult, ErrorResponse};
 pub use routes::{create_admin_router_with_config, create_router_with_config};
 pub use state::{
-    AppState, EavsConfigPaths, MmryState, SessionUiState, TemplatesRepoType, TemplatesState,
+    AppState, EavsConfigPaths, SessionUiState, TemplatesRepoType, TemplatesState,
     VisualizerVoiceState, VoiceState,
 };

@@ -50,7 +50,8 @@ pub async fn ws_debug(State(state): State<AppState>) -> Json<WsDebugResponse> {
 /// Feature flags exposed to the frontend.
 #[derive(Debug, Serialize)]
 pub struct FeaturesResponse {
-    /// Whether mmry (memories) integration is enabled.
+    /// Whether memory (memories) integration is enabled. Always true: memory is
+    /// embedded mmry-core over each workspace's `.mmry/mmry.jsonl` (ADR-0010).
     pub mmry_enabled: bool,
     /// Auto-attach mode when opening chat history.
     pub session_auto_attach: SessionAutoAttachMode,
@@ -136,7 +137,7 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
     };
 
     Json(FeaturesResponse {
-        mmry_enabled: state.mmry.enabled,
+        mmry_enabled: true,
         session_auto_attach: state.session_ui.auto_attach,
         session_auto_attach_scan: state.session_ui.auto_attach_scan,
         voice,
