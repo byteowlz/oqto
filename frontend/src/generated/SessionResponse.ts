@@ -85,10 +85,6 @@ eavs_key_hash: string | null,
  */
 eavs_virtual_key: string | null, 
 /**
- * Port for mmry memory service.
- */
-mmry_port: bigint | null, 
-/**
  * Current session status.
  */
 status: SessionStatus, 
