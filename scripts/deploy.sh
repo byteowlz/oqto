@@ -1177,7 +1177,7 @@ restart_services_ordered() {
         sync_single_user_unit_files "$is_local" "$ssh_target"
         restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
         restart_single_user_service "$is_local" "$ssh_target" "oqto"
-        restart_single_user_service "$is_local" "$ssh_target" "mmry"
+        # No per-user mmry service: memory is embedded mmry-core (ADR-0010).
 
         local svc
         for svc in $services; do

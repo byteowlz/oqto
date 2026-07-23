@@ -756,24 +756,7 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         format!("{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin");
 
     // Service file contents -- all constructed server-side, never from client input.
-    // mmry runs as a simple foreground service. oqto-runner uses Type=notify.
-    let mmry_service = format!(
-        r#"[Unit]
-Description=Oqto Memory Service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/mmry-service
-Restart=always
-RestartSec=3
-Environment=PATH={user_path}
-Environment=HOME={home}
-
-[Install]
-WantedBy=default.target
-"#
-    );
-
+    // Memory is embedded mmry-core (ADR-0010); oqto-runner uses Type=notify.
     let runner_service = format!(
         r#"[Unit]
 Description=Oqto Runner - Process isolation daemon
@@ -804,7 +787,6 @@ WantedBy=default.target
     }
 
     // 2. Write service files (runner only; memory runs in-process via runner backend)
-    let _ = mmry_service; // legacy variable intentionally unused during transition
     let services = [("oqto-runner.service", runner_service)];
     for (name, content) in &services {
         let path = format!("{service_dir}/{name}");
@@ -963,14 +945,14 @@ WantedBy=default.target
     let runner_active = run_user_systemctl(&["is-active", "oqto-runner.service"]).is_ok();
     let action = if runner_active { "restart" } else { "start" };
 
-    // Start/restart oqto-runner (pulls in mmry via Wants=).
-    // With Type=notify, this blocks until the runner signals READY=1.
+    // Start/restart oqto-runner. With Type=notify, this blocks until the
+    // runner signals READY=1.
     if let Err(e) = run_user_systemctl(&[action, "oqto-runner.service"]) {
         return Response::error(format!("{action} oqto-runner failed: {e}"));
     }
 
     // Wait for the runner socket to appear and ensure correct permissions.
-    // The runner needs time to start, bind the socket, and initialize mmry.
+    // The runner needs time to start and bind the socket.
     let socket = std::path::Path::new(&socket_path);
     for i in 0..20 {
         if socket.exists() {

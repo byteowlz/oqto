@@ -439,18 +439,9 @@ su -s /bin/bash oqto -c "
 PIDS+=($!)
 wait_for_port "$EAVS_PORT" "eavs" 15
 
-# 3. mmry (memory service for frontend memory features)
-log "Starting mmry service..."
-su -s /bin/bash oqto -c "
-  export HOME=/home/oqto
-  export XDG_CONFIG_HOME=/home/oqto/.config
-  export XDG_DATA_HOME=/home/oqto/.local/share
-  export XDG_STATE_HOME=/home/oqto/.local/state
-  mmry service run 2>&1 | sed 's/^/[mmry] /'
-" &
-PIDS+=($!)
+# Memory is embedded mmry-core (ADR-0010); no mmry daemon is started.
 
-# 4. oqto-runner (single-user mode)
+# 3. oqto-runner (single-user mode)
 if [ "$OQTO_SINGLE_USER" = "true" ]; then
   log "Starting oqto-runner..."
   su -s /bin/bash oqto -c "
