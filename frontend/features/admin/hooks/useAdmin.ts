@@ -36,7 +36,6 @@ export type AdminSession = {
 	agent_base_port: number | null;
 	max_agents: number | null;
 	eavs_key_id: string | null;
-	mmry_port: number | null;
 	status: SessionStatus;
 	runtime_mode: RuntimeMode;
 	created_at: string;
@@ -645,7 +644,6 @@ export type SyncUserConfigResult = {
 	linux_username: string | null;
 	runner_configured: boolean;
 	shell_configured: boolean;
-	mmry_configured: boolean;
 	eavs_configured: boolean;
 	error: string | null;
 };
