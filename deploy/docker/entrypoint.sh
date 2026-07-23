@@ -45,7 +45,6 @@ JWT_SECRET="${JWT_SECRET:-}"
 
 # Internal ports (not exposed)
 OQTO_BACKEND_PORT=8081
-MMRY_PORT=40111
 
 PIDS=()
 
@@ -330,9 +329,7 @@ enabled = false
 [sessions]
 
 [mmry]
-enabled = true
-local_service_url = "http://127.0.0.1:${MMRY_PORT}"
-binary = "mmry"
+enabled = false
 
 [sldr]
 

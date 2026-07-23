@@ -716,9 +716,9 @@ install_agent_tools_selected() {
   install_hstry_adapters
   install_ast_grep || true
 
-  # mmry is mandatory in multi-user mode (per-user mmry service + central
-  # embeddings). The managed acquire path installs the full set in one shot; the
-  # extra CLIs are harmless on disk and only used when configured.
+  # mmry is the lean append-only memory CLI (mmry-core embedded in the oqto
+  # backend; no daemon or embeddings service, per ADR-0010). The managed acquire
+  # path installs the CLI set in one shot.
   if [[ "${SELECTED_USER_MODE:-single}" == "multi" || "$INSTALL_MMRY" == "true" ]]; then
     install_managed_agent_tools
   fi
