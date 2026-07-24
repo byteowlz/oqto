@@ -1893,13 +1893,13 @@ impl SandboxConfig {
                 if !expanded.exists()
                     && let Err(e) = std::fs::create_dir_all(&expanded)
                 {
-                    warn!(
+                    error!(
                         "overlay: failed to create missing target '{}' (from '{}'): {}",
                         expanded.display(),
                         path,
                         e
                     );
-                    continue;
+                    return None;
                 }
 
                 let target = expanded.to_string_lossy().to_string();
@@ -1909,32 +1909,28 @@ impl SandboxConfig {
                 let work = overlay_base.join("work");
 
                 if let Err(e) = std::fs::create_dir_all(&upper) {
-                    warn!(
+                    error!(
                         "overlay: failed to create upperdir '{}': {}",
                         upper.display(),
                         e
                     );
-                    continue;
+                    return None;
                 }
 
-                // workdir must be empty for overlayfs.
-                if work.exists()
-                    && let Err(e) = std::fs::remove_dir_all(&work)
-                {
-                    warn!(
-                        "overlay: failed to reset workdir '{}': {}",
-                        work.display(),
-                        e
-                    );
-                    continue;
-                }
+                // Create the workdir once and then leave it alone. overlayfs
+                // owns it across mounts: it must be empty only on first use,
+                // and it keeps a mode-000 `work/work` inside. Deleting it while
+                // the upperdir holds files makes the next mount fail with
+                // EBUSY, and the old code's remove_dir_all could not traverse
+                // mode-000 anyway, so it failed with EPERM and silently skipped
+                // the overlay entirely.
                 if let Err(e) = std::fs::create_dir_all(&work) {
-                    warn!(
+                    error!(
                         "overlay: failed to create workdir '{}': {}",
                         work.display(),
                         e
                     );
-                    continue;
+                    return None;
                 }
 
                 args.push("--overlay-src".to_string());
@@ -1951,6 +1947,21 @@ impl SandboxConfig {
                     upper.display(),
                     work.display()
                 );
+            }
+
+            // Fail closed. An overlay path is usually also present in
+            // allow_write, which binds the real host directory read-write. If
+            // the overlay silently does not mount, writes intended for a
+            // per-workspace upperdir land in the user's real cache instead --
+            // a silent downgrade that looks like success.
+            if mounted_overlays != self.overlay_paths.len() {
+                error!(
+                    "overlay: mounted {} of {} configured path(s); refusing to run \
+                     because unmounted paths would be written directly",
+                    mounted_overlays,
+                    self.overlay_paths.len()
+                );
+                return None;
             }
 
             info!(
