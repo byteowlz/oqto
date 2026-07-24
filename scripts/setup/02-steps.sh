@@ -206,6 +206,7 @@ load_setup_config() {
           fi
           ;;
         tools.searxng)              [[ "$val" == "true" ]] && INSTALL_SEARXNG="true" ;;
+        tools.voice)                [[ "$val" == "true" ]] && VOICE_ENABLED="true" ;;
         hardening.enabled)
           if [[ "$val" == "true" ]]; then
             OQTO_HARDEN_SERVER="yes"

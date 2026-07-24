@@ -15,17 +15,26 @@
       "properties": {
         "user_mode": {
           "type": "string",
-          "enum": ["single", "multi"],
+          "enum": [
+            "single",
+            "multi"
+          ],
           "description": "User mode for deployment"
         },
         "backend_mode": {
           "type": "string",
-          "enum": ["container", "local"],
+          "enum": [
+            "container",
+            "local"
+          ],
           "description": "Backend runtime mode"
         },
         "container_runtime": {
           "type": "string",
-          "enum": ["docker", "podman"],
+          "enum": [
+            "docker",
+            "podman"
+          ],
           "description": "Container runtime when backend_mode=container"
         },
         "workspace_dir": {
@@ -41,7 +50,13 @@
       "properties": {
         "log_level": {
           "type": "string",
-          "enum": ["error", "warn", "info", "debug", "trace"],
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
           "description": "Log level"
         },
         "caddy": {
@@ -143,14 +158,12 @@
         "install_all": {
           "type": "boolean"
         },
-        "enabled": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "searxng": {
           "type": "boolean"
+        },
+        "voice": {
+          "type": "boolean",
+          "description": "Install optional voice mode (eaRS STT + kokorox TTS + whisper.cpp)"
         }
       },
       "additionalProperties": false
