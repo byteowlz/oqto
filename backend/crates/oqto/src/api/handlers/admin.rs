@@ -1160,20 +1160,14 @@ pub async fn upsert_eavs_provider(
     let existing_providers = parse_existing_providers_config(&config_content);
     let existing_provider = existing_providers.get(&request.name);
 
-    // Build the provider section
+    // Resolve the API key reference and (if a new key was provided) stage the
+    // env-file update. The provider section itself is built structurally below.
     let env_key_name = format!("{}_API_KEY", request.name.to_uppercase().replace('-', "_"));
-    let mut provider_toml = format!(
-        "\n[providers.{}]\ntype = \"{}\"\n",
-        request.name, request.type_
-    );
-    if let Some(ref api_key) = request.api_key {
-        provider_toml.push_str(&format!("api_key = \"env:{}\"\n", env_key_name));
-
-        // Write API key to env file
+    let mut env_write: Option<String> = None;
+    let api_key_ref: Option<String> = if let Some(ref api_key) = request.api_key {
         let mut env_content = tokio::fs::read_to_string(env_path)
             .await
             .unwrap_or_default();
-        // Remove existing key if present
         env_content = env_content
             .lines()
             .filter(|l| !l.starts_with(&format!("{}=", env_key_name)))
@@ -1183,48 +1177,28 @@ pub async fn upsert_eavs_provider(
             env_content.push('\n');
         }
         env_content.push_str(&format!("{}={}\n", env_key_name, api_key));
-        tokio::fs::write(env_path, &env_content)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to write eavs env: {e}")))?;
-    } else if let Some(existing_api_key_ref) =
-        existing_provider.and_then(|provider| provider.api_key_ref.as_ref())
-    {
-        // Preserve existing api_key reference when edit UI leaves API key blank.
-        provider_toml.push_str(&format!("api_key = \"{}\"\n", existing_api_key_ref));
-    }
+        env_write = Some(env_content);
+        Some(format!("env:{env_key_name}"))
+    } else {
+        // Preserve existing api_key reference when the edit UI leaves it blank.
+        existing_provider.and_then(|provider| provider.api_key_ref.clone())
+    };
 
     let base_url = request
         .base_url
-        .as_ref()
-        .or_else(|| existing_provider.and_then(|provider| provider.base_url.as_ref()));
-    if let Some(base_url) = base_url {
-        provider_toml.push_str(&format!("base_url = \"{}\"\n", base_url));
-    }
-
+        .clone()
+        .or_else(|| existing_provider.and_then(|provider| provider.base_url.clone()));
     let api_version = request
         .api_version
-        .as_ref()
-        .or_else(|| existing_provider.and_then(|provider| provider.api_version.as_ref()));
-    if let Some(api_version) = api_version {
-        provider_toml.push_str(&format!("api_version = \"{}\"\n", api_version));
-    }
-
+        .clone()
+        .or_else(|| existing_provider.and_then(|provider| provider.api_version.clone()));
     let deployment = request
         .deployment
-        .as_ref()
-        .or_else(|| existing_provider.and_then(|provider| provider.deployment.as_ref()));
-    if let Some(deployment) = deployment {
-        provider_toml.push_str(&format!("deployment = \"{}\"\n", deployment));
-    }
+        .clone()
+        .or_else(|| existing_provider.and_then(|provider| provider.deployment.clone()));
     let supports_developer_role = request
         .supports_developer_role
         .or_else(|| existing_provider.and_then(|provider| provider.supports_developer_role));
-    if let Some(supports_developer_role) = supports_developer_role {
-        provider_toml.push_str(&format!(
-            "\n[providers.{}.compat]\nsupports_developer_role = {}\n",
-            request.name, supports_developer_role
-        ));
-    }
 
     let merged_models: Vec<UpsertModelEntry> = request
         .models
@@ -1237,59 +1211,48 @@ pub async fn upsert_eavs_provider(
         })
         .collect();
 
-    // Write model shortlist entries
-    for model in &merged_models {
-        provider_toml.push_str(&format!(
-            "\n[[providers.{}.models]]\nid = \"{}\"\nname = \"{}\"\nreasoning = {}\n",
-            request.name, model.id, model.name, model.reasoning,
-        ));
-        // Input modalities
-        if !model.input.is_empty() {
-            let input_str = model
-                .input
-                .iter()
-                .map(|s| format!("\"{}\"", s))
-                .collect::<Vec<_>>()
-                .join(", ");
-            provider_toml.push_str(&format!("input = [{}]\n", input_str));
+    // Build the provider table as a structured TOML value, then splice it into
+    // the parsed document. Structured editing makes duplicate/orphaned
+    // sub-tables impossible, and the whole document is round-trip validated
+    // before it is atomically written -- a malformed config can never land on
+    // disk and crash EAVS. See ADR/incident: duplicate `[providers.*.compat]`.
+    let mut prov = toml_edit::Table::new();
+    prov["type"] = toml_edit::value(request.type_.clone());
+    if let Some(api_key_ref) = api_key_ref {
+        prov["api_key"] = toml_edit::value(api_key_ref);
+    }
+    if let Some(base_url) = base_url {
+        prov["base_url"] = toml_edit::value(base_url);
+    }
+    if let Some(api_version) = api_version {
+        prov["api_version"] = toml_edit::value(api_version);
+    }
+    if let Some(deployment) = deployment {
+        prov["deployment"] = toml_edit::value(deployment);
+    }
+    if let Some(supports_developer_role) = supports_developer_role {
+        let mut compat = toml_edit::Table::new();
+        compat["supports_developer_role"] = toml_edit::value(supports_developer_role);
+        prov["compat"] = toml_edit::Item::Table(compat);
+    }
+    if !merged_models.is_empty() {
+        let mut models = toml_edit::ArrayOfTables::new();
+        for model in &merged_models {
+            models.push(build_model_table(model));
         }
-        // Context window / max tokens
-        if model.context_window > 0 {
-            provider_toml.push_str(&format!("context_window = {}\n", model.context_window));
-        }
-        if model.max_tokens > 0 {
-            provider_toml.push_str(&format!("max_tokens = {}\n", model.max_tokens));
-        }
-        // Cost (inline table)
-        if model.cost_input > 0.0 || model.cost_output > 0.0 || model.cost_cache_read > 0.0 {
-            provider_toml.push_str(&format!(
-                "cost = {{ input = {}, output = {}, cache_read = {} }}\n",
-                model.cost_input, model.cost_output, model.cost_cache_read,
-            ));
-        }
-        // Compat flags (inline table)
-        if !model.compat.is_empty() {
-            let compat_entries: Vec<String> = model
-                .compat
-                .iter()
-                .map(|(k, v)| format!("{} = {}", k, v))
-                .collect();
-            provider_toml.push_str(&format!("compat = {{ {} }}\n", compat_entries.join(", ")));
-        }
+        prov["models"] = toml_edit::Item::ArrayOfTables(models);
     }
 
-    // Remove existing provider section if it exists, then append new one
-    // Also remove any [[providers.NAME.models]] array entries
-    let mut new_config =
-        remove_toml_section(&config_content, &format!("providers.{}", request.name));
-    // Remove leftover [[providers.NAME.models]] entries that survive the section removal
-    new_config =
-        remove_toml_array_entries(&new_config, &format!("providers.{}.models", request.name));
-    let new_config = format!("{}\n{}", new_config.trim_end(), provider_toml);
+    let new_config = upsert_provider_in_config(&config_content, &request.name, prov)?;
 
-    tokio::fs::write(config_path, &new_config)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
+    // Persist env first (only if a new key was provided), then the validated
+    // config. Both writes are atomic (temp + rename).
+    if let Some(env_content) = env_write {
+        write_file_atomic(env_path, env_content.as_bytes())
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to write eavs env: {e}")))?;
+    }
+    write_toml_config_atomic(config_path, &new_config).await?;
 
     // Restart eavs service
     restart_eavs_service(state.single_user).await?;
@@ -1319,13 +1282,12 @@ pub async fn delete_eavs_provider(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to read eavs config: {e}")))?;
 
-    let new_config = remove_toml_section(&config_content, &format!("providers.{}", name));
+    // Structurally remove the entire providers.<name> subtree, then validate +
+    // atomically write so a malformed config can never reach EAVS.
+    let new_config = remove_provider_in_config(&config_content, &name)?;
+    write_toml_config_atomic(config_path, &new_config).await?;
 
-    tokio::fs::write(config_path, &new_config)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
-
-    // Also remove API key from env file
+    // Also remove API key from env file (atomic).
     let env_key_name = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
     if let Ok(env_content) = tokio::fs::read_to_string(env_path).await {
         let new_env: String = env_content
@@ -1333,7 +1295,7 @@ pub async fn delete_eavs_provider(
             .filter(|l| !l.starts_with(&format!("{}=", env_key_name)))
             .collect::<Vec<_>>()
             .join("\n");
-        let _ = tokio::fs::write(env_path, format!("{}\n", new_env.trim_end())).await;
+        let _ = write_file_atomic(env_path, format!("{}\n", new_env.trim_end()).as_bytes()).await;
     }
 
     // Restart eavs service
@@ -1613,55 +1575,257 @@ fn toml_to_json_value(value: &toml::Value) -> Option<serde_json::Value> {
     }
 }
 
-/// Remove a [section.name] block from a TOML string.
-/// Removes from the section header until the next section header or end of file.
-fn remove_toml_section(content: &str, section: &str) -> String {
-    let header = format!("[{}]", section);
-    let array_prefix = format!("[[{}.", section);
-    let mut result = String::new();
-    let mut skipping = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == header || trimmed.starts_with(&array_prefix) {
-            skipping = true;
-            continue;
+/// Build a structured `[[providers.NAME.models]]` table entry from a model.
+fn build_model_table(model: &UpsertModelEntry) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    table["id"] = toml_edit::value(model.id.clone());
+    table["name"] = toml_edit::value(model.name.clone());
+    table["reasoning"] = toml_edit::value(model.reasoning);
+    if !model.input.is_empty() {
+        let mut arr = toml_edit::Array::new();
+        for modality in &model.input {
+            arr.push(modality.as_str());
         }
-        // A new section header ends the skip (but not array entries of the same section)
-        if skipping && trimmed.starts_with('[') && !trimmed.starts_with(&array_prefix) {
-            skipping = false;
-        }
-        if !skipping {
-            result.push_str(line);
-            result.push('\n');
-        }
+        table["input"] = toml_edit::value(arr);
     }
-    result
+    if model.context_window > 0 {
+        table["context_window"] = toml_edit::value(model.context_window as i64);
+    }
+    if model.max_tokens > 0 {
+        table["max_tokens"] = toml_edit::value(model.max_tokens as i64);
+    }
+    if model.cost_input > 0.0 || model.cost_output > 0.0 || model.cost_cache_read > 0.0 {
+        let mut cost = toml_edit::InlineTable::new();
+        cost.insert("input", model.cost_input.into());
+        cost.insert("output", model.cost_output.into());
+        cost.insert("cache_read", model.cost_cache_read.into());
+        table["cost"] = toml_edit::value(cost);
+    }
+    if !model.compat.is_empty() {
+        let mut compat = toml_edit::InlineTable::new();
+        // Deterministic key order keeps diffs stable across edits.
+        let mut keys: Vec<&String> = model.compat.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(val) = json_to_toml_edit(&model.compat[key]) {
+                compat.insert(key, val);
+            }
+        }
+        table["compat"] = toml_edit::value(compat);
+    }
+    table
 }
 
-/// Remove leftover TOML array-of-table entries ([[section]]) that might
-/// survive a section removal (e.g., [[providers.NAME.models]]).
-fn remove_toml_array_entries(content: &str, array_name: &str) -> String {
-    let header = format!("[[{}]]", array_name);
-    let mut result = String::new();
-    let mut skipping = false;
+/// Convert a JSON scalar/array into a toml_edit value (best-effort; skips nulls).
+fn json_to_toml_edit(value: &serde_json::Value) -> Option<toml_edit::Value> {
+    match value {
+        serde_json::Value::String(s) => Some(s.as_str().into()),
+        serde_json::Value::Bool(b) => Some((*b).into()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.into())
+            } else {
+                n.as_f64().map(Into::into)
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            let mut out = toml_edit::Array::new();
+            for item in arr {
+                out.push(json_to_toml_edit(item)?);
+            }
+            Some(toml_edit::Value::Array(out))
+        }
+        serde_json::Value::Null | serde_json::Value::Object(_) => None,
+    }
+}
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == header {
-            skipping = true;
-            continue;
-        }
-        // A new section or array header ends the skip
-        if skipping && trimmed.starts_with('[') {
-            skipping = false;
-        }
-        if !skipping {
-            result.push_str(line);
-            result.push('\n');
+/// Write bytes atomically: temp file in the same directory, fsync, then rename
+/// over the target. A reader (e.g. EAVS) never observes a partial file.
+async fn write_file_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config"),
+        std::process::id()
+    ));
+    tokio::fs::write(&tmp, bytes).await?;
+    // Best-effort durability before the rename.
+    if let Ok(file) = tokio::fs::File::open(&tmp).await {
+        let _ = file.sync_all().await;
+    }
+    match tokio::fs::rename(&tmp, path).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            Err(e)
         }
     }
-    result
+}
+
+/// Validate that `content` parses as TOML, then write it atomically. Refuses to
+/// persist an unparseable config -- the guarantee that a broken config file can
+/// never reach EAVS and crash-loop it.
+async fn write_toml_config_atomic(path: &std::path::Path, content: &str) -> Result<(), ApiError> {
+    content.parse::<toml_edit::DocumentMut>().map_err(|e| {
+        ApiError::Internal(format!(
+            "refusing to write invalid TOML to {}: {e}",
+            path.display()
+        ))
+    })?;
+    write_file_atomic(path, content.as_bytes())
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to write config {}: {e}", path.display())))
+}
+
+/// Replace (or insert) the `providers.<name>` table in an EAVS config document,
+/// returning the serialized, revalidated TOML. Structural removal takes the
+/// whole subtree (compat + models) with it, so duplicate/orphaned sub-tables
+/// are impossible; the result is round-trip parsed before it is returned.
+fn upsert_provider_in_config(
+    config_content: &str,
+    name: &str,
+    provider: toml_edit::Table,
+) -> Result<String, ApiError> {
+    let mut doc = config_content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| ApiError::Internal(format!("Existing eavs config is not valid TOML: {e}")))?;
+    let providers = doc["providers"].or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let providers = providers
+        .as_table_mut()
+        .ok_or_else(|| ApiError::Internal("eavs config `providers` is not a table".to_string()))?;
+    providers.remove(name);
+    providers.insert(name, toml_edit::Item::Table(provider));
+    let out = doc.to_string();
+    out.parse::<toml_edit::DocumentMut>()
+        .map_err(|e| ApiError::Internal(format!("produced invalid eavs config TOML: {e}")))?;
+    Ok(out)
+}
+
+/// Structurally remove the `providers.<name>` subtree, returning revalidated TOML.
+fn remove_provider_in_config(config_content: &str, name: &str) -> Result<String, ApiError> {
+    let mut doc = config_content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| ApiError::Internal(format!("Existing eavs config is not valid TOML: {e}")))?;
+    if let Some(providers) = doc
+        .get_mut("providers")
+        .and_then(toml_edit::Item::as_table_mut)
+    {
+        providers.remove(name);
+    }
+    let out = doc.to_string();
+    out.parse::<toml_edit::DocumentMut>()
+        .map_err(|e| ApiError::Internal(format!("produced invalid eavs config TOML: {e}")))?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod eavs_config_tests {
+    use super::*;
+
+    // Config that reproduces the octo-azure outage shape: a provider with an
+    // existing [providers.X.compat] sub-table, surrounded by other providers.
+    const CONFIG: &str = r#"[providers.foundry]
+type = "openai-compatible"
+api_key = "env:FOUNDRY_API_KEY"
+
+[providers.fhgenie]
+type = "openai-compatible"
+api_key = "env:FHGENIE_API_KEY"
+base_url = "https://fhgenie.example/v1/"
+
+[providers.fhgenie.compat]
+supports_developer_role = false
+
+[[providers.fhgenie.models]]
+id = "m1"
+name = "model one"
+reasoning = false
+
+[providers.other]
+type = "openai-compatible"
+"#;
+
+    fn provider(dev_role: bool) -> toml_edit::Table {
+        let mut prov = toml_edit::Table::new();
+        prov["type"] = toml_edit::value("openai-compatible");
+        prov["api_key"] = toml_edit::value("env:FHGENIE_API_KEY");
+        prov["base_url"] = toml_edit::value("https://fhgenie.example/v1/");
+        let mut compat = toml_edit::Table::new();
+        compat["supports_developer_role"] = toml_edit::value(dev_role);
+        prov["compat"] = toml_edit::Item::Table(compat);
+        prov
+    }
+
+    #[test]
+    fn upsert_over_existing_compat_never_duplicates() {
+        // The exact regression: replacing a provider that already has a compat
+        // sub-table must not leave an orphaned/duplicate [providers.X.compat].
+        let out = upsert_provider_in_config(CONFIG, "fhgenie", provider(true)).expect("upsert");
+        assert_eq!(
+            out.matches("[providers.fhgenie.compat]").count(),
+            1,
+            "exactly one compat table expected, got:\n{out}"
+        );
+        // Result parses, and other providers are untouched.
+        let doc: toml::Value = toml::from_str(&out).expect("valid TOML");
+        let providers = doc["providers"].as_table().unwrap();
+        assert!(providers.contains_key("foundry"));
+        assert!(providers.contains_key("other"));
+        assert_eq!(
+            providers["fhgenie"]["compat"]["supports_developer_role"]
+                .as_bool()
+                .unwrap(),
+            true
+        );
+        // Stale models from the previous definition are gone (subtree replaced).
+        assert!(providers["fhgenie"].get("models").is_none());
+    }
+
+    #[test]
+    fn upsert_repeated_edits_stay_valid_and_single() {
+        let mut cur = CONFIG.to_string();
+        for i in 0..5 {
+            cur = upsert_provider_in_config(&cur, "fhgenie", provider(i % 2 == 0)).expect("upsert");
+            toml::from_str::<toml::Value>(&cur).expect("valid TOML each iteration");
+            assert_eq!(cur.matches("[providers.fhgenie.compat]").count(), 1);
+        }
+    }
+
+    #[test]
+    fn remove_takes_whole_subtree() {
+        let out = remove_provider_in_config(CONFIG, "fhgenie").expect("remove");
+        assert!(
+            !out.contains("providers.fhgenie"),
+            "subtree fully removed:\n{out}"
+        );
+        let doc: toml::Value = toml::from_str(&out).expect("valid TOML");
+        let providers = doc["providers"].as_table().unwrap();
+        assert!(!providers.contains_key("fhgenie"));
+        assert!(providers.contains_key("foundry") && providers.contains_key("other"));
+    }
+
+    #[tokio::test]
+    async fn atomic_write_refuses_invalid_and_preserves_prior() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_toml_config_atomic(&path, "[providers.a]\ntype = \"x\"\n")
+            .await
+            .expect("valid write");
+        // A duplicate-key document (the crash shape) must be rejected...
+        let bad = "[providers.a.compat]\nx = 1\n[providers.a]\n[providers.a.compat]\ny = 2\n";
+        assert!(write_toml_config_atomic(&path, bad).await.is_err());
+        // ...and the previously good file must be untouched (no partial/temp).
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(on_disk, "[providers.a]\ntype = \"x\"\n");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "no temp files should remain");
+    }
 }
 
 /// Restart the eavs systemd service via oqto-usermgr (which runs as root).

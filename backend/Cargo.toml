@@ -23,6 +23,7 @@ config = { version = "0.15", features = ["toml"] }
 dirs = "5.0"
 shellexpand = "3.1"
 toml = "0.8"
+toml_edit = "0.22"
 
 # Logging
 env_logger = "0.11"
