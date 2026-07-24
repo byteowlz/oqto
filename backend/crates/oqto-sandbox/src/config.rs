@@ -803,7 +803,9 @@ impl SandboxProfile {
                 "/usr/bin/systemd-run".to_string(),
                 "/bin/systemd-run".to_string(),
             ],
-            // Note: ~/.pi must be writable for Pi session files
+            // Note: ~/.pi must be writable for Pi session files. Without it a
+            // sandboxed agent starts and exits 0 while silently persisting no
+            // session, which loses the oqto-log ingest source.
             allow_write: vec!["/tmp".to_string(), "~/.pi".to_string()],
             deny_write: vec![],
             isolate_network: true,
@@ -812,8 +814,16 @@ impl SandboxProfile {
             disable_userns: true,
             assert_userns_disabled: true,
             no_new_privs: true,
+            // seccomp stays in audit: enforce is fail-closed and requires a
+            // compiled seccomp_bpf_path, which this profile does not ship.
             seccomp_mode: SeccompMode::Audit,
-            landlock_mode: LandlockMode::Audit,
+            // Landlock enforces here. This is the profile for untrusted work,
+            // and it is the only shipped profile that actually restricts:
+            // writes are limited to the workspace, /tmp and ~/.pi even where
+            // bwrap mounted a path read-write. Toolchain caches (~/.cargo,
+            // ~/.npm, ...) are deliberately not writable, so builds must use
+            // workspace- or /tmp-local caches (e.g. CARGO_HOME).
+            landlock_mode: LandlockMode::Enforce,
             seccomp_bpf_path: None,
             // extra_ro_bind is applied AFTER deny_read, so these paths
             // under ~/.config are accessible even though ~/.config is blocked
@@ -2518,6 +2528,25 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn strict_profile_enforces_landlock() {
+        // strict is the profile for untrusted work and the only shipped profile
+        // that actually restricts. seccomp stays in audit because enforce is
+        // fail-closed and needs a compiled policy this profile does not ship.
+        let strict = SandboxProfile::strict();
+        assert_eq!(strict.landlock_mode, LandlockMode::Enforce);
+        assert_eq!(strict.seccomp_mode, SeccompMode::Audit);
+
+        // Toolchain caches must stay out of allow_write, or enforce buys
+        // nothing: writes would be permitted across most of home.
+        for denied in ["~/.cargo", "~/.npm", "~/.bun", "~/.rustup"] {
+            assert!(
+                !strict.allow_write.iter().any(|p| p == denied),
+                "strict must not grant {denied}"
+            );
+        }
+    }
 
     #[test]
     fn enforceable_profiles_grant_the_agent_session_directory() {

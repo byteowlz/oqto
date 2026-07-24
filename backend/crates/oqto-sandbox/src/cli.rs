@@ -25,8 +25,10 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
-    #[arg(short, long, default_value = "development")]
-    profile: String,
+    /// Profile to use. Overrides the profile named by any config file; when
+    /// omitted the config file's own profile (or "development") is used.
+    #[arg(short, long)]
+    profile: Option<String>,
 
     #[arg(short, long)]
     workspace: Option<PathBuf>,
@@ -60,11 +62,14 @@ fn load_config(args: &Args) -> Result<SandboxConfig> {
         );
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
-        let file: SandboxConfigFile =
+        let mut file: SandboxConfigFile =
             toml::from_str(&content).with_context(|| "parsing config file")?;
+        if let Some(profile) = &args.profile {
+            profile.clone_into(&mut file.profile);
+        }
         file.into()
     } else {
-        load_config_from_chain(&args.profile)?
+        load_config_from_chain(args.profile.as_deref())?
     };
 
     config.enabled = !args.no_sandbox;
@@ -77,14 +82,20 @@ const SYSTEM_SANDBOX_CONFIG: &str = "/etc/oqto/sandbox.toml";
 /// 1. `/etc/oqto/sandbox.toml` (system)
 /// 2. `~/.config/oqto/sandbox.toml` (user)
 /// 3. Hardcoded profile defaults
-fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
+fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
     let system_path = PathBuf::from(SYSTEM_SANDBOX_CONFIG);
     if system_path.exists() {
         info!("Loading sandbox config from system path: {:?}", system_path);
         let content = std::fs::read_to_string(&system_path)
             .with_context(|| format!("reading system config: {:?}", system_path))?;
-        let file: SandboxConfigFile = toml::from_str(&content)
+        let mut file: SandboxConfigFile = toml::from_str(&content)
             .with_context(|| format!("parsing system config: {:?}", system_path))?;
+        // An explicit --profile must win over the file's profile, otherwise a
+        // system config silently downgrades the caller's requested isolation.
+        if let Some(profile) = profile {
+            info!("Overriding system config profile with '{}'", profile);
+            profile.clone_into(&mut file.profile);
+        }
         return Ok(file.into());
     }
 
@@ -99,6 +110,7 @@ fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
             .context("user sandbox config exists but failed to parse");
     }
 
+    let profile = profile.unwrap_or("development");
     info!(
         "No config file found, using hardcoded profile '{}'",
         profile
