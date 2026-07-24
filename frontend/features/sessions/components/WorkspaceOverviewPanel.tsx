@@ -10,6 +10,7 @@ import {
 	updateWorkspaceSandbox,
 } from "@/lib/api";
 import type { PiModelInfo } from "@/lib/api/default-chat";
+import type { WorkspaceSkillCatalogEntry } from "@/lib/api/types";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -49,6 +50,9 @@ export function WorkspaceOverviewPanel({
 	const [values, setValues] = useState<WorkspaceOverviewValues>(emptyValues);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+	const [skillCatalog, setSkillCatalog] = useState<
+		WorkspaceSkillCatalogEntry[]
+	>([]);
 	const [availableExtensions, setAvailableExtensions] = useState<
 		ResourceEntry[]
 	>([]);
@@ -116,6 +120,7 @@ export function WorkspaceOverviewPanel({
 			setValues(nextValues);
 			setAvailableModels(models);
 			setAvailableSkills(skills);
+			setSkillCatalog(resources.skill_catalog ?? []);
 			setAvailableExtensions(extensions);
 			setSandboxProfiles(sandbox.profiles);
 		} catch (err) {
@@ -219,6 +224,7 @@ export function WorkspaceOverviewPanel({
 						availableModels={availableModels}
 						sandboxProfiles={sandboxProfiles}
 						availableSkills={availableSkills}
+						skillCatalog={skillCatalog}
 						availableExtensions={availableExtensions}
 						onChange={setValues}
 						onSave={handleSave}

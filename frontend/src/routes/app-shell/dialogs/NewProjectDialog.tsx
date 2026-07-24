@@ -183,6 +183,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 										availableModels={availableModels}
 										sandboxProfiles={sandboxProfiles}
 										availableSkills={availableSkills}
+										skillCatalog={[]}
 										availableExtensions={availableExtensions}
 										onChange={onProjectSettingsChange}
 										showSave={false}

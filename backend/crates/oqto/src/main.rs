@@ -59,6 +59,7 @@ mod session_target;
 mod session_ui;
 mod settings;
 mod shared_workspace;
+mod skills;
 mod templates;
 mod user;
 mod user_plane;

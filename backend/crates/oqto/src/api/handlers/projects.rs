@@ -21,6 +21,10 @@ use crate::auth::CurrentUser;
 use crate::projects::{self, ProjectMetadata};
 use crate::session::WorkspaceLocationInput;
 use crate::settings::{ConfigUpdate, SettingsScope};
+use crate::skills::{
+    CatalogRoots, DiscoveredSkill, EffectiveState, SkillCatalog, SkillDiagnostic, SkillLocation,
+    SkillMutability, SkillPolicy, SkillScope,
+};
 use crate::workspace::meta::{WorkspaceMeta, load_workspace_meta, write_workspace_meta};
 use oqto_sandbox::{SandboxConfigFile, SandboxProfile};
 
@@ -737,10 +741,30 @@ pub struct PiResourceEntry {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceSkillCatalogEntry {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub scope: String,
+    pub location: String,
+    pub source_path: String,
+    pub selected: bool,
+    pub effective: bool,
+    pub mutable: bool,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overridden_by: Option<String>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspacePiResourcesResponse {
     pub skills_mode: String,
     pub extensions_mode: String,
     pub skills: Vec<PiResourceEntry>,
+    /// Complete read-only catalog across standard project and account locations.
+    pub skill_catalog: Vec<WorkspaceSkillCatalogEntry>,
     pub extensions: Vec<PiResourceEntry>,
     pub global_skills_dir: String,
     pub global_extensions_dir: String,
@@ -978,6 +1002,25 @@ pub async fn get_workspace_pi_resources(
             },
             mandatory: false,
         })
+        .collect::<Vec<_>>();
+
+    let selected_names = skills
+        .iter()
+        .filter(|skill| skill.selected)
+        .map(|skill| skill.name.as_str())
+        .collect::<HashSet<_>>();
+    let account_home = account_home_from_pi_skills_dir(&global_skills_dir)?;
+    let catalog = SkillCatalog::discover(
+        &CatalogRoots {
+            work_directory: workspace_root.clone(),
+            account_home,
+        },
+        &HashMap::<(SkillLocation, String), SkillPolicy>::new(),
+    );
+    let skill_catalog = catalog
+        .skills
+        .iter()
+        .map(|skill| skill_catalog_entry(skill, &selected_names))
         .collect();
 
     // All global/platform extensions are mandatory -- they cannot be deactivated.
@@ -994,6 +1037,7 @@ pub async fn get_workspace_pi_resources(
         skills_mode: skills_mode.to_string(),
         extensions_mode: extensions_mode.to_string(),
         skills,
+        skill_catalog,
         extensions,
         global_skills_dir: global_skills_dir.to_string_lossy().to_string(),
         global_extensions_dir: global_extensions_dir.to_string_lossy().to_string(),
@@ -1084,6 +1128,77 @@ pub async fn apply_workspace_pi_resources(
         }),
     )
     .await
+}
+
+fn account_home_from_pi_skills_dir(global_skills_dir: &Path) -> Result<PathBuf, ApiError> {
+    global_skills_dir
+        .parent() // agent
+        .and_then(Path::parent) // .pi
+        .and_then(Path::parent) // account home
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            ApiError::internal(format!(
+                "Invalid account Pi skills path: {}",
+                global_skills_dir.display()
+            ))
+        })
+}
+
+fn skill_catalog_entry(
+    skill: &DiscoveredSkill,
+    selected_names: &HashSet<&str>,
+) -> WorkspaceSkillCatalogEntry {
+    let (effective, overridden_by) = match &skill.state {
+        EffectiveState::Effective => (true, None),
+        EffectiveState::Overridden { by } => (false, Some(by.to_string_lossy().to_string())),
+        EffectiveState::Invalid => (false, None),
+    };
+    let location = match skill.location {
+        SkillLocation::ProjectAgents => "project_agents",
+        SkillLocation::ProjectPi => "project_pi",
+        SkillLocation::AccountAgents => "account_agents",
+        SkillLocation::AccountPi => "account_pi",
+    };
+    let scope = match skill.scope {
+        SkillScope::Repo => "repo",
+        SkillScope::Account => "account",
+    };
+    let selected = effective
+        && match skill.location {
+            SkillLocation::ProjectAgents | SkillLocation::ProjectPi => true,
+            SkillLocation::AccountAgents => true,
+            SkillLocation::AccountPi => selected_names.contains(skill.name.as_str()),
+        };
+
+    WorkspaceSkillCatalogEntry {
+        id: format!("{location}:{}", skill.name),
+        name: skill.name.clone(),
+        description: skill.description.clone(),
+        scope: scope.to_string(),
+        location: location.to_string(),
+        source_path: skill.path.to_string_lossy().to_string(),
+        selected,
+        effective,
+        mutable: skill.policy.mutability == SkillMutability::Editable,
+        required: skill.policy.required,
+        overridden_by,
+        diagnostics: skill
+            .diagnostics
+            .iter()
+            .map(skill_diagnostic_text)
+            .collect(),
+    }
+}
+
+fn skill_diagnostic_text(diagnostic: &SkillDiagnostic) -> String {
+    match diagnostic {
+        SkillDiagnostic::MissingFrontmatter => "missing_frontmatter".to_string(),
+        SkillDiagnostic::InvalidFrontmatter(error) => format!("invalid_frontmatter: {error}"),
+        SkillDiagnostic::MissingName => "missing_name".to_string(),
+        SkillDiagnostic::MissingDescription => "missing_description".to_string(),
+        SkillDiagnostic::UnsafePath => "unsafe_path".to_string(),
+        SkillDiagnostic::ReadFailed(error) => format!("read_failed: {error}"),
+    }
 }
 
 fn expand_path(path: &str) -> Result<PathBuf, ApiError> {
@@ -1502,8 +1617,14 @@ pub async fn set_active_workspace_location(
 
 #[cfg(test)]
 pub mod tests {
-    use super::{copy_template_dir, sanitize_relative_path};
-    use std::fs;
+    use super::{
+        account_home_from_pi_skills_dir, copy_template_dir, sanitize_relative_path,
+        skill_catalog_entry,
+    };
+    use crate::skills::{
+        DiscoveredSkill, EffectiveState, SkillLocation, SkillMutability, SkillPolicy, SkillScope,
+    };
+    use std::{collections::HashSet, fs, path::PathBuf};
 
     #[test]
     fn sanitize_relative_path_rejects_invalid() {
@@ -1515,6 +1636,42 @@ pub mod tests {
     fn sanitize_relative_path_accepts_nested() {
         let path = sanitize_relative_path("projects/demo").unwrap();
         assert_eq!(path.to_string_lossy(), "projects/demo");
+    }
+
+    #[test]
+    fn derives_account_home_from_standard_pi_skills_path() {
+        let home = account_home_from_pi_skills_dir(std::path::Path::new(
+            "/accounts/tommy/.pi/agent/skills",
+        ))
+        .unwrap();
+        assert_eq!(home, PathBuf::from("/accounts/tommy"));
+    }
+
+    #[test]
+    fn catalog_entry_reports_override_and_policy() {
+        let skill = DiscoveredSkill {
+            name: "review".to_string(),
+            description: Some("Review changes".to_string()),
+            scope: SkillScope::Account,
+            location: SkillLocation::AccountAgents,
+            path: PathBuf::from("/home/test/.agents/skills/review/SKILL.md"),
+            policy: SkillPolicy {
+                mutability: SkillMutability::Immutable,
+                required: true,
+            },
+            state: EffectiveState::Overridden {
+                by: PathBuf::from("/workspace/.agents/skills/review/SKILL.md"),
+            },
+            diagnostics: Vec::new(),
+        };
+
+        let entry = skill_catalog_entry(&skill, &HashSet::from(["review"]));
+        assert!(!entry.effective);
+        assert!(!entry.selected);
+        assert!(!entry.mutable);
+        assert!(entry.required);
+        assert_eq!(entry.scope, "account");
+        assert!(entry.overridden_by.is_some());
     }
 
     #[test]

@@ -190,10 +190,26 @@ export type WorkspacePiResourceEntry = {
 	mandatory?: boolean;
 };
 
+export type WorkspaceSkillCatalogEntry = {
+	id: string;
+	name: string;
+	description?: string;
+	scope: "repo" | "account";
+	location: "project_agents" | "project_pi" | "account_agents" | "account_pi";
+	source_path: string;
+	selected: boolean;
+	effective: boolean;
+	mutable: boolean;
+	required: boolean;
+	overridden_by?: string;
+	diagnostics: string[];
+};
+
 export type WorkspacePiResources = {
 	skills_mode: "all" | "custom";
 	extensions_mode: "all" | "custom";
 	skills: WorkspacePiResourceEntry[];
+	skill_catalog: WorkspaceSkillCatalogEntry[];
 	extensions: WorkspacePiResourceEntry[];
 	global_skills_dir: string;
 	global_extensions_dir: string;
