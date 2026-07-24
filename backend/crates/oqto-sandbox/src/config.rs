@@ -2519,6 +2519,29 @@ impl SandboxConfig {
 #[cfg(test)]
 mod tests {
 
+    #[test]
+    fn enforceable_profiles_grant_the_agent_session_directory() {
+        // Pi owns its JSONL session files under ~/.pi/agent/sessions and they
+        // are the ingest source for oqto-log history. Under landlock enforce a
+        // profile without this grant still lets Pi start and exit 0, but the
+        // session is never persisted -- silent history loss. Verified by
+        // negative control: dropping ~/.pi denied the session directory and
+        // produced no session file.
+        let strict = SandboxProfile::strict();
+        assert!(
+            strict.allow_write.iter().any(|p| p == "~/.pi"),
+            "strict profile must keep ~/.pi writable: {:?}",
+            strict.allow_write
+        );
+
+        let development = SandboxProfile::development();
+        assert!(
+            development.allow_write.iter().any(|p| p == "~/.pi"),
+            "development profile must keep ~/.pi writable: {:?}",
+            development.allow_write
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn landlock_grants_standard_devices_without_binding_dev() {
