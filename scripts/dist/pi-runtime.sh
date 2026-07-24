@@ -104,8 +104,13 @@ import time
 
 binary = sys.argv[1]
 home = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
+# `-ne` (no extensions): verification is about the Pi *binary's* health
+# (version + RPC model discovery), not the invoking user's extension state. A
+# stale/conflicting user extension must not fail binary verification (it would
+# abort startup with a tool conflict -> zero models). Provider checks below read
+# auth.json/settings.json, which are independent of extensions.
 proc = subprocess.Popen(
-    [binary, "--mode", "rpc", "--no-session"],
+    [binary, "-ne", "--mode", "rpc", "--no-session"],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,

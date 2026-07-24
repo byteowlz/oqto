@@ -26,6 +26,18 @@ PI_DEFAULT_EXTENSIONS=(
   pi-openai-completions-convert-think-tags
 )
 
+# Superseded extension dir names left by the octo->oqto and pre-`pi-` renames.
+# These register the same tools as their pi-* successors, so a stale copy
+# alongside the canonical one makes Pi fail to load with a fatal tool conflict
+# (aborting RPC startup -> zero models -> deploy verification failure). They are
+# byteowlz-owned names, never user-custom, so pruning them is safe.
+PI_LEGACY_EXTENSIONS=(
+  auto-rename azure-empty-response-guard introspection
+  oqto-bridge octo-bridge oqto-todos octo-todos
+  custom-context-files read-image-guard read-file-guard
+  openai-completions-convert-think-tags
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest) MANIFEST="$2"; shift 2 ;;
@@ -105,6 +117,14 @@ install_ext_for_home() {
   local dir="$home/.pi/agent/extensions"
   local owner; owner="$(stat -c '%U:%G' "$home" 2>/dev/null || echo 'root:root')"
   sudo mkdir -p "$dir"
+  # Prune superseded legacy extension dirs first, so a stale duplicate can't
+  # conflict with its pi-* successor and abort Pi startup.
+  local legacy
+  for legacy in "${PI_LEGACY_EXTENSIONS[@]}"; do
+    [[ -e "$dir/$legacy" ]] || continue
+    sudo rm -rf "$dir/$legacy"
+    log "  pruned legacy extension: $home/.pi/agent/extensions/$legacy"
+  done
   local ext
   for ext in "${PI_DEFAULT_EXTENSIONS[@]}"; do
     [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; continue; }
