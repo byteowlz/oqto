@@ -477,6 +477,20 @@ const LANDLOCK_WRITE_ACCESS_ABI1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
 /// crosses directories, and without `TRUNCATE` truncation is not restricted at
 /// all. Enforcement there is both stricter for tooling and weaker for security
 /// than on ABI >= 3.
+/// Subset of the write mask that Landlock accepts on a non-directory.
+///
+/// `landlock_add_rule` returns `EINVAL` when a rule for a regular file or
+/// device carries directory-only rights (`MAKE_*`, `REMOVE_*`, `REFER`), so a
+/// writable file such as `/dev/null` must be registered with file rights only.
+#[cfg(target_os = "linux")]
+fn landlock_file_access_mask(abi: i64) -> u64 {
+    let mut mask = LANDLOCK_ACCESS_FS_WRITE_FILE;
+    if abi >= 3 {
+        mask |= LANDLOCK_ACCESS_FS_TRUNCATE;
+    }
+    mask
+}
+
 #[cfg(target_os = "linux")]
 fn landlock_write_access_mask(abi: i64) -> u64 {
     let mut mask = LANDLOCK_WRITE_ACCESS_ABI1;
@@ -1677,9 +1691,13 @@ impl SandboxConfig {
                     let expanded = Self::expand_home_for_user(path, username);
                     let expanded_str = expanded.to_string_lossy().to_string();
 
-                    // For paths under home, always add them (bwrap will create if needed)
-                    // For absolute paths like /tmp, check existence
-                    if path.starts_with("~/") || expanded.exists() {
+                    // `--bind` requires an existing source: bwrap does not
+                    // create it. Binding a path that is absent on this host
+                    // aborts the whole sandbox, so an optional tool directory
+                    // (~/.codex, ~/.claude, ~/.config/mailz, ...) listed by a
+                    // profile must be skipped rather than fail every spawn.
+                    // apply_landlock already skips absent paths the same way.
+                    if expanded.exists() {
                         args.push("--bind".to_string());
                         args.push(expanded_str.clone());
                         args.push(expanded_str.clone());
@@ -2364,8 +2382,16 @@ impl SandboxConfig {
                     return Err(std::io::Error::last_os_error());
                 }
 
+                // Directory-only rights on a file are rejected with EINVAL.
+                let is_dir = path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                let allowed_access = if is_dir {
+                    access_mask
+                } else {
+                    access_mask & landlock_file_access_mask(abi)
+                };
+
                 let path_beneath = LandlockPathBeneathAttr {
-                    allowed_access: access_mask,
+                    allowed_access,
                     parent_fd,
                     reserved1: 0,
                 };
@@ -2453,6 +2479,49 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn absent_allow_write_paths_are_skipped_not_bound() {
+        // A profile may list optional tool dirs (~/.codex, ~/.claude, ...).
+        // bwrap's --bind fails when the source is missing, which would abort
+        // every sandboxed spawn on hosts where that tool is not installed.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let present = tmp.path().join("present");
+        std::fs::create_dir_all(&present).expect("present dir");
+        let absent = tmp.path().join("definitely-absent");
+
+        // Only the strict profile layers individual writable dirs on a
+        // read-only home; development/minimal bind the whole home read-write.
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_write = vec![
+            present.to_string_lossy().to_string(),
+            absent.to_string_lossy().to_string(),
+        ];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        // Compare only real --bind sources; allow_write is also serialized into
+        // the Landlock shim env var, which is not a mount and must not count.
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+
+        assert!(
+            bind_sources.contains(&&present.to_string_lossy().to_string()),
+            "existing allow_write path must still be bound: {bind_sources:?}"
+        );
+        assert!(
+            !bind_sources.contains(&&absent.to_string_lossy().to_string()),
+            "absent allow_write path must be skipped, not handed to bwrap: {bind_sources:?}"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
