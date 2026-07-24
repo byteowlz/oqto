@@ -6,7 +6,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 VERSION=1.2.3
 RELEASE="$TMP/releases/v$VERSION"
-mkdir -p "$RELEASE/payload/pi" "$TMP/home"
+mkdir -p "$RELEASE/payload/pi" "$TMP/home/.pi/agent"
+# Binary verification is hermetic (`-ne`), so package-provided providers listed
+# by the invoking user must not be required in the resulting model catalog.
+printf '{"packages":["npm:pi-claude-bridge"]}\n' >"$TMP/home/.pi/agent/settings.json"
 
 cat >"$RELEASE/payload/pi/pi" <<'SH'
 #!/usr/bin/env bash
