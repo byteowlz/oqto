@@ -196,6 +196,26 @@ fn default_overlay_root() -> String {
     "~/.oqto/overlays".to_string()
 }
 
+fn default_workspace_cache_root() -> String {
+    "~/.cache/oqto/workspace-caches".to_string()
+}
+
+/// Toolchain cache environment variables redirected into the per-workspace
+/// cache directory, as `(variable, subdirectory)`.
+///
+/// `RUSTUP_HOME` is deliberately absent: rustup shims resolve the active
+/// toolchain through it, so pointing it at an empty directory breaks `cargo`
+/// and `rustc` entirely. It only needs to be readable, which it already is.
+const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
+    ("CARGO_HOME", "cargo"),
+    ("NPM_CONFIG_CACHE", "npm"),
+    ("BUN_INSTALL_CACHE_DIR", "bun"),
+    ("UV_CACHE_DIR", "uv"),
+    ("PIP_CACHE_DIR", "pip"),
+    ("GOPATH", "go"),
+    ("GOMODCACHE", "go/pkg/mod"),
+];
+
 // ============================================================================
 // Network Configuration (integrates with eavs)
 // ============================================================================
@@ -623,6 +643,14 @@ pub struct SandboxProfile {
     #[serde(default)]
     pub resource_limits: ResourceLimits,
 
+    /// Redirect toolchain caches into a per-workspace directory.
+    #[serde(default)]
+    pub workspace_cache_enabled: bool,
+
+    /// Root directory holding per-workspace toolchain caches.
+    #[serde(default = "default_workspace_cache_root")]
+    pub workspace_cache_root: String,
+
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
     #[serde(default)]
@@ -654,6 +682,8 @@ impl SandboxProfile {
     /// Create a minimal profile (least restrictive).
     pub fn minimal() -> Self {
         Self {
+            workspace_cache_enabled: false,
+            workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
@@ -691,6 +721,8 @@ impl SandboxProfile {
     /// Create a development profile (default).
     pub fn development() -> Self {
         Self {
+            workspace_cache_enabled: false,
+            workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
@@ -785,6 +817,8 @@ impl SandboxProfile {
     /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
+            workspace_cache_enabled: true,
+            workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits {
                 // Defense in depth for untrusted work: generous enough for real
                 // builds, low enough to bound a runaway or hostile process.
@@ -968,6 +1002,14 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub resource_limits: ResourceLimits,
 
+    /// Redirect toolchain caches into a per-workspace directory.
+    #[serde(default)]
+    pub workspace_cache_enabled: bool,
+
+    /// Root directory holding per-workspace toolchain caches.
+    #[serde(default = "default_workspace_cache_root")]
+    pub workspace_cache_root: String,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -982,6 +1024,8 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         let profile = SandboxProfile::development();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: false,
             profile: "development".to_string(),
@@ -1032,6 +1076,8 @@ impl From<SandboxConfigFile> for SandboxConfig {
             });
 
         let mut config = Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: file.enabled,
             profile: profile_name.to_string(),
@@ -1072,6 +1118,8 @@ impl SandboxConfig {
     pub fn minimal() -> Self {
         let profile = SandboxProfile::minimal();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: "minimal".to_string(),
@@ -1102,6 +1150,8 @@ impl SandboxConfig {
     pub fn strict() -> Self {
         let profile = SandboxProfile::strict();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: "strict".to_string(),
@@ -1153,6 +1203,8 @@ impl SandboxConfig {
             });
 
         let mut config = Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: profile_name.to_string(),
@@ -1268,6 +1320,8 @@ impl SandboxConfig {
                         });
 
                     let config = Self {
+                        workspace_cache_enabled: profile.workspace_cache_enabled,
+                        workspace_cache_root: profile.workspace_cache_root.clone(),
                         resource_limits: profile.resource_limits,
                         enabled: file.enabled,
                         profile: profile_name.to_string(),
@@ -1366,6 +1420,11 @@ impl SandboxConfig {
         profiles.extend(self.profiles.clone());
 
         Self {
+            // A workspace may turn cache redirection on, but must not choose
+            // where the cache root lives: that stays a global decision.
+            workspace_cache_enabled: self.workspace_cache_enabled
+                || workspace_config.workspace_cache_enabled,
+            workspace_cache_root: self.workspace_cache_root.clone(),
             resource_limits: self
                 .resource_limits
                 .tightest(workspace_config.resource_limits),
@@ -1645,6 +1704,27 @@ impl SandboxConfig {
             return None;
         }
 
+        // Per-workspace toolchain caches. Under an enforcing profile the real
+        // caches are not writable, so builds need a writable location that is
+        // still isolated from the user's own caches and from other workspaces.
+        // Resolved before anything consumes allow_write, because this directory
+        // must be both bind-mounted and granted in the Landlock ruleset.
+        let workspace_cache = match self.workspace_cache_dir(workspace, username) {
+            Ok(dir) => dir,
+            Err(e) => {
+                error!("workspace cache: {e}");
+                return None;
+            }
+        };
+        let effective_allow_write: Vec<String> = match &workspace_cache {
+            Some(dir) => {
+                let mut paths = self.allow_write.clone();
+                paths.push(dir.to_string_lossy().to_string());
+                paths
+            }
+            None => self.allow_write.clone(),
+        };
+
         let mut args = Vec::new();
 
         // Basic system directories (read-only)
@@ -1733,7 +1813,7 @@ impl SandboxConfig {
                 );
 
                 // Then bind writable directories on top
-                for path in &self.allow_write {
+                for path in &effective_allow_write {
                     let expanded = Self::expand_home_for_user(path, username);
                     let expanded_str = expanded.to_string_lossy().to_string();
 
@@ -1971,6 +2051,22 @@ impl SandboxConfig {
             );
         }
 
+        // Point toolchain caches at the per-workspace directory. Without this,
+        // an enforcing profile denies writes to ~/.cargo, ~/.npm and friends and
+        // every dependency-fetching build fails.
+        if let Some(dir) = &workspace_cache {
+            for (var, sub) in WORKSPACE_CACHE_ENV {
+                args.push("--setenv".to_string());
+                args.push((*var).to_string());
+                args.push(dir.join(sub).to_string_lossy().to_string());
+            }
+            debug!(
+                "Workspace cache: redirected {} toolchain variables to {}",
+                WORKSPACE_CACHE_ENV.len(),
+                dir.display()
+            );
+        }
+
         // Construct PATH for the sandboxed process.
         //
         // bwrap inherits the launcher's PATH, but that launcher may be a systemd
@@ -2110,8 +2206,7 @@ impl SandboxConfig {
                     args.push(crate::landlock_shim::ENV_WORKSPACE.to_string());
                     args.push(workspace.to_string_lossy().to_string());
 
-                    let allow_write_joined = self
-                        .allow_write
+                    let allow_write_joined = effective_allow_write
                         .iter()
                         .map(|p| {
                             Self::expand_home_for_user(p, username)
@@ -2327,6 +2422,42 @@ impl SandboxConfig {
         }
     }
 
+    /// Resolve (and create) the per-workspace toolchain cache directory.
+    ///
+    /// Returns `Ok(None)` when the feature is disabled. The directory lives
+    /// outside the workspace so build caches never appear in the user's
+    /// repository, and is keyed by workspace so two workspaces cannot corrupt
+    /// each other's caches.
+    fn workspace_cache_dir(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Result<Option<PathBuf>> {
+        if !self.workspace_cache_enabled {
+            return Ok(None);
+        }
+
+        let root = Self::expand_home_for_user(&self.workspace_cache_root, username);
+        if root.as_os_str().is_empty() {
+            anyhow::bail!(
+                "workspace_cache_root '{}' resolved to an empty path",
+                self.workspace_cache_root
+            );
+        }
+
+        let dir = root.join(Self::workspace_overlay_id(workspace));
+        for (_, sub) in WORKSPACE_CACHE_ENV {
+            std::fs::create_dir_all(dir.join(sub)).with_context(|| {
+                format!(
+                    "creating workspace cache directory {}",
+                    dir.join(sub).display()
+                )
+            })?;
+        }
+
+        Ok(Some(dir))
+    }
+
     /// Apply Landlock write restrictions (workspace + allow_write).
     pub fn apply_landlock(&self, workspace: &Path, username: Option<&str>) -> std::io::Result<()> {
         if self.landlock_mode == LandlockMode::Off {
@@ -2539,6 +2670,76 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn workspace_cache_is_granted_and_redirected_per_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws_a = tmp.path().join("a");
+        let ws_b = tmp.path().join("b");
+        std::fs::create_dir_all(&ws_a).expect("ws a");
+        std::fs::create_dir_all(&ws_b).expect("ws b");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.landlock_mode = LandlockMode::Enforce;
+        config.workspace_cache_enabled = true;
+        config.workspace_cache_root = tmp.path().join("caches").to_string_lossy().to_string();
+
+        let args_a = config
+            .build_bwrap_args_for_user(&ws_a, None)
+            .expect("args for a");
+        let args_b = config
+            .build_bwrap_args_for_user(&ws_b, None)
+            .expect("args for b");
+
+        let cargo_home = |args: &[String]| -> String {
+            args.windows(3)
+                .find(|w| w[0] == "--setenv" && w[1] == "CARGO_HOME")
+                .map(|w| w[2].clone())
+                .expect("CARGO_HOME is redirected")
+        };
+
+        let a = cargo_home(&args_a);
+        let b = cargo_home(&args_b);
+        assert_ne!(a, b, "each workspace gets its own cache");
+        assert!(
+            !a.starts_with(ws_a.to_string_lossy().as_ref()),
+            "cache must live outside the workspace so it never pollutes the repo"
+        );
+
+        // The cache must also be writable, or redirection just moves the failure.
+        let landlock_paths = args_a
+            .windows(3)
+            .find(|w| w[0] == "--setenv" && w[1] == crate::landlock_shim::ENV_ALLOW_WRITE)
+            .map(|w| w[2].clone())
+            .expect("landlock allow_write is passed to the shim");
+        let cache_dir = std::path::Path::new(&a)
+            .parent()
+            .expect("cache subdir has a parent")
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            landlock_paths.split(':').any(|p| p == cache_dir),
+            "cache dir {cache_dir} must be granted in the Landlock ruleset, got {landlock_paths}"
+        );
+    }
+
+    #[test]
+    fn workspace_cache_does_not_redirect_rustup_home() {
+        // rustup shims resolve the active toolchain through RUSTUP_HOME.
+        // Pointing it at an empty per-workspace dir breaks cargo and rustc.
+        assert!(
+            !WORKSPACE_CACHE_ENV
+                .iter()
+                .any(|(var, _)| *var == "RUSTUP_HOME"),
+            "RUSTUP_HOME must not be redirected"
+        );
+        assert!(
+            WORKSPACE_CACHE_ENV
+                .iter()
+                .any(|(var, _)| *var == "CARGO_HOME")
+        );
+    }
 
     #[test]
     fn strict_profile_enforces_landlock() {
