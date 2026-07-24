@@ -6,7 +6,7 @@
 # Tools for AI agents in the Oqto platform:
 #
 #   agntz   - Agent toolkit (wraps other tools, file reservations, etc.)
-#   mmry    - Memory storage and semantic search
+#   mmry    - Memory storage (workspace-local lexical ledger; no embeddings)
 #   trx     - Issue/task tracking
 #   scrpr   - Web content extraction (readability, Tavily, Jina)
 #   tmpltr  - Document generation from templates (Typst)
