@@ -453,8 +453,9 @@ const LANDLOCK_ACCESS_FS_REFER: u64 = 1u64 << 13;
 #[cfg(target_os = "linux")]
 const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1u64 << 14;
 
+/// Write-ish rights available in Landlock ABI 1 (Linux 5.13).
 #[cfg(target_os = "linux")]
-const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+const LANDLOCK_WRITE_ACCESS_ABI1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_REMOVE_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_CHAR
@@ -463,9 +464,30 @@ const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_SOCK
     | LANDLOCK_ACCESS_FS_MAKE_FIFO
     | LANDLOCK_ACCESS_FS_MAKE_BLOCK
-    | LANDLOCK_ACCESS_FS_MAKE_SYM
-    | LANDLOCK_ACCESS_FS_REFER
-    | LANDLOCK_ACCESS_FS_TRUNCATE;
+    | LANDLOCK_ACCESS_FS_MAKE_SYM;
+
+/// Write-restriction mask supported by a given Landlock ABI version.
+///
+/// The kernel rejects any right it does not know, so requesting `REFER`
+/// (ABI 2, Linux 5.19) or `TRUNCATE` (ABI 3, Linux 6.2) on an older kernel
+/// makes `landlock_create_ruleset` fail with `EINVAL` and takes the whole
+/// sandbox down. Clamp instead, and let callers report the reduced guarantee.
+///
+/// Note for ABI 1: without `REFER` the kernel denies every rename/link that
+/// crosses directories, and without `TRUNCATE` truncation is not restricted at
+/// all. Enforcement there is both stricter for tooling and weaker for security
+/// than on ABI >= 3.
+#[cfg(target_os = "linux")]
+fn landlock_write_access_mask(abi: i64) -> u64 {
+    let mut mask = LANDLOCK_WRITE_ACCESS_ABI1;
+    if abi >= 2 {
+        mask |= LANDLOCK_ACCESS_FS_REFER;
+    }
+    if abi >= 3 {
+        mask |= LANDLOCK_ACCESS_FS_TRUNCATE;
+    }
+    mask
+}
 
 // ============================================================================
 // Sandbox Profile
@@ -2207,20 +2229,26 @@ impl SandboxConfig {
     pub fn is_landlock_supported() -> bool {
         #[cfg(target_os = "linux")]
         {
-            // SAFETY: Syscall interface is used read-only for feature probing.
-            let abi = unsafe {
-                libc::syscall(
-                    libc::SYS_landlock_create_ruleset,
-                    std::ptr::null::<LandlockRulesetAttr>(),
-                    0,
-                    LANDLOCK_CREATE_RULESET_VERSION,
-                )
-            };
-            abi >= 1
+            Self::landlock_abi() >= 1
         }
         #[cfg(not(target_os = "linux"))]
         {
             false
+        }
+    }
+
+    /// Probe the kernel's Landlock ABI version. Returns a negative value when
+    /// Landlock is unavailable.
+    #[cfg(target_os = "linux")]
+    pub fn landlock_abi() -> i64 {
+        // SAFETY: Syscall interface is used read-only for feature probing.
+        unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<LandlockRulesetAttr>(),
+                0,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
         }
     }
 
@@ -2274,8 +2302,25 @@ impl SandboxConfig {
                 return Ok(());
             }
 
+            // Restrict only rights this kernel understands; an unknown right
+            // makes ruleset creation fail with EINVAL.
+            let abi = Self::landlock_abi();
+            let access_mask = landlock_write_access_mask(abi);
+            if abi < 3 {
+                warn!(
+                    "Landlock ABI {} lacks {}; enforcement is weaker than ABI 3+ \
+                     and cross-directory renames may be denied",
+                    abi,
+                    if abi < 2 {
+                        "REFER and TRUNCATE"
+                    } else {
+                        "TRUNCATE"
+                    }
+                );
+            }
+
             let ruleset_attr = LandlockRulesetAttr {
-                handled_access_fs: LANDLOCK_WRITE_ACCESS_MASK,
+                handled_access_fs: access_mask,
             };
 
             // Enforce mode: build ruleset and apply restrict_self.
@@ -2320,7 +2365,7 @@ impl SandboxConfig {
                 }
 
                 let path_beneath = LandlockPathBeneathAttr {
-                    allowed_access: LANDLOCK_WRITE_ACCESS_MASK,
+                    allowed_access: access_mask,
                     parent_fd,
                     reserved1: 0,
                 };
@@ -2408,6 +2453,74 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_mask_clamps_to_kernel_abi() {
+        // ABI 1 (Linux 5.13, Ubuntu 22.04): neither REFER nor TRUNCATE exist.
+        // Requesting them returns EINVAL and fails the whole sandbox.
+        let abi1 = landlock_write_access_mask(1);
+        assert_eq!(abi1 & LANDLOCK_ACCESS_FS_REFER, 0, "REFER is ABI 2+");
+        assert_eq!(abi1 & LANDLOCK_ACCESS_FS_TRUNCATE, 0, "TRUNCATE is ABI 3+");
+        assert_ne!(
+            abi1 & LANDLOCK_ACCESS_FS_WRITE_FILE,
+            0,
+            "base rights still applied"
+        );
+
+        // ABI 2 (Linux 5.19, Debian 12 is 6.1 => ABI 2): REFER only.
+        let abi2 = landlock_write_access_mask(2);
+        assert_ne!(abi2 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_eq!(abi2 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+
+        // ABI 3+ (Linux 6.2): full write mask.
+        let abi3 = landlock_write_access_mask(3);
+        assert_ne!(abi3 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_ne!(abi3 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+
+        // Newer kernels must not silently gain rights we never audited.
+        assert_eq!(
+            landlock_write_access_mask(9),
+            abi3,
+            "mask is stable above ABI 3"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_mask_is_monotonic_in_abi() {
+        let masks: Vec<u64> = (1..=9).map(landlock_write_access_mask).collect();
+        for pair in masks.windows(2) {
+            assert_eq!(pair[0] & pair[1], pair[0], "rights are only ever added");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_ruleset_creation_accepts_clamped_mask_on_this_kernel() {
+        let abi = SandboxConfig::landlock_abi();
+        if abi < 1 {
+            return; // kernel without Landlock; nothing to assert
+        }
+        let attr = LandlockRulesetAttr {
+            handled_access_fs: landlock_write_access_mask(abi),
+        };
+        // SAFETY: read-only feature use with a valid attr pointer/size.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                &attr as *const LandlockRulesetAttr,
+                std::mem::size_of::<LandlockRulesetAttr>(),
+                0,
+            )
+        };
+        assert!(
+            fd >= 0,
+            "clamped mask must be accepted by the running kernel"
+        );
+        // SAFETY: closing the fd we just created.
+        unsafe { libc::close(fd as i32) };
+    }
 
     #[test]
     fn resource_limits_merge_keeps_stricter_value() {
