@@ -10,6 +10,7 @@ pub mod handlers;
 mod onboarding_handlers;
 pub(crate) mod provisioning;
 pub mod proxy;
+mod rate_limit;
 mod routes;
 mod state;
 mod test_harness;

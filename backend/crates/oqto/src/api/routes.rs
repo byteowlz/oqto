@@ -440,11 +440,23 @@ fn create_router_with_config_and_auth(
         .route("/health", get(handlers::health))
         .route("/ws/debug", get(handlers::ws_debug))
         .route("/features", get(handlers::features))
+        .route("/auth/logout", post(handlers::logout))
+        .with_state(state.clone());
+
+    // Unauthenticated credential endpoints: rate-limited per client IP to
+    // resist brute-force. 10 attempts / 60s / IP is generous for humans but
+    // throttles automated guessing.
+    let auth_rate_limiter =
+        super::rate_limit::AuthRateLimiter::new(10, std::time::Duration::from_secs(60));
+    let auth_routes = Router::new()
         .route("/auth/login", post(handlers::login))
         .route("/auth/register", post(handlers::register))
-        .route("/auth/logout", post(handlers::logout))
         // Keep dev_login for backwards compatibility
         .route("/auth/dev-login", post(handlers::dev_login))
+        .layer(middleware::from_fn_with_state(
+            auth_rate_limiter,
+            super::rate_limit::rate_limit_middleware,
+        ))
         .with_state(state.clone());
 
     // Delegation routes (localhost-only, no auth - used by Pi extension)
@@ -496,6 +508,7 @@ fn create_router_with_config_and_auth(
 
     Router::new()
         .merge(public_routes)
+        .merge(auth_routes)
         .merge(protected_routes)
         .merge(delegate_routes)
         .merge(test_routes)
