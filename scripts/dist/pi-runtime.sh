@@ -84,7 +84,15 @@ CANDIDATE="$TMP/pi/pi"
 }
 
 verify_runtime() {
-  local binary="$1" label="$2" actual_version
+  local binary="$1" label="$2" actual_version package_dir required_asset
+  package_dir="$(cd "$(dirname "$binary")" && pwd -P)"
+  for required_asset in theme/dark.json theme/light.json; do
+    if [[ ! -r "$package_dir/$required_asset" ]]; then
+      echo "pi-runtime: $label missing required asset: $required_asset" >&2
+      return 1
+    fi
+  done
+
   actual_version="$($binary --version 2>/dev/null | head -1)"
   [[ "$actual_version" == "$VERSION" ]] || {
     echo "pi-runtime: $label version mismatch expected=$VERSION actual=${actual_version:-unavailable}" >&2

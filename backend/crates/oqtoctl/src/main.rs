@@ -4463,14 +4463,42 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         anyhow::bail!("Failed to write service file");
     }
 
-    // Reload systemd
+    // User systemd managers are reached through /run/user/<uid>/bus. Do not
+    // rely on the invoking root shell to carry the target user's runtime dir:
+    // that made daemon-reload fail silently while restart reused a stale loaded
+    // unit (including removed environment variables such as PI_PACKAGE_DIR).
+    let uid_output = std::process::Command::new("id")
+        .args(["-u", username])
+        .output()
+        .context("Failed to resolve user UID")?;
+    if !uid_output.status.success() {
+        anyhow::bail!("Failed to resolve UID for '{}'", username);
+    }
+    let uid = String::from_utf8_lossy(&uid_output.stdout)
+        .trim()
+        .to_string();
+    let xdg_runtime_dir = format!("XDG_RUNTIME_DIR=/run/user/{uid}");
+
+    // Reload systemd and fail closed: restarting with an outdated loaded unit
+    // is not a successful runner update.
     if !json {
         println!("Reloading systemd...");
     }
-
-    let _ = std::process::Command::new("sudo")
-        .args(["-u", username, "systemctl", "--user", "daemon-reload"])
-        .status();
+    let reload_status = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            username,
+            "env",
+            &xdg_runtime_dir,
+            "systemctl",
+            "--user",
+            "daemon-reload",
+        ])
+        .status()
+        .context("Failed to reload user systemd manager")?;
+    if !reload_status.success() {
+        anyhow::bail!("Failed to reload systemd user manager for '{}'", username);
+    }
 
     // Enable and start the service
     if !json {
@@ -4481,6 +4509,8 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         .args([
             "-u",
             username,
+            "env",
+            &xdg_runtime_dir,
             "systemctl",
             "--user",
             "enable",
@@ -4505,6 +4535,8 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         .args([
             "-u",
             username,
+            "env",
+            &xdg_runtime_dir,
             "systemctl",
             "--user",
             "restart",
