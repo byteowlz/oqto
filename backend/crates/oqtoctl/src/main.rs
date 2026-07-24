@@ -4497,13 +4497,17 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         println!("Starting oqto-runner service...");
     }
 
+    // `restart` (not `start`) so that reinstalling over an already-running
+    // runner actually swaps the binary. `start` is a no-op on an active
+    // service, which would silently leave the old binary in place after a
+    // runner-protocol change. On a fresh install this is equivalent to start.
     let status = std::process::Command::new("sudo")
         .args([
             "-u",
             username,
             "systemctl",
             "--user",
-            "start",
+            "restart",
             "oqto-runner",
         ])
         .status()

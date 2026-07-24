@@ -11,6 +11,7 @@ SKIP_BUILD=false
 SKIP_FRONTEND=false
 SKIP_BACKEND=false
 SKIP_SERVICES=false
+FORCE_RUNNER_RESTART=false
 USE_REMOTE_BUILD=false
 DEPLOY_ARTIFACT=""
 DEPLOY_CHECKSUM=""
@@ -92,6 +93,10 @@ Options:
   --skip-frontend          Skip frontend staging and deploy
   --skip-backend           Skip backend binary staging and deploy
   --skip-services          Skip service restarts
+  --force-runner-restart   Multi-user: force-restart every per-user oqto-runner
+                           after activation so they pick up the new binary
+                           (bypasses the "already running" fast path). Use
+                           after runner-protocol changes.
   --remote-build           Use remote-build for backend binaries (default: local cargo build)
   --remote-build-server S  Remote-build server endpoint (host:port or URL). Optional if configured via REMOTE_BUILD_SERVER or ~/.config/remote-build/config.toml
   --use-mold-linker        Opt into mold for local Rust builds. Also: OQTO_USE_MOLD_LINKER=true
@@ -134,6 +139,7 @@ while [[ $# -gt 0 ]]; do
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
         --skip-backend) SKIP_BACKEND=true; shift ;;
         --skip-services) SKIP_SERVICES=true; shift ;;
+        --force-runner-restart) FORCE_RUNNER_RESTART=true; shift ;;
         --remote-build) USE_REMOTE_BUILD=true; shift ;;
         --remote-build-server) REMOTE_BUILD_SERVER="$2"; shift 2 ;;
         --use-mold-linker) USE_MOLD_LINKER=true; shift ;;
@@ -1101,6 +1107,7 @@ restart_all_multi_user_runners() {
     # Wait for oqtoctl control plane readiness after systemctl restart oqto.
     # Retry quietly first to avoid transient "Connection refused" noise.
     host_exec_sudo "$is_local" "$ssh_target" '
+        force_flag="'"${FORCE_RUNNER_RESTART}"'"
         ready=0
         for i in $(seq 1 30); do
             if oqtoctl user list --json >/dev/null 2>&1; then
@@ -1120,9 +1127,10 @@ restart_all_multi_user_runners() {
 
         # Restart/provision each user runner via usermgr API path.
         users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
-        python3 - "$users_json" <<"PY"
+        python3 - "$users_json" "$force_flag" <<"PY"
 import json, subprocess, sys
 raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
+force = (sys.argv[2] if len(sys.argv) > 2 else "false") == "true"
 try:
     users = json.loads(raw)
 except Exception:
@@ -1131,9 +1139,14 @@ for u in users:
     username = u.get("username")
     if not username:
         continue
-    # setup-runner is idempotent; suppress the noisy "already installed" lines.
+    # setup-runner is idempotent; without --force it fast-paths when the
+    # runner is already up (keeps the old binary). --force reinstalls the
+    # unit and restarts, so runner-protocol changes actually take effect.
+    cmd = ["oqtoctl", "user", "setup-runner", username]
+    if force:
+        cmd.append("--force")
     subprocess.run(
-        ["oqtoctl", "user", "setup-runner", username],
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
         check=False,
