@@ -132,6 +132,66 @@ fn default_true() -> bool {
     true
 }
 
+/// Per-process resource limits applied with `setrlimit(2)` immediately before
+/// exec.
+///
+/// Unset fields leave the inherited limit untouched. These are per-process and
+/// require no cgroup delegation, so they apply unprivileged and when
+/// `oqto-sandbox` is used standalone. Placement-level quotas for a whole
+/// Workspace remain the supervisor's job (see ADR-0020).
+///
+/// Process-count caps are deliberately absent: `RLIMIT_NPROC` counts every
+/// process of the real UID rather than this sandbox's descendants, so any
+/// value below the user's existing process count makes `clone(2)` fail and
+/// stops the sandbox from starting at all. Bounding process counts requires
+/// cgroup `pids.max`, which belongs to the Placement Supervisor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    /// Maximum address space, in bytes (`RLIMIT_AS`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_memory_bytes: Option<u64>,
+
+    /// Maximum number of open file descriptors (`RLIMIT_NOFILE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_open_files: Option<u64>,
+
+    /// Maximum CPU time, in seconds (`RLIMIT_CPU`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cpu_seconds: Option<u64>,
+
+    /// Maximum size of any single file written, in bytes (`RLIMIT_FSIZE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_file_size_bytes: Option<u64>,
+}
+
+impl ResourceLimits {
+    /// True when no limit is set, so spawn can skip installing them.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Combine two limit sets keeping the stricter (lower) value per field.
+    ///
+    /// Workspace config may only tighten limits, never raise them, matching the
+    /// merge direction already used for `deny_read`/`allow_write`.
+    pub fn tightest(self, other: Self) -> Self {
+        fn stricter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (None, None) => None,
+            }
+        }
+
+        Self {
+            max_memory_bytes: stricter(self.max_memory_bytes, other.max_memory_bytes),
+            max_open_files: stricter(self.max_open_files, other.max_open_files),
+            max_cpu_seconds: stricter(self.max_cpu_seconds, other.max_cpu_seconds),
+            max_file_size_bytes: stricter(self.max_file_size_bytes, other.max_file_size_bytes),
+        }
+    }
+}
+
 fn default_overlay_root() -> String {
     "~/.oqto/overlays".to_string()
 }
@@ -499,6 +559,10 @@ pub struct SandboxProfile {
     #[serde(default)]
     pub scoped_paths: Vec<ScopedPathRule>,
 
+    /// Per-process resource limits applied before exec.
+    #[serde(default)]
+    pub resource_limits: ResourceLimits,
+
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
     #[serde(default)]
@@ -530,6 +594,7 @@ impl SandboxProfile {
     /// Create a minimal profile (least restrictive).
     pub fn minimal() -> Self {
         Self {
+            resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
@@ -566,6 +631,7 @@ impl SandboxProfile {
     /// Create a development profile (default).
     pub fn development() -> Self {
         Self {
+            resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
@@ -659,6 +725,14 @@ impl SandboxProfile {
     /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
+            resource_limits: ResourceLimits {
+                // Defense in depth for untrusted work: generous enough for real
+                // builds, low enough to bound a runaway or hostile process.
+                max_memory_bytes: Some(4 * 1024 * 1024 * 1024),
+                max_open_files: Some(4096),
+                max_cpu_seconds: None,
+                max_file_size_bytes: Some(2 * 1024 * 1024 * 1024),
+            },
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
@@ -820,6 +894,10 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub network: Option<NetworkConfig>,
 
+    /// Per-process resource limits applied before exec.
+    #[serde(default)]
+    pub resource_limits: ResourceLimits,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -834,6 +912,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         let profile = SandboxProfile::development();
         Self {
+            resource_limits: profile.resource_limits,
             enabled: false,
             profile: "development".to_string(),
             deny_read: profile.deny_read,
@@ -883,6 +962,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             });
 
         let mut config = Self {
+            resource_limits: profile.resource_limits,
             enabled: file.enabled,
             profile: profile_name.to_string(),
             deny_read: profile.deny_read,
@@ -922,6 +1002,7 @@ impl SandboxConfig {
     pub fn minimal() -> Self {
         let profile = SandboxProfile::minimal();
         Self {
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: "minimal".to_string(),
             deny_read: profile.deny_read,
@@ -951,6 +1032,7 @@ impl SandboxConfig {
     pub fn strict() -> Self {
         let profile = SandboxProfile::strict();
         Self {
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: "strict".to_string(),
             deny_read: profile.deny_read,
@@ -1001,6 +1083,7 @@ impl SandboxConfig {
             });
 
         let mut config = Self {
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: profile_name.to_string(),
             deny_read: profile.deny_read,
@@ -1115,6 +1198,7 @@ impl SandboxConfig {
                         });
 
                     let config = Self {
+                        resource_limits: profile.resource_limits,
                         enabled: file.enabled,
                         profile: profile_name.to_string(),
                         deny_read: profile.deny_read,
@@ -1212,6 +1296,9 @@ impl SandboxConfig {
         profiles.extend(self.profiles.clone());
 
         Self {
+            resource_limits: self
+                .resource_limits
+                .tightest(workspace_config.resource_limits),
             // Enable if either enables
             enabled: self.enabled || workspace_config.enabled,
             // Use workspace profile name if workspace specifies one
@@ -2321,6 +2408,83 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn resource_limits_merge_keeps_stricter_value() {
+        let global = ResourceLimits {
+            max_memory_bytes: Some(8 * 1024),
+            max_open_files: Some(256),
+            max_cpu_seconds: Some(600),
+            max_file_size_bytes: None,
+        };
+        let workspace = ResourceLimits {
+            max_memory_bytes: Some(4 * 1024),
+            max_open_files: Some(512),
+            max_cpu_seconds: None,
+            max_file_size_bytes: Some(128),
+        };
+
+        let merged = global.tightest(workspace);
+
+        assert_eq!(
+            merged.max_memory_bytes,
+            Some(4 * 1024),
+            "workspace tightened"
+        );
+        assert_eq!(merged.max_open_files, Some(256), "workspace may not raise");
+        assert_eq!(
+            merged.max_file_size_bytes,
+            Some(128),
+            "unset global adopts workspace"
+        );
+        assert_eq!(
+            merged.max_cpu_seconds,
+            Some(600),
+            "unset workspace keeps global"
+        );
+    }
+
+    #[test]
+    fn resource_limits_merge_is_order_independent() {
+        let a = ResourceLimits {
+            max_memory_bytes: Some(10),
+            max_cpu_seconds: Some(4),
+            ..Default::default()
+        };
+        let b = ResourceLimits {
+            max_memory_bytes: Some(20),
+            max_open_files: Some(9),
+            ..Default::default()
+        };
+        assert_eq!(a.tightest(b), b.tightest(a));
+    }
+
+    #[test]
+    fn strict_profile_sets_limits_and_development_does_not() {
+        assert!(!SandboxProfile::strict().resource_limits.is_empty());
+        assert!(SandboxProfile::development().resource_limits.is_empty());
+        assert!(SandboxProfile::minimal().resource_limits.is_empty());
+    }
+
+    #[test]
+    fn resource_limits_parse_from_profile_toml() {
+        let toml_text = r#"
+profile = "custom"
+[profiles.custom]
+deny_read = []
+allow_write = ["/tmp"]
+deny_write = []
+[profiles.custom.resource_limits]
+max_memory_bytes = 2048
+max_cpu_seconds = 32
+"#;
+        let file: SandboxConfigFile = toml::from_str(toml_text).expect("parses");
+        let config: SandboxConfig = file.into();
+        assert_eq!(config.resource_limits.max_memory_bytes, Some(2048));
+        assert_eq!(config.resource_limits.max_cpu_seconds, Some(32));
+        assert_eq!(config.resource_limits.max_open_files, None);
+    }
+
     use super::*;
     use std::env;
     use std::sync::Mutex;
