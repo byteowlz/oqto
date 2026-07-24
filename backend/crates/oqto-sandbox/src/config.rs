@@ -482,6 +482,30 @@ const LANDLOCK_WRITE_ACCESS_ABI1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
 /// `landlock_add_rule` returns `EINVAL` when a rule for a regular file or
 /// device carries directory-only rights (`MAKE_*`, `REMOVE_*`, `REFER`), so a
 /// writable file such as `/dev/null` must be registered with file rights only.
+/// Device nodes that bwrap's `--dev` always provides and that ordinary tooling
+/// expects to be writable (`git` opens `/dev/null` read-write, shells redirect
+/// to it constantly).
+///
+/// These are granted directly in the Landlock ruleset rather than through
+/// `allow_write`, because `allow_write` also drives bwrap `--bind` arguments:
+/// binding `/dev` or `/dev/null` would mount over bwrap's own `--dev` and break
+/// the sandbox in every mode. Granting a write right on a device node exposes
+/// no host filesystem contents.
+/// System location of managed agent runtimes (Pi standalone binaries).
+///
+/// Bound read-only so sandboxed agents can execute the promoted runtime.
+pub const MANAGED_RUNTIME_DIR: &str = "/var/lib/oqto/pi-runtimes";
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_ALWAYS_WRITABLE_DEVICES: &[&str] = &[
+    "/dev/null",
+    "/dev/zero",
+    "/dev/full",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/tty",
+];
+
 #[cfg(target_os = "linux")]
 fn landlock_file_access_mask(abi: i64) -> u64 {
     let mut mask = LANDLOCK_ACCESS_FS_WRITE_FILE;
@@ -1623,6 +1647,18 @@ impl SandboxConfig {
         }
         debug!("Added system directories as read-only binds");
 
+        // Managed agent runtimes live outside the system directories above, so
+        // a profile that binds home read-only (strict) could not see the Pi
+        // binary at all and every agent spawn failed with "No such file or
+        // directory". Read-only is sufficient: promotion is the installer's job.
+        let runtime_dir = Path::new(MANAGED_RUNTIME_DIR);
+        if runtime_dir.exists() {
+            args.push("--ro-bind".to_string());
+            args.push(MANAGED_RUNTIME_DIR.to_string());
+            args.push(MANAGED_RUNTIME_DIR.to_string());
+            debug!("Bound managed agent runtime directory read-only");
+        }
+
         // DNS resolver: on systemd-resolved systems, /etc/resolv.conf is a
         // symlink to /run/systemd/resolve/stub-resolv.conf.  The --ro-bind
         // for /etc does NOT follow symlinks that point outside /etc, so DNS
@@ -2361,6 +2397,9 @@ impl SandboxConfig {
             for p in &self.allow_write {
                 writable_paths.insert(Self::expand_home_for_user(p, username));
             }
+            for dev in LANDLOCK_ALWAYS_WRITABLE_DEVICES {
+                writable_paths.insert(PathBuf::from(dev));
+            }
 
             for path in writable_paths {
                 if !path.exists() {
@@ -2479,6 +2518,69 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_grants_standard_devices_without_binding_dev() {
+        // git opens /dev/null read-write and shells redirect to it. These must
+        // be granted in the ruleset, never via allow_write: an allow_write
+        // entry also emits a bwrap --bind, and binding /dev mounts over
+        // bwrap's own --dev and breaks the sandbox in every mode.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.landlock_mode = LandlockMode::Enforce;
+        config.allow_write = vec!["/tmp".to_string()];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        // Check mount destinations: these devices legitimately appear as bind
+        // *sources* (e.g. --bind /dev/null /bin/systemctl masks systemctl).
+        let bind_targets: Vec<&String> = args
+            .windows(3)
+            .filter(|w| w[0] == "--bind" || w[0] == "--ro-bind")
+            .map(|w| &w[2])
+            .collect();
+        for dev in LANDLOCK_ALWAYS_WRITABLE_DEVICES {
+            assert!(
+                !bind_targets.contains(&&dev.to_string()),
+                "{dev} must not be mounted over; it is granted in the ruleset"
+            );
+        }
+        assert!(
+            !bind_targets.contains(&&"/dev".to_string()),
+            "/dev must not be bound over bwrap's --dev"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_runtime_dir_is_bound_read_only_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        if std::path::Path::new(MANAGED_RUNTIME_DIR).exists() {
+            let ro: Vec<&String> = args
+                .windows(2)
+                .filter(|w| w[0] == "--ro-bind")
+                .map(|w| &w[1])
+                .collect();
+            assert!(
+                ro.contains(&&MANAGED_RUNTIME_DIR.to_string()),
+                "strict profile must expose the managed agent runtime read-only"
+            );
+        }
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
