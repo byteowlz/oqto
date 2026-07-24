@@ -1,4 +1,4 @@
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.setup.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.setup.schema.json
 
 [deployment]
 user_mode = "multi"

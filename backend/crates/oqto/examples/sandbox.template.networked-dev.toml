@@ -2,7 +2,7 @@
 # Use for repos that must talk to external APIs/model registries during development.
 # Examples: comfyui-lab, OCR/data-ingest repos, research/prototyping workdirs.
 
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json
 
 enabled = true
 profile = "development"

@@ -1,7 +1,7 @@
 # Oqto sandbox template: development-safe
 # Use for normal coding repos that need package/tool installs.
 
-"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json
 
 enabled = true
 profile = "development"
