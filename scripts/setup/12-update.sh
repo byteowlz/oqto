@@ -87,7 +87,6 @@ update_tools() {
   # Tools that setup.sh manages (binary name -> repo name)
   local -A TOOLS=(
     [eavs]=eavs
-    [hstry]=hstry
     [mmry]=mmry
     [trx]=trx
     [agntz]=agntz
@@ -99,7 +98,6 @@ update_tools() {
 
   # Package names for multi-binary repos (binary -> cargo package)
   local -A PACKAGES=(
-    [hstry]=hstry-cli
     [trx]=trx-cli
     [mmry]=mmry-cli
   )

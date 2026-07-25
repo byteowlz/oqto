@@ -155,8 +155,6 @@ struct InstallConfig {
     #[serde(default)]
     sandbox: Option<toml::Value>,
     #[serde(default)]
-    hstry: Option<toml::Value>,
-    #[serde(default)]
     mmry: Option<toml::Value>,
 }
 
@@ -359,11 +357,6 @@ fn hydrate_configs(install_path: &Path, mode_override: Option<HydrateMode>) -> R
             "sandbox",
             install_config.sandbox,
             config_home.join("oqto").join("sandbox.toml"),
-        ),
-        (
-            "hstry",
-            install_config.hstry,
-            config_home.join("hstry").join("config.toml"),
         ),
         (
             "mmry",

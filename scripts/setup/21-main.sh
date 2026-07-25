@@ -636,11 +636,11 @@ BANNER
 
       if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_ALL_TOOLS" == "true" ]]; then
         verify_or_rerun "agent_tools" "Agent tools" \
-          "command -v hstry && command -v mmry && command -v scrpr && command -v sx && command -v tmpltr && command -v sldr && command -v ignr" \
+          "command -v mmry && command -v scrpr && command -v sx && command -v tmpltr && command -v sldr && command -v ignr" \
           install_agent_tools_selected
       else
         verify_or_rerun "agent_tools" "Agent tools" \
-          "command -v hstry" \
+          "command -v mmry" \
           install_agent_tools_selected
       fi
 
@@ -661,7 +661,7 @@ BANNER
 
   # Upgrade all installed tools to versions in dependencies.toml.
   # verify_or_rerun only checks if a binary exists, not its version.
-  # This ensures re-runs always pick up version bumps (eavs, hstry, agntz, etc.).
+  # This ensures re-runs always pick up version bumps (eavs, agntz, etc.).
   update_tools
 
   # EAVS (LLM proxy)

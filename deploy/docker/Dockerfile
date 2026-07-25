@@ -7,7 +7,6 @@
 #   - oqto-runner (agent process manager)
 #   - oqto-files (file server)
 #   - pi-bridge, oqtoctl, oqto-sandbox
-#   - hstry (chat history, gRPC)
 #   - eavs (LLM proxy)
 #   - Frontend (static, served by caddy)
 #   - Pi (AI agent runtime)
@@ -33,11 +32,11 @@
 # Zero compilation. Everything comes from GitHub releases:
 #   - oqto:            oqto, oqtoctl, oqto-runner, oqto-files, pi-bridge, etc.
 #   - oqto frontend:   pre-built static assets (dist/)
-#   - byteowlz tools:  hstry, eavs, agntz, mmry, tmpltr, sldr, ignr, trx, scrpr, sx
+#   - byteowlz tools:  eavs, agntz, mmry, tmpltr, sldr, ignr, trx, scrpr, sx
 #   - external tools:   typst, caddy, yazi, starship
 #
 # Naming conventions:
-#   Rust:  {repo}-{tag}-{target}.tar.gz       (e.g. hstry-v0.5.10-x86_64-unknown-linux-gnu.tar.gz)
+#   Rust:  {repo}-{tag}-{target}.tar.gz       (e.g. mmry-v0.5.10-x86_64-unknown-linux-gnu.tar.gz)
 #   Go:    {repo}_{OS}_{arch}.tar.gz           (e.g. sx_Linux_x86_64.tar.gz)
 #   oqto:  oqto-{tag}-{target}.tar.gz         (binaries in bin/ subdir)
 #          oqto-frontend-{tag}.tar.gz          (static assets in dist/)
@@ -86,7 +85,7 @@ RUN set -eux; \
     # ================================================================== \
     # Byteowlz Rust tools (tarballs contain binaries at root level) \
     # ================================================================== \
-    for repo in hstry eavs agntz mmry tmpltr sldr ignr trx; do \
+    for repo in eavs agntz mmry tmpltr sldr ignr trx; do \
       echo "--- Downloading $repo ---"; \
       TAG=$(tag "$GH/$repo"); \
       curl -fsSL "$GH/$repo/releases/download/${TAG}/${repo}-${TAG}-${RUST_TARGET}.tar.gz" \
@@ -150,7 +149,7 @@ RUN set -eux; \
     # Verify required binaries exist \
     # ================================================================== \
     MISSING=""; \
-    for bin in oqto oqtoctl oqto-runner oqto-browser oqto-files pi-bridge hstry eavs caddy ttyd; do \
+    for bin in oqto oqtoctl oqto-runner oqto-browser oqto-files pi-bridge eavs caddy ttyd; do \
       if [ ! -f "/out/bin/$bin" ]; then MISSING="$MISSING $bin"; fi; \
     done; \
     if [ -n "$MISSING" ]; then \
@@ -249,13 +248,6 @@ RUN if [ -f /usr/local/lib/oqto-browserd/package.json ]; then \
         bun x playwright install --with-deps chromium; \
     fi
 
-# hstry adapters (JS scripts for parsing agent session files)
-RUN mkdir -p /usr/local/share/hstry/adapters \
-    && curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" \
-       | tar xz --strip-components=2 -C /usr/local/share/hstry/adapters/ "*/adapters/" \
-    || echo "Warning: could not fetch hstry adapters"
-# Make adapters writable by oqto user (hstry adapters update writes manifest here)
-RUN chown -R 1000:1000 /usr/local/share/hstry
 
 # --- Environment ---
 
@@ -280,7 +272,6 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 
 RUN mkdir -p \
     /data/oqto \
-    /data/hstry \
     /data/eavs \
     /data/users \
     /data/workspaces \

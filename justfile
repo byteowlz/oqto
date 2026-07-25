@@ -156,7 +156,6 @@ install-all:
     cd backend && cargo install --path crates/oqtoctl --bin oqtoctl
     cd backend && cargo install --path crates/oqto-runner --bin oqto-runner
     cd backend && cargo install --path crates/oqto-files
-    cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
 
 # Install a specific crate by name (e.g. just install oqto-browser)
 install crate:
@@ -236,7 +235,6 @@ install-system:
     sudo usermod -a -G oqto "$(id -un)" || true
 
     sudo install -Dm644 deploy/systemd/oqto-runner.service /usr/lib/systemd/user/oqto-runner.service
-    sudo install -Dm644 deploy/systemd/hstry.service /usr/lib/systemd/user/hstry.service
     sudo install -Dm644 deploy/systemd/eavs.service /usr/lib/systemd/user/eavs.service
     sudo install -Dm644 deploy/systemd/oqto-runner.tmpfiles.conf /usr/lib/tmpfiles.d/oqto-runner.conf
     sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/oqto-runner.conf || true
@@ -244,7 +242,7 @@ install-system:
 
     sudo install -d -m 2770 -o "$(id -un)" -g oqto "/run/oqto/runner-sockets/$(id -un)" || true
 
-    for bin in trx mmry mmry-service agntz hstry skdlr oqto oqto-runner oqto-files sldr sldr-server eavs; do
+    for bin in trx mmry agntz skdlr oqto oqto-runner oqto-files sldr sldr-server eavs; do
       src="$HOME/.cargo/bin/$bin"
       if [[ ! -x "$src" ]]; then
         src="$(command -v "$bin" || true)"
@@ -643,7 +641,6 @@ check-updates:
     }
 
     declare -A REPOS=(
-        ["byteowlz/hstry"]="hstry"
         ["byteowlz/mmry"]="mmry"
         ["byteowlz/trx"]="trx"
         ["byteowlz/agntz"]="agntz"

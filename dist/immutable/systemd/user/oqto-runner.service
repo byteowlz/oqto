@@ -21,8 +21,8 @@
 [Unit]
 Description=Oqto Runner - Process runner for multi-user isolation
 Documentation=https://github.com/byteowlz/oqto
-After=hstry.service eavs.service
-Wants=hstry.service eavs.service
+After=eavs.service
+Wants=eavs.service
 
 [Service]
 Type=notify

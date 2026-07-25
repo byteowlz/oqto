@@ -3,7 +3,7 @@
 # ==============================================================================
 
 # Ensure the oqto system user exists with a proper home directory.
-# Called early in multi-user setup so EAVS/hstry config can be
+# Called early in multi-user setup so EAVS config can be
 # written into ~oqto/.config/ before services are installed.
 # Safe to call multiple times (idempotent).
 OQTO_HOME="/home/oqto"
@@ -45,32 +45,9 @@ install_service_linux() {
     local oqto_bin="/usr/local/bin/oqto"
     local oqto_runner_bin="/usr/local/bin/oqto-runner"
 
-    # 1. hstry service (chat history)
-    local hstry_bin="/usr/local/bin/hstry"
-    [[ -x "$HOME/.local/bin/hstry" ]] && hstry_bin="$HOME/.local/bin/hstry"
-    [[ -x "$HOME/.cargo/bin/hstry" ]] && hstry_bin="$HOME/.cargo/bin/hstry"
-
-    local hstry_service="$service_dir/hstry.service"
-    cat >"$hstry_service" <<EOF
-[Unit]
-Description=Oqto Chat History Service
-
-[Service]
-Type=simple
-ExecStart=${hstry_bin} service run
-Restart=always
-RestartSec=3
-Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=HOME=%h
-
-[Install]
-WantedBy=default.target
-EOF
-    log_success "hstry service file created: $hstry_service"
-
     # Memory is embedded mmry-core (ADR-0010); no per-user mmry service.
 
-    # 2. oqto-runner service (session management, hstry writes, process isolation)
+    # oqto-runner service (session management, history writes, process isolation)
     local runner_service="$service_dir/oqto-runner.service"
     cat >"$runner_service" <<EOF
 # Oqto Runner - Process isolation daemon
@@ -79,8 +56,6 @@ EOF
 
 [Unit]
 Description=Oqto Runner - Process isolation daemon
-After=hstry.service
-Wants=hstry.service
 
 [Service]
 Type=notify
@@ -181,15 +156,14 @@ EOF
 
     if confirm "Enable and start services now?"; then
       systemctl --user daemon-reload
-      systemctl --user enable hstry oqto-runner oqto oqto-healthcheck.timer
-      systemctl --user start hstry
+      systemctl --user enable oqto-runner oqto oqto-healthcheck.timer
       sleep 2
       systemctl --user start oqto-runner
       sleep 2
       systemctl --user start oqto
       systemctl --user start oqto-healthcheck.timer
       log_success "Services enabled and started"
-      log_info "Check status with: systemctl --user status hstry oqto-runner oqto oqto-healthcheck.timer"
+      log_info "Check status with: systemctl --user status oqto-runner oqto oqto-healthcheck.timer"
       log_info "View logs with: journalctl --user -u oqto -u oqto-healthcheck.service -f"
     else
       log_info "To enable manually:"
@@ -375,7 +349,7 @@ EOF
 install_runner_socket_dirs() {
   # Ensure the shared runner socket base directory exists at boot.
   # Per-user subdirectories are created by oqto-usermgr at user creation time.
-  # Per-user service files (oqto-runner, hstry) are also created by usermgr.
+  # Per-user service files (oqto-runner) are also created by usermgr.
   log_info "Setting up runner socket directories..."
 
   local tmpfiles_conf="/etc/tmpfiles.d/oqto-runner.conf"

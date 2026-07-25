@@ -91,7 +91,7 @@ Everything runs inside one container, managed by `entrypoint.sh`:
    (static)        |
               oqto backend (:8081)
               /          \
-        hstry           eavs (:3033)
+        eavs (:3033)
       (gRPC)          (LLM proxy)
         |                |
     SQLite          upstream LLM APIs
@@ -105,11 +105,9 @@ Everything runs inside one container, managed by `entrypoint.sh`:
 | caddy | 8080 | HTTP | Reverse proxy, serves frontend static files |
 | oqto | 8081 | HTTP+WS | Backend API, WebSocket multiplexer |
 | eavs | 3033 | HTTP | LLM proxy with virtual keys |
-| hstry | auto | gRPC | Chat history (Unix socket / TCP) |
 
 ### Process Lifecycle
 
-1. **hstry** starts first (chat history must be available)
 2. **eavs** starts next (LLM proxy for model metadata)
 3. **oqto** backend starts (depends on both)
 4. Admin user bootstrapped (first run only)
@@ -127,8 +125,6 @@ All state lives in `/data` (mount as a Docker volume):
     oqto.db           # User accounts, sessions (SQLite)
     .jwt_secret        # Persisted JWT secret
     .bootstrapped      # First-run marker
-  hstry/
-    hstry.db           # Chat message history (SQLite)
   eavs/
     eavs.env           # Generated eavs environment
     .admin_key         # Eavs admin API key
@@ -142,7 +138,7 @@ All state lives in `/data` (mount as a Docker volume):
 `oqto`, `oqtoctl`, `oqto-runner`, `oqto-files`, `oqto-sandbox`, `oqto-scaffold`, `oqto-usermgr`, `oqto-setup`, `pi-bridge`
 
 ### Core Services
-`hstry`, `hstry-tui`, `eavs` (LLM proxy), `caddy` (reverse proxy)
+`eavs` (LLM proxy), `caddy` (reverse proxy)
 
 ### Agent Tools
 `agntz`, `mmry`, `mmry-mcp`, `mmry-tui`, `mmry-service`, `tmpltr`, `sldr`, `sldr-server`, `ignr`, `trx`, `scrpr`, `sx`

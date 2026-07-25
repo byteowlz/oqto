@@ -383,14 +383,6 @@ memories_dir = "~/.local/share/mmry"
 EOF
   fi
 
-  # hstry (chat history) config
-  cat >>"$config_file" <<EOF
-
-[hstry]
-enabled = true
-binary = "hstry"
-EOF
-
   cat >>"$config_file" <<EOF
 
 [sessions]
