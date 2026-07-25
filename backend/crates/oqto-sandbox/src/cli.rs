@@ -235,6 +235,13 @@ fn exec_sandboxed(
     debug!("Executing: sandbox-exec {:?}", full_args);
     let mut cmd = Command::new("sandbox-exec");
     cmd.args(&full_args);
+    // sandbox-exec inherits this process's environment, so a sparse PATH from a
+    // launchd job or non-interactive ssh session leaves shebang interpreters
+    // (`/usr/bin/env node`) unresolvable inside the sandbox.
+    cmd.env(
+        "PATH",
+        SandboxConfig::sandbox_path(dirs::home_dir().as_deref()),
+    );
     configure_bwrap_pre_exec(&mut cmd, config, workspace, None)?;
 
     // exec replaces this process, so the temp profile would be unlinked before

@@ -338,6 +338,13 @@ mod live {
             // Run inside the workspace: otherwise the script inherits the test
             // runner's directory and relative writes are (correctly) denied.
             .current_dir(workspace)
+            // Mirror the real backend, which repairs a sparse inherited PATH.
+            .env(
+                "PATH",
+                SandboxConfig::sandbox_path(
+                    std::env::var("HOME").ok().map(PathBuf::from).as_deref(),
+                ),
+            )
             .output()
             .expect("spawn sandbox-exec");
 
@@ -399,6 +406,90 @@ mod live {
 
         assert!(ok, "granted home subdir must be writable: {out}");
         assert!(wrote, "file must actually be created on the host");
+    }
+
+    /// Locate the Pi runtime without depending on a login-shell PATH.
+    fn pi_binary() -> Option<PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        let candidate = PathBuf::from(&home).join(".bun/bin/pi");
+        candidate.exists().then_some(candidate)
+    }
+
+    fn session_files(dir: &Path) -> std::collections::BTreeSet<PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| entries.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Pi keys sessions by workspace directory, so a new entry is a directory
+    /// rather than a file. Remove either, so these tests do not accumulate
+    /// per-temp-workspace state in the developer's real session store.
+    fn remove_session_entry(path: &Path) {
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// Both directions in one test: these share the developer's real session
+    /// store, so running them as separate parallel tests makes each observe the
+    /// other's session and fail intermittently.
+    #[test]
+    fn pi_persists_a_session_only_when_its_directory_is_granted() {
+        let Some(pi) = pi_binary() else { return };
+        let home = std::env::var("HOME").expect("HOME");
+        let sessions = PathBuf::from(&home).join(".pi/agent/sessions");
+        if !sessions.exists() {
+            return;
+        }
+
+        let script = |pi: &Path| {
+            format!(
+                "printf '%s\\n' '{{\"id\":\"m\",\"type\":\"get_available_models\"}}' \
+                 | {} -ne --mode rpc >/dev/null 2>&1; true",
+                pi.to_string_lossy()
+            )
+        };
+
+        let run_phase = |allow_pi: bool| -> Vec<PathBuf> {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let ws = tmp.path().canonicalize().expect("canonical workspace");
+            let mut config = base_config(if allow_pi {
+                vec![
+                    PathBuf::from(&home)
+                        .join(".pi")
+                        .to_string_lossy()
+                        .to_string(),
+                ]
+            } else {
+                vec![]
+            });
+            config.deny_read = vec![];
+
+            let before = session_files(&sessions);
+            run_sandboxed(&config, &ws, &script(&pi));
+            let created: Vec<PathBuf> = session_files(&sessions)
+                .difference(&before)
+                .cloned()
+                .collect();
+            for path in &created {
+                remove_session_entry(path);
+            }
+            created
+        };
+
+        // Without the grant Pi still runs, but nothing is persisted. On Linux
+        // this is a silent failure that loses the oqto-log ingest source.
+        assert!(
+            run_phase(false).is_empty(),
+            "no session may be written when ~/.pi is not granted"
+        );
+
+        assert!(
+            !run_phase(true).is_empty(),
+            "Pi must persist a session when ~/.pi is granted"
+        );
     }
 
     #[test]

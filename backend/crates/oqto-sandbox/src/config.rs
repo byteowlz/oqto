@@ -2067,57 +2067,10 @@ impl SandboxConfig {
             );
         }
 
-        // Construct PATH for the sandboxed process.
-        //
-        // bwrap inherits the launcher's PATH, but that launcher may be a systemd
-        // unit or cron job with a sparse PATH (missing /usr/bin). We bind-mount
-        // /usr, /bin, /sbin above so the binaries are reachable, but with a sparse
-        // PATH bare command names (e.g. `sed`) still fail with ENOENT while
-        // absolute paths work. Guarantee the canonical system bin dirs we already
-        // bind so command resolution never depends on the launcher's environment,
-        // keeping the inherited PATH precedence intact, then add the user's
-        // toolchain bin dirs (non-interactive shells skip ~/.bashrc/.zshrc, so
-        // ~/.cargo/bin, ~/go/bin, etc. would otherwise be missing).
-        let current_path = std::env::var("PATH").unwrap_or_default();
-        let mut path_parts: Vec<String> = current_path
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-
-        // Base system bin dirs corresponding to the read-only binds above.
-        let mut ensure: Vec<String> = [
-            "/usr/local/sbin",
-            "/usr/local/bin",
-            "/usr/sbin",
-            "/usr/bin",
-            "/sbin",
-            "/bin",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        // User toolchain bin dirs (only when the target home is known).
-        if let Some(ref home) = target_home {
-            let home_str = home.to_string_lossy();
-            for suffix in [
-                ".cargo/bin",
-                "go/bin",
-                ".local/bin",
-                ".bun/bin",
-                ".npm-global/bin",
-            ] {
-                ensure.push(format!("{home_str}/{suffix}"));
-            }
-        }
-        for p in &ensure {
-            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
-                path_parts.push(p.clone());
-            }
-        }
+        let sandbox_path = Self::sandbox_path(target_home.as_deref());
         args.push("--setenv".to_string());
         args.push("PATH".to_string());
-        args.push(path_parts.join(":"));
+        args.push(sandbox_path);
         debug!("Set sandbox PATH with base system + user toolchain bin directories");
 
         // Namespace and kernel-surface hardening
@@ -2456,6 +2409,63 @@ impl SandboxConfig {
         }
 
         Ok(Some(dir))
+    }
+
+    /// Build the PATH handed to a sandboxed process.
+    ///
+    /// A sandbox may be launched from a systemd unit, a cron job or a
+    /// non-interactive ssh session, all of which have a sparse PATH. Bare
+    /// command names then fail with ENOENT even though the binaries are
+    /// reachable. Guarantee the canonical system bin dirs and the user's
+    /// toolchain dirs while preserving the inherited PATH's precedence.
+    ///
+    /// Shared by both backends: the Linux builder passes it to bwrap
+    /// `--setenv`, and the macOS backend sets it on the child, since
+    /// `sandbox-exec` simply inherits the caller's environment. Without it,
+    /// interpreters resolved through a shebang (`/usr/bin/env node`) are not
+    /// found inside the sandbox.
+    pub(crate) fn sandbox_path(target_home: Option<&Path>) -> String {
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let mut path_parts: Vec<String> = current_path
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        let mut ensure: Vec<String> = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        if let Some(home) = target_home {
+            let home_str = home.to_string_lossy();
+            for suffix in [
+                ".cargo/bin",
+                "go/bin",
+                ".local/bin",
+                ".bun/bin",
+                ".npm-global/bin",
+            ] {
+                ensure.push(format!("{home_str}/{suffix}"));
+            }
+        }
+
+        for p in &ensure {
+            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
+                path_parts.push(p.clone());
+            }
+        }
+
+        path_parts.join(":")
     }
 
     /// Apply Landlock write restrictions (workspace + allow_write).
