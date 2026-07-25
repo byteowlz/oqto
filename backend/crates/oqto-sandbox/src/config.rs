@@ -1614,7 +1614,7 @@ impl SandboxConfig {
 
     /// Expand ~ to home directory for a specific user.
     /// If username is None, uses the current user's home directory.
-    fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
+    pub(crate) fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
         if let Some(rest) = path.strip_prefix("~/") {
             let home = if let Some(user) = username {
                 Self::get_user_home(user)
@@ -2428,7 +2428,7 @@ impl SandboxConfig {
     /// outside the workspace so build caches never appear in the user's
     /// repository, and is keyed by workspace so two workspaces cannot corrupt
     /// each other's caches.
-    fn workspace_cache_dir(
+    pub(crate) fn workspace_cache_dir(
         &self,
         workspace: &Path,
         username: Option<&str>,
@@ -2459,6 +2459,7 @@ impl SandboxConfig {
     }
 
     /// Apply Landlock write restrictions (workspace + allow_write).
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     pub fn apply_landlock(&self, workspace: &Path, username: Option<&str>) -> std::io::Result<()> {
         if self.landlock_mode == LandlockMode::Off {
             return Ok(());
@@ -2471,7 +2472,7 @@ impl SandboxConfig {
                     "landlock enforce requested on non-Linux platform",
                 ));
             }
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]

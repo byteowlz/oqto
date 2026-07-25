@@ -22,9 +22,17 @@ dirs.workspace = true
 shellexpand.workspace = true
 libc.workspace = true
 
+[features]
+default = []
+
+# Enforcement backends. Selecting a backend is separate from platform support:
+# the Seatbelt profile compiler builds and is tested everywhere, while only the
+# sandbox-exec invocation is macOS-gated.
+macos-seatbelt = ["dep:which"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tempfile.workspace = true
-which = "7"
+which = { version = "7", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

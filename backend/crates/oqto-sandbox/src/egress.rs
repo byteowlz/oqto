@@ -23,11 +23,13 @@
 //!   exhaustively unit-testable without privileges;
 //! - `apply`/`teardown` execute those commands and require `CAP_NET_ADMIN`.
 
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 
@@ -466,6 +468,15 @@ pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
 /// namespace via `setns` in a pre-exec hook (so it sees the agent's DNAT) and
 /// is told its listen address and the eavs endpoint via env. Requires the relay
 /// binary to be resolvable; fails closed otherwise.
+#[cfg(not(target_os = "linux"))]
+fn spawn_relay(_plan: &EgressPlan) -> Result<Child> {
+    // Joining a network namespace is Linux-only, so proxy mode cannot capture
+    // egress here. Fail closed rather than running the relay outside the
+    // namespace it is meant to confine.
+    anyhow::bail!("NetworkMode::Proxy requires Linux network namespaces")
+}
+
+#[cfg(target_os = "linux")]
 fn spawn_relay(plan: &EgressPlan) -> Result<Child> {
     let bin = crate::egress_relay::resolve_relay_binary().context(
         "oqto-egress-relay binary not found (set OQTO_EGRESS_RELAY_BIN or install it on PATH); \

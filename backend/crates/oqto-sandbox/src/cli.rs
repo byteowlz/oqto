@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, error, info};
+#[cfg(target_os = "macos")]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -197,84 +199,50 @@ fn exec_sandboxed(
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
-    workspace: &PathBuf,
+    workspace: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &PathBuf) -> String {
-        let mut profile = String::new();
-        profile.push_str("(version 1)\n");
-        profile.push_str("(deny default)\n");
-        profile.push_str("(allow process-fork)\n");
-        profile.push_str("(allow process-exec)\n");
-        profile.push_str("(allow signal)\n");
-        profile.push_str("(allow file-read*)\n");
+    use std::io::Write;
 
-        let w = workspace.to_string_lossy();
-        profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
-        profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
-
-        for path in &config.allow_write {
-            profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_read {
-            profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_write {
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-
-        if config.isolate_network {
-            profile.push_str("(deny network*)\n");
-        } else {
-            profile.push_str("(allow network*)\n");
-        }
-
-        profile
-    }
-
-    fn build_sandbox_exec_args(
-        config: &SandboxConfig,
-        workspace: &PathBuf,
-    ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
-        if which::which("sandbox-exec").is_err() {
-            return None;
-        }
-        let profile_text = build_seatbelt_profile(config, workspace);
-        let mut tmp = tempfile::NamedTempFile::new().ok()?;
-        use std::io::Write;
-        tmp.write_all(profile_text.as_bytes()).ok()?;
-        let args = vec!["-f".to_string(), tmp.path().to_string_lossy().to_string()];
-        Some((args, tmp))
-    }
-
-    let (sandbox_args, _temp_file) = match build_sandbox_exec_args(config, workspace) {
-        Some(result) => result,
-        None => {
-            error!("sandbox-exec not available, cannot sandbox");
-            if dry_run {
-                println!("ERROR: sandbox-exec not available");
-                return Ok(());
-            }
-            anyhow::bail!("sandbox-exec not available");
-        }
-    };
-
-    let mut full_args = sandbox_args;
-    full_args.extend(command.iter().cloned());
+    let profile_text = crate::seatbelt::compile_profile(config, workspace, None);
 
     if dry_run {
-        println!("sandbox-exec {}", full_args.join(" \\\n  "));
+        println!("sandbox-exec -f <profile> {}", command.join(" "));
         println!("\n# Seatbelt profile:");
-        println!("{}", build_seatbelt_profile(config, workspace));
+        println!("{profile_text}");
         return Ok(());
     }
 
-    debug!("Executing: sandbox-exec {:?}", full_args);
-    let err = Command::new("sandbox-exec").args(&full_args).exec();
+    if which::which("sandbox-exec").is_err() {
+        // Fail closed: running unsandboxed after being asked to sandbox would
+        // silently drop every restriction the profile describes.
+        anyhow::bail!("sandbox-exec not available, refusing to run unsandboxed");
+    }
 
-    error!("Failed to exec sandbox-exec: {:?}", err);
-    Err(err.into())
+    let mut profile_file =
+        tempfile::NamedTempFile::new().context("creating Seatbelt profile file")?;
+    profile_file
+        .write_all(profile_text.as_bytes())
+        .context("writing Seatbelt profile")?;
+    profile_file.flush().context("flushing Seatbelt profile")?;
+
+    let mut full_args = vec![
+        "-f".to_string(),
+        profile_file.path().to_string_lossy().to_string(),
+    ];
+    full_args.extend(command.iter().cloned());
+
+    debug!("Executing: sandbox-exec {:?}", full_args);
+    let mut cmd = Command::new("sandbox-exec");
+    cmd.args(&full_args);
+    configure_bwrap_pre_exec(&mut cmd, config, workspace, None)?;
+
+    // exec replaces this process, so the temp profile would be unlinked before
+    // sandbox-exec reads it. Keep the file alive by supervising the child and
+    // mirroring its exit status instead.
+    let status = cmd.status().context("spawning sandbox-exec")?;
+    drop(profile_file);
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

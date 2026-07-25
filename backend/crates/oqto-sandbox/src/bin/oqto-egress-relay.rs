@@ -96,6 +96,18 @@ fn splice(a: TcpStream, b: TcpStream) {
 
 /// Read the pre-DNAT destination of a connection via `getsockopt(SO_ORIGINAL_DST)`.
 /// IPv4 only (the egress subnet pool is IPv4).
+///
+/// `SO_ORIGINAL_DST` is a netfilter feature, so this relay is Linux-only. The
+/// stub below keeps the crate type-checkable on other targets (notably the
+/// macOS backend) instead of failing the whole build.
+#[cfg(not(target_os = "linux"))]
+fn original_dst(_fd: RawFd) -> io::Result<SocketAddrV4> {
+    Err(io::Error::other(
+        "SO_ORIGINAL_DST is Linux-only; the egress relay requires Linux",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 fn original_dst(fd: RawFd) -> io::Result<SocketAddrV4> {
     // SAFETY: zeroed sockaddr_in is a valid initial value; getsockopt fills it
     // and writes the used length into `len`.

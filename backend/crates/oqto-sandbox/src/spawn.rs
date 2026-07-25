@@ -140,7 +140,58 @@ pub fn configure_bwrap_pre_exec(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: `setrlimit` is portable, so resource limits apply here too. Seccomp,
+/// Landlock and network namespaces have no macOS equivalent and are enforced by
+/// the Seatbelt profile or not at all.
+#[cfg(target_os = "macos")]
+pub fn configure_bwrap_pre_exec(
+    cmd: &mut std::process::Command,
+    config: &SandboxConfig,
+    _workspace: &Path,
+    _egress: Option<&EgressPlan>,
+) -> Result<()> {
+    let limits = &config.resource_limits;
+    let rlimits: Vec<(libc::c_int, libc::rlim_t)> = [
+        (libc::RLIMIT_AS, limits.max_memory_bytes),
+        (libc::RLIMIT_NOFILE, limits.max_open_files),
+        (libc::RLIMIT_CPU, limits.max_cpu_seconds),
+        (libc::RLIMIT_FSIZE, limits.max_file_size_bytes),
+    ]
+    .into_iter()
+    .filter_map(|(resource, value)| {
+        value.map(|v| {
+            (
+                resource,
+                libc::rlim_t::try_from(v).unwrap_or(libc::rlim_t::MAX),
+            )
+        })
+    })
+    .collect();
+
+    if rlimits.is_empty() {
+        return Ok(());
+    }
+
+    // SAFETY: pre_exec runs in the child after fork, before exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            for (resource, value) in rlimits.iter().copied() {
+                let limit = libc::rlimit {
+                    rlim_cur: value,
+                    rlim_max: value,
+                };
+                if libc::setrlimit(resource, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn configure_bwrap_pre_exec(
     _cmd: &mut std::process::Command,
     _config: &SandboxConfig,
