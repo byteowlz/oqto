@@ -147,9 +147,8 @@ fn strict_profile_deny_read_defaults() {
     }
 }
 
-// Pins current read-policy behaviour; see oqto-tp8v.
 #[test]
-fn unlisted_paths_follow_current_read_policy() {
+fn unlisted_home_paths_are_not_readable() {
     if !bwrap_available() {
         eprintln!("skipping: bwrap/userns unavailable");
         return;
@@ -170,7 +169,7 @@ fn unlisted_paths_follow_current_read_policy() {
         ),
     );
 
-    assert_eq!(out, "present", "read policy changed; see oqto-tp8v");
+    assert_eq!(out, "denied");
 }
 
 #[test]

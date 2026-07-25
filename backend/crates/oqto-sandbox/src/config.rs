@@ -551,6 +551,19 @@ fn landlock_write_access_mask(abi: i64) -> u64 {
 // Sandbox Profile
 // ============================================================================
 
+/// How reads under the user's home directory are decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadPolicy {
+    /// Bind the whole home readable, then mask `deny_read`. Any path not
+    /// enumerated stays readable.
+    #[default]
+    Denylist,
+    /// Bind nothing under home by default; only `allow_read` (plus the
+    /// workspace and `allow_write`) is visible.
+    Allowlist,
+}
+
 /// A sandbox profile definition.
 ///
 /// Profiles define the security settings for sandboxed processes.
@@ -567,6 +580,12 @@ fn landlock_write_access_mask(abi: i64) -> u64 {
 #[serde(default)]
 pub struct SandboxProfile {
     // --- oqto-sandbox (bwrap) layer ---
+    /// How home-directory reads are decided.
+    pub read_policy: ReadPolicy,
+
+    /// Paths readable under home when `read_policy` is `Allowlist`.
+    pub allow_read: Vec<String>,
+
     /// Paths to deny read access (always applied).
     pub deny_read: Vec<String>,
 
@@ -682,6 +701,8 @@ impl SandboxProfile {
     /// Create a minimal profile (least restrictive).
     pub fn minimal() -> Self {
         Self {
+            read_policy: ReadPolicy::Denylist,
+            allow_read: vec![],
             workspace_cache_enabled: false,
             workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits::default(),
@@ -721,6 +742,8 @@ impl SandboxProfile {
     /// Create a development profile (default).
     pub fn development() -> Self {
         Self {
+            read_policy: ReadPolicy::Denylist,
+            allow_read: vec![],
             workspace_cache_enabled: false,
             workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits::default(),
@@ -817,6 +840,19 @@ impl SandboxProfile {
     /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
+            read_policy: ReadPolicy::Allowlist,
+            allow_read: vec![
+                // Toolchain and VCS configuration an agent legitimately reads.
+                // Derived by running real workloads under the allowlist, not guessed.
+                "~/.cargo".to_string(),
+                "~/.rustup".to_string(),
+                "~/.gitconfig".to_string(),
+                "~/.config/git".to_string(),
+                "~/.npmrc".to_string(),
+                "~/.bun".to_string(),
+                "~/.local/share/pi".to_string(),
+                "~/.pi".to_string(),
+            ],
             workspace_cache_enabled: true,
             workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits {
@@ -938,6 +974,12 @@ pub struct SandboxConfig {
     /// Sandbox profile name (for logging/debugging).
     pub profile: String,
 
+    /// How home-directory reads are decided.
+    pub read_policy: ReadPolicy,
+
+    /// Paths readable under home when `read_policy` is `Allowlist`.
+    pub allow_read: Vec<String>,
+
     /// Paths to deny read access (always applied).
     pub deny_read: Vec<String>,
 
@@ -1029,6 +1071,8 @@ impl Default for SandboxConfig {
             resource_limits: profile.resource_limits,
             enabled: false,
             profile: "development".to_string(),
+            read_policy: profile.read_policy,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1081,6 +1125,8 @@ impl From<SandboxConfigFile> for SandboxConfig {
             resource_limits: profile.resource_limits,
             enabled: file.enabled,
             profile: profile_name.to_string(),
+            read_policy: profile.read_policy,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1123,6 +1169,8 @@ impl SandboxConfig {
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: "minimal".to_string(),
+            read_policy: profile.read_policy,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1155,6 +1203,8 @@ impl SandboxConfig {
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: "strict".to_string(),
+            read_policy: profile.read_policy,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1208,6 +1258,8 @@ impl SandboxConfig {
             resource_limits: profile.resource_limits,
             enabled: true,
             profile: profile_name.to_string(),
+            read_policy: profile.read_policy,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1325,6 +1377,8 @@ impl SandboxConfig {
                         resource_limits: profile.resource_limits,
                         enabled: file.enabled,
                         profile: profile_name.to_string(),
+                        read_policy: profile.read_policy,
+                        allow_read: profile.allow_read,
                         deny_read: profile.deny_read,
                         allow_write: profile.allow_write,
                         deny_write: profile.deny_write,
@@ -1428,6 +1482,17 @@ impl SandboxConfig {
             resource_limits: self
                 .resource_limits
                 .tightest(workspace_config.resource_limits),
+            // Allowlist is the tighter policy, so either side may select it.
+            // allow_read comes from the global config only: a workspace may add
+            // restrictions but must not widen what it can read.
+            read_policy: if self.read_policy == ReadPolicy::Allowlist
+                || workspace_config.read_policy == ReadPolicy::Allowlist
+            {
+                ReadPolicy::Allowlist
+            } else {
+                ReadPolicy::Denylist
+            },
+            allow_read: self.allow_read.clone(),
             // Enable if either enables
             enabled: self.enabled || workspace_config.enabled,
             // Use workspace profile name if workspace specifies one
@@ -1793,7 +1858,47 @@ impl SandboxConfig {
                 username.unwrap_or("(current)")
             );
 
-            if home_writable {
+            if self.read_policy == ReadPolicy::Allowlist {
+                // Bind nothing under home by default. Only allow_read entries,
+                // allow_write entries and the workspace become visible, so a
+                // path that was never enumerated is absent rather than readable.
+                args.push("--tmpfs".to_string());
+                args.push(home_str.clone());
+
+                for path in &self.allow_read {
+                    let expanded = Self::expand_home_for_user(path, username);
+                    if !expanded.exists() {
+                        debug!("Allow-read path '{}' does not exist, skipping", path);
+                        continue;
+                    }
+                    let expanded_str = expanded.to_string_lossy().to_string();
+                    args.push("--ro-bind".to_string());
+                    args.push(expanded_str.clone());
+                    args.push(expanded_str);
+                    debug!("Allow-read: '{}'", path);
+                }
+                info!(
+                    "Home '{}' is allowlist-based ({} readable entries, profile={})",
+                    home_str,
+                    self.allow_read.len(),
+                    self.profile
+                );
+
+                // Writable paths are layered on top exactly as in the denylist
+                // strict path; see the note there about absent sources.
+                for path in &effective_allow_write {
+                    let expanded = Self::expand_home_for_user(path, username);
+                    if !expanded.exists() {
+                        debug!("Allow-write path '{}' does not exist, skipping", path);
+                        continue;
+                    }
+                    let expanded_str = expanded.to_string_lossy().to_string();
+                    args.push("--bind".to_string());
+                    args.push(expanded_str.clone());
+                    args.push(expanded_str);
+                    debug!("Allow-write: '{}'", path);
+                }
+            } else if home_writable {
                 // Development mode: bind home read-write, rely on deny_read for protection
                 args.push("--bind".to_string());
                 args.push(home_str.clone());
@@ -1885,6 +1990,20 @@ impl SandboxConfig {
             // Block denied read paths by mounting empty tmpfs (dirs) or masking files.
             for path in &self.deny_read {
                 let expanded = Self::expand_home_for_user(path, username);
+
+                // Under an allowlist the allowlist is authoritative for home: a
+                // deny entry covering an allowed path would mask it back out
+                // (denying ~/.config would hide an allowed ~/.config/git).
+                // Deny entries outside home still apply.
+                if self.read_policy == ReadPolicy::Allowlist
+                    && target_home
+                        .as_ref()
+                        .is_some_and(|home| expanded.starts_with(home))
+                {
+                    debug!("Deny-read '{}' skipped: home is allowlist-based", path);
+                    continue;
+                }
+
                 if expanded.exists() {
                     let expanded_str = expanded.to_string_lossy().to_string();
                     let is_dir = expanded
@@ -3657,5 +3776,110 @@ log_requests = true
         );
         // None on both sides stays None.
         assert!(merge_network(&None, &None).is_none());
+    }
+
+    #[test]
+    fn allowlist_does_not_bind_the_whole_home() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let home = dirs::home_dir().expect("home");
+        let home_str = home.to_string_lossy().to_string();
+
+        let config = SandboxConfig::from_profile("strict");
+        assert_eq!(config.read_policy, ReadPolicy::Allowlist);
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+
+        let ro_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ro-bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            !ro_sources.contains(&&home_str),
+            "home must not be bound wholesale under an allowlist"
+        );
+
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(tmpfs.contains(&&home_str), "home must be masked");
+    }
+
+    #[test]
+    fn allowlist_binds_existing_allow_read_entries() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let present = tmp.path().join("present");
+        std::fs::create_dir_all(&present).expect("present");
+        let absent = tmp.path().join("definitely-absent");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_read = vec![
+            present.to_string_lossy().to_string(),
+            absent.to_string_lossy().to_string(),
+        ];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+        let ro_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ro-bind")
+            .map(|w| &w[1])
+            .collect();
+
+        assert!(ro_sources.contains(&&present.to_string_lossy().to_string()));
+        assert!(
+            !ro_sources.contains(&&absent.to_string_lossy().to_string()),
+            "absent allow_read source must be skipped, not handed to bwrap"
+        );
+    }
+
+    #[test]
+    fn allowlist_ignores_home_deny_read_so_it_cannot_mask_allowed_paths() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let home = dirs::home_dir().expect("home");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.deny_read = vec!["~/.config".to_string(), "/usr/bin/systemctl".to_string()];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+
+        let config_dir = home.join(".config").to_string_lossy().to_string();
+        assert!(
+            !tmpfs.contains(&&config_dir),
+            "home deny_read must not re-mask an allowlisted subtree"
+        );
+    }
+
+    #[test]
+    fn workspace_cannot_widen_reads() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.allow_read = vec!["~/.cargo".to_string()];
+
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.allow_read = vec!["~/.ssh".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(merged.allow_read, vec!["~/.cargo".to_string()]);
     }
 }
