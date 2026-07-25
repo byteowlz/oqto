@@ -212,8 +212,14 @@ mod tests {
             profile.contains(&format!("(subpath \"{}\")", link.to_string_lossy())),
             "symlink path must grant its subtree:\n{profile}"
         );
+        // macOS resolves /var -> /private/var, so compare against the
+        // canonical target rather than the path we happened to create.
+        let real_canonical = real.canonicalize().unwrap_or(real.clone());
         assert!(
-            profile.contains(&format!("(subpath \"{}\")", real.to_string_lossy())),
+            profile.contains(&format!(
+                "(subpath \"{}\")",
+                real_canonical.to_string_lossy()
+            )),
             "resolved target must also be granted:\n{profile}"
         );
         assert!(
@@ -297,5 +303,203 @@ mod tests {
         let profile = compile_profile(&config, &PathBuf::from("/tmp/ws"), None);
         let head: Vec<&str> = profile.lines().take(2).collect();
         assert_eq!(head, vec!["(version 1)", "(deny default)"]);
+    }
+}
+
+/// Live enforcement tests. These execute `sandbox-exec` with a generated
+/// profile, so they only run on macOS and are the only proof that the profile
+/// is syntactically valid and actually restricts anything.
+#[cfg(all(test, target_os = "macos"))]
+mod live {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    /// Run `sh -c <script>` under a Seatbelt profile built from `config`.
+    /// Returns (success, combined output).
+    fn run_sandboxed(config: &SandboxConfig, workspace: &Path, script: &str) -> (bool, String) {
+        // Guard against a temp dir being reaped between setup and spawn:
+        // a missing current_dir surfaces as a confusing NotFound on the
+        // sandbox-exec spawn rather than a policy result.
+        std::fs::create_dir_all(workspace).expect("workspace exists");
+
+        let profile = compile_profile(config, workspace, None);
+        let mut file = tempfile::NamedTempFile::new().expect("profile temp file");
+        file.write_all(profile.as_bytes()).expect("write profile");
+        file.flush().expect("flush profile");
+
+        let out = Command::new("sandbox-exec")
+            .arg("-f")
+            .arg(file.path())
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            // Run inside the workspace: otherwise the script inherits the test
+            // runner's directory and relative writes are (correctly) denied.
+            .current_dir(workspace)
+            .output()
+            .expect("spawn sandbox-exec");
+
+        let mut combined = String::from_utf8_lossy(&out.stdout).to_string();
+        combined.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), combined)
+    }
+
+    fn base_config(workspace_writable_extra: Vec<String>) -> SandboxConfig {
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_write = workspace_writable_extra;
+        config.deny_read = vec!["~/.ssh".to_string()];
+        config.isolate_network = false;
+        config.workspace_cache_enabled = false;
+        config
+    }
+
+    #[test]
+    fn private_tmp_and_home_symlinks_resolve() {
+        // macOS resolves /tmp -> /private/tmp. A rule naming only "/tmp" does
+        // not match the resolved path, so granting /tmp must still permit a
+        // write that the kernel sees under /private/tmp.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+
+        let mut config = base_config(vec!["/tmp".to_string()]);
+        config.deny_read = vec![];
+
+        let probe = format!("/tmp/oqto-seatbelt-probe-{}", std::process::id());
+        let (ok, out) = run_sandboxed(&config, &ws, &format!("echo ok > {probe} && cat {probe}"));
+        let _ = std::fs::remove_file(&probe);
+
+        assert!(
+            ok && out.contains("ok"),
+            "granting /tmp must cover /private/tmp: {out}"
+        );
+    }
+
+    #[test]
+    fn granting_home_subdir_allows_writes_beneath_it() {
+        // Mirrors the ~/.pi case: Pi persists session files beneath the granted
+        // directory, so the whole subtree must be writable, not just the entry.
+        let home = std::env::var("HOME").expect("HOME");
+        let target = PathBuf::from(&home).join(".oqto-seatbelt-probe");
+        std::fs::create_dir_all(target.join("nested")).expect("probe dir");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let mut config = base_config(vec![target.to_string_lossy().to_string()]);
+        config.deny_read = vec![];
+
+        let (ok, out) = run_sandboxed(
+            &config,
+            &ws,
+            &format!("echo s > {}/nested/session.jsonl", target.to_string_lossy()),
+        );
+        let wrote = target.join("nested/session.jsonl").exists();
+        let _ = std::fs::remove_dir_all(&target);
+
+        assert!(ok, "granted home subdir must be writable: {out}");
+        assert!(wrote, "file must actually be created on the host");
+    }
+
+    #[test]
+    fn profile_is_accepted_and_workspace_is_writable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let config = base_config(vec![]);
+
+        let (ok, out) = run_sandboxed(&config, &ws, "echo hello > out.txt && cat out.txt");
+        assert!(
+            ok,
+            "sandbox-exec rejected the profile or denied the write: {out}"
+        );
+        assert!(out.contains("hello"), "unexpected output: {out}");
+    }
+
+    #[test]
+    fn writes_outside_the_workspace_are_denied() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let outside = tmp
+            .path()
+            .parent()
+            .expect("parent")
+            .join("oqto-outside-probe");
+        let _ = std::fs::remove_file(&outside);
+
+        let config = base_config(vec![]);
+        let (ok, _) = run_sandboxed(
+            &config,
+            &ws,
+            &format!("echo leak > {}", outside.to_string_lossy()),
+        );
+
+        assert!(!ok, "write outside the workspace must fail");
+        assert!(!outside.exists(), "file must not exist on the host");
+    }
+
+    #[test]
+    fn allow_write_grants_a_path_outside_the_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let granted = tmp.path().join("granted");
+        std::fs::create_dir_all(&granted).expect("granted dir");
+
+        let config = base_config(vec![granted.to_string_lossy().to_string()]);
+        let (ok, out) = run_sandboxed(
+            &config,
+            &ws,
+            &format!("echo ok > {}/f", granted.to_string_lossy()),
+        );
+
+        assert!(ok, "granted path must be writable: {out}");
+        assert!(granted.join("f").exists());
+    }
+
+    #[test]
+    fn deny_read_blocks_configured_secrets() {
+        let home = std::env::var("HOME").expect("HOME");
+        let ssh_dir = PathBuf::from(&home).join(".ssh");
+        if !ssh_dir.exists() {
+            return; // nothing to protect on this machine
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let config = base_config(vec![]);
+
+        let (ok, _) = run_sandboxed(&config, &ws, "ls ~/.ssh");
+        assert!(!ok, "deny_read must block listing ~/.ssh");
+    }
+
+    #[test]
+    fn git_works_which_requires_dev_null() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+        let config = base_config(vec![]);
+
+        let (ok, out) = run_sandboxed(
+            &config,
+            &ws,
+            "git init -q . && echo hi > f && git add -A && \
+             git -c user.email=a@b -c user.name=t commit -qm x && echo COMMITTED",
+        );
+
+        assert!(
+            ok && out.contains("COMMITTED"),
+            "git must work under the profile: {out}"
+        );
+    }
+
+    #[test]
+    fn network_isolation_is_enforced() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws = tmp.path().canonicalize().expect("canonical workspace");
+
+        let mut config = base_config(vec![]);
+        config.isolate_network = true;
+
+        // Connecting to a local port must fail when network* is denied.
+        let (ok, _) = run_sandboxed(&config, &ws, "nc -z -w 1 127.0.0.1 22 || exit 1");
+        assert!(!ok, "network must be denied under isolate_network");
     }
 }

@@ -251,3 +251,46 @@ mod tests {
         assert_eq!(value, libc::rlim_t::MAX);
     }
 }
+
+/// Live check that `setrlimit` limits reach the child on macOS. Linux has an
+/// equivalent path covered by the bwrap tests.
+#[cfg(all(test, target_os = "macos"))]
+mod macos_live {
+    use super::*;
+    use crate::config::ResourceLimits;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    #[test]
+    fn resource_limits_apply_to_the_child() {
+        let config = SandboxConfig {
+            resource_limits: ResourceLimits {
+                max_open_files: Some(64),
+                ..ResourceLimits::default()
+            },
+            ..SandboxConfig::default()
+        };
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("ulimit -n");
+        configure_bwrap_pre_exec(&mut cmd, &config, &PathBuf::from("/tmp"), None)
+            .expect("configure pre-exec");
+
+        let out = cmd.output().expect("spawn child");
+        let observed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_eq!(observed, "64", "RLIMIT_NOFILE must reach the child");
+    }
+
+    #[test]
+    fn no_limits_leaves_the_child_untouched() {
+        let config = SandboxConfig::default();
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("ulimit -n");
+        configure_bwrap_pre_exec(&mut cmd, &config, &PathBuf::from("/tmp"), None)
+            .expect("configure pre-exec");
+
+        let out = cmd.output().expect("spawn child");
+        let observed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_ne!(observed, "64");
+    }
+}

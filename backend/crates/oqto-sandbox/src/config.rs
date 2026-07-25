@@ -3303,6 +3303,7 @@ log_requests = true
         assert!(network.log_requests);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_deny_read_after_workspace_bind_when_workspace_is_home() {
         let _env = env_guard();
@@ -3452,6 +3453,7 @@ log_requests = true
     }
 
     /// Landlock=off must not wire any shim plumbing.
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_landlock_off_no_shim() {
         let temp = tempdir().unwrap();
