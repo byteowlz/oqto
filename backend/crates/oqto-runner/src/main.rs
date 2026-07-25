@@ -1,6 +1,11 @@
 use anyhow::Result;
+// Used only by the non-Linux guards below, which are compiled out on Linux.
+#[cfg(not(target_os = "linux"))]
+use anyhow::bail;
 use clap::Parser;
 use log::info;
+#[cfg(not(target_os = "linux"))]
+use log::warn;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;

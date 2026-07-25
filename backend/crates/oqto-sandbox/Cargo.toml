@@ -23,7 +23,10 @@ shellexpand.workspace = true
 libc.workspace = true
 
 [features]
-default = []
+# Enabled by default so a plain macOS build is sandboxed; the feature exists to
+# make backend selection explicit, and a build without it fails closed rather
+# than running unsandboxed.
+default = ["macos-seatbelt"]
 
 # Enforcement backends. Selecting a backend is separate from platform support:
 # the Seatbelt profile compiler builds and is tested everywhere, while only the

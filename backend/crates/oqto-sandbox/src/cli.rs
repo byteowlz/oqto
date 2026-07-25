@@ -195,7 +195,7 @@ fn exec_sandboxed(
     Err(err.into())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-seatbelt"))]
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
@@ -250,6 +250,27 @@ fn exec_sandboxed(
     let status = cmd.status().context("spawning sandbox-exec")?;
     drop(profile_file);
     std::process::exit(status.code().unwrap_or(1));
+}
+
+/// macOS without the Seatbelt backend compiled in. Fail closed: running
+/// unsandboxed after being asked to sandbox would silently drop every
+/// restriction the profile describes.
+#[cfg(all(target_os = "macos", not(feature = "macos-seatbelt")))]
+fn exec_sandboxed(
+    _config: &SandboxConfig,
+    command: &[String],
+    _workspace: &Path,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run {
+        println!("ERROR: built without the macos-seatbelt feature");
+        println!("Would refuse to execute: {command:?}");
+        return Ok(());
+    }
+    anyhow::bail!(
+        "sandboxing requested but this build lacks the macos-seatbelt feature; \
+         rebuild with --features macos-seatbelt"
+    )
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
