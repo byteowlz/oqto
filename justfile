@@ -95,6 +95,11 @@ test: agent-check-on-change test-backend test-frontend
 test-backend:
     cd backend && cargo test
 
+# Sandbox containment gate. OQTO_REQUIRE_SANDBOX=1 makes a missing sandbox a
+# failure rather than a skip.
+test-containment:
+    cd backend && OQTO_REQUIRE_SANDBOX=1 cargo test -p oqto-sandbox --test containment
+
 # Test frontend
 test-frontend:
     cd frontend && bun run test

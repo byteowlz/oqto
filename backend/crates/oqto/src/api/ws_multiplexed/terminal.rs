@@ -98,10 +98,40 @@ pub(super) async fn handle_terminal_command(
                 terminal_id, session_id, ttyd_port
             );
 
+            // No credential means the terminal is disabled or not running.
+            let ttyd_password =
+                match files::terminal_credential_for_session(state, user_id, &session).await {
+                    Ok(Some(password)) => password,
+                    Ok(None) => {
+                        warn!(
+                            "Terminal unavailable: no credential for session {}",
+                            session_id
+                        );
+                        return Some(WsEvent::Terminal(TerminalWsEvent::Error {
+                            id,
+                            terminal_id: Some(terminal_id),
+                            error: "Terminal is not available for this session".into(),
+                        }));
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            session_id = %session_id,
+                            error = %err,
+                            "failed to fetch terminal credential"
+                        );
+                        return Some(WsEvent::Terminal(TerminalWsEvent::Error {
+                            id,
+                            terminal_id: Some(terminal_id),
+                            error: "Terminal is not available for this session".into(),
+                        }));
+                    }
+                };
+
             let (command_tx, task) = match files::start_terminal_task(
                 terminal_id.clone(),
                 session_id,
                 ttyd_port,
+                ttyd_password,
                 cols,
                 rows,
                 event_tx.clone(),

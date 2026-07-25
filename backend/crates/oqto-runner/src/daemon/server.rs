@@ -45,6 +45,35 @@ pub struct Runner {
     jsonl_ingest: super::jsonl_ingest::IngestHandle,
 }
 
+/// Basic-auth username for the session terminal.
+pub const TERMINAL_USERNAME: &str = "oqto";
+
+/// Build the ttyd argument vector for a session terminal.
+pub fn build_ttyd_args(port: u16, cwd: &str, password: &str) -> Vec<String> {
+    vec![
+        "--port".to_string(),
+        port.to_string(),
+        "--interface".to_string(),
+        "127.0.0.1".to_string(),
+        "--credential".to_string(),
+        format!("{}:{}", TERMINAL_USERNAME, password),
+        "--check-origin".to_string(),
+        "--writable".to_string(),
+        "--cwd".to_string(),
+        cwd.to_string(),
+        "zsh".to_string(),
+        "-l".to_string(),
+    ]
+}
+
+/// Fresh per session start.
+fn generate_terminal_credential() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PiJsonlEntryLite {
     #[serde(rename = "type")]
@@ -1386,6 +1415,21 @@ impl Runner {
         RunnerResponse::Session(SessionResponse { session })
     }
 
+    async fn get_terminal_credential(&self, req: GetTerminalCredentialRequest) -> RunnerResponse {
+        let state = self.state.read().await;
+        match state.sessions.get(&req.session_id) {
+            Some(session) => RunnerResponse::TerminalCredential(TerminalCredentialResponse {
+                session_id: req.session_id.clone(),
+                username: TERMINAL_USERNAME.to_string(),
+                password: session.ttyd_credential.clone(),
+            }),
+            None => error_response(
+                ErrorCode::SessionNotFound,
+                format!("Session {} not found", req.session_id),
+            ),
+        }
+    }
+
     async fn start_session(&self, req: StartSessionRequest) -> RunnerResponse {
         info!(
             "Starting session {} in {:?} with ports fs={}/ttyd={}",
@@ -1446,35 +1490,40 @@ impl Runner {
             return RunnerResponse::Error(e);
         }
 
-        // Spawn ttyd
-        let ttyd_req = SpawnProcessRequest {
-            id: ttyd_id.clone(),
-            binary: self.binaries.ttyd.clone(),
-            args: vec![
-                "--port".to_string(),
-                req.ttyd_port.to_string(),
-                "--interface".to_string(),
-                "127.0.0.1".to_string(),
-                "--writable".to_string(),
-                "--cwd".to_string(),
-                req.workspace_path.to_string_lossy().to_string(),
-                "zsh".to_string(),
-                "-l".to_string(),
-            ],
-            cwd: req.workspace_path.clone(),
-            env: HashMap::new(),
-            sandboxed: false,
+        let ttyd_credential = if self.user_config.terminal_enabled {
+            Some(generate_terminal_credential())
+        } else {
+            info!(
+                "Terminal disabled by policy; not spawning ttyd for session {}",
+                req.session_id
+            );
+            None
         };
 
-        if let RunnerResponse::Error(e) = self.spawn_process(ttyd_req, false).await {
-            // Clean up fileserver
-            let _ = self
-                .kill_process(KillProcessRequest {
-                    id: fileserver_id.clone(),
-                    force: false,
-                })
-                .await;
-            return RunnerResponse::Error(e);
+        if let Some(ref password) = ttyd_credential {
+            let ttyd_req = SpawnProcessRequest {
+                id: ttyd_id.clone(),
+                binary: self.binaries.ttyd.clone(),
+                args: build_ttyd_args(
+                    req.ttyd_port,
+                    &req.workspace_path.to_string_lossy(),
+                    password,
+                ),
+                cwd: req.workspace_path.clone(),
+                env: HashMap::new(),
+                sandboxed: false,
+            };
+
+            if let RunnerResponse::Error(e) = self.spawn_process(ttyd_req, false).await {
+                // Clean up fileserver
+                let _ = self
+                    .kill_process(KillProcessRequest {
+                        id: fileserver_id.clone(),
+                        force: false,
+                    })
+                    .await;
+                return RunnerResponse::Error(e);
+            }
         }
 
         // Record session state (Pi agent is managed separately by PiSessionManager)
@@ -1484,7 +1533,12 @@ impl Runner {
             fileserver_id: fileserver_id.clone(),
             ttyd_id: ttyd_id.clone(),
             fileserver_port: req.fileserver_port,
-            ttyd_port: req.ttyd_port,
+            ttyd_port: if ttyd_credential.is_some() {
+                req.ttyd_port
+            } else {
+                0
+            },
+            ttyd_credential,
             agent: req.agent.clone(),
             started_at: std::time::Instant::now(),
         };
@@ -4386,5 +4440,37 @@ mod tests {
 
         assert_eq!(source, "live_buffer");
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn ttyd_is_always_started_with_a_credential() {
+        let args = build_ttyd_args(7681, "/workspace", "s3cr3t");
+
+        let cred_idx = args
+            .iter()
+            .position(|a| a == "--credential")
+            .expect("ttyd must be started with --credential");
+        assert_eq!(args[cred_idx + 1], format!("{}:s3cr3t", TERMINAL_USERNAME));
+        assert!(
+            args.iter().any(|a| a == "--check-origin"),
+            "ttyd must reject cross-origin upgrades"
+        );
+    }
+
+    #[test]
+    fn ttyd_credentials_are_unguessable_and_unique() {
+        let a = generate_terminal_credential();
+        let b = generate_terminal_credential();
+
+        assert_ne!(a, b, "credentials must not repeat across sessions");
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn ttyd_still_binds_loopback_only() {
+        let args = build_ttyd_args(7681, "/workspace", "pw");
+        let idx = args.iter().position(|a| a == "--interface").unwrap();
+        assert_eq!(args[idx + 1], "127.0.0.1");
     }
 }

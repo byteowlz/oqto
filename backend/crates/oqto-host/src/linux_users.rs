@@ -1370,6 +1370,7 @@ mod tests {
     #[test]
     fn test_linux_username_custom_prefix() {
         let config = LinuxUsersConfig {
+            strict_identity: false,
             prefix: "workspace_".to_string(),
             ..Default::default()
         };
@@ -1391,6 +1392,7 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let config = LinuxUsersConfig {
+            strict_identity: false,
             enabled: true,
             prefix: "test_".to_string(),
             uid_start: 3000,

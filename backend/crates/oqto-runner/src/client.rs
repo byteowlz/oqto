@@ -629,6 +629,23 @@ impl RunnerClient {
         }
     }
 
+    /// Fetch a session's terminal credential. Held in memory by the runner, so
+    /// it must be fetched per attach.
+    pub async fn get_terminal_credential(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<TerminalCredentialResponse> {
+        let req = RunnerRequest::GetTerminalCredential(GetTerminalCredentialRequest {
+            session_id: session_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::TerminalCredential(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_terminal_credential"),
+        }
+    }
+
     /// Stop a running session.
     pub async fn stop_session(
         &self,

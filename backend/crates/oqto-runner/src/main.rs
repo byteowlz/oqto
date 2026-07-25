@@ -146,6 +146,7 @@ async fn main() -> Result<()> {
         memories_dir: user_config.memories_dir.clone(),
         single_user: user_config.single_user,
         linux_users_enabled: user_config.linux_users_enabled,
+        terminal_enabled: user_config.terminal_enabled,
     };
     let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
     if let Some(address) = args.listen_tls {

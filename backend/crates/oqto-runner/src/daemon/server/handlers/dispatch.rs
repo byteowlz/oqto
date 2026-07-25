@@ -30,6 +30,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::GetSession(_)
         | RunnerRequest::StartSession(_)
         | RunnerRequest::StopSession(_)
+        | RunnerRequest::GetTerminalCredential(_)
         | RunnerRequest::ListMainChatSessions
         | RunnerRequest::GetMainChatMessages(_)
         | RunnerRequest::GetWorkspaceChatMessages(_)
