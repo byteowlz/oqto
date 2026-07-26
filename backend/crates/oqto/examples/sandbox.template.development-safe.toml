@@ -21,6 +21,13 @@ isolate_network = false
 isolate_pid = true
 
 # Scope Pi session reads/writes to current workspace shard only.
+# Optional: isolate package/toolchain writes using overlayfs (bwrap --overlay).
+# When enabled, writes to overlay_paths are redirected into per-workspace dirs
+# under overlay_root, keeping the real user paths unchanged.
+overlay_enabled = false
+overlay_root = "~/.oqto/overlays"
+overlay_paths = ["~/.cargo", "~/.npm", "~/.bun", "~/.local/share/uv", "~/.cache/uv"]
+
 [[profiles.development.scoped_paths]]
 name = "pi-sessions-workspace-shard"
 base_path = "~/.pi/agent/sessions"
@@ -34,9 +41,3 @@ target_template = "{base_path}/{value}"
 access = "rw"
 missing = "warn"
 
-# Optional: isolate package/toolchain writes using overlayfs (bwrap --overlay).
-# When enabled, writes to overlay_paths are redirected into per-workspace dirs
-# under overlay_root, keeping the real user paths unchanged.
-overlay_enabled = false
-overlay_root = "~/.oqto/overlays"
-overlay_paths = ["~/.cargo", "~/.npm", "~/.bun", "~/.local/share/uv", "~/.cache/uv"]

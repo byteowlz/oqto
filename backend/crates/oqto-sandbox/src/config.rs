@@ -59,7 +59,7 @@ use std::io::Write;
 /// Policy for guarded path access.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-#[derive(Default)]
+#[derive(schemars::JsonSchema, Default)]
 pub enum GuardPolicy {
     /// Auto-approve access, but log it.
     Auto,
@@ -71,8 +71,8 @@ pub enum GuardPolicy {
 }
 
 /// Configuration for oqto-guard (FUSE filesystem for runtime access control).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GuardConfig {
     /// Enable the guard FUSE filesystem.
     pub enabled: bool,
@@ -105,8 +105,8 @@ fn default_guard_timeout() -> u64 {
 // ============================================================================
 
 /// Configuration for oqto-ssh-proxy (SSH agent proxy with policy).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SshProxyConfig {
     /// Enable the SSH agent proxy.
     pub enabled: bool,
@@ -145,7 +145,9 @@ fn default_true() -> bool {
 /// value below the user's existing process count makes `clone(2)` fail and
 /// stops the sandbox from starting at all. Bounding process counts requires
 /// cgroup `pids.max`, which belongs to the Placement Supervisor.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    schemars::JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
 pub struct ResourceLimits {
     /// Maximum address space, in bytes (`RLIMIT_AS`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,7 +223,7 @@ const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
 // ============================================================================
 
 /// Network access mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkMode {
     /// No network restrictions.
@@ -235,8 +237,8 @@ pub enum NetworkMode {
 
 /// Configuration for network access control.
 /// When mode is "proxy", traffic goes through eavs with domain filtering.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetworkConfig {
     /// Network access mode.
     pub mode: NetworkMode,
@@ -265,8 +267,8 @@ pub struct NetworkConfig {
 // ============================================================================
 
 /// Configuration for how prompts are delivered to users.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PromptConfig {
     /// Enable desktop notifications as fallback when UI not connected.
     #[serde(default = "default_true")]
@@ -282,7 +284,7 @@ fn default_prompt_timeout() -> u64 {
 }
 
 /// Seccomp enforcement mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SeccompMode {
     /// Disable seccomp integration.
@@ -304,7 +306,7 @@ fn stricter_seccomp_mode(a: SeccompMode, b: SeccompMode) -> SeccompMode {
 }
 
 /// Landlock enforcement mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LandlockMode {
     #[default]
@@ -354,21 +356,21 @@ fn merge_network(
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopedPathSource {
     WorkspacePath,
     Literal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScopedPathAccess {
     Ro,
     Rw,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScopedPathMissing {
     Ignore,
@@ -394,7 +396,7 @@ fn default_scoped_missing() -> ScopedPathMissing {
     ScopedPathMissing::Create
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum ScopedPathTransform {
     StripPrefix { value: String },
@@ -402,8 +404,8 @@ pub enum ScopedPathTransform {
     Wrap { prefix: String, suffix: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
 pub struct ScopedPathRule {
     pub name: String,
     pub base_path: String,
@@ -592,7 +594,9 @@ fn session_shard_rules() -> Vec<ScopedPathRule> {
 }
 
 /// How reads under the user's home directory are decided.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    schemars::JsonSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadPolicy {
     /// Bind the whole home readable, then mask `deny_read`. Any path not
@@ -616,8 +620,8 @@ pub enum ReadPolicy {
 /// 2. **oqto-guard (FUSE)**: Runtime approval for "gray area" paths
 /// 3. **oqto-ssh-proxy**: SSH access without exposing private keys
 /// 4. **Network (eavs)**: Domain-level network filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct SandboxProfile {
     // --- oqto-sandbox (bwrap) layer ---
     /// How home-directory reads are decided.
@@ -987,9 +991,13 @@ impl SandboxProfile {
 /// isolate_network = false
 /// isolate_pid = true
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SandboxConfigFile {
+    /// JSON schema reference. Accepted and ignored so editors can validate.
+    #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+
     /// Enable sandboxing.
     pub enabled: bool,
 
@@ -1000,6 +1008,91 @@ pub struct SandboxConfigFile {
     /// Keys are profile names, values are profile settings.
     #[serde(default)]
     pub profiles: HashMap<String, SandboxProfile>,
+
+    // --- Overrides applied on top of the resolved profile ---
+    //
+    // Lists union with the profile rather than replacing it. Replacing lets a
+    // config silently drop a grant the runtime depends on: an allow_write that
+    // omits the agent session directory makes the harness exit 0 while
+    // persisting nothing. Removing a profile grant is done by defining a custom
+    // profile, which is explicit.
+    /// Additional paths to deny reading. Unioned with the profile.
+    #[serde(default)]
+    pub deny_read: Vec<String>,
+
+    /// Additional paths readable under an allowlist. Unioned with the profile.
+    #[serde(default)]
+    pub allow_read: Vec<String>,
+
+    /// Additional writable paths. Unioned with the profile.
+    #[serde(default)]
+    pub allow_write: Vec<String>,
+
+    /// Additional paths to deny writing. Unioned with the profile.
+    #[serde(default)]
+    pub deny_write: Vec<String>,
+
+    /// Additional read-only binds. Unioned with the profile.
+    #[serde(default)]
+    pub extra_ro_bind: Vec<String>,
+
+    /// Additional read-write binds. Unioned with the profile.
+    #[serde(default)]
+    pub extra_rw_bind: Vec<String>,
+
+    // Scalars override the profile. Global config is admin-owned, so it may
+    // legitimately loosen as well as tighten.
+    /// Override the profile's network isolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolate_network: Option<bool>,
+
+    /// Override the profile's PID isolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolate_pid: Option<bool>,
+
+    /// Override capability dropping.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drop_all_caps: Option<bool>,
+
+    /// Override user-namespace denial.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_userns: Option<bool>,
+
+    /// Override the assertion that user namespaces are unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assert_userns_disabled: Option<bool>,
+
+    /// Override no-new-privs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_new_privs: Option<bool>,
+
+    /// Override the Landlock mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landlock_mode: Option<LandlockMode>,
+
+    /// Override the seccomp mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp_mode: Option<SeccompMode>,
+
+    /// Override the compiled seccomp policy path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp_bpf_path: Option<String>,
+
+    /// Override the read policy for home.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_policy: Option<ReadPolicy>,
+
+    /// Override overlayfs redirection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay_enabled: Option<bool>,
+
+    /// Override the overlay root directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay_root: Option<String>,
+
+    /// Additional overlay targets. Unioned with the profile.
+    #[serde(default)]
+    pub overlay_paths: Vec<String>,
 }
 
 /// Sandbox configuration (resolved).
@@ -1137,6 +1230,17 @@ impl Default for SandboxConfig {
     }
 }
 
+impl SandboxConfigFile {
+    /// JSON Schema for `sandbox.toml`, derived from this type.
+    ///
+    /// Generated rather than hand-written: the previous checked-in schema
+    /// drifted until it rejected every real config.
+    pub fn schema_json() -> String {
+        let schema = schemars::schema_for!(SandboxConfigFile);
+        serde_json::to_string_pretty(&schema).expect("schema serializes")
+    }
+}
+
 impl From<SandboxConfigFile> for SandboxConfig {
     fn from(file: SandboxConfigFile) -> Self {
         let profile_name = if file.profile.is_empty() {
@@ -1188,6 +1292,59 @@ impl From<SandboxConfigFile> for SandboxConfig {
             network: profile.network,
             profiles: file.profiles,
         };
+
+        // Apply top-level overrides on the resolved profile.
+        fn extend_unique(target: &mut Vec<String>, extra: Vec<String>) {
+            for value in extra {
+                if !target.contains(&value) {
+                    target.push(value);
+                }
+            }
+        }
+        extend_unique(&mut config.deny_read, file.deny_read);
+        extend_unique(&mut config.allow_read, file.allow_read);
+        extend_unique(&mut config.allow_write, file.allow_write);
+        extend_unique(&mut config.deny_write, file.deny_write);
+        extend_unique(&mut config.extra_ro_bind, file.extra_ro_bind);
+        extend_unique(&mut config.extra_rw_bind, file.extra_rw_bind);
+
+        if let Some(v) = file.isolate_network {
+            config.isolate_network = v;
+        }
+        if let Some(v) = file.isolate_pid {
+            config.isolate_pid = v;
+        }
+        if let Some(v) = file.drop_all_caps {
+            config.drop_all_caps = v;
+        }
+        if let Some(v) = file.disable_userns {
+            config.disable_userns = v;
+        }
+        if let Some(v) = file.assert_userns_disabled {
+            config.assert_userns_disabled = v;
+        }
+        if let Some(v) = file.no_new_privs {
+            config.no_new_privs = v;
+        }
+        if let Some(v) = file.landlock_mode {
+            config.landlock_mode = v;
+        }
+        if let Some(v) = file.seccomp_mode {
+            config.seccomp_mode = v;
+        }
+        if let Some(v) = file.seccomp_bpf_path {
+            config.seccomp_bpf_path = Some(v);
+        }
+        if let Some(v) = file.read_policy {
+            config.read_policy = v;
+        }
+        if let Some(v) = file.overlay_enabled {
+            config.overlay_enabled = v;
+        }
+        if let Some(v) = file.overlay_root {
+            config.overlay_root = v;
+        }
+        extend_unique(&mut config.overlay_paths, file.overlay_paths);
 
         // Always ensure sandbox.toml itself is protected
         let sandbox_toml = "~/.config/oqto/sandbox.toml".to_string();
@@ -4037,5 +4194,91 @@ log_requests = true
             !args.contains(&other_str),
             "another workspace's shard must never be bound"
         );
+    }
+
+    #[test]
+    fn top_level_keys_are_applied_not_dropped() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            enabled = true
+            profile = "strict"
+            deny_read = ["~/.kube"]
+            seccomp_mode = "enforce"
+            isolate_network = false
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert!(config.deny_read.iter().any(|p| p == "~/.kube"));
+        assert_eq!(config.seccomp_mode, SeccompMode::Enforce);
+        assert!(!config.isolate_network, "scalars override the profile");
+    }
+
+    #[test]
+    fn allow_write_unions_so_a_config_cannot_drop_a_required_grant() {
+        // A real operator config listed toolchain caches and omitted the agent
+        // session dir. Replacing would revoke it, and the harness then exits 0
+        // while persisting nothing.
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "strict"
+            allow_write = ["~/.cargo", "~/.rustup"]
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert!(
+            config.allow_write.iter().any(|p| p == "~/.pi"),
+            "profile grants must survive a config that does not repeat them"
+        );
+        assert!(config.allow_write.iter().any(|p| p == "~/.cargo"));
+    }
+
+    #[test]
+    fn overrides_do_not_duplicate_profile_entries() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "strict"
+            deny_read = ["~/.ssh"]
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert_eq!(
+            config.deny_read.iter().filter(|p| *p == "~/.ssh").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected() {
+        // Silently dropping a misspelled restriction yields a config that looks
+        // enforced and is not.
+        let err = toml::from_str::<SandboxConfigFile>(
+            r#"
+            profile = "strict"
+            deny_reads = ["~/.ssh"]
+            "#,
+        )
+        .expect_err("unknown key must fail");
+        assert!(
+            err.to_string().contains("deny_reads"),
+            "error should name the offending key: {err}"
+        );
+    }
+
+    #[test]
+    fn schema_reference_is_accepted() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            "$schema" = "https://example.invalid/oqto.sandbox.schema.json"
+            profile = "strict"
+            "#,
+        )
+        .expect("a $schema reference must not be an error");
+        assert!(file.schema.is_some());
     }
 }

@@ -11,6 +11,7 @@ name = "oqto_sandbox"
 path = "src/lib.rs"
 
 [dependencies]
+schemars = { workspace = true }
 anyhow.workspace = true
 clap.workspace = true
 env_logger.workspace = true

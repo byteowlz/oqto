@@ -95,6 +95,15 @@ test: agent-check-on-change test-backend test-frontend
 test-backend:
     cd backend && cargo test
 
+# Regenerate sandbox.schema.json from the Rust types.
+schema-update:
+    cd backend && cargo run -q -p oqto-sandbox --example emit_schema > crates/oqto/examples/sandbox.schema.json
+    @echo "wrote backend/crates/oqto/examples/sandbox.schema.json"
+
+# Sandbox config gate: schema matches the types, shipped configs still parse.
+test-sandbox-schema:
+    cd backend && cargo test -p oqto-sandbox --test schema
+
 # Sandbox containment gate. OQTO_REQUIRE_SANDBOX=1 makes a missing sandbox a
 # failure rather than a skip.
 test-containment:

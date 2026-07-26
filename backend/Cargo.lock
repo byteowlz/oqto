@@ -4245,6 +4245,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "schemars",
  "serde",
  "serde_json",
  "shellexpand",
