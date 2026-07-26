@@ -495,7 +495,7 @@
         },
         "disable_userns": {
           "description": "Disable nested user namespace creation inside sandbox.",
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "drop_all_caps": {
@@ -543,7 +543,7 @@
         },
         "landlock_mode": {
           "description": "Landlock mode (off/audit/enforce).",
-          "default": "off",
+          "default": "audit",
           "allOf": [
             {
               "$ref": "#/definitions/LandlockMode"
@@ -552,7 +552,13 @@
         },
         "network": {
           "description": "Configuration for network access control.",
-          "default": null,
+          "default": {
+            "allow_domains": [],
+            "log_requests": false,
+            "mode": "open",
+            "proxy_dns_port": null,
+            "proxy_tcp_port": null
+          },
           "anyOf": [
             {
               "$ref": "#/definitions/NetworkConfig"
@@ -574,7 +580,13 @@
         },
         "overlay_paths": {
           "description": "Paths to overlay (typically package/toolchain directories).",
-          "default": [],
+          "default": [
+            "~/.cargo",
+            "~/.npm",
+            "~/.bun",
+            "~/.local/share/uv",
+            "~/.cache/uv"
+          ],
           "type": "array",
           "items": {
             "type": "string"
@@ -587,7 +599,10 @@
         },
         "prompts": {
           "description": "Configuration for user prompts.",
-          "default": null,
+          "default": {
+            "auto_deny_timeout_secs": 30,
+            "desktop_notifications": true
+          },
           "anyOf": [
             {
               "$ref": "#/definitions/PromptConfig"
@@ -617,7 +632,33 @@
         },
         "scoped_paths": {
           "description": "Dynamic deny+rebind rules evaluated at spawn time.",
-          "default": [],
+          "default": [
+            {
+              "access": "rw",
+              "base_path": "~/.pi/agent/sessions",
+              "missing": "create",
+              "name": "session-shard:~/.pi/agent/sessions",
+              "source": "workspace_path",
+              "source_literal": null,
+              "target_template": "{base_path}/{value}",
+              "transforms": [
+                {
+                  "op": "strip_prefix",
+                  "value": "/"
+                },
+                {
+                  "from": "/",
+                  "op": "replace",
+                  "to": "-"
+                },
+                {
+                  "op": "wrap",
+                  "prefix": "--",
+                  "suffix": "--"
+                }
+              ]
+            }
+          ],
           "type": "array",
           "items": {
             "$ref": "#/definitions/ScopedPathRule"
@@ -633,7 +674,7 @@
         },
         "seccomp_mode": {
           "description": "Seccomp mode (off/audit/enforce).",
-          "default": "off",
+          "default": "audit",
           "allOf": [
             {
               "$ref": "#/definitions/SeccompMode"
@@ -642,7 +683,16 @@
         },
         "ssh": {
           "description": "Configuration for SSH agent proxy.",
-          "default": null,
+          "default": {
+            "allowed_hosts": [
+              "github.com",
+              "gitlab.com"
+            ],
+            "allowed_keys": [],
+            "enabled": true,
+            "log_connections": true,
+            "prompt_unknown": true
+          },
           "anyOf": [
             {
               "$ref": "#/definitions/SshProxyConfig"

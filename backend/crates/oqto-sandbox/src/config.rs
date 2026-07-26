@@ -647,15 +647,12 @@ pub struct SandboxProfile {
     pub isolate_pid: bool,
 
     /// Drop all Linux capabilities inside the sandbox.
-    #[serde(default)]
     pub drop_all_caps: bool,
 
     /// Disable nested user namespace creation inside sandbox.
-    #[serde(default)]
     pub disable_userns: bool,
 
     /// Assert that nested user namespaces are disabled (fail if not).
-    #[serde(default)]
     pub assert_userns_disabled: bool,
 
     /// Set PR_SET_NO_NEW_PRIVS before exec.
@@ -663,15 +660,12 @@ pub struct SandboxProfile {
     pub no_new_privs: bool,
 
     /// Seccomp mode (off/audit/enforce).
-    #[serde(default)]
     pub seccomp_mode: SeccompMode,
 
     /// Landlock mode (off/audit/enforce).
-    #[serde(default)]
     pub landlock_mode: LandlockMode,
 
     /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
-    #[serde(default)]
     pub seccomp_bpf_path: Option<String>,
 
     /// Additional paths to bind read-only.
@@ -685,7 +679,6 @@ pub struct SandboxProfile {
     /// When enabled, each path in `overlay_paths` is mounted with bwrap overlay
     /// so writes go to a per-workspace upperdir under `overlay_root` while reads
     /// come from the original path.
-    #[serde(default)]
     pub overlay_enabled: bool,
 
     /// Root directory for per-workspace overlay upper/work dirs.
@@ -695,19 +688,15 @@ pub struct SandboxProfile {
     pub overlay_root: String,
 
     /// Paths to overlay (typically package/toolchain directories).
-    #[serde(default)]
     pub overlay_paths: Vec<String>,
 
     /// Dynamic deny+rebind rules evaluated at spawn time.
-    #[serde(default)]
     pub scoped_paths: Vec<ScopedPathRule>,
 
     /// Per-process resource limits applied before exec.
-    #[serde(default)]
     pub resource_limits: ResourceLimits,
 
     /// Redirect toolchain caches into a per-workspace directory.
-    #[serde(default)]
     pub workspace_cache_enabled: bool,
 
     /// Root directory holding per-workspace toolchain caches.
@@ -716,22 +705,18 @@ pub struct SandboxProfile {
 
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
-    #[serde(default)]
     pub guard: Option<GuardConfig>,
 
     // --- oqto-ssh-proxy layer ---
     /// Configuration for SSH agent proxy.
-    #[serde(default)]
     pub ssh: Option<SshProxyConfig>,
 
     // --- Network (eavs integration) layer ---
     /// Configuration for network access control.
-    #[serde(default)]
     pub network: Option<NetworkConfig>,
 
     // --- Prompt delivery ---
     /// Configuration for user prompts.
-    #[serde(default)]
     pub prompts: Option<PromptConfig>,
 }
 
@@ -4280,5 +4265,52 @@ log_requests = true
         )
         .expect("a $schema reference must not be an error");
         assert!(file.schema.is_some());
+    }
+
+    #[test]
+    fn a_partial_custom_profile_inherits_the_baseline() {
+        // Field-level serde(default) used to shadow the container default, so
+        // naming a profile silently reset hardening to type defaults: no
+        // seccomp, no rlimits, and no session-history scoping.
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "development"
+            [profiles.development]
+            isolate_pid = true
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+        let baseline = SandboxProfile::development();
+
+        assert_eq!(
+            config.scoped_paths.len(),
+            baseline.scoped_paths.len(),
+            "a partial custom profile must keep session-history scoping"
+        );
+        assert_eq!(config.seccomp_mode, baseline.seccomp_mode);
+        assert_eq!(config.landlock_mode, baseline.landlock_mode);
+        assert_eq!(config.resource_limits, baseline.resource_limits);
+        assert!(config.no_new_privs);
+    }
+
+    #[test]
+    fn a_custom_profile_can_still_override_the_baseline() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "locked"
+            [profiles.locked]
+            seccomp_mode = "enforce"
+            scoped_paths = []
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert_eq!(config.seccomp_mode, SeccompMode::Enforce);
+        assert!(
+            config.scoped_paths.is_empty(),
+            "an explicit empty list must still win"
+        );
     }
 }
