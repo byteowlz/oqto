@@ -61,3 +61,26 @@ _Avoid_: session hierarchy (that means Fork lineage in Session listings)
 
 **Canonical Protocol**:
 The harness-agnostic message/event/command format spoken between frontend, backend, and runner. Messages are durable; events are ephemeral UI signals; commands flow from frontend toward runners.
+
+**Surface**:
+A top-level section of the Oqto shell itself — routed, role-gated, build-time linked, and trusted. Surfaces have no capability boundary because they *are* the shell (see ADR-0027).
+_Avoid_: app (a Surface is not installable, shareable, or sandboxed)
+
+**App**:
+A UI unit that reaches everything outside itself through the Host capability contract. Installable, shareable, and promotable without rebuilding Oqto; runs standalone or embedded from the same artifact. Distinguish its three independent layers: the Artifact (versioned, content-addressed code + manifest), an Instance (one isolated running copy), and its Data binding (the mounts granted to it).
+_Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface
+
+**Host**:
+The implementation of the capability contract an App is handed — files, kv, theme, notifications, egress, agent. The only surface through which an App reaches the outside world; a standalone App is one backed by a local or mock Host.
+_Avoid_: apphost (that names one transport, not the contract)
+
+**Bridge**:
+A transport carrying the Host contract across an isolation boundary, typically `postMessage` to an iframe. Transport only — it never defines its own app-facing API (see ADR-0027).
+
+**Gate**:
+The single enforcement point, runner-side, deciding whether a given App may exercise a granted capability for a given principal. Enforced by uid separation inside the Pod, never by network reachability — a Workspace Pod's shared netns is not a boundary.
+_Avoid_: permission check (the Gate is one place, not a scattered pattern)
+
+**App Sidecar**:
+A server-side component of an App, running as a container in the Workspace Pod alongside the runner (ADR-0019). Carries an App's heavy or native compute; not required, and not available to every trust tier.
+_Avoid_: app server, service (a Sidecar is per-Workspace, not shared infra)
