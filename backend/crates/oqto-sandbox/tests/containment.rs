@@ -230,3 +230,112 @@ fn sandbox_is_available_somewhere() {
         "OQTO_REQUIRE_SANDBOX=1 but bwrap/userns is unavailable"
     );
 }
+
+#[test]
+fn other_workspaces_session_history_is_not_readable() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap/userns unavailable");
+        return;
+    }
+    let home = std::env::var("HOME").expect("HOME");
+    let sessions = PathBuf::from(&home).join(".pi/agent/sessions");
+
+    let mine = PathBuf::from(&home).join(".oqto-probe-ws-mine");
+    let theirs = PathBuf::from(&home).join(".oqto-probe-ws-theirs");
+    std::fs::create_dir_all(&mine).expect("workspace");
+    std::fs::create_dir_all(&theirs).expect("workspace");
+    let _g1 = DirGuard(mine.clone());
+    let _g2 = DirGuard(theirs.clone());
+
+    let shard = |ws: &PathBuf| {
+        sessions.join(format!(
+            "--{}--",
+            ws.to_string_lossy()
+                .trim_start_matches('/')
+                .replace('/', "-")
+        ))
+    };
+    let mine_shard = shard(&mine);
+    let theirs_shard = shard(&theirs);
+    std::fs::create_dir_all(&mine_shard).expect("shard");
+    std::fs::create_dir_all(&theirs_shard).expect("shard");
+    let _g3 = DirGuard(mine_shard.clone());
+    let _g4 = DirGuard(theirs_shard.clone());
+    std::fs::write(mine_shard.join("s.jsonl"), "MINE").expect("fixture");
+    std::fs::write(theirs_shard.join("s.jsonl"), "THEIRS").expect("fixture");
+
+    let mut config = SandboxConfig::strict();
+    config.enabled = true;
+
+    let (_ok, out) = run_sandboxed(
+        &config,
+        &mine,
+        &format!(
+            "cat {}/s.jsonl 2>/dev/null || echo denied",
+            theirs_shard.display()
+        ),
+    );
+    assert_eq!(out, "denied");
+
+    let (_ok, own) = run_sandboxed(
+        &config,
+        &mine,
+        &format!(
+            "cat {}/s.jsonl 2>/dev/null || echo denied",
+            mine_shard.display()
+        ),
+    );
+    assert_eq!(own, "MINE", "the workspace must still see its own history");
+
+    let (_ok, writable) = run_sandboxed(
+        &config,
+        &mine,
+        &format!(
+            "touch {}/new.jsonl 2>/dev/null && echo writable || echo denied",
+            mine_shard.display()
+        ),
+    );
+    assert_eq!(writable, "writable", "the harness must be able to persist");
+}
+
+#[test]
+fn a_missing_session_shard_is_created_not_skipped() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap/userns unavailable");
+        return;
+    }
+    let home = std::env::var("HOME").expect("HOME");
+    let workspace = PathBuf::from(&home).join(".oqto-probe-ws-fresh");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let _g1 = DirGuard(workspace.clone());
+
+    let shard = PathBuf::from(&home)
+        .join(".pi/agent/sessions")
+        .join(format!(
+            "--{}--",
+            workspace
+                .to_string_lossy()
+                .trim_start_matches('/')
+                .replace('/', "-")
+        ));
+    let _ = std::fs::remove_dir_all(&shard);
+    let _g2 = DirGuard(shard.clone());
+
+    let mut config = SandboxConfig::strict();
+    config.enabled = true;
+
+    let (_ok, out) = run_sandboxed(
+        &config,
+        &workspace,
+        &format!(
+            "touch {}/first.jsonl 2>/dev/null && echo writable || echo denied",
+            shard.display()
+        ),
+    );
+
+    assert_eq!(out, "writable");
+    assert!(
+        shard.join("first.jsonl").exists(),
+        "history written in the sandbox must land on the host, not a tmpfs"
+    );
+}

@@ -374,6 +374,12 @@ pub enum ScopedPathMissing {
     Ignore,
     Warn,
     Fail,
+    /// Create the target before binding.
+    ///
+    /// Required for session shards: skipping the bind leaves the base tmpfs in
+    /// place, so the harness writes its history into the sandbox and loses it
+    /// on exit with no error anywhere.
+    Create,
 }
 
 fn default_scoped_target_template() -> String {
@@ -385,7 +391,7 @@ fn default_scoped_access() -> ScopedPathAccess {
 }
 
 fn default_scoped_missing() -> ScopedPathMissing {
-    ScopedPathMissing::Warn
+    ScopedPathMissing::Create
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -550,6 +556,40 @@ fn landlock_write_access_mask(abi: i64) -> u64 {
 // ============================================================================
 // Sandbox Profile
 // ============================================================================
+
+/// Restrict harness session history to the current workspace's shard.
+///
+/// Harnesses write history under a per-cwd directory (Pi:
+/// `~/.pi/agent/sessions/--{cwd-with-slashes-as-dashes}--`), so granting the
+/// parent readable exposes every other workspace's transcripts. These rules
+/// mask the parent and bind back only the shard belonging to this workspace.
+fn session_shard_rules() -> Vec<ScopedPathRule> {
+    ["~/.pi/agent/sessions"]
+        .into_iter()
+        .map(|base| ScopedPathRule {
+            name: format!("session-shard:{base}"),
+            base_path: base.to_string(),
+            source: ScopedPathSource::WorkspacePath,
+            source_literal: None,
+            transforms: vec![
+                ScopedPathTransform::StripPrefix {
+                    value: "/".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: "/".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Wrap {
+                    prefix: "--".to_string(),
+                    suffix: "--".to_string(),
+                },
+            ],
+            target_template: default_scoped_target_template(),
+            access: ScopedPathAccess::Rw,
+            missing: ScopedPathMissing::Create,
+        })
+        .collect()
+}
 
 /// How reads under the user's home directory are decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -809,7 +849,7 @@ impl SandboxProfile {
                 "~/.local/share/uv".to_string(),
                 "~/.cache/uv".to_string(),
             ],
-            scoped_paths: vec![],
+            scoped_paths: session_shard_rules(),
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -902,7 +942,7 @@ impl SandboxProfile {
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
             overlay_paths: vec![],
-            scoped_paths: vec![],
+            scoped_paths: session_shard_rules(),
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -1646,6 +1686,15 @@ impl SandboxConfig {
                             rule.name,
                             target_str
                         );
+                    }
+                    ScopedPathMissing::Create => {
+                        std::fs::create_dir_all(&target).with_context(|| {
+                            format!(
+                                "creating scoped path target for rule '{}': {}",
+                                rule.name, target_str
+                            )
+                        })?;
+                        debug!("Scoped path target created: {}", target_str);
                     }
                 }
             }
@@ -3881,5 +3930,112 @@ log_requests = true
         let merged = global.merge_with_workspace(&workspace);
         assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
         assert_eq!(merged.allow_read, vec!["~/.cargo".to_string()]);
+    }
+
+    #[test]
+    fn shipped_profiles_scope_session_history() {
+        for name in ["development", "strict"] {
+            let config = SandboxConfig::from_profile(name);
+            let rule = config
+                .scoped_paths
+                .iter()
+                .find(|r| r.base_path == "~/.pi/agent/sessions")
+                .unwrap_or_else(|| panic!("{name} must scope pi session history"));
+            assert_eq!(
+                rule.access,
+                ScopedPathAccess::Rw,
+                "harness must still write"
+            );
+            assert_eq!(
+                rule.missing,
+                ScopedPathMissing::Create,
+                "a missing shard must be created, never skipped: skipping leaves \
+                 the tmpfs in place and the harness loses history silently"
+            );
+        }
+    }
+
+    #[test]
+    fn session_shard_encoding_matches_harness_layout() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let sessions = home.join(".pi/agent/sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let workspace = home.join("projects/demo");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let expected = sessions.join(format!(
+            "--{}--",
+            workspace
+                .to_string_lossy()
+                .trim_start_matches('/')
+                .replace('/', "-")
+        ));
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            expected.exists(),
+            "missing shard must be created so the harness can persist history"
+        );
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            bind_sources.contains(&&expected.to_string_lossy().to_string()),
+            "workspace shard must be bound back: {bind_sources:?}"
+        );
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            tmpfs.contains(&&sessions.to_string_lossy().to_string()),
+            "the sessions parent must be masked"
+        );
+    }
+
+    #[test]
+    fn only_the_current_workspace_shard_is_bound() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let sessions = home.join(".pi/agent/sessions");
+        let other = sessions.join("--other-workspace--");
+        std::fs::create_dir_all(&other).unwrap();
+        let workspace = home.join("mine");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        let other_str = other.to_string_lossy().to_string();
+        assert!(
+            !args.contains(&other_str),
+            "another workspace's shard must never be bound"
+        );
     }
 }
