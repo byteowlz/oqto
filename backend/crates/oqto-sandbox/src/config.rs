@@ -1651,6 +1651,35 @@ impl SandboxConfig {
         let mut scoped_paths = self.scoped_paths.clone();
         scoped_paths.extend(workspace_config.scoped_paths.clone());
 
+        // Read policy: allowlist is the tighter posture, so either side may
+        // select it, but the effective list must come from the same place.
+        //
+        // - global already allowlist: intersect, so a workspace can narrow but
+        //   never widen beyond what global permits.
+        // - global denylist, workspace allowlist: take the workspace list. All
+        //   of home was readable under the denylist, so any allowlist is a
+        //   tightening regardless of its contents.
+        let (merged_read_policy, merged_allow_read) =
+            match (self.read_policy, workspace_config.read_policy) {
+                (ReadPolicy::Allowlist, ReadPolicy::Allowlist) => (
+                    ReadPolicy::Allowlist,
+                    self.allow_read
+                        .iter()
+                        .filter(|p| workspace_config.allow_read.contains(p))
+                        .cloned()
+                        .collect(),
+                ),
+                (ReadPolicy::Allowlist, ReadPolicy::Denylist) => {
+                    (ReadPolicy::Allowlist, self.allow_read.clone())
+                }
+                (ReadPolicy::Denylist, ReadPolicy::Allowlist) => {
+                    (ReadPolicy::Allowlist, workspace_config.allow_read.clone())
+                }
+                (ReadPolicy::Denylist, ReadPolicy::Denylist) => {
+                    (ReadPolicy::Denylist, self.allow_read.clone())
+                }
+            };
+
         // Merge profiles (workspace can add, global takes precedence for same name)
         let mut profiles = workspace_config.profiles.clone();
         profiles.extend(self.profiles.clone());
@@ -1664,17 +1693,12 @@ impl SandboxConfig {
             resource_limits: self
                 .resource_limits
                 .tightest(workspace_config.resource_limits),
-            // Allowlist is the tighter policy, so either side may select it.
-            // allow_read comes from the global config only: a workspace may add
-            // restrictions but must not widen what it can read.
-            read_policy: if self.read_policy == ReadPolicy::Allowlist
-                || workspace_config.read_policy == ReadPolicy::Allowlist
-            {
-                ReadPolicy::Allowlist
-            } else {
-                ReadPolicy::Denylist
-            },
-            allow_read: self.allow_read.clone(),
+            // A policy and the list it governs must travel together. Taking the
+            // workspace's allowlist selection while keeping the global list
+            // masked home with nothing readable, which leaves an agent unable
+            // to see its own toolchains.
+            read_policy: merged_read_policy,
+            allow_read: merged_allow_read,
             // Enable if either enables
             enabled: self.enabled || workspace_config.enabled,
             // Use workspace profile name if workspace specifies one
@@ -2068,12 +2092,21 @@ impl SandboxConfig {
                     args.push(expanded_str);
                     debug!("Allow-read: '{}'", path);
                 }
-                info!(
-                    "Home '{}' is allowlist-based ({} readable entries, profile={})",
-                    home_str,
-                    self.allow_read.len(),
-                    self.profile
-                );
+                if self.allow_read.is_empty() {
+                    warn!(
+                        "Home '{}' is masked with an empty allow_read (profile={}): the \
+                         agent can read nothing under home, which usually means a \
+                         read_policy was selected without the list that goes with it",
+                        home_str, self.profile
+                    );
+                } else {
+                    info!(
+                        "Home '{}' is allowlist-based ({} readable entries, profile={})",
+                        home_str,
+                        self.allow_read.len(),
+                        self.profile
+                    );
+                }
 
                 // Writable paths are layered on top exactly as in the denylist
                 // strict path; see the note there about absent sources.
@@ -4311,6 +4344,47 @@ log_requests = true
         assert!(
             config.scoped_paths.is_empty(),
             "an explicit empty list must still win"
+        );
+    }
+
+    #[test]
+    fn workspace_allowlist_keeps_its_own_read_list() {
+        // A workspace selecting allowlist while the global stays denylist used
+        // to inherit the global's empty list, masking home with nothing
+        // readable.
+        let mut global = SandboxConfig::from_profile("development");
+        global.read_policy = ReadPolicy::Denylist;
+        global.allow_read = vec![];
+
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.read_policy = ReadPolicy::Allowlist;
+        workspace.allow_read = vec!["~/.cargo".to_string(), "~/.pi".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(
+            merged.allow_read,
+            vec!["~/.cargo".to_string(), "~/.pi".to_string()],
+            "an allowlist must arrive with the list it governs"
+        );
+    }
+
+    #[test]
+    fn a_workspace_cannot_widen_a_global_allowlist() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.allow_read = vec!["~/.cargo".to_string()];
+
+        let mut workspace = SandboxConfig::from_profile("strict");
+        workspace.allow_read = vec!["~/.cargo".to_string(), "~/.ssh".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(
+            merged.allow_read,
+            vec!["~/.cargo".to_string()],
+            "intersection only: a workspace must not add readable paths"
         );
     }
 }
