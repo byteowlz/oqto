@@ -21,11 +21,22 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
     // Everything is denied unless the policy grants it. `(deny default)` also
     // covers operations this profile says nothing about.
     out.push_str("(deny default)\n");
-    out.push_str("(allow process-exec)\n");
-    out.push_str("(allow process-fork)\n");
-    out.push_str("(allow sysctl-read)\n");
-    out.push_str("(allow mach-lookup)\n");
-    out.push_str("(allow signal (target self))\n");
+
+    // Baseline. Verified by execution on macOS 26: without it a process dies
+    // with SIGABRT before main, because dyld cannot load libraries and cannot
+    // stat the directories on the way to them. `file-read-metadata` is the
+    // load-bearing one: subpath grants cover descendants, but traversal still
+    // needs metadata on every ancestor including "/".
+    out.push_str("(allow process*)\n");
+    out.push_str("(allow sysctl*)\n");
+    out.push_str("(allow mach*)\n");
+    out.push_str("(allow signal)\n");
+    out.push_str("(allow file-read-metadata)\n");
+    out.push_str(
+        "(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/System\") \
+         (subpath \"/dev\") (subpath \"/private/var/db\") (subpath \"/Library\") \
+         (literal \"/\"))\n",
+    );
 
     match policy.default {
         Access::None => {}
@@ -39,7 +50,14 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
     rules.sort_by_key(|rule| rule.path().components().count());
 
     for rule in rules {
-        let path = escape(&rule.path().to_string_lossy());
+        // SBPL matches the *resolved* path. On macOS /tmp, /var and /etc are
+        // symlinks into /private, so a rule written against the symlink never
+        // matches and the path is silently denied instead of granted. Resolve
+        // before emitting; fall back to the literal path when the target does
+        // not exist yet, which is the only case where nothing can be resolved.
+        let resolved =
+            std::fs::canonicalize(rule.path()).unwrap_or_else(|_| rule.path().to_path_buf());
+        let path = escape(&resolved.to_string_lossy());
         let line = match rule.access {
             Access::None => format!("(deny file-read* file-write* (subpath \"{path}\"))\n"),
             Access::Read => format!(
@@ -89,6 +107,38 @@ mod tests {
         let profile = compile_profile(&policy(Access::None, &[]));
         assert!(profile.contains("(deny default)"));
         assert!(!profile.contains("(allow file-read*)\n"));
+    }
+
+    #[test]
+    fn the_baseline_lets_a_process_start() {
+        // Verified on macOS 26: without metadata traversal a process aborts in
+        // dyld before reaching main, so every probe reports "denied" and a
+        // broken profile looks like a working one.
+        let profile = compile_profile(&policy(Access::None, &[]));
+        assert!(profile.contains("(allow file-read-metadata)"));
+        assert!(profile.contains("(literal \"/\")"));
+        assert!(profile.contains("(subpath \"/usr\")"));
+    }
+
+    #[test]
+    fn emitted_paths_are_resolved_not_symlinked() {
+        // /tmp is a symlink to /private/tmp on macOS. Emitting the symlink
+        // silently denies the path, because SBPL matches the resolved form.
+        let temp = std::env::temp_dir();
+        let Ok(canonical) = std::fs::canonicalize(&temp) else {
+            return;
+        };
+        if canonical == temp {
+            return; // Linux: nothing to resolve, the check is macOS-specific.
+        }
+        let profile = compile_profile(&policy(
+            Access::None,
+            &[(temp.to_str().expect("utf8"), Access::Read)],
+        ));
+        assert!(
+            profile.contains(&format!("\"{}\"", canonical.display())),
+            "profile must reference the resolved path:\n{profile}"
+        );
     }
 
     #[test]

@@ -20,7 +20,14 @@ use oqto_sandbox::{
     policy_seatbelt::compile_profile,
     policy_translate::translate_profile,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// The Seatbelt adapter emits resolved paths, because SBPL matches the resolved
+/// form. bwrap does not: it operates on mounts and follows symlinks itself.
+/// The asymmetry is real, so assertions against each backend use its own form.
+fn resolved_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 struct AllPresent;
 impl PathPresence for AllPresent {
@@ -60,8 +67,9 @@ fn neither_adapter_drops_a_rule() {
                 bwrap.iter().any(|arg| arg == &path),
                 "{name}: bwrap dropped {path}"
             );
+            let resolved = resolved_path(rule.path());
             assert!(
-                sbpl.contains(&format!("\"{path}\"")),
+                sbpl.contains(&format!("\"{}\"", resolved.display())),
                 "{name}: seatbelt dropped {path}"
             );
         }
@@ -77,9 +85,11 @@ fn a_denied_path_is_denied_by_both() {
 
         for rule in policy.rules().iter().filter(|r| r.access == Access::None) {
             let path = rule.path().to_string_lossy().to_string();
+            let resolved = resolved_path(rule.path());
             assert!(
                 sbpl.contains(&format!(
-                    "(deny file-read* file-write* (subpath \"{path}\"))"
+                    "(deny file-read* file-write* (subpath \"{}\"))",
+                    resolved.display()
                 )),
                 "{name}: seatbelt does not deny {path}"
             );
