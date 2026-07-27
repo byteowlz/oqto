@@ -106,25 +106,33 @@ The existing surface maps onto it without loss:
 | `scoped_paths` | a rule whose path is templated |
 
 Rules are not confined to the work directory. Agents need profile-governed
-access to paths such as `~/.pi`, `~/.cargo`, system toolchains, caches, and the
-current session shard. Paths therefore use declared symbolic roots rather than
+access to paths such as `~/.pi`, `~/.cargo`, system toolchains, caches, and
+harness-owned state. Paths therefore use declared symbolic roots rather than
 assuming `{workdir}` is universally applicable:
 
 - `{workdir}` is the current work directory—the tree presented by the ordinary
   work-directory permission UI.
 - `{home}` addresses profile-governed user state such as `~/.pi` and
   `~/.cargo`.
-- `{session_shard}` identifies the current work directory's durable harness
-  history shard.
-- Further roots may be introduced for runtime/tool state, but each must have a
-  defined owner, resolution source, and authority boundary; arbitrary
-  environment-variable interpolation is forbidden.
+- `{resource:<id>}` references a named filesystem resource declared by a runner,
+  harness adapter, placement, or administrator. Each declaration must identify
+  its owner, resolution source, authority boundary, and whether the resource is
+  available on the selected backend.
 
-The project term is **work directory**, not `workspace`, for the directory in
-which a harness runs. There is intentionally no ambiguous `{workspace}` token.
-Symbolic roots make rules portable while keeping the path source explicit. A
-session shard is therefore an ordinary rule target rather than a separate
-permission mechanism.
+The neutral policy contains no Pi-specific `{session_shard}` concept. Pi's
+adapter may declare `resource:harness_history` and resolve it to the current
+work directory's Pi session directory. Another harness may resolve that resource
+to a different path, expose no filesystem history resource, or keep history in
+a non-filesystem store—in which case it does not participate in filesystem
+policy. Likewise, a container or external runtime may mount the resource at a
+physical path different from its host source. Policy governs the resolved
+sandbox-visible path, not Pi's storage convention.
+
+Resource identifiers are semantic contracts, not arbitrary strings. Their
+schemas and owners must be registered; arbitrary environment-variable
+interpolation is forbidden. The project term is **work directory**, not
+`workspace`, for the directory in which a harness runs, so there is
+intentionally no ambiguous `{workspace}` token.
 
 Rule authority is independent of path location. System and administrator
 profiles may govern any declared root. A work-directory tree UI normally emits
