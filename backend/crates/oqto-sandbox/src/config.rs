@@ -743,6 +743,8 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -788,6 +790,8 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -909,6 +913,8 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -937,8 +943,13 @@ impl SandboxProfile {
             landlock_mode: LandlockMode::Enforce,
             seccomp_bpf_path: None,
             // extra_ro_bind is applied AFTER deny_read, so these paths
-            // under ~/.config are accessible even though ~/.config is blocked
-            extra_ro_bind: vec!["~/.config/oqto".to_string()],
+            // under ~/.config are accessible even though ~/.config is blocked.
+            // Deliberately not the whole ~/.config/oqto: that directory holds
+            // config.toml, whose auth and eavs sections carry signing secrets.
+            // In single-user deployments the agent runs as the same user as the
+            // backend, so file permissions protect nothing here and path
+            // exclusion is the only control.
+            extra_ro_bind: vec!["~/.config/oqto/sandbox.toml".to_string()],
             extra_rw_bind: vec![],
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
@@ -1648,12 +1659,12 @@ impl SandboxConfig {
             .cloned()
             .collect();
 
-        // extra binds are union (additive)
-        let mut extra_ro_bind: HashSet<String> = self.extra_ro_bind.iter().cloned().collect();
-        extra_ro_bind.extend(workspace_config.extra_ro_bind.iter().cloned());
-
-        let mut extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
-        extra_rw_bind.extend(workspace_config.extra_rw_bind.iter().cloned());
+        // Extra binds come from the global config only. They are applied after
+        // deny_read, so unioning them let a workspace hand itself read or write
+        // access to any host path and undo a global deny, which is the opposite
+        // of the merge contract. Widening is an administrator decision.
+        let extra_ro_bind: HashSet<String> = self.extra_ro_bind.iter().cloned().collect();
+        let extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
 
         // overlay paths are additive
         let mut overlay_paths: HashSet<String> = self.overlay_paths.iter().cloned().collect();
@@ -4483,6 +4494,31 @@ log_requests = true
         assert!(
             !masked,
             "denying an ancestor of an allow_read entry would hide the allowed path"
+        );
+    }
+
+    #[test]
+    fn a_workspace_cannot_add_extra_binds() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.extra_ro_bind = vec!["~/.config/oqto/sandbox.toml".to_string()];
+        global.extra_rw_bind = vec![];
+
+        let mut workspace = SandboxConfig::from_profile("strict");
+        // Both of these would undo a global deny, since extra binds are applied
+        // after deny_read.
+        workspace.extra_ro_bind = vec!["~/.config/oqto".to_string(), "/etc/oqto".to_string()];
+        workspace.extra_rw_bind = vec!["/".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(
+            merged.extra_ro_bind,
+            vec!["~/.config/oqto/sandbox.toml".to_string()],
+            "a workspace must not grant itself reads"
+        );
+        assert!(
+            merged.extra_rw_bind.is_empty(),
+            "a workspace must not grant itself writes"
         );
     }
 }

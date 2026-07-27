@@ -474,6 +474,8 @@
             "~/.gnupg",
             "~/.aws",
             "/etc/oqto",
+            "~/.config/oqto/config.toml",
+            "~/.local/share/oqto/credentials",
             "/usr/bin/systemctl",
             "/bin/systemctl",
             "/usr/bin/systemd-run",

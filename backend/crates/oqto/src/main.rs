@@ -2233,7 +2233,20 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         ctx.config.eavs
     {
         if eavs_config.enabled {
-            if let Some(ref master_key) = eavs_config.master_key {
+            // The configured value may be a literal, `env:VAR` or `file:PATH`,
+            // so a deployment can keep the key out of a readable config file.
+            let configured = match eavs_config.master_key.as_deref() {
+                Some(value) => match crate::auth::resolve_secret_value(value) {
+                    Ok(resolved) => Some(resolved),
+                    Err(err) => {
+                        log::error!("Failed to resolve eavs.master_key: {}", err);
+                        None
+                    }
+                },
+                None => None,
+            };
+
+            if let Some(master_key) = configured {
                 match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
                     Ok(client) => Some(std::sync::Arc::new(client)),
                     Err(err) => {

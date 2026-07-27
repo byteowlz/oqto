@@ -413,22 +413,33 @@ fn platform_secrets_under_etc_are_not_readable() {
     }
     let (config, workspace) = strict_config();
 
-    let (_ok, out) = run_sandboxed(
-        &config,
-        workspace.path(),
-        "cat /etc/oqto/config.toml >/dev/null 2>&1 && echo present || echo denied",
-    );
-
-    assert_eq!(out, "denied");
+    for path in [
+        "/etc/oqto/config.toml",
+        "$HOME/.config/oqto/config.toml",
+        "$HOME/.local/share/oqto/credentials/jwt_secret",
+    ] {
+        let (_ok, out) = run_sandboxed(
+            &config,
+            workspace.path(),
+            &format!("cat {path} >/dev/null 2>&1 && echo present || echo denied"),
+        );
+        assert_eq!(out, "denied", "{path} must not be readable");
+    }
 }
 
 #[test]
 fn shipped_profiles_deny_the_platform_config() {
     for name in ["minimal", "development", "strict"] {
         let config = SandboxConfig::from_profile(name);
-        assert!(
-            config.deny_read.iter().any(|p| p == "/etc/oqto"),
-            "{name} must not expose the platform config"
-        );
+        for expected in [
+            "/etc/oqto",
+            "~/.config/oqto/config.toml",
+            "~/.local/share/oqto/credentials",
+        ] {
+            assert!(
+                config.deny_read.iter().any(|p| p == expected),
+                "{name} must not expose {expected}"
+            );
+        }
     }
 }
