@@ -119,14 +119,21 @@ assuming `{workdir}` is universally applicable:
   its owner, resolution source, authority boundary, and whether the resource is
   available on the selected backend.
 
-The neutral policy contains no Pi-specific `{session_shard}` concept. Pi's
-adapter may declare `resource:harness_history` and resolve it to the current
-work directory's Pi session directory. Another harness may resolve that resource
-to a different path, expose no filesystem history resource, or keep history in
-a non-filesystem store—in which case it does not participate in filesystem
-policy. Likewise, a container or external runtime may mount the resource at a
-physical path different from its host source. Policy governs the resolved
-sandbox-visible path, not Pi's storage convention.
+The neutral policy contains no Pi-specific `{session_shard}` concept. The
+registered resource ID for filesystem-backed agent session artifacts is
+`agent.sessions`, referenced as `{resource:agent.sessions}`. Pi's adapter may
+resolve it to the current work directory's Pi session directory. Another agent
+harness may resolve the same semantic resource to a different path, expose no
+filesystem session resource, or keep sessions in a non-filesystem store—in
+which case it does not participate in filesystem policy. This name deliberately
+does not use `history`: Oqto-log remains Oqto's authoritative session-history
+store, while `agent.sessions` denotes harness-owned runtime artifacts.
+
+Likewise, a container or external runtime may mount the resource at a physical
+path different from its host source. Policy governs the resolved
+sandbox-visible path, not Pi's storage convention. Registered IDs use dotted
+namespaces (`agent.sessions`, `agent.config`, `tool.cache`) rather than
+underscore-delimited names.
 
 Resource identifiers are semantic contracts, not arbitrary strings. Their
 schemas and owners must be registered; arbitrary environment-variable
