@@ -141,6 +141,49 @@ interpolation is forbidden. The project term is **work directory**, not
 `workspace`, for the directory in which a harness runs, so there is
 intentionally no ambiguous `{workspace}` token.
 
+#### Runtime resource registry
+
+The resource catalog is extensible at runtime while resource identities remain
+stable and namespaced. During runner/placement discovery, trusted providers may
+register resources with at least:
+
+```
+id               stable semantic ID, for example agent.sessions
+kind             resource kind; initially filesystem
+owner            runner adapter, placement, integration, or administrator
+display_name     safe user-facing label
+sandbox_path     resolved sandbox-visible path
+capabilities     access levels the materialised resource can support
+required         whether absence is a capability gap
+schema_version   resource-contract version
+```
+
+Runner adapters may register agent resources, placement adapters may register
+mounted volumes, tool integrations may register tool state, and administrators
+may register managed datasets. An external runtime adapter may translate its
+mounted resources into the same registry. The UI queries this registry and can
+render resource sections dynamically; it must not hardcode Pi, a placement, or
+an external runtime's storage conventions.
+
+**Registration never grants access.** It only declares that a semantic resource
+exists and where it is visible inside the sandbox. The access policy remains
+the sole grant decision. Registering or materialising a resource therefore
+cannot widen effective policy.
+
+Only trusted runner, placement, integration, or administrator components may
+register resources. Workspace config, agent processes, and browser input may
+select among resources exposed to their authority layer but may not register a
+host path, choose a physical path, or influence path resolution. Resolution
+occurs inside the trusted runner/placement boundary, and the UI receives
+semantic metadata and sandbox-visible paths rather than secret host paths.
+
+An unknown or absent **required** resource is handled as a missing backend
+capability under `on_missing_capability`. An absent optional resource contributes
+no path and is reported as unavailable. Stable IDs use dotted namespaces
+(`agent.sessions`, `agent.config`, `tool.cache`,
+`integration.github.credentials`, `dataset.company_wiki`); runtime availability
+may vary per execution target and Session.
+
 Rule authority is independent of path location. System and administrator
 profiles may govern any declared root. A work-directory tree UI normally emits
 rules only below `{workdir}`; separate, deliberately designed UI sections may
