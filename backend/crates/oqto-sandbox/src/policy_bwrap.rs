@@ -13,6 +13,8 @@ use std::path::Path;
 /// Injected so the mapping can be tested without touching the filesystem.
 pub trait PathPresence {
     fn exists(&self, path: &Path) -> bool;
+    /// Whether the path is a regular file rather than a directory.
+    fn is_file(&self, path: &Path) -> bool;
 }
 
 /// Real filesystem lookup.
@@ -21,6 +23,10 @@ pub struct HostPaths;
 impl PathPresence for HostPaths {
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn is_file(&self, path: &Path) -> bool {
+        path.is_file()
     }
 }
 
@@ -46,6 +52,15 @@ pub fn compile_filesystem_args(
         match rule.access {
             // A masked path is replaced rather than omitted: leaving it out
             // would expose whatever the surrounding bind already made visible.
+            //
+            // A tmpfs cannot be mounted over a regular file, so a denied file is
+            // replaced by /dev/null instead. Getting this wrong aborts the spawn
+            // rather than degrading quietly.
+            Access::None if presence.is_file(path) => {
+                args.push("--bind".to_string());
+                args.push("/dev/null".to_string());
+                args.push(path_str);
+            }
             Access::None => {
                 args.push("--tmpfs".to_string());
                 args.push(path_str);
@@ -86,12 +101,28 @@ mod tests {
         fn exists(&self, _path: &Path) -> bool {
             true
         }
+        fn is_file(&self, _path: &Path) -> bool {
+            false
+        }
+    }
+
+    struct Files(Vec<PathBuf>);
+    impl PathPresence for Files {
+        fn exists(&self, _path: &Path) -> bool {
+            true
+        }
+        fn is_file(&self, path: &Path) -> bool {
+            self.0.iter().any(|file| file == path)
+        }
     }
 
     struct Absent(Vec<PathBuf>);
     impl PathPresence for Absent {
         fn exists(&self, path: &Path) -> bool {
             !self.0.iter().any(|absent| absent == path)
+        }
+        fn is_file(&self, _path: &Path) -> bool {
+            false
         }
     }
 
@@ -157,6 +188,27 @@ mod tests {
         assert!(
             index_of(&args, "/home/agent/.config")
                 < index_of(&args, "/home/agent/.config/oqto/sandbox.toml")
+        );
+    }
+
+    #[test]
+    fn a_denied_file_is_replaced_rather_than_covered_by_a_tmpfs() {
+        let args = compile_filesystem_args(
+            &policy_with(&[
+                ("/home/agent/.config/oqto/config.toml", Access::None),
+                ("/home/agent/.ssh", Access::None),
+            ]),
+            &Files(vec![PathBuf::from("/home/agent/.config/oqto/config.toml")]),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "--tmpfs",
+                "/home/agent/.ssh",
+                "--bind",
+                "/dev/null",
+                "/home/agent/.config/oqto/config.toml",
+            ]
         );
     }
 
