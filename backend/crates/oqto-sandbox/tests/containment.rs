@@ -402,3 +402,33 @@ fn the_seccomp_policy_allows_landlock() {
          policy must allowlist landlock_create_ruleset"
     );
 }
+
+/// The platform config holds the backend signing secret, so a sandboxed agent
+/// reading it would be able to forge control-plane tokens.
+#[test]
+fn platform_secrets_under_etc_are_not_readable() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap/userns unavailable");
+        return;
+    }
+    let (config, workspace) = strict_config();
+
+    let (_ok, out) = run_sandboxed(
+        &config,
+        workspace.path(),
+        "cat /etc/oqto/config.toml >/dev/null 2>&1 && echo present || echo denied",
+    );
+
+    assert_eq!(out, "denied");
+}
+
+#[test]
+fn shipped_profiles_deny_the_platform_config() {
+    for name in ["minimal", "development", "strict"] {
+        let config = SandboxConfig::from_profile(name);
+        assert!(
+            config.deny_read.iter().any(|p| p == "/etc/oqto"),
+            "{name} must not expose the platform config"
+        );
+    }
+}

@@ -739,6 +739,10 @@ impl SandboxProfile {
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -780,6 +784,10 @@ impl SandboxProfile {
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -897,6 +905,10 @@ impl SandboxProfile {
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 "~/.config".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -2215,16 +2227,21 @@ impl SandboxConfig {
             for path in &self.deny_read {
                 let expanded = Self::expand_home_for_user(path, username);
 
-                // Under an allowlist the allowlist is authoritative for home: a
-                // deny entry covering an allowed path would mask it back out
-                // (denying ~/.config would hide an allowed ~/.config/git).
-                // Deny entries outside home still apply.
+                // Under an allowlist, a deny that covers an allowed path would
+                // mask it straight back out: denying ~/.config would hide an
+                // allowed ~/.config/git. Skip only those. Every other deny
+                // still applies, including denies inside the workspace, which
+                // is bound after the home mask and is where hiding a secret
+                // from the agent actually matters.
                 if self.read_policy == ReadPolicy::Allowlist
-                    && target_home
-                        .as_ref()
-                        .is_some_and(|home| expanded.starts_with(home))
+                    && self.allow_read.iter().any(|allowed| {
+                        Self::expand_home_for_user(allowed, username).starts_with(&expanded)
+                    })
                 {
-                    debug!("Deny-read '{}' skipped: home is allowlist-based", path);
+                    debug!(
+                        "Deny-read '{}' skipped: it would mask an allow_read entry",
+                        path
+                    );
                     continue;
                 }
 
@@ -4397,6 +4414,75 @@ log_requests = true
             merged.allow_read,
             vec!["~/.cargo".to_string()],
             "intersection only: a workspace must not add readable paths"
+        );
+    }
+
+    #[test]
+    fn allowlist_still_applies_denies_inside_the_workspace() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let secret = workspace.join("flag.txt");
+        std::fs::write(&secret, "secret").unwrap();
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.deny_read = vec![secret.to_string_lossy().to_string()];
+
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            args.iter().any(|a| a.contains("flag.txt")),
+            "a deny inside the workspace must reach bwrap: the workspace is \
+             bound after the home mask, so it is visible unless denied"
+        );
+    }
+
+    #[test]
+    fn allowlist_skips_only_denies_that_would_mask_an_allowed_path() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let cfg_dir = home.join(".config");
+        std::fs::create_dir_all(cfg_dir.join("git")).unwrap();
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_read = vec!["~/.config/git".to_string()];
+        config.deny_read = vec!["~/.config".to_string()];
+
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        let masked = tmpfs.contains(&&cfg_dir.to_string_lossy().to_string());
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            !masked,
+            "denying an ancestor of an allow_read entry would hide the allowed path"
         );
     }
 }

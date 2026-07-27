@@ -473,6 +473,7 @@
             "~/.ssh",
             "~/.gnupg",
             "~/.aws",
+            "/etc/oqto",
             "/usr/bin/systemctl",
             "/bin/systemctl",
             "/usr/bin/systemd-run",
