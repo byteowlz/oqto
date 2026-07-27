@@ -73,11 +73,21 @@ pub struct PolicyRule {
     pub origin: RuleOrigin,
 }
 
+/// Default access for one declared symbolic root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootDefault {
+    pub root: PolicyRoot,
+    pub access: Access,
+    pub origin: RuleOrigin,
+}
+
 /// Portable policy before runtime roots have been resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
+    /// Fail-closed access outside every declared root.
     pub default: Access,
     pub default_origin: RuleOrigin,
+    root_defaults: Vec<RootDefault>,
     rules: Vec<PolicyRule>,
 }
 
@@ -87,12 +97,22 @@ impl Policy {
         Self {
             default,
             default_origin,
+            root_defaults: Vec::new(),
             rules: Vec::new(),
         }
     }
 
+    pub fn add_root_default(&mut self, root_default: RootDefault) {
+        self.root_defaults.push(root_default);
+    }
+
     pub fn add_rule(&mut self, rule: PolicyRule) {
         self.rules.push(rule);
+    }
+
+    #[must_use]
+    pub fn root_defaults(&self) -> &[RootDefault] {
+        &self.root_defaults
     }
 
     #[must_use]
@@ -112,32 +132,32 @@ impl Policy {
         let mut policy = ResolvedPolicy::new(self.default, self.default_origin.clone());
         let mut unavailable_resources = Vec::new();
 
+        for root_default in &self.root_defaults {
+            let Some(root) = resolve_policy_root(
+                &root_default.root,
+                root_default.access,
+                context,
+                &mut unavailable_resources,
+            )?
+            else {
+                continue;
+            };
+            policy.add_rule(ResolvedRule::new(
+                root,
+                root_default.access,
+                root_default.origin.clone(),
+            )?);
+        }
+
         for rule in &self.rules {
-            let root = match &rule.target.root {
-                PolicyRoot::Workdir => context.workdir.to_path_buf(),
-                PolicyRoot::Home => context.home.to_path_buf(),
-                PolicyRoot::Resource(id) => {
-                    let resource = context
-                        .resources
-                        .get(id)
-                        .ok_or_else(|| PolicyError::UnknownResource(id.clone()))?;
-                    match resource.sandbox_path() {
-                        Some(_) if !resource.supports(rule.access) => {
-                            return Err(PolicyError::ResourceCapabilityUnavailable {
-                                id: id.clone(),
-                                requested: rule.access,
-                            });
-                        }
-                        Some(path) => path.to_path_buf(),
-                        None if resource.required => {
-                            return Err(PolicyError::RequiredResourceUnavailable(id.clone()));
-                        }
-                        None => {
-                            unavailable_resources.push(id.clone());
-                            continue;
-                        }
-                    }
-                }
+            let Some(root) = resolve_policy_root(
+                &rule.target.root,
+                rule.access,
+                context,
+                &mut unavailable_resources,
+            )?
+            else {
+                continue;
             };
             let path = root.join(rule.target.relative());
             policy.add_rule(ResolvedRule::new(path, rule.access, rule.origin.clone())?);
@@ -509,6 +529,40 @@ impl fmt::Display for PolicyError {
 
 impl std::error::Error for PolicyError {}
 
+fn resolve_policy_root(
+    root: &PolicyRoot,
+    requested: Access,
+    context: &ResolutionContext<'_>,
+    unavailable_resources: &mut Vec<ResourceId>,
+) -> Result<Option<PathBuf>, PolicyError> {
+    match root {
+        PolicyRoot::Workdir => Ok(Some(context.workdir.to_path_buf())),
+        PolicyRoot::Home => Ok(Some(context.home.to_path_buf())),
+        PolicyRoot::Resource(id) => {
+            let resource = context
+                .resources
+                .get(id)
+                .ok_or_else(|| PolicyError::UnknownResource(id.clone()))?;
+            match resource.sandbox_path() {
+                Some(_) if !resource.supports(requested) => {
+                    Err(PolicyError::ResourceCapabilityUnavailable {
+                        id: id.clone(),
+                        requested,
+                    })
+                }
+                Some(path) => Ok(Some(path.to_path_buf())),
+                None if resource.required => {
+                    Err(PolicyError::RequiredResourceUnavailable(id.clone()))
+                }
+                None => {
+                    unavailable_resources.push(id.clone());
+                    Ok(None)
+                }
+            }
+        }
+    }
+}
+
 fn validated_absolute(path: PathBuf) -> Result<PathBuf, PolicyError> {
     if !path.is_absolute() {
         return Err(PolicyError::PathMustBeAbsolute(path));
@@ -755,6 +809,47 @@ mod tests {
                 .unwrap()
                 .access,
             Access::Write
+        );
+    }
+
+    #[test]
+    fn defaults_are_specific_to_declared_roots() {
+        let registry = ResourceRegistry::default();
+        let mut policy = Policy::new(Access::None, origin(PolicyLayer::Admin, "outside-roots"));
+        policy.add_root_default(RootDefault {
+            root: PolicyRoot::Home,
+            access: Access::Read,
+            origin: origin(PolicyLayer::Admin, "home-default"),
+        });
+        policy.add_root_default(RootDefault {
+            root: PolicyRoot::Workdir,
+            access: Access::Write,
+            origin: origin(PolicyLayer::Admin, "workdir-default"),
+        });
+        let context = ResolutionContext {
+            workdir: Path::new("/work/project"),
+            home: Path::new("/home/agent"),
+            resources: &registry,
+        };
+        let resolved = policy.resolve_roots(&context).unwrap().policy;
+
+        assert_eq!(
+            resolved
+                .resolve(Path::new("/home/agent/file"))
+                .unwrap()
+                .access,
+            Access::Read
+        );
+        assert_eq!(
+            resolved
+                .resolve(Path::new("/work/project/file"))
+                .unwrap()
+                .access,
+            Access::Write
+        );
+        assert_eq!(
+            resolved.resolve(Path::new("/etc/shadow")).unwrap().access,
+            Access::None
         );
     }
 

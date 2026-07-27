@@ -99,11 +99,24 @@ The existing surface maps onto it without loss:
 | Today | Becomes |
 |---|---|
 | `deny_read` | rule with `access = none` |
+| `deny_write` | rule with `access = read` |
 | `allow_read`, `extra_ro_bind` | rule with `access = read` |
 | `allow_write`, `extra_rw_bind` | rule with `access = write` |
-| `read_policy = allowlist` | `default = none` |
-| `read_policy = denylist` | `default = read` |
-| `scoped_paths` | a rule whose path is templated |
+| `read_policy = allowlist` | home-root default `none` |
+| `scoped_paths` | a rule whose path is resolved by a registered resource |
+
+`read_policy = denylist` cannot determine an access default by itself. The
+legacy bwrap builder binds home **write** for the named `minimal` and
+`development` profiles but **read** for other denylist profiles. Migration must
+preserve that behavior (`write` for those two built-ins, `read` otherwise), then
+remove the profile-name-dependent rule. New policy expresses the default access
+for each root directly and never infers write permission from a profile name.
+
+Defaults are root-specific rather than one global filesystem default: a strict
+policy can default `{home}` to `none`, grant system tool resources `read`, and
+grant `{workdir}` `write`. The compact `Policy { default, rules }` notation
+above describes one resolved root/layer; composition across declared roots is
+explicit and fail-closed for paths outside them.
 
 Rules are not confined to the work directory. Agents need profile-governed
 access to paths such as `~/.pi`, `~/.cargo`, system toolchains, caches, and
