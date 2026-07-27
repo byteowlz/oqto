@@ -165,7 +165,14 @@ impl Policy {
             else {
                 continue;
             };
-            let path = root.join(rule.target.relative());
+            // `Path::join("")` appends a trailing separator, which changes the
+            // emitted mount path and breaks exact comparisons against it.
+            let relative = rule.target.relative();
+            let path = if relative.as_os_str().is_empty() {
+                root
+            } else {
+                root.join(relative)
+            };
             policy.add_rule(ResolvedRule::new(path, rule.access, rule.origin.clone())?);
         }
 

@@ -26,7 +26,11 @@ const SYSTEM_BASELINE: &[&str] = &[
     "/bin",
     "/sbin",
     "/etc",
-    "/var/lib/oqto/pi-runtimes",
+    // Managed agent runtimes live outside the system directories, so a profile
+    // that masks home cannot otherwise see the harness binary at all.
+    crate::config::MANAGED_RUNTIME_DIR,
+    // /etc/resolv.conf is a symlink into this directory on systemd-resolved
+    // hosts, and a bind of /etc does not follow it, so DNS fails without this.
     "/run/systemd/resolve",
 ];
 
@@ -51,14 +55,46 @@ pub struct TranslatedPolicy {
     pub system_paths: Vec<PathBuf>,
 }
 
-/// Translate one profile's permission fields.
+/// The permission-bearing fields of a profile or a resolved config.
 ///
-/// `profile_name` is required because the legacy builder binds home writable
-/// for `minimal` and `development` only.
+/// Both carry the same eight lists; taking them by reference keeps one
+/// translation rather than one per container type.
+pub struct PermissionFields<'a> {
+    pub profile_name: &'a str,
+    pub read_policy: ReadPolicy,
+    pub allow_read: &'a [String],
+    pub deny_read: &'a [String],
+    pub allow_write: &'a [String],
+    pub deny_write: &'a [String],
+    pub extra_ro_bind: &'a [String],
+    pub extra_rw_bind: &'a [String],
+}
+
+/// Translate one profile's permission fields.
 pub fn translate_profile(
     profile_name: &str,
     profile: &SandboxProfile,
 ) -> Result<TranslatedPolicy, PolicyError> {
+    translate_permissions(&PermissionFields {
+        profile_name,
+        read_policy: profile.read_policy,
+        allow_read: &profile.allow_read,
+        deny_read: &profile.deny_read,
+        allow_write: &profile.allow_write,
+        deny_write: &profile.deny_write,
+        extra_ro_bind: &profile.extra_ro_bind,
+        extra_rw_bind: &profile.extra_rw_bind,
+    })
+}
+
+/// Translate permission fields into a portable policy.
+///
+/// `profile_name` is required because the legacy builder binds home writable
+/// for `minimal` and `development` only.
+pub fn translate_permissions(
+    fields: &PermissionFields<'_>,
+) -> Result<TranslatedPolicy, PolicyError> {
+    let profile_name = fields.profile_name;
     let source = format!("profile:{profile_name}");
     let origin = RuleOrigin {
         layer: PolicyLayer::Admin,
@@ -70,7 +106,7 @@ pub fn translate_profile(
 
     policy.add_root_default(RootDefault {
         root: PolicyRoot::Home,
-        access: home_default_access(profile_name, profile),
+        access: home_default_access(profile_name, fields.read_policy),
         origin: RuleOrigin {
             layer: PolicyLayer::Admin,
             source: format!("{source}:home-default"),
@@ -109,12 +145,12 @@ pub fn translate_profile(
     let mut pending: Vec<PendingRule> = Vec::new();
 
     let groups: [(&[String], LegacyGrant, &str); 6] = [
-        (&profile.allow_read, LegacyGrant::Read, "allow_read"),
-        (&profile.extra_ro_bind, LegacyGrant::Read, "extra_ro_bind"),
-        (&profile.allow_write, LegacyGrant::Write, "allow_write"),
-        (&profile.extra_rw_bind, LegacyGrant::Write, "extra_rw_bind"),
-        (&profile.deny_write, LegacyGrant::DenyWrite, "deny_write"),
-        (&profile.deny_read, LegacyGrant::DenyRead, "deny_read"),
+        (fields.allow_read, LegacyGrant::Read, "allow_read"),
+        (fields.extra_ro_bind, LegacyGrant::Read, "extra_ro_bind"),
+        (fields.allow_write, LegacyGrant::Write, "allow_write"),
+        (fields.extra_rw_bind, LegacyGrant::Write, "extra_rw_bind"),
+        (fields.deny_write, LegacyGrant::DenyWrite, "deny_write"),
+        (fields.deny_read, LegacyGrant::DenyRead, "deny_read"),
     ];
 
     for (paths, grant, field) in groups {
@@ -232,8 +268,8 @@ impl PendingRule {
 /// "minimal"`, so a denylist profile under any other name binds home read-only.
 /// Deriving the default from `read_policy` alone would silently change both
 /// cases. ADR-0028 keeps this until each profile states its own home default.
-fn home_default_access(profile_name: &str, profile: &SandboxProfile) -> Access {
-    if profile.read_policy == ReadPolicy::Allowlist {
+fn home_default_access(profile_name: &str, read_policy: ReadPolicy) -> Access {
+    if read_policy == ReadPolicy::Allowlist {
         return Access::None;
     }
     if matches!(profile_name, "development" | "minimal") {

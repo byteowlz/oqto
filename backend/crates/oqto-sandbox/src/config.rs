@@ -1992,6 +1992,69 @@ impl SandboxConfig {
     /// that user's home directory instead of the current user's.
     ///
     /// Returns None if bwrap is not available.
+    /// Emit the filesystem access portion of the sandbox (ADR-0028).
+    ///
+    /// The work directory is part of the policy rather than a separate bind:
+    /// resolution is by path depth, so a home mask, the work directory nested
+    /// inside it, and a deny inside that work directory only order correctly
+    /// when all three are decided by one mechanism.
+    fn permission_args(&self, workspace: &Path, username: Option<&str>) -> Option<Vec<String>> {
+        let home = if let Some(user) = username {
+            Self::get_user_home(user)
+        } else {
+            dirs::home_dir()
+        };
+        let Some(home) = home else {
+            warn!(
+                "Could not determine home directory for user {:?}; refusing to build a sandbox \
+                 whose home policy cannot be resolved",
+                username
+            );
+            return None;
+        };
+
+        let fields = crate::policy_translate::PermissionFields {
+            profile_name: &self.profile,
+            read_policy: self.read_policy,
+            allow_read: &self.allow_read,
+            deny_read: &self.deny_read,
+            allow_write: &self.allow_write,
+            deny_write: &self.deny_write,
+            extra_ro_bind: &self.extra_ro_bind,
+            extra_rw_bind: &self.extra_rw_bind,
+        };
+        let translated = match crate::policy_translate::translate_permissions(&fields) {
+            Ok(translated) => translated,
+            Err(error) => {
+                error!("Sandbox policy is invalid: {error}");
+                return None;
+            }
+        };
+
+        let registry = crate::path_policy::ResourceRegistry::default();
+        let build = match translated
+            .policy
+            .resolve_roots(&crate::path_policy::ResolutionContext {
+                workdir: workspace,
+                home: &home,
+                resources: &registry,
+            }) {
+            Ok(build) => build,
+            Err(error) => {
+                error!("Sandbox policy could not be resolved: {error}");
+                return None;
+            }
+        };
+        for id in &build.unavailable_resources {
+            warn!("Sandbox policy resource unavailable on this target: {id}");
+        }
+
+        Some(crate::policy_bwrap::compile_filesystem_args(
+            &build.policy,
+            &crate::policy_bwrap::HostPaths,
+        ))
+    }
+
     pub fn build_bwrap_args_for_user(
         &self,
         workspace: &Path,
@@ -2033,40 +2096,15 @@ impl SandboxConfig {
 
         let mut args = Vec::new();
 
-        // Basic system directories (read-only)
-        for dir in &["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"] {
-            if Path::new(dir).exists() {
-                args.push("--ro-bind".to_string());
-                args.push(dir.to_string());
-                args.push(dir.to_string());
-            }
-        }
-        debug!("Added system directories as read-only binds");
+        // Filesystem access, including the system baseline, the home policy,
+        // the work directory and every deny, is decided by one policy and
+        // emitted parent-first (ADR-0028).
+        let permission_args = self.permission_args(workspace, username)?;
 
-        // Managed agent runtimes live outside the system directories above, so
-        // a profile that binds home read-only (strict) could not see the Pi
-        // binary at all and every agent spawn failed with "No such file or
-        // directory". Read-only is sufficient: promotion is the installer's job.
-        let runtime_dir = Path::new(MANAGED_RUNTIME_DIR);
-        if runtime_dir.exists() {
-            args.push("--ro-bind".to_string());
-            args.push(MANAGED_RUNTIME_DIR.to_string());
-            args.push(MANAGED_RUNTIME_DIR.to_string());
-            debug!("Bound managed agent runtime directory read-only");
-        }
-
-        // DNS resolver: on systemd-resolved systems, /etc/resolv.conf is a
-        // symlink to /run/systemd/resolve/stub-resolv.conf.  The --ro-bind
-        // for /etc does NOT follow symlinks that point outside /etc, so DNS
-        // breaks inside the sandbox.  Bind the resolve directory so the
-        // symlink target is reachable.
-        let resolve_dir = Path::new("/run/systemd/resolve");
-        if resolve_dir.exists() {
-            args.push("--ro-bind".to_string());
-            args.push(resolve_dir.to_string_lossy().to_string());
-            args.push(resolve_dir.to_string_lossy().to_string());
-            debug!("Bound /run/systemd/resolve for DNS resolution");
-        }
+        // The managed agent runtime and the systemd-resolved stub directory are
+        // part of the policy's read-only baseline, so they are no longer bound
+        // here. /etc/resolv.conf is a symlink into the latter and DNS breaks
+        // without it, which is why it is baseline rather than optional.
 
         // /proc (needed for many tools)
         args.push("--proc".to_string());
@@ -2076,142 +2114,23 @@ impl SandboxConfig {
         args.push("--dev".to_string());
         args.push("/dev".to_string());
 
-        // Determine target user's home directory
+        // Access rules, ordered parent-first by the adapter. The work directory
+        // is bound here as part of the policy, so a deny inside it is applied
+        // after it rather than being re-exposed by a later bind.
+        args.extend(permission_args);
+
+        // Still needed by later, non-permission steps: overlays, the workspace
+        // cache and model discovery are materialisation, not access.
         let target_home = if let Some(user) = username {
             Self::get_user_home(user)
         } else {
             dirs::home_dir()
         };
 
-        // Home directory binding strategy:
-        // - Development/minimal profiles: bind home read-write, protect sensitive paths via deny_read
-        // - Strict profile: bind home read-only, overlay specific allow_write paths
-        //
-        // The development approach is more permissive but simpler - agents can write anywhere
-        // in home except explicitly denied paths. oqto-guard provides additional runtime control.
-        let home_writable = self.profile == "development" || self.profile == "minimal";
-
-        if let Some(ref home) = target_home {
-            let home_str = home.to_string_lossy().to_string();
-            info!(
-                "Using home directory '{}' for user {:?}",
-                home_str,
-                username.unwrap_or("(current)")
-            );
-
-            if self.read_policy == ReadPolicy::Allowlist {
-                // Bind nothing under home by default. Only allow_read entries,
-                // allow_write entries and the workspace become visible, so a
-                // path that was never enumerated is absent rather than readable.
-                args.push("--tmpfs".to_string());
-                args.push(home_str.clone());
-
-                for path in &self.allow_read {
-                    let expanded = Self::expand_home_for_user(path, username);
-                    if !expanded.exists() {
-                        debug!("Allow-read path '{}' does not exist, skipping", path);
-                        continue;
-                    }
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--ro-bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str);
-                    debug!("Allow-read: '{}'", path);
-                }
-                if self.allow_read.is_empty() {
-                    warn!(
-                        "Home '{}' is masked with an empty allow_read (profile={}): the \
-                         agent can read nothing under home, which usually means a \
-                         read_policy was selected without the list that goes with it",
-                        home_str, self.profile
-                    );
-                } else {
-                    info!(
-                        "Home '{}' is allowlist-based ({} readable entries, profile={})",
-                        home_str,
-                        self.allow_read.len(),
-                        self.profile
-                    );
-                }
-
-                // Writable paths are layered on top exactly as in the denylist
-                // strict path; see the note there about absent sources.
-                for path in &effective_allow_write {
-                    let expanded = Self::expand_home_for_user(path, username);
-                    if !expanded.exists() {
-                        debug!("Allow-write path '{}' does not exist, skipping", path);
-                        continue;
-                    }
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str);
-                    debug!("Allow-write: '{}'", path);
-                }
-            } else if home_writable {
-                // Development mode: bind home read-write, rely on deny_read for protection
-                args.push("--bind".to_string());
-                args.push(home_str.clone());
-                args.push(home_str.clone());
-                debug!(
-                    "Bound home directory '{}' as read-write (profile={})",
-                    home_str, self.profile
-                );
-            } else {
-                // Strict mode: bind home read-only first
-                args.push("--ro-bind".to_string());
-                args.push(home_str.clone());
-                args.push(home_str.clone());
-                debug!(
-                    "Bound home directory '{}' as read-only (profile={})",
-                    home_str, self.profile
-                );
-
-                // Then bind writable directories on top
-                for path in &effective_allow_write {
-                    let expanded = Self::expand_home_for_user(path, username);
-                    let expanded_str = expanded.to_string_lossy().to_string();
-
-                    // `--bind` requires an existing source: bwrap does not
-                    // create it. Binding a path that is absent on this host
-                    // aborts the whole sandbox, so an optional tool directory
-                    // (~/.codex, ~/.claude, ~/.config/mailz, ...) listed by a
-                    // profile must be skipped rather than fail every spawn.
-                    // apply_landlock already skips absent paths the same way.
-                    if expanded.exists() {
-                        args.push("--bind".to_string());
-                        args.push(expanded_str.clone());
-                        args.push(expanded_str.clone());
-                        debug!(
-                            "Allow-write: '{}' -> '{}' (exists: {})",
-                            path,
-                            expanded_str,
-                            expanded.exists()
-                        );
-                    } else {
-                        debug!(
-                            "Skipping allow-write '{}' -> '{}' (path does not exist)",
-                            path, expanded_str
-                        );
-                    }
-                }
-            }
-        } else {
-            warn!(
-                "Could not determine home directory for user {:?}, home-based paths will not be bound",
-                username
-            );
-        }
-
-        // Workspace directory (read-write) - MUST come after home ro-bind
-        // so it takes precedence for paths under home
+        // The work directory itself is bound by the policy above.
         let workspace_str = workspace.to_string_lossy().to_string();
-        args.push("--bind".to_string());
-        args.push(workspace_str.clone());
-        args.push(workspace_str.clone());
-        debug!("Bound workspace '{}' as read-write", workspace_str);
 
-        // Ensure sandboxed processes start in the workspace directory.
+        // Ensure sandboxed processes start in the work directory.
         args.push("--chdir".to_string());
         args.push(workspace_str.clone());
         debug!("Set sandbox working directory to '{}'", workspace_str);
@@ -2232,71 +2151,6 @@ impl SandboxConfig {
             args.push("--tmpfs".to_string());
             args.push(oqto_dir.to_string_lossy().to_string());
             debug!("Mounted empty tmpfs at .oqto/ to prevent creation");
-        }
-
-        // Apply deny rules AFTER workspace bind so they always take precedence,
-        // even when the workspace is the user's home directory.
-        if target_home.is_some() {
-            // Block denied read paths by mounting empty tmpfs (dirs) or masking files.
-            for path in &self.deny_read {
-                let expanded = Self::expand_home_for_user(path, username);
-
-                // Under an allowlist, a deny that covers an allowed path would
-                // mask it straight back out: denying ~/.config would hide an
-                // allowed ~/.config/git. Skip only those. Every other deny
-                // still applies, including denies inside the workspace, which
-                // is bound after the home mask and is where hiding a secret
-                // from the agent actually matters.
-                if self.read_policy == ReadPolicy::Allowlist
-                    && self.allow_read.iter().any(|allowed| {
-                        Self::expand_home_for_user(allowed, username).starts_with(&expanded)
-                    })
-                {
-                    debug!(
-                        "Deny-read '{}' skipped: it would mask an allow_read entry",
-                        path
-                    );
-                    continue;
-                }
-
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    let is_dir = expanded
-                        .metadata()
-                        .map(|meta| meta.is_dir())
-                        .unwrap_or(false);
-                    if is_dir {
-                        args.push("--tmpfs".to_string());
-                        args.push(expanded_str.clone());
-                        debug!("Deny-read (tmpfs): '{}' -> '{}'", path, expanded_str);
-                    } else {
-                        // Mask file paths by binding /dev/null over them.
-                        args.push("--bind".to_string());
-                        args.push("/dev/null".to_string());
-                        args.push(expanded_str.clone());
-                        debug!("Deny-read (file mask): '{}' -> '{}'", path, expanded_str);
-                    }
-                } else {
-                    debug!(
-                        "Skipping deny-read '{}' (path does not exist for user {:?})",
-                        path,
-                        username.unwrap_or("(current)")
-                    );
-                }
-            }
-
-            // Block denied write paths by binding read-only.
-            // Applied AFTER allow_write/workspace bind, so these take precedence.
-            for path in &self.deny_write {
-                let expanded = Self::expand_home_for_user(path, username);
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--ro-bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str.clone());
-                    debug!("Deny-write (ro-bind): '{}' -> '{}'", path, expanded_str);
-                }
-            }
         }
 
         // Apply dynamic scoped deny+rebind rules.
@@ -2324,30 +2178,6 @@ impl SandboxConfig {
                 "Rebound work directory '{}' above the private /tmp",
                 workspace_str
             );
-        }
-
-        // Extra read-only binds
-        for path in &self.extra_ro_bind {
-            let expanded = Self::expand_home_for_user(path, username);
-            if expanded.exists() {
-                let expanded_str = expanded.to_string_lossy().to_string();
-                args.push("--ro-bind".to_string());
-                args.push(expanded_str.clone());
-                args.push(expanded_str.clone());
-                debug!("Extra ro-bind: '{}' -> '{}'", path, expanded_str);
-            }
-        }
-
-        // Extra read-write binds
-        for path in &self.extra_rw_bind {
-            let expanded = Self::expand_home_for_user(path, username);
-            if expanded.exists() {
-                let expanded_str = expanded.to_string_lossy().to_string();
-                args.push("--bind".to_string());
-                args.push(expanded_str.clone());
-                args.push(expanded_str.clone());
-                debug!("Extra rw-bind: '{}' -> '{}'", path, expanded_str);
-            }
         }
 
         // Overlayfs redirection for selected paths.
@@ -4127,8 +3957,14 @@ log_requests = true
         );
     }
 
+    /// A deny no longer has to be skipped to keep a deeper grant reachable.
+    ///
+    /// The old builder dropped any deny that covered an allowed path, leaving
+    /// the whole subtree unmasked. Access is now decided by specificity, so the
+    /// deny applies and the allowed child is rebound after it: strictly
+    /// narrower, and the ordering is what proves it.
     #[test]
-    fn allowlist_ignores_home_deny_read_so_it_cannot_mask_allowed_paths() {
+    fn a_deny_does_not_hide_a_more_specific_grant() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let workspace = tmp.path().join("ws");
@@ -4149,9 +3985,27 @@ log_requests = true
 
         let config_dir = home.join(".config").to_string_lossy().to_string();
         assert!(
-            !tmpfs.contains(&&config_dir),
-            "home deny_read must not re-mask an allowlisted subtree"
+            tmpfs.contains(&&config_dir),
+            "the deny must apply rather than being dropped wholesale"
         );
+
+        let git = home.join(".config/git").to_string_lossy().to_string();
+        if git_is_present(&args, &git) {
+            assert!(
+                position_of(&args, &config_dir) < position_of(&args, &git),
+                "the allowed path must be rebound after its denied parent"
+            );
+        }
+    }
+
+    fn position_of(args: &[String], needle: &str) -> usize {
+        args.iter()
+            .position(|arg| arg == needle)
+            .unwrap_or_else(|| panic!("missing {needle}"))
+    }
+
+    fn git_is_present(args: &[String], git: &str) -> bool {
+        args.iter().any(|arg| arg == git)
     }
 
     #[test]
@@ -4481,8 +4335,9 @@ log_requests = true
         );
     }
 
+    /// The narrower half of the same rule, with the grant present on disk.
     #[test]
-    fn allowlist_skips_only_denies_that_would_mask_an_allowed_path() {
+    fn a_denied_parent_still_yields_to_its_allowed_child() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
         let home = temp.path();
@@ -4501,21 +4356,27 @@ log_requests = true
 
         let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
 
-        let tmpfs: Vec<&String> = args
-            .windows(2)
-            .filter(|w| w[0] == "--tmpfs")
-            .map(|w| &w[1])
-            .collect();
-        let masked = tmpfs.contains(&&cfg_dir.to_string_lossy().to_string());
+        let cfg_str = cfg_dir.to_string_lossy().to_string();
+        let git_str = cfg_dir.join("git").to_string_lossy().to_string();
+        let masked = args.iter().any(|arg| arg == &cfg_str);
+        let grant_after_mask = args
+            .iter()
+            .position(|arg| arg == &git_str)
+            .is_some_and(|git| {
+                args.iter()
+                    .position(|arg| arg == &cfg_str)
+                    .is_some_and(|parent| parent < git)
+            });
 
         match original_home {
             Some(v) => unsafe { env::set_var("HOME", v) },
             None => unsafe { env::remove_var("HOME") },
         }
 
+        assert!(masked, "the denied parent must be masked");
         assert!(
-            !masked,
-            "denying an ancestor of an allow_read entry would hide the allowed path"
+            grant_after_mask,
+            "the allowed child must be rebound after the mask that covers it"
         );
     }
 
