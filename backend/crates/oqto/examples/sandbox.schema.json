@@ -635,33 +635,7 @@
         },
         "scoped_paths": {
           "description": "Dynamic deny+rebind rules evaluated at spawn time.",
-          "default": [
-            {
-              "access": "rw",
-              "base_path": "~/.pi/agent/sessions",
-              "missing": "create",
-              "name": "session-shard:~/.pi/agent/sessions",
-              "source": "workspace_path",
-              "source_literal": null,
-              "target_template": "{base_path}/{value}",
-              "transforms": [
-                {
-                  "op": "strip_prefix",
-                  "value": "/"
-                },
-                {
-                  "from": "/",
-                  "op": "replace",
-                  "to": "-"
-                },
-                {
-                  "op": "wrap",
-                  "prefix": "--",
-                  "suffix": "--"
-                }
-              ]
-            }
-          ],
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/ScopedPathRule"

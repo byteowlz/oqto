@@ -850,7 +850,10 @@ impl SandboxProfile {
                 "~/.local/share/uv".to_string(),
                 "~/.cache/uv".to_string(),
             ],
-            scoped_paths: session_shard_rules(),
+            scoped_paths: vec![],
+            // Session history is deliberately NOT scoped here. development is
+            // the permissive profile; cross-workspace session visibility is
+            // intended. strict scopes it (see session_shard_rules).
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -4148,8 +4151,10 @@ log_requests = true
     }
 
     #[test]
-    fn shipped_profiles_scope_session_history() {
-        for name in ["development", "strict"] {
+    fn strict_scopes_session_history() {
+        // development is deliberately unscoped; only strict isolates sessions.
+        {
+            let name = "strict";
             let config = SandboxConfig::from_profile(name);
             let rule = config
                 .scoped_paths
@@ -4519,6 +4524,21 @@ log_requests = true
         assert!(
             merged.extra_rw_bind.is_empty(),
             "a workspace must not grant itself writes"
+        );
+    }
+
+    #[test]
+    fn development_does_not_scope_session_history() {
+        // Deliberate: development is the permissive profile and cross-workspace
+        // session visibility is intended there. Pinned so it is not "fixed" by
+        // someone assuming every profile should isolate.
+        let config = SandboxConfig::from_profile("development");
+        assert!(
+            !config
+                .scoped_paths
+                .iter()
+                .any(|r| r.base_path.contains("agent/sessions")),
+            "development must not scope session history"
         );
     }
 }
