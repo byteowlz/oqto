@@ -131,9 +131,18 @@ store, while `agent.sessions` denotes harness-owned runtime artifacts.
 
 Likewise, a container or external runtime may mount the resource at a physical
 path different from its host source. Policy governs the resolved
-sandbox-visible path, not Pi's storage convention. Registered IDs use dotted
-namespaces (`agent.sessions`, `agent.config`, `tool.cache`) rather than
-underscore-delimited names.
+sandbox-visible path, not Pi's storage convention. Registered IDs use dotted namespaces rather than underscore-delimited names.
+Canonical agent resources currently include:
+
+- `agent.sessions`: harness-owned Session artifacts;
+- `agent.config`: harness configuration materialised for the agent;
+- `agent.skills`: account-level, harness-neutral skills (for example the host's
+  `~/.agents/skills`, potentially combined by a placement with harness-specific
+  skill sources).
+
+Work-directory-local `.agents/skills` remains below `{workdir}` and is governed
+by ordinary work-directory tree policy. `tool.cache` is the canonical example
+of a non-agent resource.
 
 Resource identifiers are semantic contracts, not arbitrary strings. Their
 schemas and owners must be registered; arbitrary environment-variable
