@@ -34,8 +34,29 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
     out.push_str("(allow file-read-metadata)\n");
     out.push_str(
         "(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/System\") \
-         (subpath \"/dev\") (subpath \"/private/var/db\") (subpath \"/Library\") \
-         (literal \"/\"))\n",
+         (subpath \"/dev\") (subpath \"/private/var/db\") (subpath \"/private/etc\") \
+         (subpath \"/Library\") (literal \"/\"))\n",
+    );
+
+    // The developer toolchain. /usr/bin/git, python3 and cc are xcrun shims:
+    // they dlopen libxcrun from the active developer directory, so without this
+    // every one of them fails before doing any work.
+    out.push_str(
+        "(allow file-read* (subpath \"/Applications/Xcode.app\") \
+         (subpath \"/Library/Developer\"))\n",
+    );
+
+    // The per-user temporary directory, macOS's equivalent of /tmp. Tools use
+    // $TMPDIR rather than /tmp, and xcrun writes its cache there before it will
+    // run anything.
+    out.push_str("(allow file-read* file-write* (subpath \"/private/var/folders\"))\n");
+
+    // Standard devices. git opens /dev/null read-write and fails outright when
+    // it cannot, so a read-only /dev is not enough.
+    out.push_str(
+        "(allow file-read* file-write* (literal \"/dev/null\") (literal \"/dev/zero\") \
+         (literal \"/dev/random\") (literal \"/dev/urandom\") (literal \"/dev/tty\") \
+         (literal \"/dev/dtracehelper\"))\n",
     );
 
     match policy.default {
@@ -51,10 +72,14 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
 
     for rule in rules {
         // SBPL matches the *resolved* path. On macOS /tmp, /var and /etc are
-        // symlinks into /private, so a rule written against the symlink never
-        // matches and the path is silently denied instead of granted. Resolve
-        // before emitting; fall back to the literal path when the target does
-        // not exist yet, which is the only case where nothing can be resolved.
+        // symlinks into /private, and a user may symlink config into a dotfiles
+        // directory, so a rule written against the symlink never matches and the
+        // path is silently denied instead of granted.
+        //
+        // This is why the profile must be generated on the machine it will run
+        // on: resolution needs the target's filesystem. A path that cannot be
+        // resolved falls back to its literal form, which is correct for a target
+        // that does not exist yet and wrong for one that exists elsewhere.
         let resolved =
             std::fs::canonicalize(rule.path()).unwrap_or_else(|_| rule.path().to_path_buf());
         let path = escape(&resolved.to_string_lossy());
@@ -118,6 +143,30 @@ mod tests {
         assert!(profile.contains("(allow file-read-metadata)"));
         assert!(profile.contains("(literal \"/\")"));
         assert!(profile.contains("(subpath \"/usr\")"));
+    }
+
+    #[test]
+    fn the_baseline_covers_the_developer_toolchain() {
+        // Each of these was found by running real tools on macOS 26, not by
+        // reading documentation. Removing any one breaks a common tool while
+        // leaving the profile looking correct.
+        let profile = compile_profile(&policy(Access::None, &[]));
+        for required in [
+            // xcrun shims: /usr/bin/git, python3, cc
+            "/Applications/Xcode.app",
+            "/Library/Developer",
+            // $TMPDIR, where xcrun writes its cache before running anything
+            "/private/var/folders",
+            // git opens /dev/null read-write
+            "/dev/null",
+            // TLS trust store and resolver configuration
+            "/private/etc",
+        ] {
+            assert!(
+                profile.contains(required),
+                "baseline is missing {required}:\n{profile}"
+            );
+        }
     }
 
     #[test]
