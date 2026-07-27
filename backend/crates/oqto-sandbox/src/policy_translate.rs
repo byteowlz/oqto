@@ -14,6 +14,22 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 
+/// Directories the bwrap builder binds read-only for every profile.
+///
+/// Kept in step with `SandboxConfig::build_bwrap_args_for_user`; a divergence
+/// shows up as a disagreement in the differential test against the real
+/// builder rather than as a silently narrower policy.
+const SYSTEM_BASELINE: &[&str] = &[
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/bin",
+    "/sbin",
+    "/etc",
+    "/var/lib/oqto/pi-runtimes",
+    "/run/systemd/resolve",
+];
+
 /// A legacy path string after `~/` has been split from its remainder.
 enum LegacyTarget {
     Home(PathBuf),
@@ -70,6 +86,26 @@ pub fn translate_profile(
     });
 
     let mut system_paths = Vec::new();
+
+    // The bwrap builder binds these read-only regardless of profile. They are
+    // access decisions, so a policy that omits them does not describe
+    // enforcement: swapping the builder for a policy-driven one would remove
+    // /usr and nothing would execute. Declared first so that a profile's deny
+    // of a nested path (/etc/oqto) reuses the enclosing root and stays more
+    // specific than this grant.
+    for path in SYSTEM_BASELINE {
+        let root = PathBuf::from(path);
+        system_paths.push(root.clone());
+        policy.add_root_default(RootDefault {
+            root: PolicyRoot::System(root),
+            access: Access::Read,
+            origin: RuleOrigin {
+                layer: PolicyLayer::System,
+                source: "builder:system-baseline".to_string(),
+            },
+        });
+    }
+
     let mut pending: Vec<PendingRule> = Vec::new();
 
     let groups: [(&[String], LegacyGrant, &str); 6] = [
