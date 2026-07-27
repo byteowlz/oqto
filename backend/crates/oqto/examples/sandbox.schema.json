@@ -254,6 +254,32 @@
         }
       ]
     },
+    "HomeAccess": {
+      "description": "Default access to the account home before any rule applies.\n\nThis used to be derived from the profile *name*: `development` and `minimal` got a writable home and every other denylist profile got a read-only one, with nothing in the profile saying so. A profile copied from `development` under another name silently lost write access to home.",
+      "oneOf": [
+        {
+          "description": "Nothing under home is visible unless a rule grants it.",
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        {
+          "description": "Home is readable; writes need an explicit grant.",
+          "type": "string",
+          "enum": [
+            "read"
+          ]
+        },
+        {
+          "description": "Home is writable except where a rule denies it.",
+          "type": "string",
+          "enum": [
+            "write"
+          ]
+        }
+      ]
+    },
     "LandlockMode": {
       "description": "Landlock enforcement mode.",
       "type": "string",
@@ -531,6 +557,15 @@
             },
             {
               "type": "null"
+            }
+          ]
+        },
+        "home_access": {
+          "description": "Default access to the account home.\n\n`read_policy = \"allowlist\"` masks home regardless, so this applies to denylist profiles. Stated explicitly so writability is a property of the profile rather than of its name.",
+          "default": "write",
+          "allOf": [
+            {
+              "$ref": "#/definitions/HomeAccess"
             }
           ]
         },

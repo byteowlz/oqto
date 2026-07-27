@@ -593,6 +593,36 @@ fn session_shard_rules() -> Vec<ScopedPathRule> {
         .collect()
 }
 
+/// Default access to the account home before any rule applies.
+///
+/// This used to be derived from the profile *name*: `development` and `minimal`
+/// got a writable home and every other denylist profile got a read-only one,
+/// with nothing in the profile saying so. A profile copied from `development`
+/// under another name silently lost write access to home.
+#[derive(
+    schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum HomeAccess {
+    /// Nothing under home is visible unless a rule grants it.
+    None,
+    /// Home is readable; writes need an explicit grant.
+    #[default]
+    Read,
+    /// Home is writable except where a rule denies it.
+    Write,
+}
+
 /// How reads under the user's home directory are decided.
 #[derive(
     schemars::JsonSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
@@ -626,6 +656,13 @@ pub struct SandboxProfile {
     // --- oqto-sandbox (bwrap) layer ---
     /// How home-directory reads are decided.
     pub read_policy: ReadPolicy,
+
+    /// Default access to the account home.
+    ///
+    /// `read_policy = "allowlist"` masks home regardless, so this applies to
+    /// denylist profiles. Stated explicitly so writability is a property of the
+    /// profile rather than of its name.
+    pub home_access: HomeAccess,
 
     /// Paths readable under home when `read_policy` is `Allowlist`.
     pub allow_read: Vec<String>,
@@ -731,6 +768,7 @@ impl SandboxProfile {
     pub fn minimal() -> Self {
         Self {
             read_policy: ReadPolicy::Denylist,
+            home_access: HomeAccess::Write,
             allow_read: vec![],
             workspace_cache_enabled: false,
             workspace_cache_root: default_workspace_cache_root(),
@@ -778,6 +816,7 @@ impl SandboxProfile {
     pub fn development() -> Self {
         Self {
             read_policy: ReadPolicy::Denylist,
+            home_access: HomeAccess::Write,
             allow_read: vec![],
             workspace_cache_enabled: false,
             workspace_cache_root: default_workspace_cache_root(),
@@ -885,6 +924,7 @@ impl SandboxProfile {
     pub fn strict() -> Self {
         Self {
             read_policy: ReadPolicy::Allowlist,
+            home_access: HomeAccess::None,
             allow_read: vec![
                 // Toolchain and VCS configuration an agent legitimately reads.
                 // Derived by running real workloads under the allowlist, not guessed.
@@ -1121,6 +1161,9 @@ pub struct SandboxConfig {
     /// How home-directory reads are decided.
     pub read_policy: ReadPolicy,
 
+    /// Default access to the account home for denylist profiles.
+    pub home_access: HomeAccess,
+
     /// Paths readable under home when `read_policy` is `Allowlist`.
     pub allow_read: Vec<String>,
 
@@ -1216,6 +1259,7 @@ impl Default for SandboxConfig {
             enabled: false,
             profile: "development".to_string(),
             read_policy: profile.read_policy,
+            home_access: profile.home_access,
             allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
@@ -1281,6 +1325,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             enabled: file.enabled,
             profile: profile_name.to_string(),
             read_policy: profile.read_policy,
+            home_access: profile.home_access,
             allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
@@ -1378,6 +1423,7 @@ impl SandboxConfig {
             enabled: true,
             profile: "minimal".to_string(),
             read_policy: profile.read_policy,
+            home_access: profile.home_access,
             allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
@@ -1412,6 +1458,7 @@ impl SandboxConfig {
             enabled: true,
             profile: "strict".to_string(),
             read_policy: profile.read_policy,
+            home_access: profile.home_access,
             allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
@@ -1467,6 +1514,7 @@ impl SandboxConfig {
             enabled: true,
             profile: profile_name.to_string(),
             read_policy: profile.read_policy,
+            home_access: profile.home_access,
             allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
@@ -1586,6 +1634,7 @@ impl SandboxConfig {
                         enabled: file.enabled,
                         profile: profile_name.to_string(),
                         read_policy: profile.read_policy,
+                        home_access: profile.home_access,
                         allow_read: profile.allow_read,
                         deny_read: profile.deny_read,
                         allow_write: profile.allow_write,
@@ -1711,6 +1760,9 @@ impl SandboxConfig {
         profiles.extend(self.profiles.clone());
 
         Self {
+            // A workspace may narrow home access but never widen it, so the
+            // lower of the two wins. Ordering is None < Read < Write.
+            home_access: self.home_access.min(workspace_config.home_access),
             // A workspace may turn cache redirection on, but must not choose
             // where the cache root lives: that stays a global decision.
             workspace_cache_enabled: self.workspace_cache_enabled
@@ -2016,6 +2068,7 @@ impl SandboxConfig {
         let fields = crate::policy_translate::PermissionFields {
             profile_name: &self.profile,
             read_policy: self.read_policy,
+            home_access: self.home_access,
             allow_read: &self.allow_read,
             deny_read: &self.deny_read,
             allow_write: &self.allow_write,
@@ -4418,5 +4471,43 @@ log_requests = true
                 .any(|r| r.base_path.contains("agent/sessions")),
             "development must not scope session history"
         );
+    }
+}
+
+#[cfg(test)]
+mod home_access_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_profiles_state_their_own_home_access() {
+        assert_eq!(SandboxProfile::minimal().home_access, HomeAccess::Write);
+        assert_eq!(SandboxProfile::development().home_access, HomeAccess::Write);
+        assert_eq!(SandboxProfile::strict().home_access, HomeAccess::None);
+    }
+
+    #[test]
+    fn a_workspace_cannot_widen_home_access() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.home_access = HomeAccess::Read;
+        let mut workspace = SandboxConfig::from_profile("strict");
+        workspace.home_access = HomeAccess::Write;
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(
+            merged.home_access,
+            HomeAccess::Read,
+            "a workspace must not grant itself a writable home"
+        );
+    }
+
+    #[test]
+    fn a_workspace_can_narrow_home_access() {
+        let mut global = SandboxConfig::from_profile("development");
+        global.home_access = HomeAccess::Write;
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.home_access = HomeAccess::None;
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(merged.home_access, HomeAccess::None);
     }
 }

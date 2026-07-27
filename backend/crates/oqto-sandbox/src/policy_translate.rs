@@ -6,7 +6,7 @@
 //! rather than an accident of translation.
 
 use crate::{
-    config::{ReadPolicy, SandboxProfile},
+    config::{HomeAccess, ReadPolicy, SandboxProfile},
     path_policy::{
         Access, Policy, PolicyError, PolicyLayer, PolicyPath, PolicyRoot, PolicyRule, RootDefault,
         RuleOrigin,
@@ -62,6 +62,7 @@ pub struct TranslatedPolicy {
 pub struct PermissionFields<'a> {
     pub profile_name: &'a str,
     pub read_policy: ReadPolicy,
+    pub home_access: HomeAccess,
     pub allow_read: &'a [String],
     pub deny_read: &'a [String],
     pub allow_write: &'a [String],
@@ -78,6 +79,7 @@ pub fn translate_profile(
     translate_permissions(&PermissionFields {
         profile_name,
         read_policy: profile.read_policy,
+        home_access: profile.home_access,
         allow_read: &profile.allow_read,
         deny_read: &profile.deny_read,
         allow_write: &profile.allow_write,
@@ -106,7 +108,7 @@ pub fn translate_permissions(
 
     policy.add_root_default(RootDefault {
         root: PolicyRoot::Home,
-        access: home_default_access(profile_name, fields.read_policy),
+        access: home_default_access(fields.read_policy, fields.home_access),
         origin: RuleOrigin {
             layer: PolicyLayer::Admin,
             source: format!("{source}:home-default"),
@@ -262,20 +264,18 @@ impl PendingRule {
     }
 }
 
-/// Reproduce the legacy home binding decision.
+/// Home access comes from the profile, not from its name.
 ///
-/// `config.rs` computes `home_writable = profile == "development" || profile ==
-/// "minimal"`, so a denylist profile under any other name binds home read-only.
-/// Deriving the default from `read_policy` alone would silently change both
-/// cases. ADR-0028 keeps this until each profile states its own home default.
-fn home_default_access(profile_name: &str, read_policy: ReadPolicy) -> Access {
+/// An allowlist masks home whatever the profile asks for, so `home_access`
+/// only decides the denylist case.
+fn home_default_access(read_policy: ReadPolicy, home_access: HomeAccess) -> Access {
     if read_policy == ReadPolicy::Allowlist {
         return Access::None;
     }
-    if matches!(profile_name, "development" | "minimal") {
-        Access::Write
-    } else {
-        Access::Read
+    match home_access {
+        HomeAccess::None => Access::None,
+        HomeAccess::Read => Access::Read,
+        HomeAccess::Write => Access::Write,
     }
 }
 
@@ -328,10 +328,19 @@ mod tests {
     }
 
     #[test]
-    fn a_denylist_profile_under_another_name_keeps_read_only_home() {
-        let mut profile = SandboxProfile::development();
-        profile.read_policy = ReadPolicy::Denylist;
+    fn renaming_a_profile_no_longer_changes_home_access() {
+        // A profile copied from development under another name used to lose
+        // write access to home, with nothing in the profile saying so.
+        let profile = SandboxProfile::development();
         let translated = translate_profile("team-default", &profile).unwrap();
+        assert_eq!(resolve(&translated, "/home/agent/scratch"), Access::Write);
+    }
+
+    #[test]
+    fn a_profile_can_ask_for_a_read_only_home() {
+        let mut profile = SandboxProfile::development();
+        profile.home_access = HomeAccess::Read;
+        let translated = translate_profile("locked-down", &profile).unwrap();
         assert_eq!(resolve(&translated, "/home/agent/scratch"), Access::Read);
     }
 
