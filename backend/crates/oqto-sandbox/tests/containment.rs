@@ -339,3 +339,66 @@ fn a_missing_session_shard_is_created_not_skipped() {
         "history written in the sandbox must land on the host, not a tmpfs"
     );
 }
+
+/// seccomp is installed by bwrap before the inner shim applies Landlock, so a
+/// policy that omits the landlock syscalls turns "landlock enforce" into a
+/// failed spawn that blames the kernel.
+#[test]
+fn the_seccomp_policy_allows_landlock() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap/userns unavailable");
+        return;
+    }
+    let bpf = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root")
+        .join("backend/crates/oqto/examples/seccomp/default-x86_64.bpf");
+    if !bpf.exists() || !cfg!(target_arch = "x86_64") {
+        eprintln!("skipping: x86_64 policy artifact not applicable");
+        return;
+    }
+
+    let probe =
+        "import ctypes;l=ctypes.CDLL('libc.so.6',use_errno=True);print(l.syscall(444,None,0,1))";
+
+    // bwrap reads the policy from a file descriptor, and Rust marks opened
+    // files CLOEXEC, so hand it over as stdin (fd 0) instead.
+    let file = std::fs::File::open(&bpf).expect("open policy");
+    let output = Command::new("bwrap")
+        .args([
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--ro-bind",
+            "/bin",
+            "/bin",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--seccomp",
+            "0",
+        ])
+        .args(["python3", "-c", probe])
+        .stdin(file)
+        .output()
+        .expect("spawn bwrap");
+
+    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let abi: i64 = out.parse().unwrap_or(-1);
+    assert!(
+        abi > 0,
+        "landlock probe under the shipped seccomp policy returned {out}; the \
+         policy must allowlist landlock_create_ruleset"
+    );
+}

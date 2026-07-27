@@ -2832,9 +2832,21 @@ impl SandboxConfig {
         {
             if !Self::is_landlock_supported() {
                 if self.landlock_mode == LandlockMode::Enforce {
-                    return Err(std::io::Error::other(
-                        "landlock enforce requested but kernel does not support landlock",
-                    ));
+                    // EPERM here means the probe was blocked rather than
+                    // missing, which in practice means the seccomp filter does
+                    // not allowlist the landlock syscalls. Reporting that as
+                    // "kernel does not support landlock" sends the reader to
+                    // the wrong subsystem entirely.
+                    let abi = Self::landlock_abi();
+                    let errno = std::io::Error::last_os_error();
+                    let hint = if errno.raw_os_error() == Some(libc::EPERM) {
+                        " (probe returned EPERM: the seccomp policy likely does                          not allow landlock_create_ruleset)"
+                    } else {
+                        ""
+                    };
+                    return Err(std::io::Error::other(format!(
+                        "landlock enforce requested but landlock is unavailable:                          abi probe returned {abi}{hint}"
+                    )));
                 }
                 return Ok(());
             }
