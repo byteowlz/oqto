@@ -3,6 +3,7 @@ mod config;
 pub mod egress;
 pub mod egress_relay;
 pub mod landlock_shim;
+pub mod path_policy;
 pub mod seatbelt;
 mod spawn;
 mod workspace_config;
