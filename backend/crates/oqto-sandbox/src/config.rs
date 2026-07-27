@@ -2309,6 +2309,23 @@ impl SandboxConfig {
         args.push("--tmpfs".to_string());
         args.push("/tmp".to_string());
 
+        // The private /tmp is mounted after the work directory is bound, so a
+        // work directory located under /tmp would be masked by it and bwrap
+        // would abort on --chdir before the agent ever runs. Rebinding it here
+        // keeps /tmp private while leaving the work directory reachable. The
+        // tmpfs cannot be mounted earlier instead: allow_write entries are
+        // emitted before this point, and a profile listing "/tmp" would then
+        // rebind the host's real /tmp on top and lose the isolation.
+        if workspace.starts_with("/tmp") && workspace != Path::new("/tmp") {
+            args.push("--bind".to_string());
+            args.push(workspace_str.clone());
+            args.push(workspace_str.clone());
+            debug!(
+                "Rebound work directory '{}' above the private /tmp",
+                workspace_str
+            );
+        }
+
         // Extra read-only binds
         for path in &self.extra_ro_bind {
             let expanded = Self::expand_home_for_user(path, username);

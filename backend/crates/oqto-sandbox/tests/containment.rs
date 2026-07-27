@@ -443,3 +443,51 @@ fn shipped_profiles_deny_the_platform_config() {
         }
     }
 }
+
+/// A work directory under /tmp must still be usable.
+///
+/// The private /tmp is mounted after the work directory is bound, so without a
+/// rebind bwrap aborts on --chdir and the agent never starts.
+#[test]
+fn a_work_directory_under_tmp_is_usable() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap unavailable");
+        return;
+    }
+    for profile in ["minimal", "development", "strict"] {
+        let workspace = tempfile::tempdir_in("/tmp").expect("tempdir under /tmp");
+        std::fs::write(workspace.path().join("marker"), "present\n").expect("write marker");
+
+        let config = SandboxConfig::from_profile(profile);
+        let (ok, output) = run_sandboxed(&config, workspace.path(), "cat marker");
+        assert!(
+            ok && output.contains("present"),
+            "{profile}: work directory under /tmp unusable (output: {output})"
+        );
+    }
+}
+
+/// The private /tmp must stay private even when the work directory is rebound.
+#[test]
+fn the_rest_of_tmp_stays_private() {
+    if !bwrap_available() {
+        eprintln!("skipping: bwrap unavailable");
+        return;
+    }
+    let outside = tempfile::tempdir_in("/tmp").expect("tempdir under /tmp");
+    // Sentinel content, not a recognisable path fragment: the failure message
+    // echoes the path, so a marker resembling it would match itself.
+    std::fs::write(outside.path().join("secret"), "SENTINEL-LEAKED\n").expect("write");
+
+    let workspace = tempfile::tempdir_in("/tmp").expect("tempdir under /tmp");
+    let config = SandboxConfig::from_profile("strict");
+    let (_, output) = run_sandboxed(
+        &config,
+        workspace.path(),
+        &format!("cat {}/secret 2>&1", outside.path().display()),
+    );
+    assert!(
+        !output.contains("SENTINEL-LEAKED"),
+        "an unrelated /tmp path leaked into the sandbox: {output}"
+    );
+}
