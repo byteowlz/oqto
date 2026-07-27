@@ -53,12 +53,31 @@ engines can all express. An ordered pile of overlapping mount mechanisms is not.
 
 ## Decision
 
-### 1. Permission and redirection are different concepts
+### 1. Permission and materialisation are different concepts
 
 Of the thirteen fields, five are not access control. `overlay_*` and
-`workspace_cache_*` decide *where writes land*, not *whether a write is
-permitted*. They remain, as a separate redirection concept, and are out of the
-permission model. The remaining eight collapse into one mechanism.
+`workspace_cache_*` decide how a path is materialised and where writes land,
+not whether a write is permitted. The remaining eight collapse into the access
+policy below.
+
+The five materialisation fields move to ADR-0020's typed mount descriptor:
+
+- `overlay_*` becomes a mount materialisation mode (`bind` | `overlay` |
+  `tmpfs`): the path reads from one source while writes land in another.
+- `workspace_cache_*` currently combines two concerns. Its per-Workspace
+  directory becomes a mount descriptor. Its tool-specific environment exports
+  (`CARGO_HOME`, npm cache, Go cache, and similar) belong to process environment
+  setup, not filesystem policy.
+
+The processing order is **materialise, then authorise**. A mount descriptor says
+what exists at a path; the access policy independently says what the agent may
+do there. An overlay, cache volume, or bind mount grants no access by itself.
+
+This division also survives placement changes. On container-per-Workspace
+placements, copy-on-write and per-Workspace volumes are native runtime
+facilities; on host placement, the adapter may implement the same descriptors
+with bwrap overlays and host directories. Those mechanics must not leak back
+into the permission language.
 
 ### 2. One primitive: an ordered rule set with a total resolution function
 
@@ -143,8 +162,10 @@ cannot be rendered in a tree UI, so the loss is accepted deliberately.
 
 **Migration.** The eight permission fields are mechanically translatable, so
 existing profiles and workspace configs convert without operator action. The
-containment suite is the acceptance test: it must pass unchanged against the
-new model, and then against each adapter, which is what proves adapters agree.
+five materialisation fields migrate to typed mount descriptors; tool cache
+environment exports migrate to process setup. The containment suite is the
+acceptance test: it must pass unchanged against the new model, and then against
+each adapter, which is what proves adapters agree.
 
 **Open question.** Whether `list` (observe that a directory entry exists without
 reading its contents) is a fourth access level. It is meaningful for the tree UI
