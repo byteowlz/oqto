@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed (2026-07-27). Supersedes the filesystem-permission surface of the
+Accepted (2026-07-27). Implemented for the bwrap backend in oqto-11e7: the
+builder now derives every filesystem access decision from this model, proven by
+a recorded readability contract and by differential execution against the
+builder it replaced. Supersedes the filesystem-permission surface of the
 sandbox config (`SandboxProfile`). `oqto-mpn7` becomes the first implementation
 of this model rather than a parallel effort. Related: ADR-0020 (pluggable
 placement supervisor), ADR-0019 (container-per-Workspace).
