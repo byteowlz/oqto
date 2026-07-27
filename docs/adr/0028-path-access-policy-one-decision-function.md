@@ -105,9 +105,34 @@ The existing surface maps onto it without loss:
 | `read_policy = denylist` | `default = read` |
 | `scoped_paths` | a rule whose path is templated |
 
-Paths support template variables (`{home}`, `{workspace}`, `{shard}`) so a rule
-is portable across work directories. This is what makes session-history scoping
-an ordinary rule rather than its own mechanism.
+Rules are not confined to the work directory. Agents need profile-governed
+access to paths such as `~/.pi`, `~/.cargo`, system toolchains, caches, and the
+current session shard. Paths therefore use declared symbolic roots rather than
+assuming `{workdir}` is universally applicable:
+
+- `{workdir}` is the current work directory—the tree presented by the ordinary
+  work-directory permission UI.
+- `{home}` addresses profile-governed user state such as `~/.pi` and
+  `~/.cargo`.
+- `{session_shard}` identifies the current work directory's durable harness
+  history shard.
+- Further roots may be introduced for runtime/tool state, but each must have a
+  defined owner, resolution source, and authority boundary; arbitrary
+  environment-variable interpolation is forbidden.
+
+The project term is **work directory**, not `workspace`, for the directory in
+which a harness runs. There is intentionally no ambiguous `{workspace}` token.
+Symbolic roots make rules portable while keeping the path source explicit. A
+session shard is therefore an ordinary rule target rather than a separate
+permission mechanism.
+
+Rule authority is independent of path location. System and administrator
+profiles may govern any declared root. A work-directory tree UI normally emits
+rules only below `{workdir}`; separate, deliberately designed UI sections may
+expose agent state or caches. A work-directory or session layer cannot widen
+access under `{home}` or any other root merely by naming it. Layer composition
+still takes the minimum effective access, so a more-specific lower-authority
+rule cannot override an administrator denial.
 
 ### 3. Resolution is pure, total, and explainable
 
