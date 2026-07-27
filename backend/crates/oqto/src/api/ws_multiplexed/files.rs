@@ -919,15 +919,12 @@ impl TtydConnectionRead {
     }
 }
 
-/// Basic-auth header value for the session terminal.
-fn ttyd_auth_header(password: &str) -> anyhow::Result<axum::http::HeaderValue> {
+/// base64("user:password"), used both for the Basic header and for ttyd's
+/// in-band AuthToken. ttyd checks the header at the handshake and the token
+/// before it spawns the shell, so both are required.
+fn ttyd_basic_credential(password: &str) -> String {
     use base64::Engine as _;
-    let raw = format!("oqto:{}", password);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
-    Ok(axum::http::HeaderValue::from_str(&format!(
-        "Basic {}",
-        encoded
-    ))?)
+    base64::engine::general_purpose::STANDARD.encode(format!("oqto:{}", password))
 }
 
 /// Fetch a session's terminal credential from the runner that owns it.
@@ -964,7 +961,8 @@ async fn connect_ttyd_socket(
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-    let auth = ttyd_auth_header(password)?;
+    let credential = ttyd_basic_credential(password);
+    let auth = axum::http::HeaderValue::from_str(&format!("Basic {}", credential))?;
     let socket_path = ProcessManager::ttyd_socket_path(session_id);
     if socket_path.exists() {
         use tokio::net::UnixStream;
@@ -977,6 +975,10 @@ async fn connect_ttyd_socket(
             axum::http::HeaderValue::from_static("tty"),
         );
         request.headers_mut().insert("Authorization", auth);
+        request.headers_mut().insert(
+            "Origin",
+            axum::http::HeaderValue::from_static("http://localhost"),
+        );
         let (socket, _response) = client_async(request, stream).await?;
         return Ok(TtydConnection::Unix(socket));
     }
@@ -988,6 +990,12 @@ async fn connect_ttyd_socket(
         axum::http::HeaderValue::from_static("tty"),
     );
     request.headers_mut().insert("Authorization", auth);
+    // ttyd runs with --check-origin and rejects an upgrade whose Origin does
+    // not match the request host, including a missing one.
+    request.headers_mut().insert(
+        "Origin",
+        axum::http::HeaderValue::from_str(&format!("http://localhost:{}", ttyd_port))?,
+    );
     let (socket, _response) = connect_async(request).await?;
     Ok(TtydConnection::Tcp(socket))
 }
@@ -1034,8 +1042,11 @@ pub(super) async fn start_terminal_task(
 
         let (mut ttyd_write, mut ttyd_read) = socket.split();
 
+        // ttyd validates AuthToken before spawning the shell. An empty token
+        // leaves the websocket open with no child process, which surfaces as a
+        // terminal that connects and never prints a prompt.
         let init_msg = serde_json::json!({
-            "AuthToken": "",
+            "AuthToken": ttyd_basic_credential(&ttyd_password),
             "columns": cols,
             "rows": rows,
         });
