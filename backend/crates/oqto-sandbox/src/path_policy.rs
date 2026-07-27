@@ -45,6 +45,12 @@ pub enum PolicyRoot {
     Workdir,
     Home,
     Resource(ResourceId),
+    /// An absolute host location declared by an administrator or profile.
+    ///
+    /// Unlike a resource, a system root is not runtime-discovered and carries
+    /// no availability contract; it is the escape hatch for paths like `/etc`
+    /// that exist on every target of a given placement.
+    System(PathBuf),
 }
 
 /// A portable path consisting of a symbolic root and a safe relative suffix.
@@ -538,6 +544,7 @@ fn resolve_policy_root(
     match root {
         PolicyRoot::Workdir => Ok(Some(context.workdir.to_path_buf())),
         PolicyRoot::Home => Ok(Some(context.home.to_path_buf())),
+        PolicyRoot::System(path) => Ok(Some(validated_absolute(path.clone())?)),
         PolicyRoot::Resource(id) => {
             let resource = context
                 .resources
