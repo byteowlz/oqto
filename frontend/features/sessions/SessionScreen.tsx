@@ -547,6 +547,8 @@ export const SessionScreen = memo(function SessionScreen() {
 	// A denied user must never be left on the terminal view: the tab is hidden,
 	// but a stale cached view or a role downgrade could still land them there.
 	// Only act once the session is known, so admins keep their cached view.
+	// useeffect-guardrail: allow: must react to permission state arriving or
+	// changing after mount, which no render-time check can cover.
 	useEffect(() => {
 		if (currentUser && !mayUseTerminal && activeView === "terminal") {
 			setActiveView(window.innerWidth < 768 ? "chat" : "files");
