@@ -40,6 +40,12 @@ def main() -> int:
         help="Do not fail when [pi_agent_extensions] items are missing on disk "
         "(they are pulled from source at release time via scripts/dist/sync.sh)",
     )
+    parser.add_argument(
+        "--allow-missing-frontend",
+        action="store_true",
+        help="Do not fail when the frontend bundle is missing on disk "
+        "(it is built at release time via scripts/dist/stage-frontend.sh)",
+    )
     args = parser.parse_args()
 
     manifest_path = pathlib.Path(args.manifest)
@@ -127,8 +133,13 @@ def main() -> int:
             # Pi extensions are pulled from source at release time
             # (scripts/dist/sync.sh) and are not tracked in git.
             is_extension = kind == "pi-extension"
-            exempt = (is_binary and args.allow_missing_binaries) or (
-                is_extension and args.allow_missing_extensions
+            # The frontend bundle is built at release time
+            # (scripts/dist/stage-frontend.sh) and is not tracked in git.
+            is_frontend = kind == "frontend"
+            exempt = (
+                (is_binary and args.allow_missing_binaries)
+                or (is_extension and args.allow_missing_extensions)
+                or (is_frontend and args.allow_missing_frontend)
             )
             if missing_source and not exempt:
                 fail(errors, f"{prefix}.source does not exist: {source}")

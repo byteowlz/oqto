@@ -66,7 +66,7 @@ lint-no-legacy-history-authority:
 
 # Validate dist/manifest.toml structure and asset references
 lint-dist-manifest:
-    ./scripts/lint/verify-dist-manifest.py --allow-missing-binaries --allow-missing-extensions
+    ./scripts/lint/verify-dist-manifest.py --allow-missing-binaries --allow-missing-extensions --allow-missing-frontend
 
 # Strict dist manifest validation (all referenced sources must exist)
 lint-dist-manifest-strict:
@@ -79,6 +79,10 @@ dist-sync:
 # Stage built binaries into dist/immutable/bin/ (use --build to compile first)
 dist-stage-binaries *ARGS:
     ./scripts/dist/stage-binaries.sh {{ARGS}}
+
+# Stage the built frontend into dist/immutable/frontend/ (use --build to build first)
+dist-stage-frontend *ARGS:
+    ./scripts/dist/stage-frontend.sh {{ARGS}}
 
 # Package dist payload as release tarball (+sha256)
 dist-package version="dev" target="local":

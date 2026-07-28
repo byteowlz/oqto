@@ -217,6 +217,13 @@ prepare_default_artifact_if_needed() {
     log "No --artifact provided; building deployment artifact from dist workflow..."
     host_exec "true" "" "cd '$ROOT_DIR' && just dist-sync"
     host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-binaries --build"
+    if [[ "$SKIP_FRONTEND" == "true" ]]; then
+        # The artifact always ships a bundle (oqto-setup fails closed without
+        # one); --skip-frontend only skips rebuilding it.
+        host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-frontend"
+    else
+        host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-frontend --build"
+    fi
     host_exec "true" "" "cd '$ROOT_DIR' && just lint-dist-manifest-strict"
     host_exec "true" "" "cd '$ROOT_DIR' && just dist-package '$version' '$target'"
 
@@ -1395,6 +1402,28 @@ restore_oqto_log_from_backup() {
     " || warn "Failed to restore some oqto-log backups"
 }
 
+# Assert the host actually serves the bundle we just shipped. A deploy that
+# leaves web_root pinned to an older release is otherwise invisible: the API is
+# healthy and only the browser sees stale UI (see trx oqto-6k9w).
+verify_web_root() {
+    local name="$1" ssh_target="$2" is_local="$3" web_root="$4"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} verify $web_root/index.html matches the shipped bundle"
+        return 0
+    fi
+
+    local expected served
+    expected="$(sha256sum "$ROOT_DIR/dist/immutable/frontend/index.html" | cut -d' ' -f1)"
+    served="$(host_exec_sudo "$is_local" "$ssh_target" "sha256sum '$web_root/index.html' 2>/dev/null | cut -d' ' -f1" || true)"
+
+    if [[ "$served" != "$expected" ]]; then
+        err "[$name] web root $web_root does not serve the shipped bundle (expected $expected, got ${served:-<missing>})"
+        return 1
+    fi
+    ok "[$name] web root serves the shipped bundle"
+}
+
 health_check_host() {
     local is_local="$1" ssh_target="$2" mode="$3"
     local start
@@ -1720,7 +1749,9 @@ activate_host() {
     install_seccomp_bpf "$is_local" "$ssh_target" "$name" "$release_dir"
 
     if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
-        host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
+        # Once a host has taken an artifact deploy, web_root is a symlink into the
+        # active release; rsyncing through it would rewrite that release in place.
+        host_exec_sudo "$is_local" "$ssh_target" "if [ -L '$web_root' ]; then echo 'refusing to rsync into symlinked web root $web_root (host is on the artifact deploy path)' >&2; exit 1; fi; mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
     fi
 
     # Mandatory oqto-log migration/validation gate.
@@ -2030,6 +2061,9 @@ deploy_host() {
     if [[ -n "$DEPLOY_ARTIFACT" ]]; then
         log "[$name] deploying via oqto-setup install artifact path"
         if ! deploy_via_oqto_setup_install "$name" "$ssh_target" "$is_local"; then
+            return 1
+        fi
+        if [[ "$frontend" == "true" ]] && ! verify_web_root "$name" "$ssh_target" "$is_local" "$web_root"; then
             return 1
         fi
         if ! run_oqto_log_deploy_gate "$name" "$ssh_target" "$is_local" "$mode"; then

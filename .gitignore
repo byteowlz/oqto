@@ -64,5 +64,8 @@ dist/immutable/bin/*
 # (scripts/dist/sync.sh) and packaged into the tarball; never tracked here.
 dist/immutable/defaults/pi-agent/extensions/
 
+# Frontend bundle is built at release time (scripts/dist/stage-frontend.sh).
+dist/immutable/frontend/
+
 # Node dependencies (never tracked anywhere)
 node_modules/

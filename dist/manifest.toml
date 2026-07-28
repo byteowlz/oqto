@@ -79,6 +79,23 @@ group = "root"
 mode = "0755"
 profiles = ["team"]
 
+# The web root is a symlink into the active release, like the binaries, so a
+# rollback restores the matching bundle and superseded chunks disappear with the
+# release they came from. `/var/www/oqto` is the canonical location the backend
+# already probes in resolve_frontend_dir().
+[[assets]]
+id = "frontend-dist"
+class = "immutable_symlink"
+kind = "frontend"
+source = "dist/immutable/frontend"
+stage_path = "frontend"
+install_path = "/var/www/oqto"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
 [[assets]]
 id = "bin-oqto-setup"
 class = "immutable_symlink"

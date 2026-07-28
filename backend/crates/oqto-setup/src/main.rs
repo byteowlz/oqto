@@ -53,6 +53,9 @@ enum Command {
         /// Stable binary link directory.
         #[arg(long, default_value = "/usr/local/bin")]
         bin_dir: PathBuf,
+        /// Web root linked at the release's frontend bundle.
+        #[arg(long, default_value = "/var/www/oqto")]
+        web_root: PathBuf,
         /// Run strict doctor check after activation. Pass `--doctor-strict false`
         /// when a deploy orchestrator starts services + validates health itself
         /// (the strict gate requires services already active).
@@ -180,6 +183,7 @@ fn main() -> Result<()> {
             checksum,
             releases_root,
             bin_dir,
+            web_root,
             doctor_strict,
             keep_releases,
         } => install_release(
@@ -187,6 +191,7 @@ fn main() -> Result<()> {
             checksum.as_deref(),
             &releases_root,
             &bin_dir,
+            &web_root,
             doctor_strict,
             keep_releases,
         ),
@@ -514,6 +519,7 @@ fn install_release(
     checksum: Option<&Path>,
     releases_root: &Path,
     bin_dir: &Path,
+    web_root: &Path,
     doctor_strict: bool,
     keep_releases: usize,
 ) -> Result<()> {
@@ -548,6 +554,7 @@ fn install_release(
         &release_dir,
         releases_root,
         bin_dir,
+        web_root,
         doctor_strict,
         keep_releases,
     )?;
@@ -567,6 +574,7 @@ fn activate_release(
     release_dir: &Path,
     releases_root: &Path,
     bin_dir: &Path,
+    web_root: &Path,
     doctor_strict: bool,
     keep_releases: usize,
 ) -> Result<()> {
@@ -579,6 +587,7 @@ fn activate_release(
 
     atomic_symlink(&current_link, release_dir)?;
     relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
+    link_web_root(&current_link.join("immutable/frontend"), web_root)?;
 
     if doctor_strict && let Err(doctor_err) = run_doctor_strict() {
         match previous.as_ref() {
@@ -589,7 +598,8 @@ fn activate_release(
                 let rollback = atomic_symlink(&current_link, prev).and_then(|_| {
                     // Relink through `current` (now pointing at prev) so the
                     // stable entrypoints stay consistent with the activation path.
-                    relink_bins(&current_link.join("immutable/bin"), bin_dir)
+                    relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
+                    link_web_root(&current_link.join("immutable/frontend"), web_root)
                 });
                 match rollback {
                     Ok(()) => anyhow::bail!(
@@ -640,7 +650,61 @@ fn validate_staged_release(release_dir: &Path) -> Result<()> {
             bin_src.display()
         );
     }
+
+    // Fail closed: an artifact without a bundle would otherwise activate
+    // silently and leave the web root pinned to the previous release.
+    let index = release_dir.join("immutable/frontend/index.html");
+    if !index.is_file() {
+        anyhow::bail!(
+            "Invalid artifact: no frontend bundle staged at {}",
+            index.display()
+        );
+    }
     Ok(())
+}
+
+/// Point `web_root` at the active release's frontend bundle.
+///
+/// A pre-existing real directory is from the legacy rsync-into-web-root deploy;
+/// it is moved aside once rather than deleted, since it is the only copy of
+/// whatever was last served.
+fn link_web_root(frontend_src: &Path, web_root: &Path) -> Result<()> {
+    if let Some(parent) = web_root.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed creating web root parent {}", parent.display()))?;
+    }
+
+    if let Ok(meta) = fs::symlink_metadata(web_root)
+        && !meta.file_type().is_symlink()
+    {
+        if !meta.is_dir() {
+            anyhow::bail!(
+                "Refusing to replace non-directory {} with the release web root link",
+                web_root.display()
+            );
+        }
+        let backup = web_root.with_file_name(format!(
+            "{}.pre-release-{}",
+            web_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("web-root"),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        ));
+        fs::rename(web_root, &backup).with_context(|| {
+            format!(
+                "Failed moving legacy web root {} aside to {}",
+                web_root.display(),
+                backup.display()
+            )
+        })?;
+        println!("Moved legacy web root aside to {}", backup.display());
+    }
+
+    atomic_symlink(web_root, frontend_src)
 }
 
 /// Resolve the absolute target a symlink points at, or `None` if `link` is
@@ -871,6 +935,13 @@ mod tests {
         if let Some(b) = binary {
             fs::write(bin.join(b), b"#!/bin/true\n").unwrap();
         }
+        mk_frontend(root, name);
+    }
+
+    fn mk_frontend(root: &Path, name: &str) {
+        let frontend = root.join(name).join("immutable/frontend");
+        fs::create_dir_all(&frontend).unwrap();
+        fs::write(frontend.join("index.html"), b"<html></html>").unwrap();
     }
 
     #[test]
@@ -1022,11 +1093,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let releases_root = root.path().join("releases");
         let bin_dir = root.path().join("bin");
+        let web_root = root.path().join("www");
         mk_release_dir(&releases_root, "oqto-9.9.9-test", Some("oqto"));
         let release_dir = releases_root.join("oqto-9.9.9-test");
 
         // doctor_strict=false so we don't depend on oqtoctl being installed.
-        activate_release(&release_dir, &releases_root, &bin_dir, false, 3).unwrap();
+        activate_release(&release_dir, &releases_root, &bin_dir, &web_root, false, 3).unwrap();
 
         assert_eq!(
             link_basename(&releases_root.join("current")).as_deref(),
@@ -1052,6 +1124,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let releases_root = root.path().join("releases");
         let bin_dir = root.path().join("bin");
+        let web_root = root.path().join("www");
         mk_release_dir(&releases_root, "rel-old", Some("oqto"));
         mk_release_dir(&releases_root, "rel-new", Some("oqto"));
 
@@ -1059,6 +1132,7 @@ mod tests {
             &releases_root.join("rel-old"),
             &releases_root,
             &bin_dir,
+            &web_root,
             false,
             3,
         )
@@ -1067,6 +1141,7 @@ mod tests {
             &releases_root.join("rel-new"),
             &releases_root,
             &bin_dir,
+            &web_root,
             false,
             3,
         )
@@ -1093,6 +1168,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let releases_root = root.path().join("releases");
         let bin_dir = root.path().join("bin");
+        let web_root = root.path().join("www");
         // immutable/bin exists but is empty -> no binaries to relink.
         mk_release_dir(&releases_root, "rel-empty", None);
 
@@ -1100,6 +1176,7 @@ mod tests {
             &releases_root.join("rel-empty"),
             &releases_root,
             &bin_dir,
+            &web_root,
             false,
             3,
         );
@@ -1109,5 +1186,79 @@ mod tests {
             "current must not be switched to an invalid release"
         );
         assert!(read_link_target(&releases_root.join("last-good")).is_none());
+    }
+
+    #[test]
+    fn validate_staged_release_requires_a_frontend_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("nofrontend/immutable/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("oqto"), b"#!/bin/true\n").unwrap();
+
+        assert!(validate_staged_release(&root.path().join("nofrontend")).is_err());
+
+        mk_frontend(root.path(), "nofrontend");
+        assert!(validate_staged_release(&root.path().join("nofrontend")).is_ok());
+    }
+
+    /// The web root follows `current`, so a later switch serves the matching
+    /// bundle without re-linking.
+    #[test]
+    fn activate_release_links_web_root_through_current() {
+        let root = tempfile::tempdir().unwrap();
+        let releases_root = root.path().join("releases");
+        let bin_dir = root.path().join("bin");
+        let web_root = root.path().join("www");
+        mk_release_dir(&releases_root, "rel-a", Some("oqto"));
+
+        activate_release(
+            &releases_root.join("rel-a"),
+            &releases_root,
+            &bin_dir,
+            &web_root,
+            false,
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_link_target(&web_root).as_deref(),
+            Some(releases_root.join("current/immutable/frontend").as_path())
+        );
+        assert!(web_root.join("index.html").is_file());
+    }
+
+    /// A legacy rsync-populated web root is moved aside, not deleted.
+    #[test]
+    fn link_web_root_moves_legacy_directory_aside() {
+        let root = tempfile::tempdir().unwrap();
+        let web_root = root.path().join("www");
+        fs::create_dir_all(&web_root).unwrap();
+        fs::write(web_root.join("index.html"), b"legacy").unwrap();
+
+        let frontend = root.path().join("rel/immutable/frontend");
+        fs::create_dir_all(&frontend).unwrap();
+        fs::write(frontend.join("index.html"), b"new").unwrap();
+
+        link_web_root(&frontend, &web_root).unwrap();
+
+        assert_eq!(
+            read_link_target(&web_root).as_deref(),
+            Some(frontend.as_path())
+        );
+        assert_eq!(
+            fs::read_to_string(web_root.join("index.html")).unwrap(),
+            "new"
+        );
+
+        let preserved = fs::read_dir(root.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("www.pre-release-")
+            });
+        assert!(preserved, "legacy web root must be preserved, not deleted");
     }
 }
