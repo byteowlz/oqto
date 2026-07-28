@@ -142,20 +142,6 @@ export type {
 } from "./features";
 export { getFeatures } from "./features";
 
-// Dashboard
-export type {
-	SchedulerEntry,
-	SchedulerOverview,
-	FeedFetchResponse,
-	CodexBarUsagePayload,
-} from "./dashboard";
-export {
-	getSchedulerOverview,
-	deleteSchedulerJob,
-	fetchFeed,
-	getCodexBarUsage,
-} from "./dashboard";
-
 // Files and proxy URLs
 export {
 	agentProxyBaseUrl,
