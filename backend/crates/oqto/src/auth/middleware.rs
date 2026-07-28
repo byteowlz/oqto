@@ -244,6 +244,11 @@ impl CurrentUser {
         self.claims.is_admin()
     }
 
+    /// Whether this principal may open an interactive terminal.
+    pub fn may_use_terminal(&self) -> bool {
+        self.claims.may_use_terminal()
+    }
+
     /// Get display name.
     pub fn display_name(&self) -> &str {
         self.claims.display_name()

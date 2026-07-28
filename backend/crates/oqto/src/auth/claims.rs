@@ -11,6 +11,8 @@ pub enum Role {
     User,
     /// Administrator.
     Admin,
+    /// Non-human service principal.
+    Service,
 }
 
 impl std::fmt::Display for Role {
@@ -18,6 +20,7 @@ impl std::fmt::Display for Role {
         match self {
             Role::User => write!(f, "user"),
             Role::Admin => write!(f, "admin"),
+            Role::Service => write!(f, "service"),
         }
     }
 }
@@ -29,6 +32,7 @@ impl std::str::FromStr for Role {
         match s.to_lowercase().as_str() {
             "user" => Ok(Role::User),
             "admin" => Ok(Role::Admin),
+            "service" => Ok(Role::Service),
             _ => Err(format!("unknown role: {}", s)),
         }
     }
@@ -103,7 +107,27 @@ impl Claims {
             }
         }
 
+        if let Some(ref role) = self.role
+            && role.to_lowercase() == "service"
+        {
+            return Role::Service;
+        }
+
+        for role in &self.roles {
+            if role.to_lowercase() == "service" {
+                return Role::Service;
+            }
+        }
+
         Role::User
+    }
+
+    /// Whether this principal may open an interactive terminal.
+    ///
+    /// Terminals bypass the agent seam entirely, so they stay restricted to
+    /// operator principals rather than ordinary workspace users.
+    pub fn may_use_terminal(&self) -> bool {
+        matches!(self.effective_role(), Role::Admin | Role::Service)
     }
 
     /// Check if the user has admin role.
@@ -129,6 +153,7 @@ mod tests {
     fn test_role_display() {
         assert_eq!(Role::User.to_string(), "user");
         assert_eq!(Role::Admin.to_string(), "admin");
+        assert_eq!(Role::Service.to_string(), "service");
     }
 
     #[test]
@@ -136,7 +161,52 @@ mod tests {
         assert_eq!("user".parse::<Role>().unwrap(), Role::User);
         assert_eq!("admin".parse::<Role>().unwrap(), Role::Admin);
         assert_eq!("Admin".parse::<Role>().unwrap(), Role::Admin);
+        assert_eq!("service".parse::<Role>().unwrap(), Role::Service);
         assert!("invalid".parse::<Role>().is_err());
+    }
+
+    fn claims_with_role(role: &str) -> Claims {
+        Claims {
+            sub: "user1".to_string(),
+            iss: None,
+            aud: None,
+            exp: 0,
+            iat: None,
+            nbf: None,
+            jti: None,
+            email: None,
+            name: None,
+            preferred_username: None,
+            roles: vec![],
+            role: Some(role.to_string()),
+        }
+    }
+
+    #[test]
+    fn service_role_resolves_and_does_not_grant_admin() {
+        let service = claims_with_role("service");
+        assert_eq!(service.effective_role(), Role::Service);
+        assert!(!service.is_admin());
+
+        let from_roles = Claims {
+            roles: vec!["service".to_string()],
+            role: None,
+            ..claims_with_role("service")
+        };
+        assert_eq!(from_roles.effective_role(), Role::Service);
+    }
+
+    #[test]
+    fn only_admin_and_service_may_use_terminal() {
+        assert!(!claims_with_role("user").may_use_terminal());
+        assert!(claims_with_role("admin").may_use_terminal());
+        assert!(claims_with_role("service").may_use_terminal());
+
+        let no_role = Claims {
+            role: None,
+            ..claims_with_role("user")
+        };
+        assert!(!no_role.may_use_terminal());
     }
 
     #[test]

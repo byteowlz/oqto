@@ -6,12 +6,45 @@ fn terminal_binding_matches(existing: &TerminalSession, user_id: &str, session_i
     existing.owner_user_id == user_id && existing.session_id == session_id
 }
 
+/// Single decision point for terminal authorization.
+///
+/// Returns the refusal event when the connection's principal may not use a
+/// terminal, for every command variant, so nothing is spawned or attached.
+fn refuse_terminal(allowed: bool, cmd: &TerminalWsCommand) -> Option<WsEvent> {
+    if allowed {
+        return None;
+    }
+    let (id, terminal_id) = match cmd {
+        TerminalWsCommand::Open {
+            id, terminal_id, ..
+        } => (id.clone(), terminal_id.clone()),
+        TerminalWsCommand::Input {
+            id, terminal_id, ..
+        }
+        | TerminalWsCommand::Resize {
+            id, terminal_id, ..
+        }
+        | TerminalWsCommand::Close { id, terminal_id } => (id.clone(), Some(terminal_id.clone())),
+    };
+    Some(WsEvent::Terminal(TerminalWsEvent::Error {
+        id,
+        terminal_id,
+        error: "Terminal access is restricted to administrators".to_string(),
+    }))
+}
+
 pub(super) async fn handle_terminal_command(
     cmd: TerminalWsCommand,
     user_id: &str,
     state: &AppState,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
+    let allowed = conn_state.lock().await.terminal_allowed;
+    if let Some(refusal) = refuse_terminal(allowed, &cmd) {
+        warn!("Terminal refused for non-operator user {}", user_id);
+        return Some(refusal);
+    }
+
     match cmd {
         TerminalWsCommand::Open {
             id,
@@ -271,5 +304,60 @@ mod tests {
         };
         assert!(!terminal_binding_matches(&session, "user-a", "ses-2"));
         assert!(!terminal_binding_matches(&session, "user-b", "ses-1"));
+    }
+
+    fn all_command_variants() -> Vec<TerminalWsCommand> {
+        vec![
+            TerminalWsCommand::Open {
+                id: Some("req-1".to_string()),
+                terminal_id: Some("term-1".to_string()),
+                workspace_path: Some("/home/user-a/ws".to_string()),
+                session_id: Some("ses-1".to_string()),
+                cols: 80,
+                rows: 24,
+            },
+            TerminalWsCommand::Input {
+                id: Some("req-1".to_string()),
+                terminal_id: "term-1".to_string(),
+                data: "whoami\n".to_string(),
+            },
+            TerminalWsCommand::Resize {
+                id: Some("req-1".to_string()),
+                terminal_id: "term-1".to_string(),
+                cols: 100,
+                rows: 40,
+            },
+            TerminalWsCommand::Close {
+                id: Some("req-1".to_string()),
+                terminal_id: "term-1".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn disallowed_principal_is_refused_for_every_terminal_command() {
+        for cmd in all_command_variants() {
+            let refusal = refuse_terminal(false, &cmd)
+                .unwrap_or_else(|| panic!("expected refusal for {cmd:?}"));
+            match refusal {
+                WsEvent::Terminal(TerminalWsEvent::Error {
+                    id,
+                    terminal_id,
+                    error,
+                }) => {
+                    assert_eq!(id.as_deref(), Some("req-1"));
+                    assert_eq!(terminal_id.as_deref(), Some("term-1"));
+                    assert!(error.contains("restricted"));
+                }
+                other => panic!("expected terminal error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn allowed_principal_is_not_refused() {
+        for cmd in all_command_variants() {
+            assert!(refuse_terminal(true, &cmd).is_none());
+        }
     }
 }
