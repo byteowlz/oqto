@@ -150,6 +150,11 @@ fn default_true() -> bool {
 )]
 pub struct ResourceLimits {
     /// Maximum address space, in bytes (`RLIMIT_AS`).
+    ///
+    /// This is reserved virtual address space, not resident memory, so it is
+    /// not a memory budget: JIT and WebAssembly engines reserve far more than
+    /// they commit and will fail allocation long before the process uses the
+    /// stated amount. Left unset in the shipped profiles for that reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_memory_bytes: Option<u64>,
 
@@ -980,9 +985,15 @@ impl SandboxProfile {
             workspace_cache_enabled: true,
             workspace_cache_root: default_workspace_cache_root(),
             resource_limits: ResourceLimits {
-                // Defense in depth for untrusted work: generous enough for real
-                // builds, low enough to bound a runaway or hostile process.
-                max_memory_bytes: Some(4 * 1024 * 1024 * 1024),
+                // Deliberately unset. RLIMIT_AS bounds reserved address space,
+                // not resident memory, and every JIT or WebAssembly engine
+                // reserves far more virtual space than it ever commits. A 4 GiB
+                // cap here made Node fail to instantiate the WASM module undici
+                // uses for HTTP parsing, killing the harness seconds after spawn
+                // with an error that named memory but was really a reservation.
+                // Bound real memory with a cgroup, which limits what is resident
+                // and ignores reservations.
+                max_memory_bytes: None,
                 max_open_files: Some(4096),
                 max_cpu_seconds: None,
                 max_file_size_bytes: Some(2 * 1024 * 1024 * 1024),
@@ -4252,6 +4263,22 @@ log_requests = true
                 landlock_paths.split(':').any(|p| target.starts_with(p)),
                 "scoped rule '{name}' is mounted writable but not authorised: \
                  {target} not covered by {landlock_paths}"
+            );
+        }
+    }
+
+    fn shipped_profiles_do_not_cap_address_space() {
+        // RLIMIT_AS bounds reserved virtual address space, not resident memory.
+        // Every JIT and WebAssembly engine reserves far more than it commits, so
+        // a cap that looks generous still breaks them: 4 GiB here stopped Node
+        // instantiating undici's HTTP parser and killed the harness seconds
+        // after spawn. Bound real memory with a cgroup instead.
+        for name in ["strict", "development", "minimal"] {
+            let profile = SandboxProfile::builtin(name)
+                .unwrap_or_else(|| panic!("{name} is a shipped profile"));
+            assert_eq!(
+                profile.resource_limits.max_memory_bytes, None,
+                "{name} must not set RLIMIT_AS; it is not a memory budget"
             );
         }
     }

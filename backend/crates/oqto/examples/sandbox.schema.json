@@ -425,7 +425,7 @@
           "minimum": 0.0
         },
         "max_memory_bytes": {
-          "description": "Maximum address space, in bytes (`RLIMIT_AS`).",
+          "description": "Maximum address space, in bytes (`RLIMIT_AS`).\n\nThis is reserved virtual address space, not resident memory, so it is not a memory budget: JIT and WebAssembly engines reserve far more than they commit and will fail allocation long before the process uses the stated amount. Left unset in the shipped profiles for that reason.",
           "type": [
             "integer",
             "null"
