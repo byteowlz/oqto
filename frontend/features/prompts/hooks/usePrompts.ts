@@ -271,16 +271,17 @@ export function usePrompts(options: UsePromptsOptions = {}): UsePromptsReturn {
 // Helper to get human-readable prompt info
 // ============================================================================
 
-export function getPromptTitle(prompt: Prompt): string {
+/// Returns an i18n key; callers translate it.
+export function getPromptTitleKey(prompt: Prompt): string {
 	switch (prompt.source) {
 		case "octo_guard":
-			return "File Access Request";
+			return "permissions.titleFileAccess";
 		case "octo_ssh_proxy":
-			return "SSH Access Request";
+			return "permissions.titleSshAccess";
 		case "network":
-			return "Network Access Request";
+			return "permissions.titleNetworkAccess";
 		default:
-			return "Access Request";
+			return "permissions.titleGenericAccess";
 	}
 }
 

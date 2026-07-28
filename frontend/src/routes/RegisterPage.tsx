@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
@@ -27,41 +28,28 @@ import { authKeys } from "@/hooks/use-auth";
 import { register } from "@/lib/control-plane-client";
 import { useQueryClient } from "@tanstack/react-query";
 
-const registerSchema = z
-	.object({
-		username: z
-			.string()
-			.min(3, "Username must be at least 3 characters")
-			.max(50, "Username must be at most 50 characters")
-			.regex(
-				/^[a-zA-Z0-9_-]+$/,
-				"Username can only contain letters, numbers, underscores, and hyphens",
-			),
-		email: z.string().email("Please enter a valid email address"),
-		password: z.string().min(6, "Password must be at least 6 characters"),
-		confirmPassword: z.string(),
-		inviteCode: z.string().min(1, "Invite code is required"),
-		displayName: z.string().optional(),
-	})
-	.refine((data) => data.password === data.confirmPassword, {
-		message: "Passwords do not match",
-		path: ["confirmPassword"],
-	});
-
-type RegisterFormData = z.infer<typeof registerSchema>;
+type RegisterFormData = {
+	username: string;
+	email: string;
+	password: string;
+	confirmPassword: string;
+	inviteCode: string;
+	displayName?: string;
+};
 
 // Provisioning steps shown to the user during account creation.
 // These are timed estimates -- the actual backend work is a single API call.
 const PROVISIONING_STEPS = [
-	{ label: "Creating user account...", delay: 0 },
-	{ label: "Setting up workspace environment...", delay: 2000 },
-	{ label: "Configuring AI services...", delay: 5000 },
-	{ label: "Starting background services...", delay: 9000 },
-	{ label: "Verifying service health...", delay: 14000 },
-	{ label: "Almost there...", delay: 22000 },
+	{ key: "auth.provisioningCreatingAccount", delay: 0 },
+	{ key: "auth.provisioningWorkspace", delay: 2000 },
+	{ key: "auth.provisioningServices", delay: 5000 },
+	{ key: "auth.provisioningBackground", delay: 9000 },
+	{ key: "auth.provisioningHealth", delay: 14000 },
+	{ key: "auth.provisioningAlmost", delay: 22000 },
 ];
 
 function ProvisioningStatus({ startTime }: { startTime: number }) {
+	const { t } = useTranslation();
 	const [currentStep, setCurrentStep] = useState(0);
 
 	useEffect(() => {
@@ -82,7 +70,7 @@ function ProvisioningStatus({ startTime }: { startTime: number }) {
 		<div className="space-y-3 py-4">
 			{PROVISIONING_STEPS.map((step, idx) => (
 				<div
-					key={step.label}
+					key={step.key}
 					className="flex items-center gap-3 text-sm transition-opacity duration-300"
 					style={{ opacity: idx <= currentStep ? 1 : 0.3 }}
 				>
@@ -122,7 +110,7 @@ function ProvisioningStatus({ startTime }: { startTime: number }) {
 									: "text-muted-foreground/50"
 						}
 					>
-						{step.label}
+						{t(step.key)}
 					</span>
 				</div>
 			))}
@@ -132,7 +120,29 @@ function ProvisioningStatus({ startTime }: { startTime: number }) {
 
 export function RegisterPage() {
 	const navigate = useNavigate();
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const registerSchema = useMemo(
+		() =>
+			z
+				.object({
+					username: z
+						.string()
+						.min(3, t("auth.usernameMin"))
+						.max(50, t("auth.usernameMax"))
+						.regex(/^[a-zA-Z0-9_-]+$/, t("auth.usernamePattern")),
+					email: z.string().email(t("auth.emailInvalid")),
+					password: z.string().min(6, t("auth.passwordMin")),
+					confirmPassword: z.string(),
+					inviteCode: z.string().min(1, t("auth.inviteCodeRequired")),
+					displayName: z.string().optional(),
+				})
+				.refine((data) => data.password === data.confirmPassword, {
+					message: t("auth.passwordsMismatch"),
+					path: ["confirmPassword"],
+				}),
+		[t],
+	);
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isProvisioning, setIsProvisioning] = useState(false);
@@ -174,16 +184,13 @@ export function RegisterPage() {
 			navigate("/", { replace: true });
 		} catch (err) {
 			const message =
-				err instanceof Error ? err.message : "Registration failed";
+				err instanceof Error ? err.message : t("auth.registrationFailed");
 			// Strip internal error details -- show a user-friendly message
 			if (
 				message.includes("Internal server error") ||
 				message.includes("Failed to create user account")
 			) {
-				setError(
-					"Account setup is taking longer than expected. Please wait a moment and try again. " +
-						"If this keeps happening, contact an administrator.",
-				);
+				setError(t("auth.accountSetupSlow"));
 			} else {
 				setError(message);
 			}
@@ -196,16 +203,14 @@ export function RegisterPage() {
 	return (
 		<Card>
 			<CardHeader className="space-y-1">
-				<CardTitle className="text-2xl">Create an account</CardTitle>
-				<CardDescription>
-					Enter your details and invite code to get started
-				</CardDescription>
+				<CardTitle className="text-2xl">{t("auth.createAccount")}</CardTitle>
+				<CardDescription>{t("auth.createAccountDescription")}</CardDescription>
 			</CardHeader>
 			<CardContent>
 				{isProvisioning ? (
 					<div className="min-h-[200px]">
 						<p className="text-sm text-muted-foreground mb-2">
-							Setting up your workspace. This can take up to 30 seconds...
+							{t("auth.provisioningNotice")}
 						</p>
 						<ProvisioningStatus startTime={provisioningStartRef.current} />
 					</div>
@@ -223,10 +228,10 @@ export function RegisterPage() {
 								name="inviteCode"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Invite Code</FormLabel>
+										<FormLabel>{t("auth.inviteCode")}</FormLabel>
 										<FormControl>
 											<Input
-												placeholder="Enter your invite code"
+												placeholder={t("auth.inviteCodePlaceholder")}
 												disabled={isLoading}
 												{...field}
 											/>
@@ -241,10 +246,10 @@ export function RegisterPage() {
 								name="username"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Username</FormLabel>
+										<FormLabel>{t("auth.username")}</FormLabel>
 										<FormControl>
 											<Input
-												placeholder="Choose a username"
+												placeholder={t("auth.usernameChoosePlaceholder")}
 												autoComplete="username"
 												disabled={isLoading}
 												{...field}
@@ -260,11 +265,11 @@ export function RegisterPage() {
 								name="email"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Email</FormLabel>
+										<FormLabel>{t("auth.email")}</FormLabel>
 										<FormControl>
 											<Input
 												type="email"
-												placeholder="Enter your email"
+												placeholder={t("auth.emailPlaceholder")}
 												autoComplete="email"
 												disabled={isLoading}
 												{...field}
@@ -280,10 +285,10 @@ export function RegisterPage() {
 								name="displayName"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Display Name (optional)</FormLabel>
+										<FormLabel>{t("auth.displayName")}</FormLabel>
 										<FormControl>
 											<Input
-												placeholder="How should we call you?"
+												placeholder={t("auth.displayNamePlaceholder")}
 												autoComplete="name"
 												disabled={isLoading}
 												{...field}
@@ -299,11 +304,11 @@ export function RegisterPage() {
 								name="password"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Password</FormLabel>
+										<FormLabel>{t("auth.password")}</FormLabel>
 										<FormControl>
 											<Input
 												type="password"
-												placeholder="Create a password"
+												placeholder={t("auth.passwordCreatePlaceholder")}
 												autoComplete="new-password"
 												disabled={isLoading}
 												{...field}
@@ -319,11 +324,11 @@ export function RegisterPage() {
 								name="confirmPassword"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Confirm Password</FormLabel>
+										<FormLabel>{t("auth.confirmPassword")}</FormLabel>
 										<FormControl>
 											<Input
 												type="password"
-												placeholder="Confirm your password"
+												placeholder={t("auth.confirmPasswordPlaceholder")}
 												autoComplete="new-password"
 												disabled={isLoading}
 												{...field}
@@ -335,7 +340,9 @@ export function RegisterPage() {
 							/>
 
 							<Button type="submit" className="w-full" disabled={isLoading}>
-								{isLoading ? "Creating account..." : "Create account"}
+								{isLoading
+									? t("auth.creatingAccount")
+									: t("auth.createAccountSubmit")}
 							</Button>
 						</form>
 					</Form>
@@ -343,9 +350,9 @@ export function RegisterPage() {
 			</CardContent>
 			<CardFooter className="flex flex-col space-y-2">
 				<div className="text-sm text-muted-foreground">
-					Already have an account?{" "}
+					{t("auth.haveAccount")}{" "}
 					<Link to="/login" className="text-primary hover:underline">
-						Sign in
+						{t("auth.signIn")}
 					</Link>
 				</div>
 			</CardFooter>

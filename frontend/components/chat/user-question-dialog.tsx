@@ -21,6 +21,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { HelpCircle, MessageSquare } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface UserQuestionDialogProps {
 	request: QuestionRequest | null;
@@ -67,6 +68,7 @@ function QuestionItem({
 	answer: string[];
 	onAnswerChange: (answer: string[]) => void;
 }) {
+	const { t } = useTranslation();
 	const [customInput, setCustomInput] = useState("");
 	const isMultiple = question.multiple ?? false;
 
@@ -181,7 +183,7 @@ function QuestionItem({
 				<div className="flex items-center gap-2 pt-1">
 					<Input
 						type="text"
-						placeholder="Other (type custom answer)..."
+						placeholder={t("permissions.otherPlaceholder")}
 						value={customInput}
 						onChange={(e) => setCustomInput(e.target.value)}
 						onKeyDown={(e) => {
@@ -240,6 +242,7 @@ export function UserQuestionDialog({
 	onReject,
 	onDismiss,
 }: UserQuestionDialogProps) {
+	const { t } = useTranslation();
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [answers, setAnswers] = useState<QuestionAnswer[]>([]);
 
@@ -308,16 +311,18 @@ export function UserQuestionDialog({
 						<div>
 							<DialogTitle className="text-base">
 								{hasMultipleQuestions
-									? `${request.questions.length} Questions`
-									: "Question"}
+									? t("permissions.questions", {
+											count: request.questions.length,
+										})
+									: t("permissions.question")}
 							</DialogTitle>
 							<p className="text-xs text-muted-foreground mt-0.5">
-								The agent needs your input to continue
+								{t("permissions.agentNeedsInput")}
 							</p>
 						</div>
 					</div>
 					<DialogDescription className="sr-only">
-						Answer the following questions to help the agent proceed
+						{t("permissions.answerToProceed")}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -344,7 +349,7 @@ export function UserQuestionDialog({
 						disabled={isSubmitting}
 						className="sm:mr-auto"
 					>
-						{isSubmitting ? "..." : "Skip"}
+						{isSubmitting ? "..." : t("permissions.skip")}
 					</Button>
 					<Button
 						type="button"
@@ -352,7 +357,9 @@ export function UserQuestionDialog({
 						onClick={handleSubmit}
 						disabled={isSubmitting || !allQuestionsAnswered}
 					>
-						{isSubmitting ? "Submitting..." : "Submit Answers"}
+						{isSubmitting
+							? t("permissions.submitting")
+							: t("permissions.submitAnswers")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -368,6 +375,7 @@ export function UserQuestionBanner({
 	count: number;
 	onClick: () => void;
 }) {
+	const { t } = useTranslation();
 	if (count === 0) return null;
 
 	return (
@@ -379,10 +387,10 @@ export function UserQuestionBanner({
 			<div className="flex items-center gap-2">
 				<MessageSquare className="w-4 h-4" />
 				<span className="text-sm font-medium">
-					{count} question{count !== 1 ? "s" : ""} pending
+					{t("permissions.questionsPending", { count })}
 				</span>
 			</div>
-			<span className="text-xs">Click to answer</span>
+			<span className="text-xs">{t("permissions.clickToAnswer")}</span>
 		</button>
 	);
 }

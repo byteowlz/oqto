@@ -4,7 +4,7 @@
  */
 export {
 	usePrompts,
-	getPromptTitle,
+	getPromptTitleKey,
 	getPromptIcon,
 	getRemainingTime,
 	type PromptSource,

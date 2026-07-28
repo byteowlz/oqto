@@ -15,15 +15,23 @@ export const i18n = i18next;
 export function initI18n() {
 	if (i18n.isInitialized) return i18n;
 
+	// Resolve here, not only in UIProvider: the auth routes render outside the
+	// provider and would otherwise always fall back to the default locale.
+	const initialLocale = resolveStoredLocale();
+
 	i18n.use(initReactI18next).init({
 		resources: {
 			en: { translation: enMessages },
 			de: { translation: deMessages },
 		},
-		lng: defaultLocale,
+		lng: initialLocale,
 		fallbackLng: "en",
 		interpolation: { escapeValue: false },
 	});
+
+	if (typeof document !== "undefined") {
+		document.documentElement.lang = initialLocale;
+	}
 
 	return i18n;
 }

@@ -512,7 +512,7 @@ export const MobileMenu = memo(function MobileMenu({
 						size="icon"
 						rounded="full"
 						onClick={onToggleLocale}
-						aria-label="Sprache wechseln"
+						aria-label={t("command.changeLanguage")}
 						className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent"
 					>
 						<Globe2 className="w-5 h-5" />

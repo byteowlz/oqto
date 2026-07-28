@@ -1,7 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
@@ -54,16 +55,28 @@ function detectBackendUrl(): string {
 	return "";
 }
 
-const loginSchema = z.object({
-	username: z.string().min(1, "Username is required"),
-	password: z.string().min(1, "Password is required"),
-	backendUrl: z.string().trim().url("Enter a valid URL").or(z.literal("")),
-});
-
-type LoginFormData = z.infer<typeof loginSchema>;
+type LoginFormData = {
+	username: string;
+	password: string;
+	backendUrl: string;
+};
 
 export function LoginPage() {
 	const navigate = useNavigate();
+	const { t } = useTranslation();
+	const loginSchema = useMemo(
+		() =>
+			z.object({
+				username: z.string().min(1, t("auth.usernameRequired")),
+				password: z.string().min(1, t("auth.passwordRequired")),
+				backendUrl: z
+					.string()
+					.trim()
+					.url(t("auth.invalidUrl"))
+					.or(z.literal("")),
+			}),
+		[t],
+	);
 	const authInputClass =
 		"border-sidebar-border bg-sidebar-accent/50 shadow-none focus-visible:ring-0 focus-visible:border-primary/50";
 	const queryClient = useQueryClient();
@@ -103,7 +116,7 @@ export function LoginPage() {
 
 			navigate(redirectTo, { replace: true });
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : "Login failed";
+			const msg = err instanceof Error ? err.message : t("auth.loginFailed");
 			setError(msg);
 		} finally {
 			setIsLoading(false);
@@ -113,10 +126,8 @@ export function LoginPage() {
 	return (
 		<Card>
 			<CardHeader className="space-y-1">
-				<CardTitle className="text-2xl">Sign in</CardTitle>
-				<CardDescription>
-					Enter your credentials to access your workspace
-				</CardDescription>
+				<CardTitle className="text-2xl">{t("auth.signIn")}</CardTitle>
+				<CardDescription>{t("auth.signInDescription")}</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<Form {...form}>
@@ -132,10 +143,10 @@ export function LoginPage() {
 							name="username"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel>Username</FormLabel>
+									<FormLabel>{t("auth.username")}</FormLabel>
 									<FormControl>
 										<Input
-											placeholder="Enter your username"
+											placeholder={t("auth.usernamePlaceholder")}
 											autoComplete="username"
 											disabled={isLoading}
 											className={authInputClass}
@@ -152,11 +163,11 @@ export function LoginPage() {
 							name="password"
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel>Password</FormLabel>
+									<FormLabel>{t("auth.password")}</FormLabel>
 									<FormControl>
 										<Input
 											type="password"
-											placeholder="Enter your password"
+											placeholder={t("auth.passwordPlaceholder")}
 											autoComplete="current-password"
 											disabled={isLoading}
 											className={authInputClass}
@@ -179,7 +190,7 @@ export function LoginPage() {
 								) : (
 									<ChevronRight className="h-3 w-3" />
 								)}
-								Advanced
+								{t("auth.advanced")}
 							</button>
 							{showAdvanced && (
 								<div className="mt-2">
@@ -188,7 +199,7 @@ export function LoginPage() {
 										name="backendUrl"
 										render={({ field }) => (
 											<FormItem>
-												<FormLabel>Backend URL</FormLabel>
+												<FormLabel>{t("auth.backendUrl")}</FormLabel>
 												<FormControl>
 													<Input
 														placeholder="https://your-server.com/api"
@@ -207,16 +218,16 @@ export function LoginPage() {
 						</div>
 
 						<Button type="submit" className="w-full" disabled={isLoading}>
-							{isLoading ? "Signing in..." : "Sign in"}
+							{isLoading ? t("auth.signingIn") : t("auth.signIn")}
 						</Button>
 					</form>
 				</Form>
 			</CardContent>
 			<CardFooter className="flex flex-col space-y-2">
 				<div className="text-sm text-muted-foreground">
-					Don&apos;t have an account?{" "}
+					{t("auth.noAccount")}{" "}
 					<Link to="/register" className="text-primary hover:underline">
-						Register
+						{t("auth.register")}
 					</Link>
 				</div>
 			</CardFooter>

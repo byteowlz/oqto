@@ -8,6 +8,7 @@ import {
 	SunMedium,
 } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface SidebarNavProps {
 	activeAppId: string;
@@ -41,6 +42,7 @@ export const SidebarNav = memo(function SidebarNav({
 	onToggleTheme,
 	onLogout,
 }: SidebarNavProps) {
+	const { t } = useTranslation();
 	return (
 		<div
 			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-5 pb-4"} mt-auto pt-3`}
@@ -127,7 +129,7 @@ export const SidebarNav = memo(function SidebarNav({
 					size="icon"
 					rounded="full"
 					onClick={onToggleLocale}
-					aria-label="Sprache wechseln"
+					aria-label={t("command.changeLanguage")}
 					className="w-9 h-9 flex items-center justify-center transition-colors"
 					style={{
 						backgroundColor: navIdle,

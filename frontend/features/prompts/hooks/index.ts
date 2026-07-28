@@ -8,7 +8,7 @@
 
 export {
 	usePrompts,
-	getPromptTitle,
+	getPromptTitleKey,
 	getPromptIcon,
 	getRemainingTime,
 } from "./usePrompts";

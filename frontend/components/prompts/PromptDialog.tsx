@@ -9,7 +9,7 @@ import {
 	type Prompt,
 	type PromptAction,
 	getPromptIcon,
-	getPromptTitle,
+	getPromptTitleKey,
 	getRemainingTime,
 	usePrompts,
 } from "@/hooks/use-prompts";
@@ -25,6 +25,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 import {
 	Dialog,
@@ -45,6 +46,7 @@ interface PromptCardProps {
 }
 
 function PromptCard({ prompt, onRespond }: PromptCardProps) {
+	const { t } = useTranslation();
 	const [remaining, setRemaining] = useState(getRemainingTime(prompt));
 
 	// Update countdown
@@ -56,7 +58,7 @@ function PromptCard({ prompt, onRespond }: PromptCardProps) {
 	}, [prompt]);
 
 	const icon = getPromptIcon(prompt);
-	const title = getPromptTitle(prompt);
+	const title = t(getPromptTitleKey(prompt));
 
 	return (
 		<motion.div
@@ -99,7 +101,7 @@ function PromptCard({ prompt, onRespond }: PromptCardProps) {
 					onClick={() => onRespond("deny")}
 				>
 					<X className="w-4 h-4 mr-1" />
-					Deny
+					{t("permissions.deny")}
 				</Button>
 				<Button
 					variant="secondary"
@@ -108,7 +110,7 @@ function PromptCard({ prompt, onRespond }: PromptCardProps) {
 					onClick={() => onRespond("allow_once")}
 				>
 					<Check className="w-4 h-4 mr-1" />
-					Once
+					{t("permissions.once")}
 				</Button>
 				<Button
 					variant="default"
@@ -117,7 +119,7 @@ function PromptCard({ prompt, onRespond }: PromptCardProps) {
 					onClick={() => onRespond("allow_session")}
 				>
 					<Check className="w-4 h-4 mr-1" />
-					Session
+					{t("permissions.session")}
 				</Button>
 			</div>
 		</motion.div>
@@ -172,6 +174,7 @@ export function PromptDetailDialog({
 	onRespond,
 	onClose,
 }: PromptDialogProps) {
+	const { t } = useTranslation();
 	const [remaining, setRemaining] = useState(
 		prompt ? getRemainingTime(prompt) : 0,
 	);
@@ -203,9 +206,9 @@ export function PromptDetailDialog({
 							<Icon className="w-6 h-6 text-amber-500" />
 						</div>
 						<div>
-							<DialogTitle>{getPromptTitle(prompt)}</DialogTitle>
+							<DialogTitle>{t(getPromptTitleKey(prompt))}</DialogTitle>
 							<DialogDescription>
-								An agent is requesting access to a protected resource
+								{t("permissions.accessRequestDescription")}
 							</DialogDescription>
 						</div>
 					</div>
@@ -220,7 +223,7 @@ export function PromptDetailDialog({
 					{/* Resource */}
 					<div className="space-y-2">
 						<div className="text-xs font-medium text-muted-foreground uppercase">
-							Resource
+							{t("permissions.resource")}
 						</div>
 						<div className="bg-muted rounded-md px-3 py-2">
 							<code className="text-sm break-all">{prompt.resource}</code>
@@ -231,7 +234,7 @@ export function PromptDetailDialog({
 					{prompt.context && (
 						<div className="space-y-2">
 							<div className="text-xs font-medium text-muted-foreground uppercase">
-								Details
+								{t("permissions.details")}
 							</div>
 							<pre className="bg-muted rounded-md px-3 py-2 text-xs overflow-auto max-h-32">
 								{JSON.stringify(prompt.context, null, 2)}
@@ -243,7 +246,8 @@ export function PromptDetailDialog({
 					<div className="flex items-center gap-2 text-sm text-muted-foreground">
 						<Clock className="w-4 h-4" />
 						<span>
-							Auto-deny in <strong>{remaining}</strong> seconds
+							{t("permissions.autoDenyPrefix")} <strong>{remaining}</strong>{" "}
+							{t("permissions.autoDenySuffix")}
 						</span>
 					</div>
 
@@ -251,8 +255,7 @@ export function PromptDetailDialog({
 					<div className="flex items-start gap-2 p-3 bg-amber-500/10 rounded-md">
 						<AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
 						<p className="text-xs text-amber-700 dark:text-amber-300">
-							Only allow access if you trust the agent and understand why it
-							needs this resource.
+							{t("permissions.trustWarning")}
 						</p>
 					</div>
 				</div>
@@ -264,7 +267,7 @@ export function PromptDetailDialog({
 						className="w-full sm:w-auto"
 					>
 						<X className="w-4 h-4 mr-2" />
-						Deny
+						{t("permissions.deny")}
 					</Button>
 					<Button
 						variant="secondary"
@@ -272,7 +275,7 @@ export function PromptDetailDialog({
 						className="w-full sm:w-auto"
 					>
 						<Check className="w-4 h-4 mr-2" />
-						Allow Once
+						{t("permissions.allowOnce")}
 					</Button>
 					<Button
 						variant="default"
@@ -280,7 +283,7 @@ export function PromptDetailDialog({
 						className="w-full sm:w-auto"
 					>
 						<Check className="w-4 h-4 mr-2" />
-						Allow for Session
+						{t("permissions.allowForSession")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
