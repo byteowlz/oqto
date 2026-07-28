@@ -91,6 +91,7 @@ import {
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 
+import { AgentErrorBody } from "@/features/chat/components/AgentErrorBody";
 import { getWsManager } from "@/lib/ws-manager";
 import {
 	ArrowDown,
@@ -125,7 +126,6 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { AgentErrorBody } from "@/features/chat/components/AgentErrorBody";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
