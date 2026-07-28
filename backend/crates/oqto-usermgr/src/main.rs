@@ -106,6 +106,19 @@ fn main() {
 
     eprintln!("oqto-usermgr: starting (pid {})", std::process::id());
 
+    // systemd re-applies RuntimeDirectory ownership to the service user on every
+    // start, which silently strips per-user runner socket directories back to
+    // root:root. Repair before serving, so a restart of this daemon can never
+    // leave runners unable to bind on their next start.
+    match repair_all_socket_dirs() {
+        Ok(fixed) if !fixed.is_empty() => eprintln!(
+            "oqto-usermgr: restored socket dir ownership for {} user(s) at startup",
+            fixed.len()
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("oqto-usermgr: warning: socket dir repair failed: {e}"),
+    }
+
     // Remove stale socket
     let _ = std::fs::remove_file(SOCKET_PATH);
 
@@ -1481,20 +1494,41 @@ fn cmd_fix_socket_dir(args: &serde_json::Value) -> Response {
 /// Verify and fix all runner socket directories.
 /// Called by oqto backend on startup to prevent the recurring ownership regression.
 fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
-    // 1. Fix base directory chain
-    if let Err(e) = fix_socket_base_dirs() {
-        return Response::error(format!("fixing base dirs: {e}"));
+    match repair_all_socket_dirs() {
+        Err(e) => Response::error(e),
+        Ok(fixed) if fixed.is_empty() => Response::success(),
+        Ok(fixed) => {
+            eprintln!(
+                "oqto-usermgr: fixed socket dir ownership for {} user(s): {}",
+                fixed.len(),
+                fixed.join(", ")
+            );
+            Response::success_with_data(serde_json::json!({
+                "fixed": fixed,
+                "count": fixed.len(),
+            }))
+        }
     }
+}
+
+/// Restore `<user>:oqto` 2770 on every per-user runner socket directory.
+///
+/// Ownership here is lost by more than one route -- notably a restart of this
+/// service, because the unit declares `RuntimeDirectory=oqto` and systemd
+/// re-applies ownership of that tree to the service user. The loss is silent:
+/// a running runner keeps its bound socket and looks healthy, and only the next
+/// runner restart fails. So this is repaired unconditionally at startup rather
+/// than left to whoever notices.
+fn repair_all_socket_dirs() -> Result<Vec<String>, String> {
+    // 1. Fix base directory chain
+    fix_socket_base_dirs().map_err(|e| format!("fixing base dirs: {e}"))?;
 
     let base = "/run/oqto/runner-sockets";
     let group = "oqto";
     let mut fixed = Vec::new();
 
     // 2. Fix all per-user subdirectories
-    let entries = match std::fs::read_dir(base) {
-        Ok(e) => e,
-        Err(e) => return Response::error(format!("reading {base}: {e}")),
-    };
+    let entries = std::fs::read_dir(base).map_err(|e| format!("reading {base}: {e}"))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1565,19 +1599,7 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
         }
     }
 
-    if fixed.is_empty() {
-        Response::success()
-    } else {
-        eprintln!(
-            "oqto-usermgr: fixed socket dir ownership for {} user(s): {}",
-            fixed.len(),
-            fixed.join(", ")
-        );
-        Response::success_with_data(serde_json::json!({
-            "fixed": fixed,
-            "count": fixed.len(),
-        }))
-    }
+    Ok(fixed)
 }
 
 /// Ensure /run/oqto/ and /run/oqto/runner-sockets/ have correct ownership.
