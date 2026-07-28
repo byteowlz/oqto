@@ -483,6 +483,14 @@ fn cmd_set_own_primary_group(args: &serde_json::Value) -> Response {
         return Response::error(e);
     }
 
+    // The runner reaches its socket directory by traversing the shared parent,
+    // which today is only possible for members of the service group. Widen it
+    // to traversal-for-all *before* dropping the membership, or the user's
+    // runner cannot create its socket.
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base socket dirs: {e}"));
+    }
+
     if let Err(e) = run_cmd("/usr/sbin/usermod", &["-g", username, username]) {
         return Response::error(format!("usermod -g: {e}"));
     }
@@ -912,18 +920,12 @@ WantedBy=default.target
     );
 
     // 4. Create per-user socket directory
-    //    Also ensure the parent /run/oqto/runner-sockets/ has correct ownership.
-    //    mkdir -p creates it as root:root by default, but we need root:oqto
-    //    so platform users (in group oqto) can traverse into their subdirectory.
-    let runner_sockets_base = "/run/oqto/runner-sockets";
-    if let Err(e) = run_cmd("/bin/mkdir", &["-p", runner_sockets_base]) {
-        return Response::error(format!("mkdir {runner_sockets_base}: {e}"));
-    }
-    if let Err(e) = run_cmd("/usr/bin/chown", &["root:oqto", runner_sockets_base]) {
-        return Response::error(format!("chown {runner_sockets_base}: {e}"));
-    }
-    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", runner_sockets_base]) {
-        return Response::error(format!("chmod {runner_sockets_base}: {e}"));
+    //    Also ensure the parent /run/oqto/runner-sockets/ is traversable, so a
+    //    platform user can reach their own subdirectory without being in the
+    //    service group. It stays unlistable, and the per-user subdirectory
+    //    below is the boundary.
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base socket dirs: {e}"));
     }
 
     let socket_dir = format!("/run/oqto/runner-sockets/{username}");
@@ -1589,11 +1591,17 @@ fn fix_socket_base_dirs() -> Result<(), String> {
     run_cmd("/usr/bin/chmod", &["0775", run_oqto]).map_err(|e| format!("chmod {run_oqto}: {e}"))?;
 
     // /run/oqto/runner-sockets/
+    //
+    // Traversable by anyone, listable by no one: a platform user must reach
+    // their own subdirectory, and that subdirectory is the actual boundary
+    // (owned by them, group `oqto` for the backend, nothing for others).
+    // Granting traversal via group membership instead would put every tenant
+    // in the service group, which is what oqto-tnd1 fixed.
     let sockets_base = "/run/oqto/runner-sockets";
     let _ = run_cmd("/bin/mkdir", &["-p", sockets_base]);
     run_cmd("/usr/bin/chown", &["root:oqto", sockets_base])
         .map_err(|e| format!("chown {sockets_base}: {e}"))?;
-    run_cmd("/usr/bin/chmod", &["2770", sockets_base])
+    run_cmd("/usr/bin/chmod", &["2771", sockets_base])
         .map_err(|e| format!("chmod {sockets_base}: {e}"))?;
 
     Ok(())

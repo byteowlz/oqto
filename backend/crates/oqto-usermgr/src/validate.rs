@@ -37,7 +37,7 @@ pub const ALLOWED_SHELLS: &[&str] = &[
 ];
 
 /// Allowed chmod modes.
-pub const ALLOWED_MODES: &[&str] = &["700", "750", "755", "770", "2750", "2770"];
+pub const ALLOWED_MODES: &[&str] = &["700", "750", "755", "770", "771", "2750", "2770", "2771"];
 
 /// Validate a username for use as a Linux user managed by oqto.
 ///
