@@ -442,6 +442,19 @@ enum UserCommand {
         #[arg(long)]
         user: Option<String>,
     },
+    /// Move platform users off the shared `oqto` service group onto their own.
+    ///
+    /// `oqto` carries the backend's access to every managed home and workspace,
+    /// so it must contain the service and nothing else. Reports by default;
+    /// pass --apply to change anything.
+    FixServiceGroup {
+        /// Optional Linux username to scope the migration.
+        #[arg(long)]
+        user: Option<String>,
+        /// Apply the change instead of reporting what would change.
+        #[arg(long)]
+        apply: bool,
+    },
     /// Audit and remediate identity contract consistency for multi-user rollout.
     DoctorIdentity {
         /// Optional username or user ID to scope the check.
@@ -2623,6 +2636,10 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             doctor_identity(user.as_deref(), apply, json).await?;
         }
 
+        UserCommand::FixServiceGroup { user, apply } => {
+            fix_service_group(user.as_deref(), apply, json)?;
+        }
+
         UserCommand::Delete { user, force } => {
             // Resolve user to get details (try API first, fall back to system lookup)
             let user_id = user.clone();
@@ -4021,6 +4038,116 @@ async fn handle_doctor(
     }
 
     doctor_identity(target_user, apply, json).await
+}
+
+/// Move platform users off the shared service group onto their own.
+///
+/// Enumerates from the system rather than the users table on purpose: shared
+/// workspaces have Linux users but no row there, and they need migrating too.
+fn fix_service_group(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {
+    use std::process::Command;
+
+    let service_gid =
+        group_gid("oqto")?.ok_or_else(|| anyhow::anyhow!("service group 'oqto' does not exist"))?;
+
+    let passwd = Command::new("/usr/bin/getent")
+        .arg("passwd")
+        .output()
+        .context("listing system users")?;
+    let passwd = String::from_utf8_lossy(&passwd.stdout);
+
+    let mut pending: Vec<String> = Vec::new();
+    for line in passwd.lines() {
+        let mut fields = line.split(':');
+        let (Some(name), Some(_), Some(uid), Some(gid)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if !name.starts_with("oqto_") {
+            continue;
+        }
+        let (Ok(uid), Ok(gid)) = (uid.parse::<u32>(), gid.parse::<u32>()) else {
+            continue;
+        };
+        if !(2000..=60000).contains(&uid) || gid != service_gid {
+            continue;
+        }
+        if let Some(target) = target_user
+            && target != name
+        {
+            continue;
+        }
+        pending.push(name.to_string());
+    }
+
+    if !apply {
+        if json {
+            println!("{}", serde_json::json!({ "pending": pending }));
+        } else if pending.is_empty() {
+            println!("No users are on the shared service group.");
+        } else {
+            println!(
+                "{} user(s) would move onto their own primary group:",
+                pending.len()
+            );
+            for name in &pending {
+                println!("  {name}");
+            }
+            println!("\nRe-run with --apply to make the change.");
+        }
+        return Ok(());
+    }
+
+    let mut migrated = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for name in &pending {
+        match oqto_host::linux_users::usermgr_request(
+            "set-own-primary-group",
+            serde_json::json!({ "username": name }),
+        ) {
+            Ok(()) => {
+                migrated += 1;
+                if !json {
+                    println!("  {name}: ok");
+                }
+            }
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "migrated": migrated, "errors": errors })
+        );
+    } else {
+        println!("Migrated {migrated} user(s).");
+        for e in &errors {
+            eprintln!("  error: {e}");
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("{} user(s) failed to migrate", errors.len())
+    }
+}
+
+/// Look up a group's GID, or `None` when it does not exist.
+fn group_gid(group: &str) -> Result<Option<u32>> {
+    let out = std::process::Command::new("/usr/bin/getent")
+        .args(["group", group])
+        .output()
+        .with_context(|| format!("looking up group '{group}'"))?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .split(':')
+        .nth(2)
+        .and_then(|gid| gid.trim().parse().ok()))
 }
 
 async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {

@@ -210,6 +210,7 @@ fn dispatch(req: &Request) -> Response {
     match req.cmd.as_str() {
         "create-group" => cmd_create_group(&req.args),
         "create-user" => cmd_create_user(&req.args),
+        "set-own-primary-group" => cmd_set_own_primary_group(&req.args),
         "delete-user" => cmd_delete_user(&req.args),
         "mkdir" => cmd_mkdir(&req.args),
         "chown" => cmd_chown(&req.args),
@@ -386,13 +387,27 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
     let uid_str = uid.to_string();
     let home_flag = if create_home { "-m" } else { "-M" };
 
+    // The user's primary group is their own, never the service group: `oqto`
+    // carries the backend's access to every user's workspace, so a tenant in it
+    // would hold that access over every other tenant. Group *ownership* below
+    // stays `oqto` — the permissions were always right, only the membership was
+    // wrong.
+    if let Err(e) = ensure_own_group(username, uid) {
+        return Response::error(e);
+    }
+
     match run_cmd(
         "/usr/sbin/useradd",
         &[
-            "-u", &uid_str, "-g", group, "-s", shell, home_flag, "-c", gecos, username,
+            "-u", &uid_str, "-g", username, "-s", shell, home_flag, "-c", gecos, username,
         ],
     ) {
         Ok(_) => {
+            let home = format!("/home/{username}");
+            if create_home && let Err(e) = claim_home_for_service_group(&home, username, group) {
+                return Response::error(e);
+            }
+
             // Create workspace directory inside the user's home with group-write
             // so the oqto backend (same group) can manage workspaces.
             let workspace = format!("/home/{username}/oqto");
@@ -404,13 +419,100 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
             let _ = run_cmd("/usr/bin/chmod", &["2770", &workspace]);
 
             // Write shell dotfiles (zsh + starship)
-            let home = format!("/home/{username}");
             write_user_dotfiles(&home, username, group);
 
             Response::success()
         }
         Err(e) => Response::error(e),
     }
+}
+
+/// Create the user's own group, gid mirroring their uid.
+fn ensure_own_group(username: &str, uid: u32) -> Result<(), String> {
+    if let Ok(status) = Command::new("/usr/bin/getent")
+        .args(["group", username])
+        .status()
+        && status.success()
+    {
+        return Ok(());
+    }
+    run_cmd("/usr/sbin/groupadd", &["-g", &uid.to_string(), username])
+        .map(|_| ())
+        .map_err(|e| format!("groupadd {username}: {e}"))
+}
+
+/// Group-own the home by the service group and mark it setgid.
+///
+/// The backend reads a handful of files under the home (the Pi model config and
+/// the eavs key), and setgid keeps them group-owned by `oqto` as they are
+/// rewritten. Without it those files would inherit the user's own group and the
+/// backend would silently lose access on the next regeneration.
+fn claim_home_for_service_group(home: &str, username: &str, group: &str) -> Result<(), String> {
+    run_cmd("/usr/bin/chown", &[&format!("{username}:{group}"), home])
+        .map_err(|e| format!("chown {home}: {e}"))?;
+    run_cmd("/usr/bin/chmod", &["2750", home]).map_err(|e| format!("chmod {home}: {e}"))?;
+    Ok(())
+}
+
+/// Move an existing platform user off the shared service group onto their own.
+///
+/// Idempotent: re-running on a migrated user is a no-op. The home stays
+/// group-owned by `oqto` and gains setgid so the backend keeps the access it
+/// has today; only the user's membership of the service group goes away.
+fn cmd_set_own_primary_group(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+    // The caller does not get to name the target group: it is always the user's
+    // own. Passing it explicitly keeps the check visible at the call site.
+    if let Err(e) = validate_primary_group(username, username) {
+        return Response::error(e);
+    }
+
+    let uid = match get_user_uid(username) {
+        Some(uid) => uid,
+        None => return Response::error(format!("user '{username}' does not exist")),
+    };
+
+    if let Err(e) = ensure_own_group(username, uid) {
+        return Response::error(e);
+    }
+
+    if let Err(e) = run_cmd("/usr/sbin/usermod", &["-g", username, username]) {
+        return Response::error(format!("usermod -g: {e}"));
+    }
+
+    // Existing content was created under the shared group; keep it reachable by
+    // the service and make new content inherit the same group.
+    let home = format!("/home/{username}");
+    if let Err(e) = run_cmd("/usr/bin/chgrp", &["-R", REQUIRED_GROUP, &home]) {
+        return Response::error(format!("chgrp -R: {e}"));
+    }
+    if let Err(e) = run_cmd(
+        "/usr/bin/find",
+        &[
+            &home,
+            "-type",
+            "d",
+            "-exec",
+            "/usr/bin/chmod",
+            "g+s",
+            "{}",
+            "+",
+        ],
+    ) {
+        return Response::error(format!("find -exec chmod g+s: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2750", &home]) {
+        return Response::error(format!("chmod 2750 {home}: {e}"));
+    }
+
+    Response::success()
 }
 
 fn cmd_delete_user(args: &serde_json::Value) -> Response {
