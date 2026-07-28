@@ -60,6 +60,24 @@ binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
 services = ["oqto"]
 ```
 
+## Frontend
+
+The frontend bundle ships **inside the release artifact** at
+`immutable/frontend/`, staged by `scripts/dist/stage-frontend.sh` (`just
+dist-stage-frontend --build`). `oqto-setup install` points `web_root` at
+`releases/current/immutable/frontend`, so the web root is a symlink that follows
+the active release: a rollback serves the matching bundle, and superseded chunks
+disappear with the release they came from.
+
+This is fail-closed on both ends: an artifact without a bundle is rejected before
+`current` is switched, and deploy verifies after install that `web_root/index.html`
+hashes equal to the bundle it shipped. `--skip-frontend` skips *rebuilding* the
+bundle, not shipping it.
+
+A pre-existing real directory at `web_root` (from the older rsync-into-web-root
+deploys) is moved aside to `<web_root>.pre-release-<epoch>` on first artifact
+install rather than deleted.
+
 ## Update Lifecycle
 
 Before build/prepare/activate, deploy pre-authenticates sudo on all selected

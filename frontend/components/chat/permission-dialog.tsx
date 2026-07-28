@@ -13,6 +13,7 @@ import type { Permission, PermissionResponse } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, FileEdit, Globe, Shield, Terminal } from "lucide-react";
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface PermissionDialogProps {
 	permission: Permission | null;
@@ -26,7 +27,7 @@ interface PermissionDialogProps {
 // Map tool names to icons and descriptions
 function getToolInfo(tool: string): {
 	icon: React.ReactNode;
-	category: string;
+	categoryKey: string;
 	riskLevel: "low" | "medium" | "high";
 } {
 	const toolLower = tool.toLowerCase();
@@ -38,7 +39,7 @@ function getToolInfo(tool: string): {
 	) {
 		return {
 			icon: <Terminal className="w-5 h-5" />,
-			category: "Shell Command",
+			categoryKey: "permissions.categoryShell",
 			riskLevel: "high",
 		};
 	}
@@ -49,7 +50,7 @@ function getToolInfo(tool: string): {
 	) {
 		return {
 			icon: <FileEdit className="w-5 h-5" />,
-			category: "File Edit",
+			categoryKey: "permissions.categoryFile",
 			riskLevel: "medium",
 		};
 	}
@@ -60,14 +61,14 @@ function getToolInfo(tool: string): {
 	) {
 		return {
 			icon: <Globe className="w-5 h-5" />,
-			category: "Web Request",
+			categoryKey: "permissions.categoryWeb",
 			riskLevel: "low",
 		};
 	}
 
 	return {
 		icon: <Shield className="w-5 h-5" />,
-		category: "Tool",
+		categoryKey: "permissions.categoryTool",
 		riskLevel: "medium",
 	};
 }
@@ -88,6 +89,7 @@ export function PermissionDialog({
 	onRespond,
 	onDismiss,
 }: PermissionDialogProps) {
+	const { t } = useTranslation();
 	const [isResponding, setIsResponding] = useState(false);
 	const [selectedResponse, setSelectedResponse] =
 		useState<PermissionResponse | null>(null);
@@ -129,10 +131,10 @@ export function PermissionDialog({
 						</div>
 						<div>
 							<DialogTitle className="text-base">
-								Permission Required
+								{t("permissions.title")}
 							</DialogTitle>
 							<p className="text-xs text-muted-foreground mt-0.5">
-								{toolInfo.category}
+								{t(toolInfo.categoryKey)}
 							</p>
 						</div>
 					</div>
@@ -185,7 +187,9 @@ export function PermissionDialog({
 							disabled={isResponding}
 							className="flex-1 sm:flex-none"
 						>
-							{isResponding && selectedResponse === "no" ? "..." : "Deny"}
+							{isResponding && selectedResponse === "no"
+								? "..."
+								: t("permissions.deny")}
 						</Button>
 						<Button
 							type="button"
@@ -195,7 +199,9 @@ export function PermissionDialog({
 							disabled={isResponding}
 							className="flex-1 sm:flex-none text-destructive hover:text-destructive"
 						>
-							{isResponding && selectedResponse === "never" ? "..." : "Never"}
+							{isResponding && selectedResponse === "never"
+								? "..."
+								: t("permissions.never")}
 						</Button>
 					</div>
 					<div className="flex gap-2 w-full sm:w-auto">
@@ -207,7 +213,9 @@ export function PermissionDialog({
 							disabled={isResponding}
 							className="flex-1 sm:flex-none text-primary hover:text-primary"
 						>
-							{isResponding && selectedResponse === "always" ? "..." : "Always"}
+							{isResponding && selectedResponse === "always"
+								? "..."
+								: t("permissions.always")}
 						</Button>
 						<Button
 							type="button"
@@ -216,7 +224,9 @@ export function PermissionDialog({
 							disabled={isResponding}
 							className="flex-1 sm:flex-none"
 						>
-							{isResponding && selectedResponse === "yes" ? "..." : "Allow"}
+							{isResponding && selectedResponse === "yes"
+								? "..."
+								: t("permissions.allow")}
 						</Button>
 					</div>
 				</DialogFooter>
@@ -233,6 +243,7 @@ export function PermissionBanner({
 	count: number;
 	onClick: () => void;
 }) {
+	const { t } = useTranslation();
 	if (count === 0) return null;
 
 	return (
@@ -244,10 +255,10 @@ export function PermissionBanner({
 			<div className="flex items-center gap-2">
 				<Shield className="w-4 h-4" />
 				<span className="text-sm font-medium">
-					{count} permission{count !== 1 ? "s" : ""} pending
+					{t("permissions.pending", { count })}
 				</span>
 			</div>
-			<span className="text-xs">Click to review</span>
+			<span className="text-xs">{t("permissions.clickToReview")}</span>
 		</button>
 	);
 }

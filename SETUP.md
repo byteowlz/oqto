@@ -167,24 +167,13 @@ The setup script with hardening enabled will:
 
 > ⚠️ **Warning**: SSH hardening disables password authentication. Ensure you have SSH key access before enabling!
 
-### Option 3: Ansible Playbook (Production/Server)
+### Option 3: Fleet Deployment (Production/Server)
 
-For more complex deployments or when you need full control:
-
-```bash
-cd deploy/ansible
-cp inventory.yml.example inventory.yml
-# Edit inventory.yml with your server details
-ansible-playbook -i inventory.yml oqto.yml
-```
-
-The Ansible playbook provides the same hardening as `setup.sh --harden-server` plus:
-- Creates dedicated oqto system user
-- Installs all Oqto dependencies including trash-cli
-- Sets up systemd services
-- More granular control via Ansible variables
-
-See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
+Provision each host with `./setup.sh` first, then use `just deploy` to stage and
+activate releases across hosts listed in `deploy/hosts.toml`. `just deploy` is an
+update/activation engine: it expects the host layout, systemd units, and
+`/etc/oqto/sandbox.toml` that `setup.sh` creates, and its preflight fails without
+them. See [deploy/DEPLOY.md](./deploy/DEPLOY.md).
 
 ## Prerequisites
 
@@ -976,6 +965,6 @@ Container setup is currently disabled in `setup.sh`. Docker/Podman are not requi
 - [backend/README.md](./backend/README.md) - Backend documentation
 - [frontend/README.md](./frontend/README.md) - Frontend documentation
 - [deploy/systemd/README.md](./deploy/systemd/README.md) - Systemd service setup
-- [deploy/ansible/README.md](./deploy/ansible/README.md) - Ansible deployment playbook
+- [deploy/DEPLOY.md](./deploy/DEPLOY.md) - Release deployment across hosts
 - [AGENTS.md](./AGENTS.md) - Agent development guidelines
 - [backend/examples/config.toml](./backend/examples/config.toml) - Full config reference

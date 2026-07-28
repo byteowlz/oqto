@@ -37,7 +37,7 @@ pub const ALLOWED_SHELLS: &[&str] = &[
 ];
 
 /// Allowed chmod modes.
-pub const ALLOWED_MODES: &[&str] = &["700", "750", "755", "770", "2770"];
+pub const ALLOWED_MODES: &[&str] = &["700", "750", "755", "770", "771", "2750", "2770", "2771"];
 
 /// Validate a username for use as a Linux user managed by oqto.
 ///
@@ -78,6 +78,24 @@ pub fn validate_username(name: &str) -> Result<(), String> {
 pub fn validate_group(group: &str) -> Result<(), String> {
     if group != REQUIRED_GROUP {
         return Err(format!("group must be '{REQUIRED_GROUP}', got '{group}'"));
+    }
+    Ok(())
+}
+
+/// Validate a platform user's *primary* group.
+///
+/// `oqto` is the service group: the backend holds group access to each user's
+/// workspace so it can manage it. A platform user must therefore never have it
+/// as their primary group, or the permissions meant for the service apply to
+/// every tenant. The only primary group a managed user may have is their own,
+/// so this deliberately admits exactly one value and cannot be widened by a
+/// caller.
+pub fn validate_primary_group(group: &str, username: &str) -> Result<(), String> {
+    validate_username(username)?;
+    if group != username {
+        return Err(format!(
+            "primary group must be the user's own group '{username}', got '{group}'"
+        ));
     }
     Ok(())
 }
@@ -322,6 +340,37 @@ mod tests {
     #[test]
     fn group_valid() {
         assert!(validate_group("oqto").is_ok());
+    }
+
+    #[test]
+    fn primary_group_must_be_the_users_own() {
+        assert!(validate_primary_group("oqto_alice", "oqto_alice").is_ok());
+    }
+
+    #[test]
+    fn primary_group_rejects_the_service_group() {
+        // The whole point: a tenant in `oqto` holds the backend's access to
+        // every other tenant's home and workspace.
+        let err = validate_primary_group("oqto", "oqto_alice").unwrap_err();
+        assert!(err.contains("oqto_alice"), "{err}");
+    }
+
+    #[test]
+    fn primary_group_rejects_another_users_group() {
+        assert!(validate_primary_group("oqto_bob", "oqto_alice").is_err());
+    }
+
+    #[test]
+    fn primary_group_rejects_an_invalid_username() {
+        assert!(validate_primary_group("root", "root").is_err());
+        assert!(validate_primary_group("", "").is_err());
+    }
+
+    #[test]
+    fn setgid_home_mode_is_allowed() {
+        // Home is setgid so files created later stay group-owned by the
+        // service group once the user's primary group is their own.
+        assert!(validate_chmod_mode("2750").is_ok());
     }
 
     #[test]

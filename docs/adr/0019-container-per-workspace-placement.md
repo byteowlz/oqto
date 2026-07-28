@@ -1,6 +1,7 @@
 # Container-per-workspace is a Placement, not a runtime mode
 
-Status: proposed (grilled 2026-06-25). Depends on the PlacementStore contract (`oqto-3ct7.16`, ADR-0011), the dead-code deletion (`oqto-3ct7.15`), the portability foundation (ADR-0020), and consumes the prebuilt bundle from ADR-0018. **Amends ADR-0009** (host-Principal lifecycle collapses for container placements).
+Status: accepted (grilled 2026-06-25; accepted 2026-07-27 as the intended
+direction, not yet implemented). Depends on the PlacementStore contract (`oqto-3ct7.16`, ADR-0011), the dead-code deletion (`oqto-3ct7.15`), the portability foundation (ADR-0020), and consumes the prebuilt bundle from ADR-0018. **Amends ADR-0009** (host-Principal lifecycle collapses for container placements).
 
 We want each personal user and each shared workspace to run as its own container with a runner inside it. ADR-0001 already abolished backend "container mode": the backend only speaks the runner protocol and never orchestrates containers in the session path. So this is **not** a revival of `RuntimeMode::Container` — it is a new **Placement** whose **Placement Supervisor** is a container engine (ADR-0020), exactly parallel to "systemd locally, k8s for pods" (CONTEXT.md, ADR-0002). A runner behaves identically regardless of placement; the protocol does not change. The dead pre-ADR-0001 container code (`oqto/src/container/*`, `RuntimeMode`) is **deleted, not extended** (`oqto-3ct7.15`).
 

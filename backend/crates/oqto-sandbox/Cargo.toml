@@ -11,6 +11,7 @@ name = "oqto_sandbox"
 path = "src/lib.rs"
 
 [dependencies]
+schemars = { workspace = true }
 anyhow.workspace = true
 clap.workspace = true
 env_logger.workspace = true
@@ -22,9 +23,20 @@ dirs.workspace = true
 shellexpand.workspace = true
 libc.workspace = true
 
+[features]
+# Enabled by default so a plain macOS build is sandboxed; the feature exists to
+# make backend selection explicit, and a build without it fails closed rather
+# than running unsandboxed.
+default = ["macos-seatbelt"]
+
+# Enforcement backends. Selecting a backend is separate from platform support:
+# the Seatbelt profile compiler builds and is tested everywhere, while only the
+# sandbox-exec invocation is macOS-gated.
+macos-seatbelt = ["dep:which"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tempfile.workspace = true
-which = "7"
+which = { version = "7", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

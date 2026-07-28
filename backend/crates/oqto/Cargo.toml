@@ -109,7 +109,6 @@ sha2.workspace = true
 rustix.workspace = true
 fork.workspace = true
 glob = "0.3.3"
-fuser = "0.16.0"
 notify-rust = { version = "4", optional = true }
 notify.workspace = true
 

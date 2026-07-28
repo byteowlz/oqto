@@ -6,7 +6,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 VERSION=1.2.3
 RELEASE="$TMP/releases/v$VERSION"
-mkdir -p "$RELEASE/payload/pi" "$TMP/home"
+mkdir -p "$RELEASE/payload/pi" "$TMP/home/.pi/agent"
+# Binary verification is hermetic (`-ne`), so package-provided providers listed
+# by the invoking user must not be required in the resulting model catalog.
+printf '{"packages":["npm:pi-claude-bridge"]}\n' >"$TMP/home/.pi/agent/settings.json"
 
 cat >"$RELEASE/payload/pi/pi" <<'SH'
 #!/usr/bin/env bash
@@ -24,8 +27,29 @@ fi
 exit 2
 SH
 chmod 755 "$RELEASE/payload/pi/pi"
+mkdir -p "$RELEASE/payload/pi/theme"
+printf '{}\n' >"$RELEASE/payload/pi/theme/dark.json"
+printf '{}\n' >"$RELEASE/payload/pi/theme/light.json"
 tar -czf "$RELEASE/pi-linux-x64.tar.gz" -C "$RELEASE/payload" pi
 SHA="$(sha256sum "$RELEASE/pi-linux-x64.tar.gz" | awk '{print $1}')"
+
+# RPC mode does not load TUI assets. A checksum-valid archive without a built-in
+# theme must still fail before it can be promoted.
+mkdir -p "$TMP/incomplete/pi/theme" "$TMP/incomplete-release/v$VERSION"
+cp "$RELEASE/payload/pi/pi" "$TMP/incomplete/pi/pi"
+cp "$RELEASE/payload/pi/theme/light.json" "$TMP/incomplete/pi/theme/light.json"
+tar -czf "$TMP/incomplete-release/v$VERSION/pi-linux-x64.tar.gz" -C "$TMP/incomplete" pi
+INCOMPLETE_SHA="$(sha256sum "$TMP/incomplete-release/v$VERSION/pi-linux-x64.tar.gz" | awk '{print $1}')"
+if HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
+  "$SCRIPT_DIR/pi-runtime.sh" \
+  --version "$VERSION" \
+  --sha256 "$INCOMPLETE_SHA" \
+  --base-url "file://$TMP/incomplete-release" \
+  >"$TMP/incomplete.out" 2>&1; then
+  echo "test-pi-runtime: archive missing dark theme unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'missing required asset: theme/dark.json' "$TMP/incomplete.out"
 
 HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
   "$SCRIPT_DIR/pi-runtime.sh" \

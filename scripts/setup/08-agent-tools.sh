@@ -6,7 +6,7 @@
 # Tools for AI agents in the Oqto platform:
 #
 #   agntz   - Agent toolkit (wraps other tools, file reservations, etc.)
-#   mmry    - Memory storage and semantic search
+#   mmry    - Memory storage (workspace-local lexical ledger; no embeddings)
 #   trx     - Issue/task tracking
 #   scrpr   - Web content extraction (readability, Tavily, Jina)
 #   tmpltr  - Document generation from templates (Typst)
@@ -27,7 +27,7 @@ BYTEOWLZ_GITHUB="https://github.com/byteowlz"
 TOOLS_INSTALL_DIR="/usr/local/bin"
 
 # Read a tool version from dependencies.toml
-# Usage: get_dep_version hstry -> "0.4.4"
+# Usage: get_dep_version mmry -> "0.4.4"
 get_dep_version() {
   local tool="$1"
   local deps_file="${SCRIPT_DIR}/dependencies.toml"
@@ -68,9 +68,9 @@ get_release_target() {
 # Download pre-built binary from GitHub releases.
 # Falls back to cargo install if download fails or no release exists.
 # Usage: download_or_build_tool <binary> <repo> [package]
-#   binary:  name of the binary to install (e.g., "hstry")
-#   repo:    GitHub repo name (e.g., "hstry")
-#   package: package name for multi-binary repos (e.g., "hstry-cli")
+#   binary:  name of the binary to install (e.g., "mmry")
+#   repo:    GitHub repo name (e.g., "mmry")
+#   package: package name for multi-binary repos (e.g., "mmry-cli")
 download_or_build_tool() {
   local tool="$1"
   local repo="${2:-$tool}"
@@ -88,7 +88,7 @@ download_or_build_tool() {
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    # Rust repos: repo-vtag-target.tar.gz  (e.g. hstry-v0.4.4-x86_64-unknown-linux-gnu.tar.gz)
+    # Rust repos: repo-vtag-target.tar.gz  (e.g. mmry-v0.4.4-x86_64-unknown-linux-gnu.tar.gz)
     # Go repos:   repo_OS_arch.tar.gz      (e.g. sx_Linux_x86_64.tar.gz)
     local -a urls=()
 
@@ -156,71 +156,6 @@ install_binary_global() {
 
   sudo install -m 755 "$binary_path" "${TOOLS_INSTALL_DIR}/${tool}"
   log_success "$tool installed to ${TOOLS_INSTALL_DIR}/${tool}"
-}
-
-# Install hstry adapters system-wide so all platform users can sync history.
-# Adapters are TypeScript files that parse various chat formats (pi, claude, etc.)
-# Installed to /usr/local/share/hstry/adapters/ which is referenced in per-user configs.
-install_hstry_adapters() {
-  local adapters_dest="/usr/local/share/hstry/adapters"
-
-  # hstry >=0.5 expects an adapter manifest file (.hstry-adapters.json).
-  # Only treat the install as valid when both the pi adapter and manifest exist.
-  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" && -f "$adapters_dest/.hstry-adapters.json" ]]; then
-    log_info "hstry adapters already installed"
-    return 0
-  fi
-
-  log_info "Installing hstry adapters..."
-
-  # Preferred path: let hstry generate adapters + manifest, then copy system-wide.
-  if command_exists hstry; then
-    local tmpcfg
-    tmpcfg=$(mktemp -d)
-    if XDG_CONFIG_HOME="$tmpcfg" XDG_DATA_HOME="$tmpcfg/.local/share" hstry adapters update >/dev/null 2>&1; then
-      if [[ -f "$tmpcfg/hstry/adapters/.hstry-adapters.json" ]]; then
-        sudo mkdir -p "$adapters_dest"
-        sudo rsync -a --delete "$tmpcfg/hstry/adapters/" "$adapters_dest/"
-        sudo chmod -R a+rX "$adapters_dest"
-        rm -rf "$tmpcfg"
-        log_success "hstry adapters installed to $adapters_dest"
-        return 0
-      fi
-    fi
-    rm -rf "$tmpcfg"
-  fi
-
-  # Fallback: fetch adapters from repo archive and synthesize a minimal manifest.
-  local version
-  version=$(get_dep_version hstry)
-  local tag="v${version:-main}"
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  if curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/tags/${tag}.tar.gz" |
-    tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
-    :
-  elif curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" |
-    tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
-    :
-  else
-    rm -rf "$tmpdir"
-    log_warn "Could not fetch hstry adapters. 'hstry sync' for pi sessions will not work."
-    return 1
-  fi
-
-  # Synthesize manifest if archive does not include one.
-  if [[ ! -f "$tmpdir/adapters/.hstry-adapters.json" ]]; then
-    cat >"$tmpdir/adapters/.hstry-adapters.json" <<'EOF'
-{"repos":[{"name":"official","url":"https://github.com/byteowlz/hstry-adapters"}]}
-EOF
-  fi
-
-  sudo mkdir -p "$adapters_dest"
-  sudo rsync -a --delete "$tmpdir/adapters/" "$adapters_dest/"
-  sudo chmod -R a+rX "$adapters_dest"
-  rm -rf "$tmpdir"
-  log_success "hstry adapters installed to $adapters_dest"
 }
 
 # Install a Rust tool from crates.io, GitHub, or local source.
@@ -661,11 +596,6 @@ install_all_agent_tools() {
   # skdlr, eavs) resolved from dependencies.toml.
   install_managed_agent_tools
 
-  # hstry is legacy/interop only and intentionally NOT in the managed set
-  # (pending removal — oqto-2hyk); keep its own installer until then.
-  download_or_build_tool hstry hstry hstry-cli
-  download_or_build_tool hstry-tui hstry hstry-tui
-  install_hstry_adapters
   install_ast_grep || true
 }
 
@@ -710,10 +640,6 @@ install_agent_tools_selected() {
     return
   fi
 
-  # hstry is required for per-user chat history (systemd user service); legacy,
-  # not in the managed set (pending oqto-2hyk).
-  download_or_build_tool hstry hstry hstry-cli
-  install_hstry_adapters
   install_ast_grep || true
 
   # mmry is the lean append-only memory CLI (mmry-core embedded in the oqto

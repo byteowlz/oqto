@@ -613,6 +613,7 @@ impl From<crate::auth::Role> for crate::user::UserRole {
         match role {
             crate::auth::Role::Admin => crate::user::UserRole::Admin,
             crate::auth::Role::User => crate::user::UserRole::User,
+            crate::auth::Role::Service => crate::user::UserRole::Service,
         }
     }
 }

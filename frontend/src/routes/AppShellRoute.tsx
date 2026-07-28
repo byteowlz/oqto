@@ -353,10 +353,7 @@ const AppShell = memo(function AppShell() {
 		[apps],
 	);
 
-	const virtualApps = useMemo(
-		() => new Set(["dashboard", "settings", "admin"]),
-		[],
-	);
+	const virtualApps = useMemo(() => new Set(["settings", "admin"]), []);
 
 	// Route synchronization effects
 	useAppShellRouteSync({

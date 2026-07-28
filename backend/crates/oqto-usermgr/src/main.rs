@@ -106,6 +106,19 @@ fn main() {
 
     eprintln!("oqto-usermgr: starting (pid {})", std::process::id());
 
+    // systemd re-applies RuntimeDirectory ownership to the service user on every
+    // start, which silently strips per-user runner socket directories back to
+    // root:root. Repair before serving, so a restart of this daemon can never
+    // leave runners unable to bind on their next start.
+    match repair_all_socket_dirs() {
+        Ok(fixed) if !fixed.is_empty() => eprintln!(
+            "oqto-usermgr: restored socket dir ownership for {} user(s) at startup",
+            fixed.len()
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("oqto-usermgr: warning: socket dir repair failed: {e}"),
+    }
+
     // Remove stale socket
     let _ = std::fs::remove_file(SOCKET_PATH);
 
@@ -210,6 +223,7 @@ fn dispatch(req: &Request) -> Response {
     match req.cmd.as_str() {
         "create-group" => cmd_create_group(&req.args),
         "create-user" => cmd_create_user(&req.args),
+        "set-own-primary-group" => cmd_set_own_primary_group(&req.args),
         "delete-user" => cmd_delete_user(&req.args),
         "mkdir" => cmd_mkdir(&req.args),
         "chown" => cmd_chown(&req.args),
@@ -386,13 +400,27 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
     let uid_str = uid.to_string();
     let home_flag = if create_home { "-m" } else { "-M" };
 
+    // The user's primary group is their own, never the service group: `oqto`
+    // carries the backend's access to every user's workspace, so a tenant in it
+    // would hold that access over every other tenant. Group *ownership* below
+    // stays `oqto` — the permissions were always right, only the membership was
+    // wrong.
+    if let Err(e) = ensure_own_group(username, uid) {
+        return Response::error(e);
+    }
+
     match run_cmd(
         "/usr/sbin/useradd",
         &[
-            "-u", &uid_str, "-g", group, "-s", shell, home_flag, "-c", gecos, username,
+            "-u", &uid_str, "-g", username, "-s", shell, home_flag, "-c", gecos, username,
         ],
     ) {
         Ok(_) => {
+            let home = format!("/home/{username}");
+            if create_home && let Err(e) = claim_home_for_service_group(&home, username, group) {
+                return Response::error(e);
+            }
+
             // Create workspace directory inside the user's home with group-write
             // so the oqto backend (same group) can manage workspaces.
             let workspace = format!("/home/{username}/oqto");
@@ -404,13 +432,108 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
             let _ = run_cmd("/usr/bin/chmod", &["2770", &workspace]);
 
             // Write shell dotfiles (zsh + starship)
-            let home = format!("/home/{username}");
             write_user_dotfiles(&home, username, group);
 
             Response::success()
         }
         Err(e) => Response::error(e),
     }
+}
+
+/// Create the user's own group, gid mirroring their uid.
+fn ensure_own_group(username: &str, uid: u32) -> Result<(), String> {
+    if let Ok(status) = Command::new("/usr/bin/getent")
+        .args(["group", username])
+        .status()
+        && status.success()
+    {
+        return Ok(());
+    }
+    run_cmd("/usr/sbin/groupadd", &["-g", &uid.to_string(), username])
+        .map(|_| ())
+        .map_err(|e| format!("groupadd {username}: {e}"))
+}
+
+/// Group-own the home by the service group and mark it setgid.
+///
+/// The backend reads a handful of files under the home (the Pi model config and
+/// the eavs key), and setgid keeps them group-owned by `oqto` as they are
+/// rewritten. Without it those files would inherit the user's own group and the
+/// backend would silently lose access on the next regeneration.
+fn claim_home_for_service_group(home: &str, username: &str, group: &str) -> Result<(), String> {
+    run_cmd("/usr/bin/chown", &[&format!("{username}:{group}"), home])
+        .map_err(|e| format!("chown {home}: {e}"))?;
+    run_cmd("/usr/bin/chmod", &["2750", home]).map_err(|e| format!("chmod {home}: {e}"))?;
+    Ok(())
+}
+
+/// Move an existing platform user off the shared service group onto their own.
+///
+/// Idempotent: re-running on a migrated user is a no-op. The home stays
+/// group-owned by `oqto` and gains setgid so the backend keeps the access it
+/// has today; only the user's membership of the service group goes away.
+fn cmd_set_own_primary_group(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+    // The caller does not get to name the target group: it is always the user's
+    // own. Passing it explicitly keeps the check visible at the call site.
+    if let Err(e) = validate_primary_group(username, username) {
+        return Response::error(e);
+    }
+
+    let uid = match get_user_uid(username) {
+        Some(uid) => uid,
+        None => return Response::error(format!("user '{username}' does not exist")),
+    };
+
+    if let Err(e) = ensure_own_group(username, uid) {
+        return Response::error(e);
+    }
+
+    // The runner reaches its socket directory by traversing the shared parent,
+    // which today is only possible for members of the service group. Widen it
+    // to traversal-for-all *before* dropping the membership, or the user's
+    // runner cannot create its socket.
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base socket dirs: {e}"));
+    }
+
+    if let Err(e) = run_cmd("/usr/sbin/usermod", &["-g", username, username]) {
+        return Response::error(format!("usermod -g: {e}"));
+    }
+
+    // Existing content was created under the shared group; keep it reachable by
+    // the service and make new content inherit the same group.
+    let home = format!("/home/{username}");
+    if let Err(e) = run_cmd("/usr/bin/chgrp", &["-R", REQUIRED_GROUP, &home]) {
+        return Response::error(format!("chgrp -R: {e}"));
+    }
+    if let Err(e) = run_cmd(
+        "/usr/bin/find",
+        &[
+            &home,
+            "-type",
+            "d",
+            "-exec",
+            "/usr/bin/chmod",
+            "g+s",
+            "{}",
+            "+",
+        ],
+    ) {
+        return Response::error(format!("find -exec chmod g+s: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2750", &home]) {
+        return Response::error(format!("chmod 2750 {home}: {e}"));
+    }
+
+    Response::success()
 }
 
 fn cmd_delete_user(args: &serde_json::Value) -> Response {
@@ -810,18 +933,12 @@ WantedBy=default.target
     );
 
     // 4. Create per-user socket directory
-    //    Also ensure the parent /run/oqto/runner-sockets/ has correct ownership.
-    //    mkdir -p creates it as root:root by default, but we need root:oqto
-    //    so platform users (in group oqto) can traverse into their subdirectory.
-    let runner_sockets_base = "/run/oqto/runner-sockets";
-    if let Err(e) = run_cmd("/bin/mkdir", &["-p", runner_sockets_base]) {
-        return Response::error(format!("mkdir {runner_sockets_base}: {e}"));
-    }
-    if let Err(e) = run_cmd("/usr/bin/chown", &["root:oqto", runner_sockets_base]) {
-        return Response::error(format!("chown {runner_sockets_base}: {e}"));
-    }
-    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", runner_sockets_base]) {
-        return Response::error(format!("chmod {runner_sockets_base}: {e}"));
+    //    Also ensure the parent /run/oqto/runner-sockets/ is traversable, so a
+    //    platform user can reach their own subdirectory without being in the
+    //    service group. It stays unlistable, and the per-user subdirectory
+    //    below is the boundary.
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base socket dirs: {e}"));
     }
 
     let socket_dir = format!("/run/oqto/runner-sockets/{username}");
@@ -1377,20 +1494,41 @@ fn cmd_fix_socket_dir(args: &serde_json::Value) -> Response {
 /// Verify and fix all runner socket directories.
 /// Called by oqto backend on startup to prevent the recurring ownership regression.
 fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
-    // 1. Fix base directory chain
-    if let Err(e) = fix_socket_base_dirs() {
-        return Response::error(format!("fixing base dirs: {e}"));
+    match repair_all_socket_dirs() {
+        Err(e) => Response::error(e),
+        Ok(fixed) if fixed.is_empty() => Response::success(),
+        Ok(fixed) => {
+            eprintln!(
+                "oqto-usermgr: fixed socket dir ownership for {} user(s): {}",
+                fixed.len(),
+                fixed.join(", ")
+            );
+            Response::success_with_data(serde_json::json!({
+                "fixed": fixed,
+                "count": fixed.len(),
+            }))
+        }
     }
+}
+
+/// Restore `<user>:oqto` 2770 on every per-user runner socket directory.
+///
+/// Ownership here is lost by more than one route -- notably a restart of this
+/// service, because the unit declares `RuntimeDirectory=oqto` and systemd
+/// re-applies ownership of that tree to the service user. The loss is silent:
+/// a running runner keeps its bound socket and looks healthy, and only the next
+/// runner restart fails. So this is repaired unconditionally at startup rather
+/// than left to whoever notices.
+fn repair_all_socket_dirs() -> Result<Vec<String>, String> {
+    // 1. Fix base directory chain
+    fix_socket_base_dirs().map_err(|e| format!("fixing base dirs: {e}"))?;
 
     let base = "/run/oqto/runner-sockets";
     let group = "oqto";
     let mut fixed = Vec::new();
 
     // 2. Fix all per-user subdirectories
-    let entries = match std::fs::read_dir(base) {
-        Ok(e) => e,
-        Err(e) => return Response::error(format!("reading {base}: {e}")),
-    };
+    let entries = std::fs::read_dir(base).map_err(|e| format!("reading {base}: {e}"))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1461,19 +1599,7 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
         }
     }
 
-    if fixed.is_empty() {
-        Response::success()
-    } else {
-        eprintln!(
-            "oqto-usermgr: fixed socket dir ownership for {} user(s): {}",
-            fixed.len(),
-            fixed.join(", ")
-        );
-        Response::success_with_data(serde_json::json!({
-            "fixed": fixed,
-            "count": fixed.len(),
-        }))
-    }
+    Ok(fixed)
 }
 
 /// Ensure /run/oqto/ and /run/oqto/runner-sockets/ have correct ownership.
@@ -1487,11 +1613,17 @@ fn fix_socket_base_dirs() -> Result<(), String> {
     run_cmd("/usr/bin/chmod", &["0775", run_oqto]).map_err(|e| format!("chmod {run_oqto}: {e}"))?;
 
     // /run/oqto/runner-sockets/
+    //
+    // Traversable by anyone, listable by no one: a platform user must reach
+    // their own subdirectory, and that subdirectory is the actual boundary
+    // (owned by them, group `oqto` for the backend, nothing for others).
+    // Granting traversal via group membership instead would put every tenant
+    // in the service group, which is what oqto-tnd1 fixed.
     let sockets_base = "/run/oqto/runner-sockets";
     let _ = run_cmd("/bin/mkdir", &["-p", sockets_base]);
     run_cmd("/usr/bin/chown", &["root:oqto", sockets_base])
         .map_err(|e| format!("chown {sockets_base}: {e}"))?;
-    run_cmd("/usr/bin/chmod", &["2770", sockets_base])
+    run_cmd("/usr/bin/chmod", &["2771", sockets_base])
         .map_err(|e| format!("chmod {sockets_base}: {e}"))?;
 
     Ok(())

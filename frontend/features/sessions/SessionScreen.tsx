@@ -8,7 +8,7 @@ import {
 	initialFileTreeState,
 } from "@/features/sessions/components/FileTreeView";
 import { useApp } from "@/hooks/use-app";
-import { useCurrentUser } from "@/hooks/use-auth";
+import { useCurrentUser, useMayUseTerminal } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
 
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
@@ -506,6 +506,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		getSessionWorkspacePath,
 	} = useApp();
 	const { data: currentUser } = useCurrentUser();
+	const mayUseTerminal = useMayUseTerminal();
 	const isMobileLayout = useIsMobile();
 	const [features, setFeatures] = useState<Features>({ mmry_enabled: false });
 	const [featuresLoaded, setFeaturesLoaded] = useState(false);
@@ -542,6 +543,17 @@ export const SessionScreen = memo(function SessionScreen() {
 			/* ignore */
 		}
 	}, []);
+
+	// A denied user must never be left on the terminal view: the tab is hidden,
+	// but a stale cached view or a role downgrade could still land them there.
+	// Only act once the session is known, so admins keep their cached view.
+	// useeffect-guardrail: allow: must react to permission state arriving or
+	// changing after mount, which no render-time check can cover.
+	useEffect(() => {
+		if (currentUser && !mayUseTerminal && activeView === "terminal") {
+			setActiveView(window.innerWidth < 768 ? "chat" : "files");
+		}
+	}, [currentUser, mayUseTerminal, activeView, setActiveView]);
 	const [tasksSubTab, setTasksSubTab] = useState<"todos" | "planner">("todos");
 	const [latestTodos, setLatestTodos] = useState<TodoItem[]>([]);
 	const openTodoCount = useMemo(
@@ -1209,13 +1221,15 @@ export const SessionScreen = memo(function SessionScreen() {
 									label={t("nav.memories")}
 								/>
 							)}
-							<TabButton
-								activeView={activeView}
-								onSelect={setActiveView}
-								view="terminal"
-								icon={Terminal}
-								label={t("terminal.title")}
-							/>
+							{mayUseTerminal && (
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="terminal"
+									icon={Terminal}
+									label={t("terminal.title")}
+								/>
+							)}
 							<TabButton
 								activeView={activeView}
 								onSelect={setActiveView}
@@ -1317,7 +1331,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								/>
 							</Suspense>
 						)}
-						{activeView === "terminal" && (
+						{activeView === "terminal" && mayUseTerminal && (
 							<div className="h-full">
 								{terminalWorkspacePath ? (
 									<Suspense fallback={viewLoadingFallback}>
@@ -1587,16 +1601,18 @@ export const SessionScreen = memo(function SessionScreen() {
 										label="Memories"
 									/>
 								)}
-								<CollapsedTabButton
-									activeView={activeView}
-									onSelect={(view) => {
-										setActiveView(view);
-										setRightSidebarCollapsed(false);
-									}}
-									view="terminal"
-									icon={Terminal}
-									label="Terminal"
-								/>
+								{mayUseTerminal && (
+									<CollapsedTabButton
+										activeView={activeView}
+										onSelect={(view) => {
+											setActiveView(view);
+											setRightSidebarCollapsed(false);
+										}}
+										view="terminal"
+										icon={Terminal}
+										label="Terminal"
+									/>
+								)}
 								<CollapsedTabButton
 									activeView={activeView}
 									onSelect={(view) => {
@@ -1668,14 +1684,16 @@ export const SessionScreen = memo(function SessionScreen() {
 											hideLabel
 										/>
 									)}
-									<TabButton
-										activeView={activeView}
-										onSelect={setActiveView}
-										view="terminal"
-										icon={Terminal}
-										label="Terminal"
-										hideLabel
-									/>
+									{mayUseTerminal && (
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="terminal"
+											icon={Terminal}
+											label="Terminal"
+											hideLabel
+										/>
+									)}
 									<TabButton
 										activeView={activeView}
 										onSelect={setActiveView}
@@ -1788,7 +1806,7 @@ export const SessionScreen = memo(function SessionScreen() {
 											/>
 										</Suspense>
 									)}
-									{activeView === "terminal" && (
+									{activeView === "terminal" && mayUseTerminal && (
 										<div className="h-full">
 											{terminalWorkspacePath ? (
 												<Suspense fallback={viewLoadingFallback}>

@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, error, info};
+#[cfg(target_os = "macos")]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -25,8 +27,10 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
-    #[arg(short, long, default_value = "development")]
-    profile: String,
+    /// Profile to use. Overrides the profile named by any config file; when
+    /// omitted the config file's own profile (or "development") is used.
+    #[arg(short, long)]
+    profile: Option<String>,
 
     #[arg(short, long)]
     workspace: Option<PathBuf>,
@@ -60,11 +64,14 @@ fn load_config(args: &Args) -> Result<SandboxConfig> {
         );
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
-        let file: SandboxConfigFile =
+        let mut file: SandboxConfigFile =
             toml::from_str(&content).with_context(|| "parsing config file")?;
+        if let Some(profile) = &args.profile {
+            profile.clone_into(&mut file.profile);
+        }
         file.into()
     } else {
-        load_config_from_chain(&args.profile)?
+        load_config_from_chain(args.profile.as_deref())?
     };
 
     config.enabled = !args.no_sandbox;
@@ -77,14 +84,20 @@ const SYSTEM_SANDBOX_CONFIG: &str = "/etc/oqto/sandbox.toml";
 /// 1. `/etc/oqto/sandbox.toml` (system)
 /// 2. `~/.config/oqto/sandbox.toml` (user)
 /// 3. Hardcoded profile defaults
-fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
+fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
     let system_path = PathBuf::from(SYSTEM_SANDBOX_CONFIG);
     if system_path.exists() {
         info!("Loading sandbox config from system path: {:?}", system_path);
         let content = std::fs::read_to_string(&system_path)
             .with_context(|| format!("reading system config: {:?}", system_path))?;
-        let file: SandboxConfigFile = toml::from_str(&content)
+        let mut file: SandboxConfigFile = toml::from_str(&content)
             .with_context(|| format!("parsing system config: {:?}", system_path))?;
+        // An explicit --profile must win over the file's profile, otherwise a
+        // system config silently downgrades the caller's requested isolation.
+        if let Some(profile) = profile {
+            info!("Overriding system config profile with '{}'", profile);
+            profile.clone_into(&mut file.profile);
+        }
         return Ok(file.into());
     }
 
@@ -99,6 +112,7 @@ fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
             .context("user sandbox config exists but failed to parse");
     }
 
+    let profile = profile.unwrap_or("development");
     info!(
         "No config file found, using hardcoded profile '{}'",
         profile
@@ -181,88 +195,82 @@ fn exec_sandboxed(
     Err(err.into())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-seatbelt"))]
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
-    workspace: &PathBuf,
+    workspace: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &PathBuf) -> String {
-        let mut profile = String::new();
-        profile.push_str("(version 1)\n");
-        profile.push_str("(deny default)\n");
-        profile.push_str("(allow process-fork)\n");
-        profile.push_str("(allow process-exec)\n");
-        profile.push_str("(allow signal)\n");
-        profile.push_str("(allow file-read*)\n");
+    use std::io::Write;
 
-        let w = workspace.to_string_lossy();
-        profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
-        profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
-
-        for path in &config.allow_write {
-            profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_read {
-            profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_write {
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-
-        if config.isolate_network {
-            profile.push_str("(deny network*)\n");
-        } else {
-            profile.push_str("(allow network*)\n");
-        }
-
-        profile
-    }
-
-    fn build_sandbox_exec_args(
-        config: &SandboxConfig,
-        workspace: &PathBuf,
-    ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
-        if which::which("sandbox-exec").is_err() {
-            return None;
-        }
-        let profile_text = build_seatbelt_profile(config, workspace);
-        let mut tmp = tempfile::NamedTempFile::new().ok()?;
-        use std::io::Write;
-        tmp.write_all(profile_text.as_bytes()).ok()?;
-        let args = vec!["-f".to_string(), tmp.path().to_string_lossy().to_string()];
-        Some((args, tmp))
-    }
-
-    let (sandbox_args, _temp_file) = match build_sandbox_exec_args(config, workspace) {
-        Some(result) => result,
-        None => {
-            error!("sandbox-exec not available, cannot sandbox");
-            if dry_run {
-                println!("ERROR: sandbox-exec not available");
-                return Ok(());
-            }
-            anyhow::bail!("sandbox-exec not available");
-        }
-    };
-
-    let mut full_args = sandbox_args;
-    full_args.extend(command.iter().cloned());
+    let profile_text = crate::seatbelt::compile_profile(config, workspace, None);
 
     if dry_run {
-        println!("sandbox-exec {}", full_args.join(" \\\n  "));
+        println!("sandbox-exec -f <profile> {}", command.join(" "));
         println!("\n# Seatbelt profile:");
-        println!("{}", build_seatbelt_profile(config, workspace));
+        println!("{profile_text}");
         return Ok(());
     }
 
-    debug!("Executing: sandbox-exec {:?}", full_args);
-    let err = Command::new("sandbox-exec").args(&full_args).exec();
+    if which::which("sandbox-exec").is_err() {
+        // Fail closed: running unsandboxed after being asked to sandbox would
+        // silently drop every restriction the profile describes.
+        anyhow::bail!("sandbox-exec not available, refusing to run unsandboxed");
+    }
 
-    error!("Failed to exec sandbox-exec: {:?}", err);
-    Err(err.into())
+    let mut profile_file =
+        tempfile::NamedTempFile::new().context("creating Seatbelt profile file")?;
+    profile_file
+        .write_all(profile_text.as_bytes())
+        .context("writing Seatbelt profile")?;
+    profile_file.flush().context("flushing Seatbelt profile")?;
+
+    let mut full_args = vec![
+        "-f".to_string(),
+        profile_file.path().to_string_lossy().to_string(),
+    ];
+    full_args.extend(command.iter().cloned());
+
+    debug!("Executing: sandbox-exec {:?}", full_args);
+    let mut cmd = Command::new("sandbox-exec");
+    cmd.args(&full_args);
+    // sandbox-exec inherits this process's environment, so a sparse PATH from a
+    // launchd job or non-interactive ssh session leaves shebang interpreters
+    // (`/usr/bin/env node`) unresolvable inside the sandbox.
+    cmd.env(
+        "PATH",
+        SandboxConfig::sandbox_path(dirs::home_dir().as_deref()),
+    );
+    configure_bwrap_pre_exec(&mut cmd, config, workspace, None)?;
+
+    // exec replaces this process, so the temp profile would be unlinked before
+    // sandbox-exec reads it. Keep the file alive by supervising the child and
+    // mirroring its exit status instead.
+    let status = cmd.status().context("spawning sandbox-exec")?;
+    drop(profile_file);
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// macOS without the Seatbelt backend compiled in. Fail closed: running
+/// unsandboxed after being asked to sandbox would silently drop every
+/// restriction the profile describes.
+#[cfg(all(target_os = "macos", not(feature = "macos-seatbelt")))]
+fn exec_sandboxed(
+    _config: &SandboxConfig,
+    command: &[String],
+    _workspace: &Path,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run {
+        println!("ERROR: built without the macos-seatbelt feature");
+        println!("Would refuse to execute: {command:?}");
+        return Ok(());
+    }
+    anyhow::bail!(
+        "sandboxing requested but this build lacks the macos-seatbelt feature; \
+         rebuild with --features macos-seatbelt"
+    )
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

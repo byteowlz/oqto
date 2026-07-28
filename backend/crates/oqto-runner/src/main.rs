@@ -1,6 +1,11 @@
 use anyhow::Result;
+// Used only by the non-Linux guards below, which are compiled out on Linux.
+#[cfg(not(target_os = "linux"))]
+use anyhow::bail;
 use clap::Parser;
 use log::info;
+#[cfg(not(target_os = "linux"))]
+use log::warn;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -141,6 +146,7 @@ async fn main() -> Result<()> {
         memories_dir: user_config.memories_dir.clone(),
         single_user: user_config.single_user,
         linux_users_enabled: user_config.linux_users_enabled,
+        terminal_enabled: user_config.terminal_enabled,
     };
     let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
     if let Some(address) = args.listen_tls {

@@ -91,11 +91,16 @@ impl SessionReadiness for HttpSessionReadiness {
                 .map(|res| res.status().is_success())
                 .unwrap_or(false);
 
+            // ttyd runs with a credential, so an unauthenticated probe gets 401.
+            // A 401 still proves the listener is up and serving, which is all
+            // readiness needs; requiring 2xx here made every terminal hang.
             let ttyd_ok = client
                 .get(&ttyd_url)
                 .send()
                 .await
-                .map(|res| res.status().is_success())
+                .map(|res| {
+                    res.status().is_success() || res.status() == reqwest::StatusCode::UNAUTHORIZED
+                })
                 .unwrap_or(false);
 
             if ttyd_ok && fileserver_ok {
@@ -2981,6 +2986,45 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    /// A credentialed ttyd answers 401 to an unauthenticated probe. Treating
+    /// that as not-ready made every terminal hang until the websocket timed
+    /// out, leaking a ttyd per retry.
+    #[tokio::test]
+    async fn readiness_accepts_an_authenticated_ttyd() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        fn serve_once(status_line: &'static str) -> u16 {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                for stream in listener.incoming().take(8) {
+                    let Ok(mut stream) = stream else { continue };
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(status_line.as_bytes());
+                    let _ = stream.flush();
+                }
+            });
+            port
+        }
+
+        let fileserver = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let ttyd = serve_once(
+            "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nContent-Length: 0\r\n\r\n",
+        );
+
+        let readiness = HttpSessionReadiness;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            readiness.wait_for_session_services(fileserver, ttyd),
+        )
+        .await
+        .expect("readiness must not hang on a 401 from ttyd");
+
+        assert!(result.is_ok(), "401 from ttyd means up, not unready");
+    }
+
     use super::*;
 
     fn agent_ctx_test_session(agent: Option<&str>) -> Session {

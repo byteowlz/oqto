@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 import {
 	Globe2,
-	LayoutDashboard,
 	LogOut,
 	MoonStar,
 	Settings,
@@ -9,6 +8,7 @@ import {
 	SunMedium,
 } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface SidebarNavProps {
 	activeAppId: string;
@@ -42,6 +42,7 @@ export const SidebarNav = memo(function SidebarNav({
 	onToggleTheme,
 	onLogout,
 }: SidebarNavProps) {
+	const { t } = useTranslation();
 	return (
 		<div
 			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-5 pb-4"} mt-auto pt-3`}
@@ -58,38 +59,6 @@ export const SidebarNav = memo(function SidebarNav({
 			<div
 				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : `justify-center ${isAdmin ? "gap-1" : "gap-2"}`}`}
 			>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					rounded="full"
-					onClick={() => onToggleApp("dashboard")}
-					aria-label="Dashboard"
-					className="w-9 h-9 flex items-center justify-center transition-colors"
-					style={{
-						backgroundColor:
-							activeAppId === "dashboard" ? navActiveBg : navIdle,
-						border:
-							activeAppId === "dashboard"
-								? `1px solid ${navActiveBorder}`
-								: "1px solid transparent",
-						color: activeAppId === "dashboard" ? navActiveText : navText,
-					}}
-					onMouseEnter={(e) => {
-						if (activeAppId !== "dashboard") {
-							e.currentTarget.style.backgroundColor = sidebarHover;
-							e.currentTarget.style.border = `1px solid ${sidebarHoverBorder}`;
-						}
-					}}
-					onMouseLeave={(e) => {
-						if (activeAppId !== "dashboard") {
-							e.currentTarget.style.backgroundColor = navIdle;
-							e.currentTarget.style.border = "1px solid transparent";
-						}
-					}}
-				>
-					<LayoutDashboard className="w-4 h-4" />
-				</Button>
 				<Button
 					type="button"
 					variant="ghost"
@@ -160,7 +129,7 @@ export const SidebarNav = memo(function SidebarNav({
 					size="icon"
 					rounded="full"
 					onClick={onToggleLocale}
-					aria-label="Sprache wechseln"
+					aria-label={t("command.changeLanguage")}
 					className="w-9 h-9 flex items-center justify-center transition-colors"
 					style={{
 						backgroundColor: navIdle,

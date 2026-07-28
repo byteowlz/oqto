@@ -105,6 +105,9 @@ pub enum RunnerRequest {
     /// Stop a running session.
     StopSession(StopSessionRequest),
 
+    /// Fetch the terminal credential for a session.
+    GetTerminalCredential(GetTerminalCredentialRequest),
+
     // ========================================================================
     // Main Chat Operations (user-plane)
     // ========================================================================
@@ -381,6 +384,7 @@ pub enum RunnerResponse {
 
     /// Session started (with service ports/PIDs).
     SessionStarted(SessionStartedResponse),
+    TerminalCredential(TerminalCredentialResponse),
 
     /// Session stopped.
     SessionStopped(SessionStoppedResponse),
@@ -1598,6 +1602,23 @@ pub struct SessionStartedResponse {
     pub session_id: String,
     /// PIDs of started processes (comma-separated).
     pub pids: String,
+}
+
+/// Request for a session's terminal credential.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetTerminalCredentialRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Terminal credential for a session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalCredentialResponse {
+    /// Session ID.
+    pub session_id: String,
+    pub username: String,
+    /// None when the terminal is disabled by policy.
+    pub password: Option<String>,
 }
 
 /// Response when session is stopped.

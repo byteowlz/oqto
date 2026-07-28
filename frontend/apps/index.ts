@@ -1,21 +1,11 @@
 import { AdminApp } from "@/apps/admin";
 import { AgentsApp } from "@/apps/agents";
-import { DashboardApp } from "@/apps/dashboard";
 import { SessionsApp } from "@/apps/sessions";
 import { SettingsApp } from "@/apps/settings";
 import { SldrApp } from "@/apps/sldr";
 import { appRegistry } from "@/lib/app-registry";
 
 appRegistry
-	.register({
-		id: "dashboard",
-		label: { de: "Dashboard", en: "Dashboard" },
-		description: "Workspace overview and status",
-		component: DashboardApp,
-		routes: ["/dashboard"],
-		permissions: ["user"],
-		priority: 0,
-	})
 	.register({
 		id: "sessions",
 		label: { de: "Chats", en: "Chats" },

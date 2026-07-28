@@ -1189,7 +1189,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						errMsg.includes("SessionNotFound") ||
 						errMsg.includes("Response channel closed");
 
-					if (!wasInFlight && isSessionNotFound) {
+					// The agent process dying is not background noise, even when the
+					// user is idle: everything afterwards fails against a process
+					// that is gone. Suppressing it is how a crash used to reach the
+					// user as an unrelated timeout on the next prompt.
+					const processExited = errMsg.includes("Agent process exited");
+
+					if (!wasInFlight && isSessionNotFound && !processExited) {
 						// Background session lookup failure while idle (e.g. viewing history)
 						// should not surface as a user-visible error.
 						break;

@@ -5,6 +5,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::ListSessions => runner.list_sessions().await,
         RunnerRequest::GetSession(r) => runner.get_session(r).await,
         RunnerRequest::StartSession(r) => runner.start_session(r).await,
+        RunnerRequest::GetTerminalCredential(r) => runner.get_terminal_credential(r).await,
         RunnerRequest::StopSession(r) => runner.stop_session(r).await,
         RunnerRequest::ListMainChatSessions => runner.list_main_chat_sessions().await,
         RunnerRequest::GetMainChatMessages(r) => runner.get_main_chat_messages(r).await,

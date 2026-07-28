@@ -4,7 +4,6 @@
 # =============================================================================
 #
 # Starts all services in the correct dependency order:
-#   1. hstry   (chat history, gRPC)
 #   2. eavs    (LLM proxy)
 #   3. oqto    (backend API + WebSocket)
 #   4. caddy   (reverse proxy, serves frontend)
@@ -73,20 +72,6 @@ wait_for_port() {
   log "${name} is ready on port ${port} (${waited}s)"
 }
 
-wait_for_hstry() {
-  local timeout="${1:-30}" waited=0
-  while [ "$waited" -lt "$timeout" ]; do
-    if [ -f "/home/oqto/.local/state/hstry/port" ] || \
-       [ -S "/home/oqto/.local/state/hstry/service.sock" ]; then
-      log "hstry is ready (${waited}s)"
-      return 0
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  log "hstry startup wait complete (may still be initializing)"
-}
-
 wait_for_socket() {
   local socket_path="$1" name="$2" timeout="${3:-15}" waited=0
   while [ ! -S "$socket_path" ]; do
@@ -119,17 +104,13 @@ trap cleanup SIGTERM SIGINT EXIT
 log "Initializing Oqto (data: ${OQTO_DATA_DIR})"
 
 mkdir -p \
-  "${OQTO_DATA_DIR}/hstry" \
   "${OQTO_DATA_DIR}/eavs" \
   "${OQTO_DATA_DIR}/oqto" \
   "${OQTO_DATA_DIR}/users" \
   "${OQTO_DATA_DIR}/workspaces" \
   /run/oqto \
   /home/oqto/.config/oqto \
-  /home/oqto/.config/hstry \
   /home/oqto/.config/eavs \
-  /home/oqto/.local/state/hstry \
-  /home/oqto/.local/share/hstry \
   "${OQTO_DATA_DIR}/pi-sessions"
 
 chown -R oqto:oqto "${OQTO_DATA_DIR}" /run/oqto /home/oqto 2>/dev/null || true
@@ -249,24 +230,6 @@ fi
 chown -R oqto:oqto /home/oqto/.config/eavs
 
 # ---------------------------------------------------------------------------
-# Write hstry config
-# ---------------------------------------------------------------------------
-
-cat > /home/oqto/.config/hstry/config.toml <<EOF
-database = "${OQTO_DATA_DIR}/hstry/hstry.db"
-adapter_paths = ["/usr/local/share/hstry/adapters"]
-js_runtime = "bun"
-
-[service]
-enabled = true
-poll_interval_secs = 30
-search_api = true
-transport = "tcp"
-EOF
-
-chown -R oqto:oqto /home/oqto/.config/hstry
-
-# ---------------------------------------------------------------------------
 # Write oqto config (matches AppConfig struct)
 # ---------------------------------------------------------------------------
 
@@ -320,8 +283,6 @@ jwt_secret = "${JWT_SECRET}"
 enabled = true
 base_url = "http://127.0.0.1:${EAVS_PORT}"
 master_key = "${EAVS_ADMIN_KEY}"
-
-[hstry]
 
 [voice]
 enabled = false
@@ -408,20 +369,7 @@ EOF
 # Start services
 # ---------------------------------------------------------------------------
 
-# 1. hstry (chat history)
-log "Starting hstry..."
-su -s /bin/bash oqto -c "
-  export HOME=/home/oqto
-  export XDG_CONFIG_HOME=/home/oqto/.config
-  export XDG_DATA_HOME=/home/oqto/.local/share
-  export XDG_STATE_HOME=/home/oqto/.local/state
-  hstry adapters update 2>&1 || true
-  hstry service run 2>&1 | sed 's/^/[hstry] /'
-" &
-PIDS+=($!)
-wait_for_hstry 15
-
-# 2. eavs (LLM proxy)
+# 1. eavs (LLM proxy)
 log "Starting eavs..."
 set -a
 # shellcheck source=/dev/null

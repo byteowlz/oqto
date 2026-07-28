@@ -144,12 +144,14 @@ impl LinuxUsersConfig {
             username, uid, project_id
         );
 
+        self.ensure_own_group(&username, uid)?;
+
         // Build useradd command
         let mut args = vec![
             "-u".to_string(),
             uid.to_string(),
             "-g".to_string(),
-            self.group.clone(),
+            username.clone(),
             "-s".to_string(),
             self.shell.clone(),
         ];
@@ -173,6 +175,10 @@ impl LinuxUsersConfig {
 
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating project user '{}'", username))?;
+
+        if self.create_home {
+            self.claim_home_for_service_group(&username)?;
+        }
 
         info!("Created Linux user '{}' with UID {}", username, uid);
 
@@ -465,12 +471,14 @@ impl LinuxUsersConfig {
             username, uid, user_id
         );
 
+        self.ensure_own_group(username, uid)?;
+
         // Build useradd command
         let mut args = vec![
             "-u".to_string(),
             uid.to_string(),
             "-g".to_string(),
-            self.group.clone(),
+            username.to_string(),
             "-s".to_string(),
             self.shell.clone(),
         ];
@@ -491,6 +499,10 @@ impl LinuxUsersConfig {
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
+
+        if self.create_home {
+            self.claim_home_for_service_group(username)?;
+        }
 
         info!("Created Linux user '{}' with UID {}", username, uid);
         Ok((uid, username.to_string()))
@@ -1179,6 +1191,62 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
 /// In multi-user mode, the oqto-usermgr daemon runs as root on a unix socket.
 /// This provides OS-level privilege separation: even if the oqto process is
 /// compromised, it cannot modify /etc/passwd or /home directly.
+impl LinuxUsersConfig {
+    /// Create the user's own group so it can be their primary group.
+    ///
+    /// `self.group` (`oqto`) is the *service* group: it carries the backend's
+    /// access to every managed user's home and workspace. A platform user must
+    /// never be a member, or that access is held by every tenant over every
+    /// other tenant. Group *ownership* of the home stays `oqto`; only the
+    /// user's membership changes.
+    /// Keep the home group-owned by the service group, and setgid so files
+    /// created later inherit it.
+    ///
+    /// The backend reads a few files under each home (the Pi model config, the
+    /// eavs key). Without setgid those would inherit the user's own group once
+    /// it is no longer `oqto`, and the backend would lose access the next time
+    /// they are regenerated.
+    fn claim_home_for_service_group(&self, username: &str) -> Result<()> {
+        let home = format!("/home/{}", username);
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/bin/chown",
+            &[&format!("{}:{}", username, self.group), &home],
+        )
+        .with_context(|| format!("chown home for '{}'", username))?;
+        run_privileged_command(self.use_sudo, "/usr/bin/chmod", &["2750", &home])
+            .with_context(|| format!("chmod home for '{}'", username))
+    }
+
+    fn ensure_own_group(&self, username: &str, uid: u32) -> Result<()> {
+        if get_group_gid(username)?.is_some() {
+            return Ok(());
+        }
+        let uid_str = uid.to_string();
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/sbin/groupadd",
+            &["-g", &uid_str, username],
+        )
+        .with_context(|| format!("creating own group for '{}'", username))
+    }
+}
+
+/// Look up a group's GID, or `None` when it does not exist.
+fn get_group_gid(group: &str) -> Result<Option<u32>> {
+    let output = Command::new("/usr/bin/getent")
+        .args(["group", group])
+        .output()
+        .with_context(|| format!("looking up group '{}'", group))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split(':')
+        .nth(2)
+        .and_then(|gid| gid.trim().parse().ok()))
+}
+
 fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()> {
     let is_root = geteuid().is_root();
 
@@ -1370,6 +1438,7 @@ mod tests {
     #[test]
     fn test_linux_username_custom_prefix() {
         let config = LinuxUsersConfig {
+            strict_identity: false,
             prefix: "workspace_".to_string(),
             ..Default::default()
         };
@@ -1391,6 +1460,7 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let config = LinuxUsersConfig {
+            strict_identity: false,
             enabled: true,
             prefix: "test_".to_string(),
             uid_start: 3000,

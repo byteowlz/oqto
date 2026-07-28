@@ -46,23 +46,45 @@ impl Default for AuthConfig {
     }
 }
 
+/// Resolve a secret that may be given literally, as `env:VAR`, or as
+/// `file:PATH`.
+///
+/// `file:` exists for systemd `LoadCredential`, which places secrets in
+/// `$CREDENTIALS_DIRECTORY` at mode 0400 and keeps them out of the process
+/// environment, so they are not exposed via `/proc/PID/environ` and are not
+/// inherited by spawned tools.
+pub fn resolve_secret_value(value: &str) -> Result<String, ConfigValidationError> {
+    if let Some(var_name) = value.strip_prefix("env:") {
+        return match std::env::var(var_name) {
+            Ok(secret) if !secret.is_empty() => Ok(secret),
+            Ok(_) => Err(ConfigValidationError::EnvVarEmpty(var_name.to_string())),
+            Err(_) => Err(ConfigValidationError::EnvVarNotFound(var_name.to_string())),
+        };
+    }
+
+    if let Some(path) = value.strip_prefix("file:") {
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            ConfigValidationError::SecretFileUnreadable(path.to_string(), e.to_string())
+        })?;
+        // Trailing newlines are near-universal in credential files and are not
+        // part of the secret.
+        let secret = contents.trim_end_matches(['\n', '\r']).to_string();
+        if secret.is_empty() {
+            return Err(ConfigValidationError::SecretFileEmpty(path.to_string()));
+        }
+        return Ok(secret);
+    }
+
+    Ok(value.to_string())
+}
+
 impl AuthConfig {
-    /// Resolve the JWT secret, expanding `env:VAR_NAME` syntax.
+    /// Resolve the JWT secret, expanding `env:VAR` and `file:PATH` syntax.
     /// Returns the resolved secret or None if not configured.
     pub fn resolve_jwt_secret(&self) -> Result<Option<String>, ConfigValidationError> {
         match &self.jwt_secret {
             None => Ok(None),
-            Some(value) => {
-                if let Some(var_name) = value.strip_prefix("env:") {
-                    match std::env::var(var_name) {
-                        Ok(secret) if !secret.is_empty() => Ok(Some(secret)),
-                        Ok(_) => Err(ConfigValidationError::EnvVarEmpty(var_name.to_string())),
-                        Err(_) => Err(ConfigValidationError::EnvVarNotFound(var_name.to_string())),
-                    }
-                } else {
-                    Ok(Some(value.clone()))
-                }
-            }
+            Some(value) => resolve_secret_value(value).map(Some),
         }
     }
 
@@ -122,6 +144,10 @@ pub enum ConfigValidationError {
     InsecureJwtSecret,
     /// JWT secret is too short (minimum 32 characters).
     JwtSecretTooShort,
+    /// Credential file could not be read (for `file:PATH` syntax).
+    SecretFileUnreadable(String, String),
+    /// Credential file is empty (for `file:PATH` syntax).
+    SecretFileEmpty(String),
     /// Environment variable not found (for `env:VAR_NAME` syntax).
     EnvVarNotFound(String),
     /// Environment variable is empty (for `env:VAR_NAME` syntax).
@@ -147,6 +173,20 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "JWT secret must be at least 32 characters long for security."
+                )
+            }
+            Self::SecretFileUnreadable(path, err) => {
+                write!(
+                    f,
+                    "Secret file '{}' could not be read (referenced via file:{} in config): {}.                      Under systemd LoadCredential the path is $CREDENTIALS_DIRECTORY/<name>.",
+                    path, path, err
+                )
+            }
+            Self::SecretFileEmpty(path) => {
+                write!(
+                    f,
+                    "Secret file '{}' is empty (referenced via file:{} in config).",
+                    path, path
                 )
             }
             Self::EnvVarNotFound(var) => {
@@ -495,5 +535,87 @@ mod tests {
         let config = AuthConfig::default();
         let resolved = config.resolve_jwt_secret().unwrap();
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn resolves_a_secret_from_a_credential_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jwt");
+        // systemd writes credentials with a trailing newline; it is not part
+        // of the secret.
+        std::fs::write(&path, "s3cr3t-value-that-is-long-enough-000000\n").expect("write");
+
+        let config = AuthConfig {
+            jwt_secret: Some(format!("file:{}", path.display())),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config.resolve_jwt_secret().expect("resolves"),
+            Some("s3cr3t-value-that-is-long-enough-000000".to_string())
+        );
+    }
+
+    #[test]
+    fn a_file_secret_never_enters_the_environment() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jwt");
+        std::fs::write(&path, "another-secret-long-enough-0000000000000").expect("write");
+
+        let config = AuthConfig {
+            jwt_secret: Some(format!("file:{}", path.display())),
+            ..Default::default()
+        };
+        let resolved = config.resolve_jwt_secret().expect("resolves").unwrap();
+
+        assert!(
+            !std::env::vars().any(|(_, v)| v == resolved),
+            "the point of file: is that the secret is not in the environment, \
+             where it would be readable via /proc/PID/environ and inherited by \
+             every spawned tool"
+        );
+    }
+
+    #[test]
+    fn a_missing_credential_file_fails_closed() {
+        let config = AuthConfig {
+            jwt_secret: Some("file:/nonexistent/oqto-credential".to_string()),
+            ..Default::default()
+        };
+
+        let err = config.resolve_jwt_secret().expect_err("must not fall back");
+        assert!(matches!(
+            err,
+            ConfigValidationError::SecretFileUnreadable(_, _)
+        ));
+    }
+
+    #[test]
+    fn an_empty_credential_file_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("empty");
+        std::fs::write(&path, "\n").expect("write");
+
+        let config = AuthConfig {
+            jwt_secret: Some(format!("file:{}", path.display())),
+            ..Default::default()
+        };
+
+        let err = config
+            .resolve_jwt_secret()
+            .expect_err("empty must not pass");
+        assert!(matches!(err, ConfigValidationError::SecretFileEmpty(_)));
+    }
+
+    #[test]
+    fn a_literal_secret_is_still_returned_unchanged() {
+        let config = AuthConfig {
+            jwt_secret: Some("plain-literal-secret-value-0000000000000".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_jwt_secret().expect("resolves"),
+            Some("plain-literal-secret-value-0000000000000".to_string())
+        );
     }
 }

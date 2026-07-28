@@ -93,7 +93,7 @@ start_all_services() {
       sudo runuser -u "$username" -- env \
         XDG_RUNTIME_DIR="$runtime_dir" \
         DBUS_SESSION_BUS_ADDRESS="$bus" \
-        systemctl --user stop oqto-runner hstry mmry 2>/dev/null || true
+        systemctl --user stop oqto-runner 2>/dev/null || true
 
       # Remove stale socket
       sudo rm -f "/run/oqto/runner-sockets/${username}/oqto-runner.sock"
@@ -211,14 +211,6 @@ print_summary() {
     echo -e "  Valkey:         $(check_service_status valkey)"
   elif command_exists redis-server; then
     echo -e "  Redis:          $(check_service_status redis)"
-  fi
-
-  if [[ "$OS" == "linux" ]]; then
-    if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
-      echo -e "  hstry:          ${CYAN}per-user (managed by runner)${NC}"
-    else
-      echo -e "  hstry:          $(check_service_status hstry "$is_user_service")"
-    fi
   fi
 
   echo
@@ -483,7 +475,7 @@ print_summary() {
   echo "  - README.md"
   echo "  - SETUP.md (detailed setup guide)"
   echo "  - deploy/systemd/README.md (Linux systemd setup)"
-  echo "  - deploy/ansible/README.md (Ansible deployment)"
+  echo "  - deploy/DEPLOY.md (release deployment across hosts)"
   echo "  - backend/examples/config.toml (full config reference)"
 }
 

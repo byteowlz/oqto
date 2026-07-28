@@ -799,6 +799,7 @@ mod tests {
     fn test_local_runtime_config_with_linux_users() {
         let config = LocalRuntimeConfig {
             linux_users: LinuxUsersConfig {
+                strict_identity: false,
                 enabled: true,
                 prefix: "test_".to_string(),
                 uid_start: 3000,
@@ -842,6 +843,7 @@ mod tests {
             default_agent: Some("build".to_string()),
             single_user: false,
             linux_users: LinuxUsersConfig {
+                strict_identity: false,
                 enabled: true,
                 prefix: "ws_".to_string(),
                 uid_start: 5000,

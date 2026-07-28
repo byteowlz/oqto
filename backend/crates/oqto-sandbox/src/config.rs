@@ -59,7 +59,7 @@ use std::io::Write;
 /// Policy for guarded path access.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-#[derive(Default)]
+#[derive(schemars::JsonSchema, Default)]
 pub enum GuardPolicy {
     /// Auto-approve access, but log it.
     Auto,
@@ -71,8 +71,8 @@ pub enum GuardPolicy {
 }
 
 /// Configuration for oqto-guard (FUSE filesystem for runtime access control).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GuardConfig {
     /// Enable the guard FUSE filesystem.
     pub enabled: bool,
@@ -105,8 +105,8 @@ fn default_guard_timeout() -> u64 {
 // ============================================================================
 
 /// Configuration for oqto-ssh-proxy (SSH agent proxy with policy).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SshProxyConfig {
     /// Enable the SSH agent proxy.
     pub enabled: bool,
@@ -132,16 +132,103 @@ fn default_true() -> bool {
     true
 }
 
+/// Per-process resource limits applied with `setrlimit(2)` immediately before
+/// exec.
+///
+/// Unset fields leave the inherited limit untouched. These are per-process and
+/// require no cgroup delegation, so they apply unprivileged and when
+/// `oqto-sandbox` is used standalone. Placement-level quotas for a whole
+/// Workspace remain the supervisor's job (see ADR-0020).
+///
+/// Process-count caps are deliberately absent: `RLIMIT_NPROC` counts every
+/// process of the real UID rather than this sandbox's descendants, so any
+/// value below the user's existing process count makes `clone(2)` fail and
+/// stops the sandbox from starting at all. Bounding process counts requires
+/// cgroup `pids.max`, which belongs to the Placement Supervisor.
+#[derive(
+    schemars::JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct ResourceLimits {
+    /// Maximum address space, in bytes (`RLIMIT_AS`).
+    ///
+    /// This is reserved virtual address space, not resident memory, so it is
+    /// not a memory budget: JIT and WebAssembly engines reserve far more than
+    /// they commit and will fail allocation long before the process uses the
+    /// stated amount. Left unset in the shipped profiles for that reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_memory_bytes: Option<u64>,
+
+    /// Maximum number of open file descriptors (`RLIMIT_NOFILE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_open_files: Option<u64>,
+
+    /// Maximum CPU time, in seconds (`RLIMIT_CPU`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cpu_seconds: Option<u64>,
+
+    /// Maximum size of any single file written, in bytes (`RLIMIT_FSIZE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_file_size_bytes: Option<u64>,
+}
+
+impl ResourceLimits {
+    /// True when no limit is set, so spawn can skip installing them.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Combine two limit sets keeping the stricter (lower) value per field.
+    ///
+    /// Workspace config may only tighten limits, never raise them, matching the
+    /// merge direction already used for `deny_read`/`allow_write`.
+    pub fn tightest(self, other: Self) -> Self {
+        fn stricter(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (None, None) => None,
+            }
+        }
+
+        Self {
+            max_memory_bytes: stricter(self.max_memory_bytes, other.max_memory_bytes),
+            max_open_files: stricter(self.max_open_files, other.max_open_files),
+            max_cpu_seconds: stricter(self.max_cpu_seconds, other.max_cpu_seconds),
+            max_file_size_bytes: stricter(self.max_file_size_bytes, other.max_file_size_bytes),
+        }
+    }
+}
+
 fn default_overlay_root() -> String {
     "~/.oqto/overlays".to_string()
 }
+
+fn default_workspace_cache_root() -> String {
+    "~/.cache/oqto/workspace-caches".to_string()
+}
+
+/// Toolchain cache environment variables redirected into the per-workspace
+/// cache directory, as `(variable, subdirectory)`.
+///
+/// `RUSTUP_HOME` is deliberately absent: rustup shims resolve the active
+/// toolchain through it, so pointing it at an empty directory breaks `cargo`
+/// and `rustc` entirely. It only needs to be readable, which it already is.
+const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
+    ("CARGO_HOME", "cargo"),
+    ("NPM_CONFIG_CACHE", "npm"),
+    ("BUN_INSTALL_CACHE_DIR", "bun"),
+    ("UV_CACHE_DIR", "uv"),
+    ("PIP_CACHE_DIR", "pip"),
+    ("GOPATH", "go"),
+    ("GOMODCACHE", "go/pkg/mod"),
+];
 
 // ============================================================================
 // Network Configuration (integrates with eavs)
 // ============================================================================
 
 /// Network access mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkMode {
     /// No network restrictions.
@@ -155,8 +242,8 @@ pub enum NetworkMode {
 
 /// Configuration for network access control.
 /// When mode is "proxy", traffic goes through eavs with domain filtering.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetworkConfig {
     /// Network access mode.
     pub mode: NetworkMode,
@@ -185,8 +272,8 @@ pub struct NetworkConfig {
 // ============================================================================
 
 /// Configuration for how prompts are delivered to users.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PromptConfig {
     /// Enable desktop notifications as fallback when UI not connected.
     #[serde(default = "default_true")]
@@ -202,7 +289,7 @@ fn default_prompt_timeout() -> u64 {
 }
 
 /// Seccomp enforcement mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SeccompMode {
     /// Disable seccomp integration.
@@ -224,7 +311,7 @@ fn stricter_seccomp_mode(a: SeccompMode, b: SeccompMode) -> SeccompMode {
 }
 
 /// Landlock enforcement mode.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LandlockMode {
     #[default]
@@ -274,26 +361,32 @@ fn merge_network(
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopedPathSource {
     WorkspacePath,
     Literal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScopedPathAccess {
     Ro,
     Rw,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScopedPathMissing {
     Ignore,
     Warn,
     Fail,
+    /// Create the target before binding.
+    ///
+    /// Required for session shards: skipping the bind leaves the base tmpfs in
+    /// place, so the harness writes its history into the sandbox and loses it
+    /// on exit with no error anywhere.
+    Create,
 }
 
 fn default_scoped_target_template() -> String {
@@ -305,10 +398,10 @@ fn default_scoped_access() -> ScopedPathAccess {
 }
 
 fn default_scoped_missing() -> ScopedPathMissing {
-    ScopedPathMissing::Warn
+    ScopedPathMissing::Create
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum ScopedPathTransform {
     StripPrefix { value: String },
@@ -316,8 +409,8 @@ pub enum ScopedPathTransform {
     Wrap { prefix: String, suffix: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
 pub struct ScopedPathRule {
     pub name: String,
     pub base_path: String,
@@ -393,8 +486,9 @@ const LANDLOCK_ACCESS_FS_REFER: u64 = 1u64 << 13;
 #[cfg(target_os = "linux")]
 const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1u64 << 14;
 
+/// Write-ish rights available in Landlock ABI 1 (Linux 5.13).
 #[cfg(target_os = "linux")]
-const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+const LANDLOCK_WRITE_ACCESS_ABI1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_REMOVE_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_CHAR
@@ -403,13 +497,191 @@ const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_SOCK
     | LANDLOCK_ACCESS_FS_MAKE_FIFO
     | LANDLOCK_ACCESS_FS_MAKE_BLOCK
-    | LANDLOCK_ACCESS_FS_MAKE_SYM
-    | LANDLOCK_ACCESS_FS_REFER
-    | LANDLOCK_ACCESS_FS_TRUNCATE;
+    | LANDLOCK_ACCESS_FS_MAKE_SYM;
+
+/// Write-restriction mask supported by a given Landlock ABI version.
+///
+/// The kernel rejects any right it does not know, so requesting `REFER`
+/// (ABI 2, Linux 5.19) or `TRUNCATE` (ABI 3, Linux 6.2) on an older kernel
+/// makes `landlock_create_ruleset` fail with `EINVAL` and takes the whole
+/// sandbox down. Clamp instead, and let callers report the reduced guarantee.
+///
+/// Note for ABI 1: without `REFER` the kernel denies every rename/link that
+/// crosses directories, and without `TRUNCATE` truncation is not restricted at
+/// all. Enforcement there is both stricter for tooling and weaker for security
+/// than on ABI >= 3.
+/// Subset of the write mask that Landlock accepts on a non-directory.
+///
+/// `landlock_add_rule` returns `EINVAL` when a rule for a regular file or
+/// device carries directory-only rights (`MAKE_*`, `REMOVE_*`, `REFER`), so a
+/// writable file such as `/dev/null` must be registered with file rights only.
+/// Device nodes that bwrap's `--dev` always provides and that ordinary tooling
+/// expects to be writable (`git` opens `/dev/null` read-write, shells redirect
+/// to it constantly).
+///
+/// These are granted directly in the Landlock ruleset rather than through
+/// `allow_write`, because `allow_write` also drives bwrap `--bind` arguments:
+/// binding `/dev` or `/dev/null` would mount over bwrap's own `--dev` and break
+/// the sandbox in every mode. Granting a write right on a device node exposes
+/// no host filesystem contents.
+/// System location of managed agent runtimes (Pi standalone binaries).
+///
+/// Bound read-only so sandboxed agents can execute the promoted runtime.
+pub const MANAGED_RUNTIME_DIR: &str = "/var/lib/oqto/pi-runtimes";
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_ALWAYS_WRITABLE_DEVICES: &[&str] = &[
+    "/dev/null",
+    "/dev/zero",
+    "/dev/full",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/tty",
+];
+
+#[cfg(target_os = "linux")]
+fn landlock_file_access_mask(abi: i64) -> u64 {
+    let mut mask = LANDLOCK_ACCESS_FS_WRITE_FILE;
+    if abi >= 3 {
+        mask |= LANDLOCK_ACCESS_FS_TRUNCATE;
+    }
+    mask
+}
+
+#[cfg(target_os = "linux")]
+fn landlock_write_access_mask(abi: i64) -> u64 {
+    let mut mask = LANDLOCK_WRITE_ACCESS_ABI1;
+    if abi >= 2 {
+        mask |= LANDLOCK_ACCESS_FS_REFER;
+    }
+    if abi >= 3 {
+        mask |= LANDLOCK_ACCESS_FS_TRUNCATE;
+    }
+    mask
+}
 
 // ============================================================================
 // Sandbox Profile
 // ============================================================================
+
+/// Restrict harness session history to the current workspace's shard.
+///
+/// Harnesses write history under a per-cwd directory (Pi:
+/// `~/.pi/agent/sessions/--{cwd-with-slashes-as-dashes}--`), so granting the
+/// parent readable exposes every other workspace's transcripts. These rules
+/// mask the parent and bind back only the shard belonging to this workspace.
+fn session_shard_rules() -> Vec<ScopedPathRule> {
+    ["~/.pi/agent/sessions"]
+        .into_iter()
+        .map(|base| ScopedPathRule {
+            name: format!("session-shard:{base}"),
+            base_path: base.to_string(),
+            source: ScopedPathSource::WorkspacePath,
+            source_literal: None,
+            transforms: vec![
+                ScopedPathTransform::StripPrefix {
+                    value: "/".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: "/".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Wrap {
+                    prefix: "--".to_string(),
+                    suffix: "--".to_string(),
+                },
+            ],
+            target_template: default_scoped_target_template(),
+            access: ScopedPathAccess::Rw,
+            missing: ScopedPathMissing::Create,
+        })
+        .collect()
+}
+
+/// Restrict co-resident agent state to the current workspace's project directory.
+///
+/// Extensions that bridge to another agent keep per-workspace state under a
+/// per-cwd directory, so granting the parent exposes every other workspace's
+/// state and granting nothing breaks the extension at startup with EACCES.
+/// These rules mask the parent and bind back only this workspace's directory.
+///
+/// The encoding differs from the harness session shard: the workspace path is
+/// not wrapped, and `.` and `_` collapse to `-` alongside `/`, so
+/// `/home/u/byteowlz/oqto_refactor` becomes `-home-u-byteowlz-oqto-refactor`.
+/// Verified against real directories rather than derived from documentation.
+fn agent_project_shard_rules() -> Vec<ScopedPathRule> {
+    ["~/.claude/projects"]
+        .into_iter()
+        .map(|base| ScopedPathRule {
+            name: format!("agent-project-shard:{base}"),
+            base_path: base.to_string(),
+            source: ScopedPathSource::WorkspacePath,
+            source_literal: None,
+            transforms: vec![
+                ScopedPathTransform::Replace {
+                    from: "/".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: ".".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: "_".to_string(),
+                    to: "-".to_string(),
+                },
+            ],
+            target_template: default_scoped_target_template(),
+            access: ScopedPathAccess::Rw,
+            missing: ScopedPathMissing::Create,
+        })
+        .collect()
+}
+
+/// Default access to the account home before any rule applies.
+///
+/// This used to be derived from the profile *name*: `development` and `minimal`
+/// got a writable home and every other denylist profile got a read-only one,
+/// with nothing in the profile saying so. A profile copied from `development`
+/// under another name silently lost write access to home.
+#[derive(
+    schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Default,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum HomeAccess {
+    /// Nothing under home is visible unless a rule grants it.
+    None,
+    /// Home is readable; writes need an explicit grant.
+    #[default]
+    Read,
+    /// Home is writable except where a rule denies it.
+    Write,
+}
+
+/// How reads under the user's home directory are decided.
+#[derive(
+    schemars::JsonSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadPolicy {
+    /// Bind the whole home readable, then mask `deny_read`. Any path not
+    /// enumerated stays readable.
+    #[default]
+    Denylist,
+    /// Bind nothing under home by default; only `allow_read` (plus the
+    /// workspace and `allow_write`) is visible.
+    Allowlist,
+}
 
 /// A sandbox profile definition.
 ///
@@ -423,10 +695,23 @@ const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
 /// 2. **oqto-guard (FUSE)**: Runtime approval for "gray area" paths
 /// 3. **oqto-ssh-proxy**: SSH access without exposing private keys
 /// 4. **Network (eavs)**: Domain-level network filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct SandboxProfile {
     // --- oqto-sandbox (bwrap) layer ---
+    /// How home-directory reads are decided.
+    pub read_policy: ReadPolicy,
+
+    /// Default access to the account home.
+    ///
+    /// `read_policy = "allowlist"` masks home regardless, so this applies to
+    /// denylist profiles. Stated explicitly so writability is a property of the
+    /// profile rather than of its name.
+    pub home_access: HomeAccess,
+
+    /// Paths readable under home when `read_policy` is `Allowlist`.
+    pub allow_read: Vec<String>,
+
     /// Paths to deny read access (always applied).
     pub deny_read: Vec<String>,
 
@@ -444,15 +729,12 @@ pub struct SandboxProfile {
     pub isolate_pid: bool,
 
     /// Drop all Linux capabilities inside the sandbox.
-    #[serde(default)]
     pub drop_all_caps: bool,
 
     /// Disable nested user namespace creation inside sandbox.
-    #[serde(default)]
     pub disable_userns: bool,
 
     /// Assert that nested user namespaces are disabled (fail if not).
-    #[serde(default)]
     pub assert_userns_disabled: bool,
 
     /// Set PR_SET_NO_NEW_PRIVS before exec.
@@ -460,15 +742,12 @@ pub struct SandboxProfile {
     pub no_new_privs: bool,
 
     /// Seccomp mode (off/audit/enforce).
-    #[serde(default)]
     pub seccomp_mode: SeccompMode,
 
     /// Landlock mode (off/audit/enforce).
-    #[serde(default)]
     pub landlock_mode: LandlockMode,
 
     /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
-    #[serde(default)]
     pub seccomp_bpf_path: Option<String>,
 
     /// Additional paths to bind read-only.
@@ -482,7 +761,6 @@ pub struct SandboxProfile {
     /// When enabled, each path in `overlay_paths` is mounted with bwrap overlay
     /// so writes go to a per-workspace upperdir under `overlay_root` while reads
     /// come from the original path.
-    #[serde(default)]
     pub overlay_enabled: bool,
 
     /// Root directory for per-workspace overlay upper/work dirs.
@@ -492,31 +770,35 @@ pub struct SandboxProfile {
     pub overlay_root: String,
 
     /// Paths to overlay (typically package/toolchain directories).
-    #[serde(default)]
     pub overlay_paths: Vec<String>,
 
     /// Dynamic deny+rebind rules evaluated at spawn time.
-    #[serde(default)]
     pub scoped_paths: Vec<ScopedPathRule>,
+
+    /// Per-process resource limits applied before exec.
+    pub resource_limits: ResourceLimits,
+
+    /// Redirect toolchain caches into a per-workspace directory.
+    pub workspace_cache_enabled: bool,
+
+    /// Root directory holding per-workspace toolchain caches.
+    #[serde(default = "default_workspace_cache_root")]
+    pub workspace_cache_root: String,
 
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
-    #[serde(default)]
     pub guard: Option<GuardConfig>,
 
     // --- oqto-ssh-proxy layer ---
     /// Configuration for SSH agent proxy.
-    #[serde(default)]
     pub ssh: Option<SshProxyConfig>,
 
     // --- Network (eavs integration) layer ---
     /// Configuration for network access control.
-    #[serde(default)]
     pub network: Option<NetworkConfig>,
 
     // --- Prompt delivery ---
     /// Configuration for user prompts.
-    #[serde(default)]
     pub prompts: Option<PromptConfig>,
 }
 
@@ -530,10 +812,22 @@ impl SandboxProfile {
     /// Create a minimal profile (least restrictive).
     pub fn minimal() -> Self {
         Self {
+            read_policy: ReadPolicy::Denylist,
+            home_access: HomeAccess::Write,
+            allow_read: vec![],
+            workspace_cache_enabled: false,
+            workspace_cache_root: default_workspace_cache_root(),
+            resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -566,10 +860,22 @@ impl SandboxProfile {
     /// Create a development profile (default).
     pub fn development() -> Self {
         Self {
+            read_policy: ReadPolicy::Denylist,
+            home_access: HomeAccess::Write,
+            allow_read: vec![],
+            workspace_cache_enabled: false,
+            workspace_cache_root: default_workspace_cache_root(),
+            resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -629,6 +935,9 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
             ],
             scoped_paths: vec![],
+            // Session history is deliberately NOT scoped here. development is
+            // the permissive profile; cross-workspace session visibility is
+            // intended. strict scopes it (see session_shard_rules).
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -659,17 +968,55 @@ impl SandboxProfile {
     /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
+            read_policy: ReadPolicy::Allowlist,
+            home_access: HomeAccess::None,
+            allow_read: vec![
+                // Toolchain and VCS configuration an agent legitimately reads.
+                // Derived by running real workloads under the allowlist, not guessed.
+                "~/.cargo".to_string(),
+                "~/.rustup".to_string(),
+                "~/.gitconfig".to_string(),
+                "~/.config/git".to_string(),
+                "~/.npmrc".to_string(),
+                "~/.bun".to_string(),
+                "~/.local/share/pi".to_string(),
+                "~/.pi".to_string(),
+            ],
+            workspace_cache_enabled: true,
+            workspace_cache_root: default_workspace_cache_root(),
+            resource_limits: ResourceLimits {
+                // Deliberately unset. RLIMIT_AS bounds reserved address space,
+                // not resident memory, and every JIT or WebAssembly engine
+                // reserves far more virtual space than it ever commits. A 4 GiB
+                // cap here made Node fail to instantiate the WASM module undici
+                // uses for HTTP parsing, killing the harness seconds after spawn
+                // with an error that named memory but was really a reservation.
+                // Bound real memory with a cgroup, which limits what is resident
+                // and ignores reservations.
+                max_memory_bytes: None,
+                max_open_files: Some(4096),
+                max_cpu_seconds: None,
+                max_file_size_bytes: Some(2 * 1024 * 1024 * 1024),
+            },
             deny_read: vec![
                 "~/.ssh".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 "~/.config".to_string(),
+                // The platform's own config holds the backend signing secret and the
+                // EAVS master key. An agent never needs it; the user-scoped
+                // ~/.config/oqto is separate.
+                "/etc/oqto".to_string(),
+                "~/.config/oqto/config.toml".to_string(),
+                "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
                 "/bin/systemd-run".to_string(),
             ],
-            // Note: ~/.pi must be writable for Pi session files
+            // Note: ~/.pi must be writable for Pi session files. Without it a
+            // sandboxed agent starts and exits 0 while silently persisting no
+            // session, which loses the oqto-log ingest source.
             allow_write: vec!["/tmp".to_string(), "~/.pi".to_string()],
             deny_write: vec![],
             isolate_network: true,
@@ -678,17 +1025,33 @@ impl SandboxProfile {
             disable_userns: true,
             assert_userns_disabled: true,
             no_new_privs: true,
+            // seccomp stays in audit: enforce is fail-closed and requires a
+            // compiled seccomp_bpf_path, which this profile does not ship.
             seccomp_mode: SeccompMode::Audit,
-            landlock_mode: LandlockMode::Audit,
+            // Landlock enforces here. This is the profile for untrusted work,
+            // and it is the only shipped profile that actually restricts:
+            // writes are limited to the workspace, /tmp and ~/.pi even where
+            // bwrap mounted a path read-write. Toolchain caches (~/.cargo,
+            // ~/.npm, ...) are deliberately not writable, so builds must use
+            // workspace- or /tmp-local caches (e.g. CARGO_HOME).
+            landlock_mode: LandlockMode::Enforce,
             seccomp_bpf_path: None,
             // extra_ro_bind is applied AFTER deny_read, so these paths
-            // under ~/.config are accessible even though ~/.config is blocked
-            extra_ro_bind: vec!["~/.config/oqto".to_string()],
+            // under ~/.config are accessible even though ~/.config is blocked.
+            // Deliberately not the whole ~/.config/oqto: that directory holds
+            // config.toml, whose auth and eavs sections carry signing secrets.
+            // In single-user deployments the agent runs as the same user as the
+            // backend, so file permissions protect nothing here and path
+            // exclusion is the only control.
+            extra_ro_bind: vec!["~/.config/oqto/sandbox.toml".to_string()],
             extra_rw_bind: vec![],
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
             overlay_paths: vec![],
-            scoped_paths: vec![],
+            scoped_paths: session_shard_rules()
+                .into_iter()
+                .chain(agent_project_shard_rules())
+                .collect(),
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -733,9 +1096,13 @@ impl SandboxProfile {
 /// isolate_network = false
 /// isolate_pid = true
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SandboxConfigFile {
+    /// JSON schema reference. Accepted and ignored so editors can validate.
+    #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+
     /// Enable sandboxing.
     pub enabled: bool,
 
@@ -746,6 +1113,91 @@ pub struct SandboxConfigFile {
     /// Keys are profile names, values are profile settings.
     #[serde(default)]
     pub profiles: HashMap<String, SandboxProfile>,
+
+    // --- Overrides applied on top of the resolved profile ---
+    //
+    // Lists union with the profile rather than replacing it. Replacing lets a
+    // config silently drop a grant the runtime depends on: an allow_write that
+    // omits the agent session directory makes the harness exit 0 while
+    // persisting nothing. Removing a profile grant is done by defining a custom
+    // profile, which is explicit.
+    /// Additional paths to deny reading. Unioned with the profile.
+    #[serde(default)]
+    pub deny_read: Vec<String>,
+
+    /// Additional paths readable under an allowlist. Unioned with the profile.
+    #[serde(default)]
+    pub allow_read: Vec<String>,
+
+    /// Additional writable paths. Unioned with the profile.
+    #[serde(default)]
+    pub allow_write: Vec<String>,
+
+    /// Additional paths to deny writing. Unioned with the profile.
+    #[serde(default)]
+    pub deny_write: Vec<String>,
+
+    /// Additional read-only binds. Unioned with the profile.
+    #[serde(default)]
+    pub extra_ro_bind: Vec<String>,
+
+    /// Additional read-write binds. Unioned with the profile.
+    #[serde(default)]
+    pub extra_rw_bind: Vec<String>,
+
+    // Scalars override the profile. Global config is admin-owned, so it may
+    // legitimately loosen as well as tighten.
+    /// Override the profile's network isolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolate_network: Option<bool>,
+
+    /// Override the profile's PID isolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolate_pid: Option<bool>,
+
+    /// Override capability dropping.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drop_all_caps: Option<bool>,
+
+    /// Override user-namespace denial.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_userns: Option<bool>,
+
+    /// Override the assertion that user namespaces are unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assert_userns_disabled: Option<bool>,
+
+    /// Override no-new-privs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_new_privs: Option<bool>,
+
+    /// Override the Landlock mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landlock_mode: Option<LandlockMode>,
+
+    /// Override the seccomp mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp_mode: Option<SeccompMode>,
+
+    /// Override the compiled seccomp policy path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp_bpf_path: Option<String>,
+
+    /// Override the read policy for home.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_policy: Option<ReadPolicy>,
+
+    /// Override overlayfs redirection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay_enabled: Option<bool>,
+
+    /// Override the overlay root directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay_root: Option<String>,
+
+    /// Additional overlay targets. Unioned with the profile.
+    #[serde(default)]
+    pub overlay_paths: Vec<String>,
 }
 
 /// Sandbox configuration (resolved).
@@ -759,6 +1211,15 @@ pub struct SandboxConfig {
 
     /// Sandbox profile name (for logging/debugging).
     pub profile: String,
+
+    /// How home-directory reads are decided.
+    pub read_policy: ReadPolicy,
+
+    /// Default access to the account home for denylist profiles.
+    pub home_access: HomeAccess,
+
+    /// Paths readable under home when `read_policy` is `Allowlist`.
+    pub allow_read: Vec<String>,
 
     /// Paths to deny read access (always applied).
     pub deny_read: Vec<String>,
@@ -820,6 +1281,18 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub network: Option<NetworkConfig>,
 
+    /// Per-process resource limits applied before exec.
+    #[serde(default)]
+    pub resource_limits: ResourceLimits,
+
+    /// Redirect toolchain caches into a per-workspace directory.
+    #[serde(default)]
+    pub workspace_cache_enabled: bool,
+
+    /// Root directory holding per-workspace toolchain caches.
+    #[serde(default = "default_workspace_cache_root")]
+    pub workspace_cache_root: String,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -834,8 +1307,14 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         let profile = SandboxProfile::development();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
+            resource_limits: profile.resource_limits,
             enabled: false,
             profile: "development".to_string(),
+            read_policy: profile.read_policy,
+            home_access: profile.home_access,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -857,6 +1336,17 @@ impl Default for SandboxConfig {
             network: profile.network,
             profiles: HashMap::new(),
         }
+    }
+}
+
+impl SandboxConfigFile {
+    /// JSON Schema for `sandbox.toml`, derived from this type.
+    ///
+    /// Generated rather than hand-written: the previous checked-in schema
+    /// drifted until it rejected every real config.
+    pub fn schema_json() -> String {
+        let schema = schemars::schema_for!(SandboxConfigFile);
+        serde_json::to_string_pretty(&schema).expect("schema serializes")
     }
 }
 
@@ -883,8 +1373,14 @@ impl From<SandboxConfigFile> for SandboxConfig {
             });
 
         let mut config = Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
+            resource_limits: profile.resource_limits,
             enabled: file.enabled,
             profile: profile_name.to_string(),
+            read_policy: profile.read_policy,
+            home_access: profile.home_access,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -907,6 +1403,59 @@ impl From<SandboxConfigFile> for SandboxConfig {
             profiles: file.profiles,
         };
 
+        // Apply top-level overrides on the resolved profile.
+        fn extend_unique(target: &mut Vec<String>, extra: Vec<String>) {
+            for value in extra {
+                if !target.contains(&value) {
+                    target.push(value);
+                }
+            }
+        }
+        extend_unique(&mut config.deny_read, file.deny_read);
+        extend_unique(&mut config.allow_read, file.allow_read);
+        extend_unique(&mut config.allow_write, file.allow_write);
+        extend_unique(&mut config.deny_write, file.deny_write);
+        extend_unique(&mut config.extra_ro_bind, file.extra_ro_bind);
+        extend_unique(&mut config.extra_rw_bind, file.extra_rw_bind);
+
+        if let Some(v) = file.isolate_network {
+            config.isolate_network = v;
+        }
+        if let Some(v) = file.isolate_pid {
+            config.isolate_pid = v;
+        }
+        if let Some(v) = file.drop_all_caps {
+            config.drop_all_caps = v;
+        }
+        if let Some(v) = file.disable_userns {
+            config.disable_userns = v;
+        }
+        if let Some(v) = file.assert_userns_disabled {
+            config.assert_userns_disabled = v;
+        }
+        if let Some(v) = file.no_new_privs {
+            config.no_new_privs = v;
+        }
+        if let Some(v) = file.landlock_mode {
+            config.landlock_mode = v;
+        }
+        if let Some(v) = file.seccomp_mode {
+            config.seccomp_mode = v;
+        }
+        if let Some(v) = file.seccomp_bpf_path {
+            config.seccomp_bpf_path = Some(v);
+        }
+        if let Some(v) = file.read_policy {
+            config.read_policy = v;
+        }
+        if let Some(v) = file.overlay_enabled {
+            config.overlay_enabled = v;
+        }
+        if let Some(v) = file.overlay_root {
+            config.overlay_root = v;
+        }
+        extend_unique(&mut config.overlay_paths, file.overlay_paths);
+
         // Always ensure sandbox.toml itself is protected
         let sandbox_toml = "~/.config/oqto/sandbox.toml".to_string();
         if !config.deny_write.contains(&sandbox_toml) {
@@ -922,8 +1471,14 @@ impl SandboxConfig {
     pub fn minimal() -> Self {
         let profile = SandboxProfile::minimal();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: "minimal".to_string(),
+            read_policy: profile.read_policy,
+            home_access: profile.home_access,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -951,8 +1506,14 @@ impl SandboxConfig {
     pub fn strict() -> Self {
         let profile = SandboxProfile::strict();
         Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: "strict".to_string(),
+            read_policy: profile.read_policy,
+            home_access: profile.home_access,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1001,8 +1562,14 @@ impl SandboxConfig {
             });
 
         let mut config = Self {
+            workspace_cache_enabled: profile.workspace_cache_enabled,
+            workspace_cache_root: profile.workspace_cache_root.clone(),
+            resource_limits: profile.resource_limits,
             enabled: true,
             profile: profile_name.to_string(),
+            read_policy: profile.read_policy,
+            home_access: profile.home_access,
+            allow_read: profile.allow_read,
             deny_read: profile.deny_read,
             allow_write: profile.allow_write,
             deny_write: profile.deny_write,
@@ -1115,8 +1682,14 @@ impl SandboxConfig {
                         });
 
                     let config = Self {
+                        workspace_cache_enabled: profile.workspace_cache_enabled,
+                        workspace_cache_root: profile.workspace_cache_root.clone(),
+                        resource_limits: profile.resource_limits,
                         enabled: file.enabled,
                         profile: profile_name.to_string(),
+                        read_policy: profile.read_policy,
+                        home_access: profile.home_access,
+                        allow_read: profile.allow_read,
                         deny_read: profile.deny_read,
                         allow_write: profile.allow_write,
                         deny_write: profile.deny_write,
@@ -1192,12 +1765,12 @@ impl SandboxConfig {
             .cloned()
             .collect();
 
-        // extra binds are union (additive)
-        let mut extra_ro_bind: HashSet<String> = self.extra_ro_bind.iter().cloned().collect();
-        extra_ro_bind.extend(workspace_config.extra_ro_bind.iter().cloned());
-
-        let mut extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
-        extra_rw_bind.extend(workspace_config.extra_rw_bind.iter().cloned());
+        // Extra binds come from the global config only. They are applied after
+        // deny_read, so unioning them let a workspace hand itself read or write
+        // access to any host path and undo a global deny, which is the opposite
+        // of the merge contract. Widening is an administrator decision.
+        let extra_ro_bind: HashSet<String> = self.extra_ro_bind.iter().cloned().collect();
+        let extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
 
         // overlay paths are additive
         let mut overlay_paths: HashSet<String> = self.overlay_paths.iter().cloned().collect();
@@ -1207,11 +1780,57 @@ impl SandboxConfig {
         let mut scoped_paths = self.scoped_paths.clone();
         scoped_paths.extend(workspace_config.scoped_paths.clone());
 
+        // Read policy: allowlist is the tighter posture, so either side may
+        // select it, but the effective list must come from the same place.
+        //
+        // - global already allowlist: intersect, so a workspace can narrow but
+        //   never widen beyond what global permits.
+        // - global denylist, workspace allowlist: take the workspace list. All
+        //   of home was readable under the denylist, so any allowlist is a
+        //   tightening regardless of its contents.
+        let (merged_read_policy, merged_allow_read) =
+            match (self.read_policy, workspace_config.read_policy) {
+                (ReadPolicy::Allowlist, ReadPolicy::Allowlist) => (
+                    ReadPolicy::Allowlist,
+                    self.allow_read
+                        .iter()
+                        .filter(|p| workspace_config.allow_read.contains(p))
+                        .cloned()
+                        .collect(),
+                ),
+                (ReadPolicy::Allowlist, ReadPolicy::Denylist) => {
+                    (ReadPolicy::Allowlist, self.allow_read.clone())
+                }
+                (ReadPolicy::Denylist, ReadPolicy::Allowlist) => {
+                    (ReadPolicy::Allowlist, workspace_config.allow_read.clone())
+                }
+                (ReadPolicy::Denylist, ReadPolicy::Denylist) => {
+                    (ReadPolicy::Denylist, self.allow_read.clone())
+                }
+            };
+
         // Merge profiles (workspace can add, global takes precedence for same name)
         let mut profiles = workspace_config.profiles.clone();
         profiles.extend(self.profiles.clone());
 
         Self {
+            // A workspace may narrow home access but never widen it, so the
+            // lower of the two wins. Ordering is None < Read < Write.
+            home_access: self.home_access.min(workspace_config.home_access),
+            // A workspace may turn cache redirection on, but must not choose
+            // where the cache root lives: that stays a global decision.
+            workspace_cache_enabled: self.workspace_cache_enabled
+                || workspace_config.workspace_cache_enabled,
+            workspace_cache_root: self.workspace_cache_root.clone(),
+            resource_limits: self
+                .resource_limits
+                .tightest(workspace_config.resource_limits),
+            // A policy and the list it governs must travel together. Taking the
+            // workspace's allowlist selection while keeping the global list
+            // masked home with nothing readable, which leaves an agent unable
+            // to see its own toolchains.
+            read_policy: merged_read_policy,
+            allow_read: merged_allow_read,
             // Enable if either enables
             enabled: self.enabled || workspace_config.enabled,
             // Use workspace profile name if workspace specifies one
@@ -1291,6 +1910,43 @@ impl SandboxConfig {
         }
     }
 
+    /// Resolve a scoped rule to the concrete path it grants for this workspace.
+    ///
+    /// Shared by mount emission and Landlock authorisation. Materialising the
+    /// mount is not sufficient: a writable bind that Landlock does not also
+    /// authorise fails at the first write with EACCES, which surfaces to the
+    /// user as an unrelated harness error rather than a permission problem.
+    fn scoped_rule_target(
+        rule: &ScopedPathRule,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Option<PathBuf> {
+        let base = Self::expand_home_for_user(&rule.base_path, username);
+        if base.as_os_str().is_empty() {
+            return None;
+        }
+        let mut value = match rule.source {
+            ScopedPathSource::WorkspacePath => workspace.to_string_lossy().to_string(),
+            ScopedPathSource::Literal => rule.source_literal.clone().unwrap_or_default(),
+        };
+        for transform in &rule.transforms {
+            value = match transform {
+                ScopedPathTransform::StripPrefix { value: prefix } => {
+                    value.strip_prefix(prefix).unwrap_or(&value).to_string()
+                }
+                ScopedPathTransform::Replace { from, to } => value.replace(from, to),
+                ScopedPathTransform::Wrap { prefix, suffix } => {
+                    format!("{}{}{}", prefix, value, suffix)
+                }
+            };
+        }
+        let target_expr = rule
+            .target_template
+            .replace("{base_path}", &base.to_string_lossy())
+            .replace("{value}", &value);
+        Some(Self::expand_home_for_user(&target_expr, username))
+    }
+
     fn apply_scoped_path_rules(
         &self,
         args: &mut Vec<String>,
@@ -1366,6 +2022,15 @@ impl SandboxConfig {
                             target_str
                         );
                     }
+                    ScopedPathMissing::Create => {
+                        std::fs::create_dir_all(&target).with_context(|| {
+                            format!(
+                                "creating scoped path target for rule '{}': {}",
+                                rule.name, target_str
+                            )
+                        })?;
+                        debug!("Scoped path target created: {}", target_str);
+                    }
                 }
             }
 
@@ -1398,7 +2063,7 @@ impl SandboxConfig {
 
     /// Expand ~ to home directory for a specific user.
     /// If username is None, uses the current user's home directory.
-    fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
+    pub(crate) fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
         if let Some(rest) = path.strip_prefix("~/") {
             let home = if let Some(user) = username {
                 Self::get_user_home(user)
@@ -1470,6 +2135,70 @@ impl SandboxConfig {
     /// that user's home directory instead of the current user's.
     ///
     /// Returns None if bwrap is not available.
+    /// Emit the filesystem access portion of the sandbox (ADR-0028).
+    ///
+    /// The work directory is part of the policy rather than a separate bind:
+    /// resolution is by path depth, so a home mask, the work directory nested
+    /// inside it, and a deny inside that work directory only order correctly
+    /// when all three are decided by one mechanism.
+    fn permission_args(&self, workspace: &Path, username: Option<&str>) -> Option<Vec<String>> {
+        let home = if let Some(user) = username {
+            Self::get_user_home(user)
+        } else {
+            dirs::home_dir()
+        };
+        let Some(home) = home else {
+            warn!(
+                "Could not determine home directory for user {:?}; refusing to build a sandbox \
+                 whose home policy cannot be resolved",
+                username
+            );
+            return None;
+        };
+
+        let fields = crate::policy_translate::PermissionFields {
+            profile_name: &self.profile,
+            read_policy: self.read_policy,
+            home_access: self.home_access,
+            allow_read: &self.allow_read,
+            deny_read: &self.deny_read,
+            allow_write: &self.allow_write,
+            deny_write: &self.deny_write,
+            extra_ro_bind: &self.extra_ro_bind,
+            extra_rw_bind: &self.extra_rw_bind,
+        };
+        let translated = match crate::policy_translate::translate_permissions(&fields) {
+            Ok(translated) => translated,
+            Err(error) => {
+                error!("Sandbox policy is invalid: {error}");
+                return None;
+            }
+        };
+
+        let registry = crate::path_policy::ResourceRegistry::default();
+        let build = match translated
+            .policy
+            .resolve_roots(&crate::path_policy::ResolutionContext {
+                workdir: workspace,
+                home: &home,
+                resources: &registry,
+            }) {
+            Ok(build) => build,
+            Err(error) => {
+                error!("Sandbox policy could not be resolved: {error}");
+                return None;
+            }
+        };
+        for id in &build.unavailable_resources {
+            warn!("Sandbox policy resource unavailable on this target: {id}");
+        }
+
+        Some(crate::policy_bwrap::compile_filesystem_args(
+            &build.policy,
+            &crate::policy_bwrap::HostPaths,
+        ))
+    }
+
     pub fn build_bwrap_args_for_user(
         &self,
         workspace: &Path,
@@ -1488,30 +2217,38 @@ impl SandboxConfig {
             return None;
         }
 
+        // Per-workspace toolchain caches. Under an enforcing profile the real
+        // caches are not writable, so builds need a writable location that is
+        // still isolated from the user's own caches and from other workspaces.
+        // Resolved before anything consumes allow_write, because this directory
+        // must be both bind-mounted and granted in the Landlock ruleset.
+        let workspace_cache = match self.workspace_cache_dir(workspace, username) {
+            Ok(dir) => dir,
+            Err(e) => {
+                error!("workspace cache: {e}");
+                return None;
+            }
+        };
+        let effective_allow_write: Vec<String> = match &workspace_cache {
+            Some(dir) => {
+                let mut paths = self.allow_write.clone();
+                paths.push(dir.to_string_lossy().to_string());
+                paths
+            }
+            None => self.allow_write.clone(),
+        };
+
         let mut args = Vec::new();
 
-        // Basic system directories (read-only)
-        for dir in &["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"] {
-            if Path::new(dir).exists() {
-                args.push("--ro-bind".to_string());
-                args.push(dir.to_string());
-                args.push(dir.to_string());
-            }
-        }
-        debug!("Added system directories as read-only binds");
+        // Filesystem access, including the system baseline, the home policy,
+        // the work directory and every deny, is decided by one policy and
+        // emitted parent-first (ADR-0028).
+        let permission_args = self.permission_args(workspace, username)?;
 
-        // DNS resolver: on systemd-resolved systems, /etc/resolv.conf is a
-        // symlink to /run/systemd/resolve/stub-resolv.conf.  The --ro-bind
-        // for /etc does NOT follow symlinks that point outside /etc, so DNS
-        // breaks inside the sandbox.  Bind the resolve directory so the
-        // symlink target is reachable.
-        let resolve_dir = Path::new("/run/systemd/resolve");
-        if resolve_dir.exists() {
-            args.push("--ro-bind".to_string());
-            args.push(resolve_dir.to_string_lossy().to_string());
-            args.push(resolve_dir.to_string_lossy().to_string());
-            debug!("Bound /run/systemd/resolve for DNS resolution");
-        }
+        // The managed agent runtime and the systemd-resolved stub directory are
+        // part of the policy's read-only baseline, so they are no longer bound
+        // here. /etc/resolv.conf is a symlink into the latter and DNS breaks
+        // without it, which is why it is baseline rather than optional.
 
         // /proc (needed for many tools)
         args.push("--proc".to_string());
@@ -1521,89 +2258,23 @@ impl SandboxConfig {
         args.push("--dev".to_string());
         args.push("/dev".to_string());
 
-        // Determine target user's home directory
+        // Access rules, ordered parent-first by the adapter. The work directory
+        // is bound here as part of the policy, so a deny inside it is applied
+        // after it rather than being re-exposed by a later bind.
+        args.extend(permission_args);
+
+        // Still needed by later, non-permission steps: overlays, the workspace
+        // cache and model discovery are materialisation, not access.
         let target_home = if let Some(user) = username {
             Self::get_user_home(user)
         } else {
             dirs::home_dir()
         };
 
-        // Home directory binding strategy:
-        // - Development/minimal profiles: bind home read-write, protect sensitive paths via deny_read
-        // - Strict profile: bind home read-only, overlay specific allow_write paths
-        //
-        // The development approach is more permissive but simpler - agents can write anywhere
-        // in home except explicitly denied paths. oqto-guard provides additional runtime control.
-        let home_writable = self.profile == "development" || self.profile == "minimal";
-
-        if let Some(ref home) = target_home {
-            let home_str = home.to_string_lossy().to_string();
-            info!(
-                "Using home directory '{}' for user {:?}",
-                home_str,
-                username.unwrap_or("(current)")
-            );
-
-            if home_writable {
-                // Development mode: bind home read-write, rely on deny_read for protection
-                args.push("--bind".to_string());
-                args.push(home_str.clone());
-                args.push(home_str.clone());
-                debug!(
-                    "Bound home directory '{}' as read-write (profile={})",
-                    home_str, self.profile
-                );
-            } else {
-                // Strict mode: bind home read-only first
-                args.push("--ro-bind".to_string());
-                args.push(home_str.clone());
-                args.push(home_str.clone());
-                debug!(
-                    "Bound home directory '{}' as read-only (profile={})",
-                    home_str, self.profile
-                );
-
-                // Then bind writable directories on top
-                for path in &self.allow_write {
-                    let expanded = Self::expand_home_for_user(path, username);
-                    let expanded_str = expanded.to_string_lossy().to_string();
-
-                    // For paths under home, always add them (bwrap will create if needed)
-                    // For absolute paths like /tmp, check existence
-                    if path.starts_with("~/") || expanded.exists() {
-                        args.push("--bind".to_string());
-                        args.push(expanded_str.clone());
-                        args.push(expanded_str.clone());
-                        debug!(
-                            "Allow-write: '{}' -> '{}' (exists: {})",
-                            path,
-                            expanded_str,
-                            expanded.exists()
-                        );
-                    } else {
-                        debug!(
-                            "Skipping allow-write '{}' -> '{}' (path does not exist)",
-                            path, expanded_str
-                        );
-                    }
-                }
-            }
-        } else {
-            warn!(
-                "Could not determine home directory for user {:?}, home-based paths will not be bound",
-                username
-            );
-        }
-
-        // Workspace directory (read-write) - MUST come after home ro-bind
-        // so it takes precedence for paths under home
+        // The work directory itself is bound by the policy above.
         let workspace_str = workspace.to_string_lossy().to_string();
-        args.push("--bind".to_string());
-        args.push(workspace_str.clone());
-        args.push(workspace_str.clone());
-        debug!("Bound workspace '{}' as read-write", workspace_str);
 
-        // Ensure sandboxed processes start in the workspace directory.
+        // Ensure sandboxed processes start in the work directory.
         args.push("--chdir".to_string());
         args.push(workspace_str.clone());
         debug!("Set sandbox working directory to '{}'", workspace_str);
@@ -1626,52 +2297,6 @@ impl SandboxConfig {
             debug!("Mounted empty tmpfs at .oqto/ to prevent creation");
         }
 
-        // Apply deny rules AFTER workspace bind so they always take precedence,
-        // even when the workspace is the user's home directory.
-        if target_home.is_some() {
-            // Block denied read paths by mounting empty tmpfs (dirs) or masking files.
-            for path in &self.deny_read {
-                let expanded = Self::expand_home_for_user(path, username);
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    let is_dir = expanded
-                        .metadata()
-                        .map(|meta| meta.is_dir())
-                        .unwrap_or(false);
-                    if is_dir {
-                        args.push("--tmpfs".to_string());
-                        args.push(expanded_str.clone());
-                        debug!("Deny-read (tmpfs): '{}' -> '{}'", path, expanded_str);
-                    } else {
-                        // Mask file paths by binding /dev/null over them.
-                        args.push("--bind".to_string());
-                        args.push("/dev/null".to_string());
-                        args.push(expanded_str.clone());
-                        debug!("Deny-read (file mask): '{}' -> '{}'", path, expanded_str);
-                    }
-                } else {
-                    debug!(
-                        "Skipping deny-read '{}' (path does not exist for user {:?})",
-                        path,
-                        username.unwrap_or("(current)")
-                    );
-                }
-            }
-
-            // Block denied write paths by binding read-only.
-            // Applied AFTER allow_write/workspace bind, so these take precedence.
-            for path in &self.deny_write {
-                let expanded = Self::expand_home_for_user(path, username);
-                if expanded.exists() {
-                    let expanded_str = expanded.to_string_lossy().to_string();
-                    args.push("--ro-bind".to_string());
-                    args.push(expanded_str.clone());
-                    args.push(expanded_str.clone());
-                    debug!("Deny-write (ro-bind): '{}' -> '{}'", path, expanded_str);
-                }
-            }
-        }
-
         // Apply dynamic scoped deny+rebind rules.
         if let Err(e) = self.apply_scoped_path_rules(&mut args, workspace, username) {
             error!("Failed to apply scoped path rules: {}", e);
@@ -1682,28 +2307,21 @@ impl SandboxConfig {
         args.push("--tmpfs".to_string());
         args.push("/tmp".to_string());
 
-        // Extra read-only binds
-        for path in &self.extra_ro_bind {
-            let expanded = Self::expand_home_for_user(path, username);
-            if expanded.exists() {
-                let expanded_str = expanded.to_string_lossy().to_string();
-                args.push("--ro-bind".to_string());
-                args.push(expanded_str.clone());
-                args.push(expanded_str.clone());
-                debug!("Extra ro-bind: '{}' -> '{}'", path, expanded_str);
-            }
-        }
-
-        // Extra read-write binds
-        for path in &self.extra_rw_bind {
-            let expanded = Self::expand_home_for_user(path, username);
-            if expanded.exists() {
-                let expanded_str = expanded.to_string_lossy().to_string();
-                args.push("--bind".to_string());
-                args.push(expanded_str.clone());
-                args.push(expanded_str.clone());
-                debug!("Extra rw-bind: '{}' -> '{}'", path, expanded_str);
-            }
+        // The private /tmp is mounted after the work directory is bound, so a
+        // work directory located under /tmp would be masked by it and bwrap
+        // would abort on --chdir before the agent ever runs. Rebinding it here
+        // keeps /tmp private while leaving the work directory reachable. The
+        // tmpfs cannot be mounted earlier instead: allow_write entries are
+        // emitted before this point, and a profile listing "/tmp" would then
+        // rebind the host's real /tmp on top and lose the isolation.
+        if workspace.starts_with("/tmp") && workspace != Path::new("/tmp") {
+            args.push("--bind".to_string());
+            args.push(workspace_str.clone());
+            args.push(workspace_str.clone());
+            debug!(
+                "Rebound work directory '{}' above the private /tmp",
+                workspace_str
+            );
         }
 
         // Overlayfs redirection for selected paths.
@@ -1720,13 +2338,13 @@ impl SandboxConfig {
                 if !expanded.exists()
                     && let Err(e) = std::fs::create_dir_all(&expanded)
                 {
-                    warn!(
+                    error!(
                         "overlay: failed to create missing target '{}' (from '{}'): {}",
                         expanded.display(),
                         path,
                         e
                     );
-                    continue;
+                    return None;
                 }
 
                 let target = expanded.to_string_lossy().to_string();
@@ -1736,32 +2354,28 @@ impl SandboxConfig {
                 let work = overlay_base.join("work");
 
                 if let Err(e) = std::fs::create_dir_all(&upper) {
-                    warn!(
+                    error!(
                         "overlay: failed to create upperdir '{}': {}",
                         upper.display(),
                         e
                     );
-                    continue;
+                    return None;
                 }
 
-                // workdir must be empty for overlayfs.
-                if work.exists()
-                    && let Err(e) = std::fs::remove_dir_all(&work)
-                {
-                    warn!(
-                        "overlay: failed to reset workdir '{}': {}",
-                        work.display(),
-                        e
-                    );
-                    continue;
-                }
+                // Create the workdir once and then leave it alone. overlayfs
+                // owns it across mounts: it must be empty only on first use,
+                // and it keeps a mode-000 `work/work` inside. Deleting it while
+                // the upperdir holds files makes the next mount fail with
+                // EBUSY, and the old code's remove_dir_all could not traverse
+                // mode-000 anyway, so it failed with EPERM and silently skipped
+                // the overlay entirely.
                 if let Err(e) = std::fs::create_dir_all(&work) {
-                    warn!(
+                    error!(
                         "overlay: failed to create workdir '{}': {}",
                         work.display(),
                         e
                     );
-                    continue;
+                    return None;
                 }
 
                 args.push("--overlay-src".to_string());
@@ -1780,6 +2394,21 @@ impl SandboxConfig {
                 );
             }
 
+            // Fail closed. An overlay path is usually also present in
+            // allow_write, which binds the real host directory read-write. If
+            // the overlay silently does not mount, writes intended for a
+            // per-workspace upperdir land in the user's real cache instead --
+            // a silent downgrade that looks like success.
+            if mounted_overlays != self.overlay_paths.len() {
+                error!(
+                    "overlay: mounted {} of {} configured path(s); refusing to run \
+                     because unmounted paths would be written directly",
+                    mounted_overlays,
+                    self.overlay_paths.len()
+                );
+                return None;
+            }
+
             info!(
                 "Overlayfs enabled: mounted {} path(s) under {}",
                 mounted_overlays,
@@ -1787,57 +2416,26 @@ impl SandboxConfig {
             );
         }
 
-        // Construct PATH for the sandboxed process.
-        //
-        // bwrap inherits the launcher's PATH, but that launcher may be a systemd
-        // unit or cron job with a sparse PATH (missing /usr/bin). We bind-mount
-        // /usr, /bin, /sbin above so the binaries are reachable, but with a sparse
-        // PATH bare command names (e.g. `sed`) still fail with ENOENT while
-        // absolute paths work. Guarantee the canonical system bin dirs we already
-        // bind so command resolution never depends on the launcher's environment,
-        // keeping the inherited PATH precedence intact, then add the user's
-        // toolchain bin dirs (non-interactive shells skip ~/.bashrc/.zshrc, so
-        // ~/.cargo/bin, ~/go/bin, etc. would otherwise be missing).
-        let current_path = std::env::var("PATH").unwrap_or_default();
-        let mut path_parts: Vec<String> = current_path
-            .split(':')
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
+        // Point toolchain caches at the per-workspace directory. Without this,
+        // an enforcing profile denies writes to ~/.cargo, ~/.npm and friends and
+        // every dependency-fetching build fails.
+        if let Some(dir) = &workspace_cache {
+            for (var, sub) in WORKSPACE_CACHE_ENV {
+                args.push("--setenv".to_string());
+                args.push((*var).to_string());
+                args.push(dir.join(sub).to_string_lossy().to_string());
+            }
+            debug!(
+                "Workspace cache: redirected {} toolchain variables to {}",
+                WORKSPACE_CACHE_ENV.len(),
+                dir.display()
+            );
+        }
 
-        // Base system bin dirs corresponding to the read-only binds above.
-        let mut ensure: Vec<String> = [
-            "/usr/local/sbin",
-            "/usr/local/bin",
-            "/usr/sbin",
-            "/usr/bin",
-            "/sbin",
-            "/bin",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        // User toolchain bin dirs (only when the target home is known).
-        if let Some(ref home) = target_home {
-            let home_str = home.to_string_lossy();
-            for suffix in [
-                ".cargo/bin",
-                "go/bin",
-                ".local/bin",
-                ".bun/bin",
-                ".npm-global/bin",
-            ] {
-                ensure.push(format!("{home_str}/{suffix}"));
-            }
-        }
-        for p in &ensure {
-            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
-                path_parts.push(p.clone());
-            }
-        }
+        let sandbox_path = Self::sandbox_path(target_home.as_deref());
         args.push("--setenv".to_string());
         args.push("PATH".to_string());
-        args.push(path_parts.join(":"));
+        args.push(sandbox_path);
         debug!("Set sandbox PATH with base system + user toolchain bin directories");
 
         // Namespace and kernel-surface hardening
@@ -1926,14 +2524,25 @@ impl SandboxConfig {
                     args.push(crate::landlock_shim::ENV_WORKSPACE.to_string());
                     args.push(workspace.to_string_lossy().to_string());
 
-                    let allow_write_joined = self
-                        .allow_write
+                    // Scoped rules resolve to a per-workspace path that is not
+                    // in allow_write, so the shim would rebuild a writable set
+                    // without them and every write to a scoped target would
+                    // fail with EACCES despite the bind being read-write.
+                    let scoped_writable = self.scoped_paths.iter().filter_map(|rule| {
+                        if !matches!(rule.access, ScopedPathAccess::Rw) {
+                            return None;
+                        }
+                        Self::scoped_rule_target(rule, workspace, username)
+                            .map(|t| t.to_string_lossy().to_string())
+                    });
+                    let allow_write_joined = effective_allow_write
                         .iter()
                         .map(|p| {
                             Self::expand_home_for_user(p, username)
                                 .to_string_lossy()
                                 .to_string()
                         })
+                        .chain(scoped_writable)
                         .collect::<Vec<_>>()
                         .join(":");
                     args.push("--setenv".to_string());
@@ -2120,16 +2729,7 @@ impl SandboxConfig {
     pub fn is_landlock_supported() -> bool {
         #[cfg(target_os = "linux")]
         {
-            // SAFETY: Syscall interface is used read-only for feature probing.
-            let abi = unsafe {
-                libc::syscall(
-                    libc::SYS_landlock_create_ruleset,
-                    std::ptr::null::<LandlockRulesetAttr>(),
-                    0,
-                    LANDLOCK_CREATE_RULESET_VERSION,
-                )
-            };
-            abi >= 1
+            Self::landlock_abi() >= 1
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -2137,7 +2737,116 @@ impl SandboxConfig {
         }
     }
 
+    /// Probe the kernel's Landlock ABI version. Returns a negative value when
+    /// Landlock is unavailable.
+    #[cfg(target_os = "linux")]
+    pub fn landlock_abi() -> i64 {
+        // SAFETY: Syscall interface is used read-only for feature probing.
+        unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<LandlockRulesetAttr>(),
+                0,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
+        }
+    }
+
+    /// Resolve (and create) the per-workspace toolchain cache directory.
+    ///
+    /// Returns `Ok(None)` when the feature is disabled. The directory lives
+    /// outside the workspace so build caches never appear in the user's
+    /// repository, and is keyed by workspace so two workspaces cannot corrupt
+    /// each other's caches.
+    pub(crate) fn workspace_cache_dir(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Result<Option<PathBuf>> {
+        if !self.workspace_cache_enabled {
+            return Ok(None);
+        }
+
+        let root = Self::expand_home_for_user(&self.workspace_cache_root, username);
+        if root.as_os_str().is_empty() {
+            anyhow::bail!(
+                "workspace_cache_root '{}' resolved to an empty path",
+                self.workspace_cache_root
+            );
+        }
+
+        let dir = root.join(Self::workspace_overlay_id(workspace));
+        for (_, sub) in WORKSPACE_CACHE_ENV {
+            std::fs::create_dir_all(dir.join(sub)).with_context(|| {
+                format!(
+                    "creating workspace cache directory {}",
+                    dir.join(sub).display()
+                )
+            })?;
+        }
+
+        Ok(Some(dir))
+    }
+
+    /// Build the PATH handed to a sandboxed process.
+    ///
+    /// A sandbox may be launched from a systemd unit, a cron job or a
+    /// non-interactive ssh session, all of which have a sparse PATH. Bare
+    /// command names then fail with ENOENT even though the binaries are
+    /// reachable. Guarantee the canonical system bin dirs and the user's
+    /// toolchain dirs while preserving the inherited PATH's precedence.
+    ///
+    /// Shared by both backends: the Linux builder passes it to bwrap
+    /// `--setenv`, and the macOS backend sets it on the child, since
+    /// `sandbox-exec` simply inherits the caller's environment. Without it,
+    /// interpreters resolved through a shebang (`/usr/bin/env node`) are not
+    /// found inside the sandbox.
+    pub(crate) fn sandbox_path(target_home: Option<&Path>) -> String {
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let mut path_parts: Vec<String> = current_path
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        let mut ensure: Vec<String> = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        if let Some(home) = target_home {
+            let home_str = home.to_string_lossy();
+            for suffix in [
+                ".cargo/bin",
+                "go/bin",
+                ".local/bin",
+                ".bun/bin",
+                ".npm-global/bin",
+            ] {
+                ensure.push(format!("{home_str}/{suffix}"));
+            }
+        }
+
+        for p in &ensure {
+            if !path_parts.iter().any(|e| e == p) && Path::new(p).exists() {
+                path_parts.push(p.clone());
+            }
+        }
+
+        path_parts.join(":")
+    }
+
     /// Apply Landlock write restrictions (workspace + allow_write).
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     pub fn apply_landlock(&self, workspace: &Path, username: Option<&str>) -> std::io::Result<()> {
         if self.landlock_mode == LandlockMode::Off {
             return Ok(());
@@ -2150,16 +2859,28 @@ impl SandboxConfig {
                     "landlock enforce requested on non-Linux platform",
                 ));
             }
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
         {
             if !Self::is_landlock_supported() {
                 if self.landlock_mode == LandlockMode::Enforce {
-                    return Err(std::io::Error::other(
-                        "landlock enforce requested but kernel does not support landlock",
-                    ));
+                    // EPERM here means the probe was blocked rather than
+                    // missing, which in practice means the seccomp filter does
+                    // not allowlist the landlock syscalls. Reporting that as
+                    // "kernel does not support landlock" sends the reader to
+                    // the wrong subsystem entirely.
+                    let abi = Self::landlock_abi();
+                    let errno = std::io::Error::last_os_error();
+                    let hint = if errno.raw_os_error() == Some(libc::EPERM) {
+                        " (probe returned EPERM: the seccomp policy likely does                          not allow landlock_create_ruleset)"
+                    } else {
+                        ""
+                    };
+                    return Err(std::io::Error::other(format!(
+                        "landlock enforce requested but landlock is unavailable:                          abi probe returned {abi}{hint}"
+                    )));
                 }
                 return Ok(());
             }
@@ -2187,8 +2908,25 @@ impl SandboxConfig {
                 return Ok(());
             }
 
+            // Restrict only rights this kernel understands; an unknown right
+            // makes ruleset creation fail with EINVAL.
+            let abi = Self::landlock_abi();
+            let access_mask = landlock_write_access_mask(abi);
+            if abi < 3 {
+                warn!(
+                    "Landlock ABI {} lacks {}; enforcement is weaker than ABI 3+ \
+                     and cross-directory renames may be denied",
+                    abi,
+                    if abi < 2 {
+                        "REFER and TRUNCATE"
+                    } else {
+                        "TRUNCATE"
+                    }
+                );
+            }
+
             let ruleset_attr = LandlockRulesetAttr {
-                handled_access_fs: LANDLOCK_WRITE_ACCESS_MASK,
+                handled_access_fs: access_mask,
             };
 
             // Enforce mode: build ruleset and apply restrict_self.
@@ -2211,6 +2949,17 @@ impl SandboxConfig {
             for p in &self.allow_write {
                 writable_paths.insert(Self::expand_home_for_user(p, username));
             }
+            for rule in &self.scoped_paths {
+                if !matches!(rule.access, ScopedPathAccess::Rw) {
+                    continue;
+                }
+                if let Some(target) = Self::scoped_rule_target(rule, workspace, username) {
+                    writable_paths.insert(target);
+                }
+            }
+            for dev in LANDLOCK_ALWAYS_WRITABLE_DEVICES {
+                writable_paths.insert(PathBuf::from(dev));
+            }
 
             for path in writable_paths {
                 if !path.exists() {
@@ -2232,8 +2981,16 @@ impl SandboxConfig {
                     return Err(std::io::Error::last_os_error());
                 }
 
+                // Directory-only rights on a file are rejected with EINVAL.
+                let is_dir = path.metadata().map(|m| m.is_dir()).unwrap_or(false);
+                let allowed_access = if is_dir {
+                    access_mask
+                } else {
+                    access_mask & landlock_file_access_mask(abi)
+                };
+
                 let path_beneath = LandlockPathBeneathAttr {
-                    allowed_access: LANDLOCK_WRITE_ACCESS_MASK,
+                    allowed_access,
                     parent_fd,
                     reserved1: 0,
                 };
@@ -2321,6 +3078,369 @@ impl SandboxConfig {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn workspace_cache_is_granted_and_redirected_per_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ws_a = tmp.path().join("a");
+        let ws_b = tmp.path().join("b");
+        std::fs::create_dir_all(&ws_a).expect("ws a");
+        std::fs::create_dir_all(&ws_b).expect("ws b");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.landlock_mode = LandlockMode::Enforce;
+        config.workspace_cache_enabled = true;
+        config.workspace_cache_root = tmp.path().join("caches").to_string_lossy().to_string();
+
+        let args_a = config
+            .build_bwrap_args_for_user(&ws_a, None)
+            .expect("args for a");
+        let args_b = config
+            .build_bwrap_args_for_user(&ws_b, None)
+            .expect("args for b");
+
+        let cargo_home = |args: &[String]| -> String {
+            args.windows(3)
+                .find(|w| w[0] == "--setenv" && w[1] == "CARGO_HOME")
+                .map(|w| w[2].clone())
+                .expect("CARGO_HOME is redirected")
+        };
+
+        let a = cargo_home(&args_a);
+        let b = cargo_home(&args_b);
+        assert_ne!(a, b, "each workspace gets its own cache");
+        assert!(
+            !a.starts_with(ws_a.to_string_lossy().as_ref()),
+            "cache must live outside the workspace so it never pollutes the repo"
+        );
+
+        // The cache must also be writable, or redirection just moves the failure.
+        let landlock_paths = args_a
+            .windows(3)
+            .find(|w| w[0] == "--setenv" && w[1] == crate::landlock_shim::ENV_ALLOW_WRITE)
+            .map(|w| w[2].clone())
+            .expect("landlock allow_write is passed to the shim");
+        let cache_dir = std::path::Path::new(&a)
+            .parent()
+            .expect("cache subdir has a parent")
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            landlock_paths.split(':').any(|p| p == cache_dir),
+            "cache dir {cache_dir} must be granted in the Landlock ruleset, got {landlock_paths}"
+        );
+    }
+
+    #[test]
+    fn workspace_cache_does_not_redirect_rustup_home() {
+        // rustup shims resolve the active toolchain through RUSTUP_HOME.
+        // Pointing it at an empty per-workspace dir breaks cargo and rustc.
+        assert!(
+            !WORKSPACE_CACHE_ENV
+                .iter()
+                .any(|(var, _)| *var == "RUSTUP_HOME"),
+            "RUSTUP_HOME must not be redirected"
+        );
+        assert!(
+            WORKSPACE_CACHE_ENV
+                .iter()
+                .any(|(var, _)| *var == "CARGO_HOME")
+        );
+    }
+
+    #[test]
+    fn strict_profile_enforces_landlock() {
+        // strict is the profile for untrusted work and the only shipped profile
+        // that actually restricts. seccomp stays in audit because enforce is
+        // fail-closed and needs a compiled policy this profile does not ship.
+        let strict = SandboxProfile::strict();
+        assert_eq!(strict.landlock_mode, LandlockMode::Enforce);
+        assert_eq!(strict.seccomp_mode, SeccompMode::Audit);
+
+        // Toolchain caches must stay out of allow_write, or enforce buys
+        // nothing: writes would be permitted across most of home.
+        for denied in ["~/.cargo", "~/.npm", "~/.bun", "~/.rustup"] {
+            assert!(
+                !strict.allow_write.iter().any(|p| p == denied),
+                "strict must not grant {denied}"
+            );
+        }
+    }
+
+    #[test]
+    fn enforceable_profiles_grant_the_agent_session_directory() {
+        // Pi owns its JSONL session files under ~/.pi/agent/sessions and they
+        // are the ingest source for oqto-log history. Under landlock enforce a
+        // profile without this grant still lets Pi start and exit 0, but the
+        // session is never persisted -- silent history loss. Verified by
+        // negative control: dropping ~/.pi denied the session directory and
+        // produced no session file.
+        let strict = SandboxProfile::strict();
+        assert!(
+            strict.allow_write.iter().any(|p| p == "~/.pi"),
+            "strict profile must keep ~/.pi writable: {:?}",
+            strict.allow_write
+        );
+
+        let development = SandboxProfile::development();
+        assert!(
+            development.allow_write.iter().any(|p| p == "~/.pi"),
+            "development profile must keep ~/.pi writable: {:?}",
+            development.allow_write
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_grants_standard_devices_without_binding_dev() {
+        // git opens /dev/null read-write and shells redirect to it. These must
+        // be granted in the ruleset, never via allow_write: an allow_write
+        // entry also emits a bwrap --bind, and binding /dev mounts over
+        // bwrap's own --dev and breaks the sandbox in every mode.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.landlock_mode = LandlockMode::Enforce;
+        config.allow_write = vec!["/tmp".to_string()];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        // Check mount destinations: these devices legitimately appear as bind
+        // *sources* (e.g. --bind /dev/null /bin/systemctl masks systemctl).
+        let bind_targets: Vec<&String> = args
+            .windows(3)
+            .filter(|w| w[0] == "--bind" || w[0] == "--ro-bind")
+            .map(|w| &w[2])
+            .collect();
+        for dev in LANDLOCK_ALWAYS_WRITABLE_DEVICES {
+            assert!(
+                !bind_targets.contains(&&dev.to_string()),
+                "{dev} must not be mounted over; it is granted in the ruleset"
+            );
+        }
+        assert!(
+            !bind_targets.contains(&&"/dev".to_string()),
+            "/dev must not be bound over bwrap's --dev"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_runtime_dir_is_bound_read_only_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        if std::path::Path::new(MANAGED_RUNTIME_DIR).exists() {
+            let ro: Vec<&String> = args
+                .windows(2)
+                .filter(|w| w[0] == "--ro-bind")
+                .map(|w| &w[1])
+                .collect();
+            assert!(
+                ro.contains(&&MANAGED_RUNTIME_DIR.to_string()),
+                "strict profile must expose the managed agent runtime read-only"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn absent_allow_write_paths_are_skipped_not_bound() {
+        // A profile may list optional tool dirs (~/.codex, ~/.claude, ...).
+        // bwrap's --bind fails when the source is missing, which would abort
+        // every sandboxed spawn on hosts where that tool is not installed.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let present = tmp.path().join("present");
+        std::fs::create_dir_all(&present).expect("present dir");
+        let absent = tmp.path().join("definitely-absent");
+
+        // Only the strict profile layers individual writable dirs on a
+        // read-only home; development/minimal bind the whole home read-write.
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_write = vec![
+            present.to_string_lossy().to_string(),
+            absent.to_string_lossy().to_string(),
+        ];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args built");
+
+        // Compare only real --bind sources; allow_write is also serialized into
+        // the Landlock shim env var, which is not a mount and must not count.
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+
+        assert!(
+            bind_sources.contains(&&present.to_string_lossy().to_string()),
+            "existing allow_write path must still be bound: {bind_sources:?}"
+        );
+        assert!(
+            !bind_sources.contains(&&absent.to_string_lossy().to_string()),
+            "absent allow_write path must be skipped, not handed to bwrap: {bind_sources:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_mask_clamps_to_kernel_abi() {
+        // ABI 1 (Linux 5.13, Ubuntu 22.04): neither REFER nor TRUNCATE exist.
+        // Requesting them returns EINVAL and fails the whole sandbox.
+        let abi1 = landlock_write_access_mask(1);
+        assert_eq!(abi1 & LANDLOCK_ACCESS_FS_REFER, 0, "REFER is ABI 2+");
+        assert_eq!(abi1 & LANDLOCK_ACCESS_FS_TRUNCATE, 0, "TRUNCATE is ABI 3+");
+        assert_ne!(
+            abi1 & LANDLOCK_ACCESS_FS_WRITE_FILE,
+            0,
+            "base rights still applied"
+        );
+
+        // ABI 2 (Linux 5.19, Debian 12 is 6.1 => ABI 2): REFER only.
+        let abi2 = landlock_write_access_mask(2);
+        assert_ne!(abi2 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_eq!(abi2 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+
+        // ABI 3+ (Linux 6.2): full write mask.
+        let abi3 = landlock_write_access_mask(3);
+        assert_ne!(abi3 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_ne!(abi3 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+
+        // Newer kernels must not silently gain rights we never audited.
+        assert_eq!(
+            landlock_write_access_mask(9),
+            abi3,
+            "mask is stable above ABI 3"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_mask_is_monotonic_in_abi() {
+        let masks: Vec<u64> = (1..=9).map(landlock_write_access_mask).collect();
+        for pair in masks.windows(2) {
+            assert_eq!(pair[0] & pair[1], pair[0], "rights are only ever added");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_ruleset_creation_accepts_clamped_mask_on_this_kernel() {
+        let abi = SandboxConfig::landlock_abi();
+        if abi < 1 {
+            return; // kernel without Landlock; nothing to assert
+        }
+        let attr = LandlockRulesetAttr {
+            handled_access_fs: landlock_write_access_mask(abi),
+        };
+        // SAFETY: read-only feature use with a valid attr pointer/size.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                &attr as *const LandlockRulesetAttr,
+                std::mem::size_of::<LandlockRulesetAttr>(),
+                0,
+            )
+        };
+        assert!(
+            fd >= 0,
+            "clamped mask must be accepted by the running kernel"
+        );
+        // SAFETY: closing the fd we just created.
+        unsafe { libc::close(fd as i32) };
+    }
+
+    #[test]
+    fn resource_limits_merge_keeps_stricter_value() {
+        let global = ResourceLimits {
+            max_memory_bytes: Some(8 * 1024),
+            max_open_files: Some(256),
+            max_cpu_seconds: Some(600),
+            max_file_size_bytes: None,
+        };
+        let workspace = ResourceLimits {
+            max_memory_bytes: Some(4 * 1024),
+            max_open_files: Some(512),
+            max_cpu_seconds: None,
+            max_file_size_bytes: Some(128),
+        };
+
+        let merged = global.tightest(workspace);
+
+        assert_eq!(
+            merged.max_memory_bytes,
+            Some(4 * 1024),
+            "workspace tightened"
+        );
+        assert_eq!(merged.max_open_files, Some(256), "workspace may not raise");
+        assert_eq!(
+            merged.max_file_size_bytes,
+            Some(128),
+            "unset global adopts workspace"
+        );
+        assert_eq!(
+            merged.max_cpu_seconds,
+            Some(600),
+            "unset workspace keeps global"
+        );
+    }
+
+    #[test]
+    fn resource_limits_merge_is_order_independent() {
+        let a = ResourceLimits {
+            max_memory_bytes: Some(10),
+            max_cpu_seconds: Some(4),
+            ..Default::default()
+        };
+        let b = ResourceLimits {
+            max_memory_bytes: Some(20),
+            max_open_files: Some(9),
+            ..Default::default()
+        };
+        assert_eq!(a.tightest(b), b.tightest(a));
+    }
+
+    #[test]
+    fn strict_profile_sets_limits_and_development_does_not() {
+        assert!(!SandboxProfile::strict().resource_limits.is_empty());
+        assert!(SandboxProfile::development().resource_limits.is_empty());
+        assert!(SandboxProfile::minimal().resource_limits.is_empty());
+    }
+
+    #[test]
+    fn resource_limits_parse_from_profile_toml() {
+        let toml_text = r#"
+profile = "custom"
+[profiles.custom]
+deny_read = []
+allow_write = ["/tmp"]
+deny_write = []
+[profiles.custom.resource_limits]
+max_memory_bytes = 2048
+max_cpu_seconds = 32
+"#;
+        let file: SandboxConfigFile = toml::from_str(toml_text).expect("parses");
+        let config: SandboxConfig = file.into();
+        assert_eq!(config.resource_limits.max_memory_bytes, Some(2048));
+        assert_eq!(config.resource_limits.max_cpu_seconds, Some(32));
+        assert_eq!(config.resource_limits.max_open_files, None);
+    }
+
     use super::*;
     use std::env;
     use std::sync::Mutex;
@@ -2590,6 +3710,7 @@ log_requests = true
         assert!(network.log_requests);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_deny_read_after_workspace_bind_when_workspace_is_home() {
         let _env = env_guard();
@@ -2739,6 +3860,7 @@ log_requests = true
     }
 
     /// Landlock=off must not wire any shim plumbing.
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_landlock_off_no_shim() {
         let temp = tempdir().unwrap();
@@ -2932,5 +4054,700 @@ log_requests = true
         );
         // None on both sides stays None.
         assert!(merge_network(&None, &None).is_none());
+    }
+
+    #[test]
+    fn allowlist_does_not_bind_the_whole_home() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let home = dirs::home_dir().expect("home");
+        let home_str = home.to_string_lossy().to_string();
+
+        let config = SandboxConfig::from_profile("strict");
+        assert_eq!(config.read_policy, ReadPolicy::Allowlist);
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+
+        let ro_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ro-bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            !ro_sources.contains(&&home_str),
+            "home must not be bound wholesale under an allowlist"
+        );
+
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(tmpfs.contains(&&home_str), "home must be masked");
+    }
+
+    #[test]
+    fn allowlist_binds_existing_allow_read_entries() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let present = tmp.path().join("present");
+        std::fs::create_dir_all(&present).expect("present");
+        let absent = tmp.path().join("definitely-absent");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_read = vec![
+            present.to_string_lossy().to_string(),
+            absent.to_string_lossy().to_string(),
+        ];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+        let ro_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--ro-bind")
+            .map(|w| &w[1])
+            .collect();
+
+        assert!(ro_sources.contains(&&present.to_string_lossy().to_string()));
+        assert!(
+            !ro_sources.contains(&&absent.to_string_lossy().to_string()),
+            "absent allow_read source must be skipped, not handed to bwrap"
+        );
+    }
+
+    /// A deny no longer has to be skipped to keep a deeper grant reachable.
+    ///
+    /// The old builder dropped any deny that covered an allowed path, leaving
+    /// the whole subtree unmasked. Access is now decided by specificity, so the
+    /// deny applies and the allowed child is rebound after it: strictly
+    /// narrower, and the ordering is what proves it.
+    #[test]
+    fn a_deny_does_not_hide_a_more_specific_grant() {
+        let _env = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let home = dirs::home_dir().expect("home");
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.deny_read = vec!["~/.config".to_string(), "/usr/bin/systemctl".to_string()];
+
+        let args = config
+            .build_bwrap_args_for_user(&workspace, None)
+            .expect("args");
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+
+        let config_dir = home.join(".config").to_string_lossy().to_string();
+        assert!(
+            tmpfs.contains(&&config_dir),
+            "the deny must apply rather than being dropped wholesale"
+        );
+
+        let git = home.join(".config/git").to_string_lossy().to_string();
+        if git_is_present(&args, &git) {
+            assert!(
+                position_of(&args, &config_dir) < position_of(&args, &git),
+                "the allowed path must be rebound after its denied parent"
+            );
+        }
+    }
+
+    fn position_of(args: &[String], needle: &str) -> usize {
+        args.iter()
+            .position(|arg| arg == needle)
+            .unwrap_or_else(|| panic!("missing {needle}"))
+    }
+
+    fn git_is_present(args: &[String], git: &str) -> bool {
+        args.iter().any(|arg| arg == git)
+    }
+
+    #[test]
+    fn workspace_cannot_widen_reads() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.allow_read = vec!["~/.cargo".to_string()];
+
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.allow_read = vec!["~/.ssh".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(merged.allow_read, vec!["~/.cargo".to_string()]);
+    }
+
+    #[test]
+    fn strict_scopes_session_history() {
+        // development is deliberately unscoped; only strict isolates sessions.
+        {
+            let name = "strict";
+            let config = SandboxConfig::from_profile(name);
+            let rule = config
+                .scoped_paths
+                .iter()
+                .find(|r| r.base_path == "~/.pi/agent/sessions")
+                .unwrap_or_else(|| panic!("{name} must scope pi session history"));
+            assert_eq!(
+                rule.access,
+                ScopedPathAccess::Rw,
+                "harness must still write"
+            );
+            assert_eq!(
+                rule.missing,
+                ScopedPathMissing::Create,
+                "a missing shard must be created, never skipped: skipping leaves \
+                 the tmpfs in place and the harness loses history silently"
+            );
+        }
+    }
+
+    #[test]
+    fn writable_scoped_targets_are_authorised_not_just_mounted() {
+        // A read-write bind that Landlock does not also authorise fails at the
+        // first write with EACCES while the mount itself looks correct. The
+        // shim rebuilds its writable set from the environment, so a scoped
+        // target absent from that list is mounted writable and then denied.
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        std::fs::create_dir_all(home.join(".claude/projects")).unwrap();
+        let workspace = home.join("byteowlz/demo");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        // Resolve while HOME still points at the fixture: these paths are
+        // relative to the home the arguments were built against.
+        let expected: Vec<(String, String)> = config
+            .scoped_paths
+            .iter()
+            .filter(|rule| matches!(rule.access, ScopedPathAccess::Rw))
+            .map(|rule| {
+                let target = SandboxConfig::scoped_rule_target(rule, &workspace, None)
+                    .expect("a writable scoped rule resolves to a target");
+                (rule.name.clone(), target.to_string_lossy().to_string())
+            })
+            .collect();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        let landlock_paths = args
+            .windows(3)
+            .find(|w| w[0] == "--setenv" && w[1] == crate::landlock_shim::ENV_ALLOW_WRITE)
+            .map(|w| w[2].clone())
+            .expect("landlock allow_write is passed to the shim");
+
+        assert!(
+            !expected.is_empty(),
+            "strict must ship writable scoped rules"
+        );
+        for (name, target) in expected {
+            assert!(
+                landlock_paths.split(':').any(|p| target.starts_with(p)),
+                "scoped rule '{name}' is mounted writable but not authorised: \
+                 {target} not covered by {landlock_paths}"
+            );
+        }
+    }
+
+    fn shipped_profiles_do_not_cap_address_space() {
+        // RLIMIT_AS bounds reserved virtual address space, not resident memory.
+        // Every JIT and WebAssembly engine reserves far more than it commits, so
+        // a cap that looks generous still breaks them: 4 GiB here stopped Node
+        // instantiating undici's HTTP parser and killed the harness seconds
+        // after spawn. Bound real memory with a cgroup instead.
+        for name in ["strict", "development", "minimal"] {
+            let profile = SandboxProfile::builtin(name)
+                .unwrap_or_else(|| panic!("{name} is a shipped profile"));
+            assert_eq!(
+                profile.resource_limits.max_memory_bytes, None,
+                "{name} must not set RLIMIT_AS; it is not a memory budget"
+            );
+        }
+    }
+
+    fn agent_project_shard_is_scoped_and_created() {
+        // A co-resident agent extension fails at startup with EACCES if its
+        // per-workspace directory is absent, and that surfaces as an unrelated
+        // harness timeout rather than a permission error. The shard must exist
+        // and the parent must stay masked so other workspaces remain private.
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let projects = home.join(".claude/projects");
+        std::fs::create_dir_all(&projects).unwrap();
+        // Underscore and dot both collapse to a dash in the real layout.
+        let workspace = home.join("byteowlz/oqto_refactor");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let expected = projects.join(workspace.to_string_lossy().replace(['/', '.', '_'], "-"));
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            !expected.to_string_lossy().contains('_'),
+            "underscores must collapse to dashes: {}",
+            expected.display()
+        );
+        assert!(
+            expected.exists(),
+            "the shard must be created or the extension dies with EACCES"
+        );
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            bind_sources.contains(&&expected.to_string_lossy().to_string()),
+            "this workspace's directory must be bound back: {bind_sources:?}"
+        );
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            tmpfs.contains(&&projects.to_string_lossy().to_string()),
+            "the projects parent must be masked so other workspaces stay private"
+        );
+    }
+
+    fn session_shard_encoding_matches_harness_layout() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let sessions = home.join(".pi/agent/sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let workspace = home.join("projects/demo");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let expected = sessions.join(format!(
+            "--{}--",
+            workspace
+                .to_string_lossy()
+                .trim_start_matches('/')
+                .replace('/', "-")
+        ));
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            expected.exists(),
+            "missing shard must be created so the harness can persist history"
+        );
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            bind_sources.contains(&&expected.to_string_lossy().to_string()),
+            "workspace shard must be bound back: {bind_sources:?}"
+        );
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            tmpfs.contains(&&sessions.to_string_lossy().to_string()),
+            "the sessions parent must be masked"
+        );
+    }
+
+    #[test]
+    fn only_the_current_workspace_shard_is_bound() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let sessions = home.join(".pi/agent/sessions");
+        let other = sessions.join("--other-workspace--");
+        std::fs::create_dir_all(&other).unwrap();
+        let workspace = home.join("mine");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        let other_str = other.to_string_lossy().to_string();
+        assert!(
+            !args.contains(&other_str),
+            "another workspace's shard must never be bound"
+        );
+    }
+
+    #[test]
+    fn top_level_keys_are_applied_not_dropped() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            enabled = true
+            profile = "strict"
+            deny_read = ["~/.kube"]
+            seccomp_mode = "enforce"
+            isolate_network = false
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert!(config.deny_read.iter().any(|p| p == "~/.kube"));
+        assert_eq!(config.seccomp_mode, SeccompMode::Enforce);
+        assert!(!config.isolate_network, "scalars override the profile");
+    }
+
+    #[test]
+    fn allow_write_unions_so_a_config_cannot_drop_a_required_grant() {
+        // A real operator config listed toolchain caches and omitted the agent
+        // session dir. Replacing would revoke it, and the harness then exits 0
+        // while persisting nothing.
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "strict"
+            allow_write = ["~/.cargo", "~/.rustup"]
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert!(
+            config.allow_write.iter().any(|p| p == "~/.pi"),
+            "profile grants must survive a config that does not repeat them"
+        );
+        assert!(config.allow_write.iter().any(|p| p == "~/.cargo"));
+    }
+
+    #[test]
+    fn overrides_do_not_duplicate_profile_entries() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "strict"
+            deny_read = ["~/.ssh"]
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert_eq!(
+            config.deny_read.iter().filter(|p| *p == "~/.ssh").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected() {
+        // Silently dropping a misspelled restriction yields a config that looks
+        // enforced and is not.
+        let err = toml::from_str::<SandboxConfigFile>(
+            r#"
+            profile = "strict"
+            deny_reads = ["~/.ssh"]
+            "#,
+        )
+        .expect_err("unknown key must fail");
+        assert!(
+            err.to_string().contains("deny_reads"),
+            "error should name the offending key: {err}"
+        );
+    }
+
+    #[test]
+    fn schema_reference_is_accepted() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            "$schema" = "https://example.invalid/oqto.sandbox.schema.json"
+            profile = "strict"
+            "#,
+        )
+        .expect("a $schema reference must not be an error");
+        assert!(file.schema.is_some());
+    }
+
+    #[test]
+    fn a_partial_custom_profile_inherits_the_baseline() {
+        // Field-level serde(default) used to shadow the container default, so
+        // naming a profile silently reset hardening to type defaults: no
+        // seccomp, no rlimits, and no session-history scoping.
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "development"
+            [profiles.development]
+            isolate_pid = true
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+        let baseline = SandboxProfile::development();
+
+        assert_eq!(
+            config.scoped_paths.len(),
+            baseline.scoped_paths.len(),
+            "a partial custom profile must keep session-history scoping"
+        );
+        assert_eq!(config.seccomp_mode, baseline.seccomp_mode);
+        assert_eq!(config.landlock_mode, baseline.landlock_mode);
+        assert_eq!(config.resource_limits, baseline.resource_limits);
+        assert!(config.no_new_privs);
+    }
+
+    #[test]
+    fn a_custom_profile_can_still_override_the_baseline() {
+        let file: SandboxConfigFile = toml::from_str(
+            r#"
+            profile = "locked"
+            [profiles.locked]
+            seccomp_mode = "enforce"
+            scoped_paths = []
+            "#,
+        )
+        .expect("parses");
+        let config: SandboxConfig = file.into();
+
+        assert_eq!(config.seccomp_mode, SeccompMode::Enforce);
+        assert!(
+            config.scoped_paths.is_empty(),
+            "an explicit empty list must still win"
+        );
+    }
+
+    #[test]
+    fn workspace_allowlist_keeps_its_own_read_list() {
+        // A workspace selecting allowlist while the global stays denylist used
+        // to inherit the global's empty list, masking home with nothing
+        // readable.
+        let mut global = SandboxConfig::from_profile("development");
+        global.read_policy = ReadPolicy::Denylist;
+        global.allow_read = vec![];
+
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.read_policy = ReadPolicy::Allowlist;
+        workspace.allow_read = vec!["~/.cargo".to_string(), "~/.pi".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(
+            merged.allow_read,
+            vec!["~/.cargo".to_string(), "~/.pi".to_string()],
+            "an allowlist must arrive with the list it governs"
+        );
+    }
+
+    #[test]
+    fn a_workspace_cannot_widen_a_global_allowlist() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.allow_read = vec!["~/.cargo".to_string()];
+
+        let mut workspace = SandboxConfig::from_profile("strict");
+        workspace.allow_read = vec!["~/.cargo".to_string(), "~/.ssh".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(merged.read_policy, ReadPolicy::Allowlist);
+        assert_eq!(
+            merged.allow_read,
+            vec!["~/.cargo".to_string()],
+            "intersection only: a workspace must not add readable paths"
+        );
+    }
+
+    #[test]
+    fn allowlist_still_applies_denies_inside_the_workspace() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let secret = workspace.join("flag.txt");
+        std::fs::write(&secret, "secret").unwrap();
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.deny_read = vec![secret.to_string_lossy().to_string()];
+
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            args.iter().any(|a| a.contains("flag.txt")),
+            "a deny inside the workspace must reach bwrap: the workspace is \
+             bound after the home mask, so it is visible unless denied"
+        );
+    }
+
+    /// The narrower half of the same rule, with the grant present on disk.
+    #[test]
+    fn a_denied_parent_still_yields_to_its_allowed_child() {
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let cfg_dir = home.join(".config");
+        std::fs::create_dir_all(cfg_dir.join("git")).unwrap();
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let mut config = SandboxConfig::from_profile("strict");
+        config.allow_read = vec!["~/.config/git".to_string()];
+        config.deny_read = vec!["~/.config".to_string()];
+
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let cfg_str = cfg_dir.to_string_lossy().to_string();
+        let git_str = cfg_dir.join("git").to_string_lossy().to_string();
+        let masked = args.iter().any(|arg| arg == &cfg_str);
+        let grant_after_mask = args
+            .iter()
+            .position(|arg| arg == &git_str)
+            .is_some_and(|git| {
+                args.iter()
+                    .position(|arg| arg == &cfg_str)
+                    .is_some_and(|parent| parent < git)
+            });
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(masked, "the denied parent must be masked");
+        assert!(
+            grant_after_mask,
+            "the allowed child must be rebound after the mask that covers it"
+        );
+    }
+
+    #[test]
+    fn a_workspace_cannot_add_extra_binds() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.extra_ro_bind = vec!["~/.config/oqto/sandbox.toml".to_string()];
+        global.extra_rw_bind = vec![];
+
+        let mut workspace = SandboxConfig::from_profile("strict");
+        // Both of these would undo a global deny, since extra binds are applied
+        // after deny_read.
+        workspace.extra_ro_bind = vec!["~/.config/oqto".to_string(), "/etc/oqto".to_string()];
+        workspace.extra_rw_bind = vec!["/".to_string()];
+
+        let merged = global.merge_with_workspace(&workspace);
+
+        assert_eq!(
+            merged.extra_ro_bind,
+            vec!["~/.config/oqto/sandbox.toml".to_string()],
+            "a workspace must not grant itself reads"
+        );
+        assert!(
+            merged.extra_rw_bind.is_empty(),
+            "a workspace must not grant itself writes"
+        );
+    }
+
+    #[test]
+    fn development_does_not_scope_session_history() {
+        // Deliberate: development is the permissive profile and cross-workspace
+        // session visibility is intended there. Pinned so it is not "fixed" by
+        // someone assuming every profile should isolate.
+        let config = SandboxConfig::from_profile("development");
+        assert!(
+            !config
+                .scoped_paths
+                .iter()
+                .any(|r| r.base_path.contains("agent/sessions")),
+            "development must not scope session history"
+        );
+    }
+}
+
+#[cfg(test)]
+mod home_access_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_profiles_state_their_own_home_access() {
+        assert_eq!(SandboxProfile::minimal().home_access, HomeAccess::Write);
+        assert_eq!(SandboxProfile::development().home_access, HomeAccess::Write);
+        assert_eq!(SandboxProfile::strict().home_access, HomeAccess::None);
+    }
+
+    #[test]
+    fn a_workspace_cannot_widen_home_access() {
+        let mut global = SandboxConfig::from_profile("strict");
+        global.home_access = HomeAccess::Read;
+        let mut workspace = SandboxConfig::from_profile("strict");
+        workspace.home_access = HomeAccess::Write;
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(
+            merged.home_access,
+            HomeAccess::Read,
+            "a workspace must not grant itself a writable home"
+        );
+    }
+
+    #[test]
+    fn a_workspace_can_narrow_home_access() {
+        let mut global = SandboxConfig::from_profile("development");
+        global.home_access = HomeAccess::Write;
+        let mut workspace = SandboxConfig::from_profile("development");
+        workspace.home_access = HomeAccess::None;
+
+        let merged = global.merge_with_workspace(&workspace);
+        assert_eq!(merged.home_access, HomeAccess::None);
     }
 }

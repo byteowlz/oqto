@@ -787,11 +787,14 @@ pub async fn ws_multiplexed_handler(
 
     let user_id = user.id().to_string();
     let is_admin = user.is_admin();
+    let terminal_allowed = user.may_use_terminal();
 
     Ok(ws
         .max_message_size(256 * 1024 * 1024)
         .max_frame_size(256 * 1024 * 1024)
-        .on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
+        .on_upgrade(move |socket| {
+            handle_multiplexed_ws(socket, state, user_id, is_admin, terminal_allowed)
+        }))
 }
 
 /// Create a runner client for a user if multi-user mode is enabled.
@@ -897,6 +900,10 @@ struct WsConnectionState {
     session_runner_overrides: HashMap<String, RunnerClient>,
     /// Bus subscriber ID for this connection.
     bus_subscriber_id: crate::bus::SubscriberId,
+    /// Whether the authenticated principal may open interactive terminals.
+    /// Decided once at connect from the JWT role; terminals bypass the agent
+    /// seam, so ordinary users never get one.
+    terminal_allowed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -925,6 +932,7 @@ async fn handle_multiplexed_ws(
     state: AppState,
     user_id: String,
     is_admin: bool,
+    terminal_allowed: bool,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
@@ -953,6 +961,7 @@ async fn handle_multiplexed_ws(
         file_watchers: HashMap::new(),
         session_runner_overrides: HashMap::new(),
         bus_subscriber_id: 0, // Set after bus registration
+        terminal_allowed,
     }));
 
     // Register this connection with the legacy WS hub only for non-agent
@@ -2881,6 +2890,7 @@ mod tests {
             file_watchers: HashMap::new(),
             session_runner_overrides: HashMap::new(),
             bus_subscriber_id: 0,
+            terminal_allowed: true,
         }));
 
         emit_terminal_send_failure(

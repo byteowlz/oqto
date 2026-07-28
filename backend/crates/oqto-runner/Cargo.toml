@@ -16,6 +16,7 @@ integration-tests = []
 iroh-transport = ["dep:iroh"]
 
 [dependencies]
+rand = { workspace = true }
 anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true

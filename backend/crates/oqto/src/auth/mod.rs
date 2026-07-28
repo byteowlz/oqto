@@ -11,6 +11,6 @@ mod middleware;
 
 pub use claims::{Claims, Role};
 #[allow(unused_imports)]
-pub use config::{AuthConfig, ConfigValidationError, DevUser};
+pub use config::{AuthConfig, ConfigValidationError, DevUser, resolve_secret_value};
 pub use error::AuthError;
 pub use middleware::{AuthMiddlewareState, AuthState, CurrentUser, RequireAdmin, auth_middleware};

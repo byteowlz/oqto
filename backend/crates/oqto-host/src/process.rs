@@ -247,6 +247,8 @@ pub fn base_system_env() -> HashMap<String, String> {
 pub struct ProcessManager {
     /// Map of session_id -> list of process handles.
     processes: Arc<Mutex<HashMap<String, Vec<ProcessHandle>>>>,
+    /// Map of session_id -> ttyd basic-auth password. In-memory only.
+    ttyd_credentials: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl ProcessManager {
@@ -254,7 +256,37 @@ impl ProcessManager {
     pub fn new() -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
+            ttyd_credentials: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Basic-auth username for the session terminal.
+    pub const TERMINAL_USERNAME: &'static str = "oqto";
+
+    /// Build the ttyd argument vector.
+    pub fn build_ttyd_args(
+        socket_path: &str,
+        cwd: &str,
+        password: &str,
+        shell_args: &[String],
+    ) -> Vec<String> {
+        let mut args = vec![
+            "--interface".to_string(),
+            socket_path.to_string(),
+            "--credential".to_string(),
+            format!("{}:{}", Self::TERMINAL_USERNAME, password),
+            "--check-origin".to_string(),
+            "--writable".to_string(),
+            "--cwd".to_string(),
+            cwd.to_string(),
+        ];
+        args.extend(shell_args.iter().cloned());
+        args
+    }
+
+    /// Look up the terminal credential for a session, if the terminal is running.
+    pub async fn ttyd_credential(&self, session_id: &str) -> Option<String> {
+        self.ttyd_credentials.lock().await.get(session_id).cloned()
     }
 
     // Pi process management is handled by Main Chat Pi service.
@@ -380,17 +412,21 @@ impl ProcessManager {
         // Use Unix socket via --interface instead of TCP port
         let socket_path_str = socket_path.to_string_lossy().to_string();
         let cwd_str = cwd.to_str().unwrap_or(".");
-        let mut ttyd_args: Vec<String> = vec![
-            "--interface".to_string(),
-            socket_path_str,
-            "--writable".to_string(),
-            "--cwd".to_string(),
-            cwd_str.to_string(),
-        ];
-        // Append shell command and its arguments as separate positional args
-        for arg in &shell_args {
-            ttyd_args.push(arg.clone());
-        }
+        let password = {
+            use rand::RngCore;
+            let mut bytes = [0u8; 32];
+            rand::rng().fill_bytes(&mut bytes);
+            bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        };
+        self.ttyd_credentials
+            .lock()
+            .await
+            .insert(session_id.to_string(), password.clone());
+
+        let ttyd_args = Self::build_ttyd_args(&socket_path_str, cwd_str, &password, &shell_args);
 
         let ttyd_args_refs: Vec<&str> = ttyd_args.iter().map(|s| s.as_str()).collect();
 
@@ -749,6 +785,7 @@ impl Clone for ProcessManager {
     fn clone(&self) -> Self {
         Self {
             processes: Arc::clone(&self.processes),
+            ttyd_credentials: Arc::clone(&self.ttyd_credentials),
         }
     }
 }
@@ -1173,21 +1210,6 @@ mod tests {
         ]
     }
 
-    /// Helper to build ttyd args (mirrors the logic in spawn_ttyd).
-    fn build_ttyd_args(port: u16, cwd: &str) -> Vec<String> {
-        vec![
-            "--port".to_string(),
-            port.to_string(),
-            "--interface".to_string(),
-            "127.0.0.1".to_string(),
-            "--writable".to_string(),
-            "--cwd".to_string(),
-            cwd.to_string(),
-            "zsh".to_string(),
-            "-l".to_string(),
-        ]
-    }
-
     #[test]
     fn test_fileserver_binds_to_localhost_only() {
         let args = build_fileserver_args(8080, "/workspace");
@@ -1210,26 +1232,46 @@ mod tests {
     }
 
     #[test]
-    fn test_ttyd_binds_to_localhost_only() {
-        let args = build_ttyd_args(7681, "/workspace");
+    fn ttyd_listens_on_a_unix_socket_not_a_tcp_port() {
+        let shell = vec!["zsh".to_string(), "-i".to_string()];
+        let args = ProcessManager::build_ttyd_args(
+            "/run/user/1000/oqto-ttyd-s1.sock",
+            "/workspace",
+            "secret",
+            &shell,
+        );
 
-        // Find the --interface argument
-        let interface_idx = args.iter().position(|a| a == "--interface");
+        let interface_idx = args
+            .iter()
+            .position(|a| a == "--interface")
+            .expect("ttyd args must include --interface");
+        let interface = &args[interface_idx + 1];
         assert!(
-            interface_idx.is_some(),
-            "ttyd args must include --interface"
+            interface.starts_with('/'),
+            "ttyd must listen on a unix socket, got {interface}"
         );
+        assert!(
+            !args.iter().any(|a| a == "--port"),
+            "ttyd must not open a TCP port"
+        );
+    }
 
-        let bind_addr = &args[interface_idx.t() + 1];
+    #[test]
+    fn ttyd_is_always_started_with_a_credential() {
+        let shell = vec!["zsh".to_string(), "-i".to_string()];
+        let args = ProcessManager::build_ttyd_args("/tmp/t.sock", "/workspace", "s3cr3t", &shell);
+
+        let cred_idx = args
+            .iter()
+            .position(|a| a == "--credential")
+            .expect("ttyd must be started with --credential");
         assert_eq!(
-            bind_addr, "127.0.0.1",
-            "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
-            bind_addr
+            args[cred_idx + 1],
+            format!("{}:s3cr3t", ProcessManager::TERMINAL_USERNAME)
         );
-
-        assert_ne!(
-            bind_addr, "0.0.0.0",
-            "SECURITY: ttyd must NOT bind to 0.0.0.0"
+        assert!(
+            args.iter().any(|a| a == "--check-origin"),
+            "ttyd must reject cross-origin upgrades"
         );
     }
 }

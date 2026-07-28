@@ -11,7 +11,6 @@ import {
 	ChevronRight,
 	FolderKanban,
 	Globe2,
-	LayoutDashboard,
 	LogOut,
 	MoonStar,
 	Settings,
@@ -478,22 +477,6 @@ export const MobileMenu = memo(function MobileMenu({
 						variant="ghost"
 						size="icon"
 						rounded="full"
-						onClick={() => onToggleApp("dashboard")}
-						aria-label="Dashboard"
-						className={cn(
-							"hover:bg-sidebar-accent",
-							activeAppId === "dashboard"
-								? "text-primary"
-								: "text-muted-foreground hover:text-primary",
-						)}
-					>
-						<LayoutDashboard className="w-5 h-5" />
-					</Button>
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						rounded="full"
 						onClick={() => onToggleApp("settings")}
 						aria-label="Settings"
 						className={cn(
@@ -529,7 +512,7 @@ export const MobileMenu = memo(function MobileMenu({
 						size="icon"
 						rounded="full"
 						onClick={onToggleLocale}
-						aria-label="Sprache wechseln"
+						aria-label={t("command.changeLanguage")}
 						className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent"
 					>
 						<Globe2 className="w-5 h-5" />

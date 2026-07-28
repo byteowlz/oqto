@@ -18,6 +18,7 @@ pub struct RunnerUserConfig {
     pub memories_dir: PathBuf,
     pub single_user: bool,
     pub linux_users_enabled: bool,
+    pub terminal_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -49,6 +50,7 @@ struct LocalSection {
     ttyd_binary: String,
     workspace_dir: String,
     single_user: bool,
+    terminal_enabled: bool,
     linux_users: LinuxUsersSection,
 }
 
@@ -59,6 +61,7 @@ impl Default for LocalSection {
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "~/oqto".to_string(),
             single_user: false,
+            terminal_enabled: true,
             linux_users: LinuxUsersSection::default(),
         }
     }
@@ -137,6 +140,7 @@ impl RunnerUserConfig {
         Self {
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
+            terminal_enabled: config_file.local.terminal_enabled,
             pi_binary,
             runner_id,
             workspace_dir: Self::expand_path(&config_file.local.workspace_dir, &home),

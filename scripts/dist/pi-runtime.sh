@@ -84,7 +84,15 @@ CANDIDATE="$TMP/pi/pi"
 }
 
 verify_runtime() {
-  local binary="$1" label="$2" actual_version
+  local binary="$1" label="$2" actual_version package_dir required_asset
+  package_dir="$(cd "$(dirname "$binary")" && pwd -P)"
+  for required_asset in theme/dark.json theme/light.json; do
+    if [[ ! -r "$package_dir/$required_asset" ]]; then
+      echo "pi-runtime: $label missing required asset: $required_asset" >&2
+      return 1
+    fi
+  done
+
   actual_version="$($binary --version 2>/dev/null | head -1)"
   [[ "$actual_version" == "$VERSION" ]] || {
     echo "pi-runtime: $label version mismatch expected=$VERSION actual=${actual_version:-unavailable}" >&2
@@ -107,8 +115,9 @@ home = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
 # `-ne` (no extensions): verification is about the Pi *binary's* health
 # (version + RPC model discovery), not the invoking user's extension state. A
 # stale/conflicting user extension must not fail binary verification (it would
-# abort startup with a tool conflict -> zero models). Provider checks below read
-# auth.json/settings.json, which are independent of extensions.
+# abort startup with a tool conflict -> zero models). Only built-in providers
+# may be asserted here: package-provided providers are intentionally disabled
+# by `-ne` and require a separate post-sync integration check.
 proc = subprocess.Popen(
     [binary, "-ne", "--mode", "rpc", "--no-session"],
     stdin=subprocess.PIPE,
@@ -167,17 +176,6 @@ if home:
             auth = {}
         if "openai-codex" in auth and "openai-codex" not in providers:
             raise SystemExit("configured openai-codex provider missing from RPC discovery")
-
-    settings_path = home / ".pi" / "agent" / "settings.json"
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            settings = {}
-        packages = settings.get("packages") or []
-        if any(str(package).split("@", 1)[0] == "npm:pi-claude-bridge" for package in packages):
-            if "claude-bridge" not in providers:
-                raise SystemExit("configured claude-bridge provider missing from RPC discovery")
 
 print(f"models={len(models)} providers={len(providers)}")
 PY

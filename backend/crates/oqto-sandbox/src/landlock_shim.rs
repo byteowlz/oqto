@@ -12,10 +12,13 @@
 //! The shim runs after namespace setup is complete, installs Landlock rules,
 //! then `execvp`s the real command.
 
-use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
+use anyhow::Result;
 use std::env;
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
 use crate::config::{LandlockMode, SandboxConfig};
 
 pub const SHIM_ENV: &str = "OQTO_SANDBOX_SHIM_MODE";
@@ -53,14 +56,29 @@ pub fn maybe_run_shim() -> Result<()> {
 ///
 /// Resolution order:
 /// 1. `OQTO_SANDBOX_SHIM_BIN` (explicit override)
-/// 2. `oqto-sandbox` on `PATH`
-/// 3. `current_exe()` when it is named `oqto-sandbox`
+/// 2. `current_exe()` when it is named `oqto-sandbox`
+/// 3. `oqto-sandbox` on `PATH`
+///
+/// `current_exe` is preferred over `PATH` so the shim is the same build as the
+/// process choosing the policy. Searching `PATH` first meant an older installed
+/// `/usr/local/bin/oqto-sandbox` silently applied stale Landlock logic while the
+/// outer process used new policy -- a mismatch that is invisible at runtime and
+/// produces misleading test results.
 pub fn resolve_shim_binary() -> Option<PathBuf> {
     if let Ok(raw) = env::var(SHIM_BIN_OVERRIDE_ENV) {
         let p = PathBuf::from(raw);
         if p.exists() {
             return Some(p);
         }
+    }
+
+    if let Ok(cur) = env::current_exe()
+        && cur
+            .file_name()
+            .and_then(|f| f.to_str())
+            .is_some_and(|s| s == "oqto-sandbox")
+    {
+        return Some(cur);
     }
 
     if let Ok(path) = env::var("PATH") {
@@ -73,15 +91,6 @@ pub fn resolve_shim_binary() -> Option<PathBuf> {
                 return Some(candidate);
             }
         }
-    }
-
-    if let Ok(cur) = env::current_exe()
-        && cur
-            .file_name()
-            .and_then(|f| f.to_str())
-            .is_some_and(|s| s == "oqto-sandbox")
-    {
-        return Some(cur);
     }
 
     None

@@ -97,9 +97,9 @@ check_prerequisites() {
     esac
   fi
 
-  # protoc is required by hstry-core (prost-build) for gRPC protobuf compilation
+  # protoc is required by prost-build for gRPC protobuf compilation
   if ! command_exists protoc; then
-    log_info "Installing protobuf compiler (required by hstry gRPC build)..."
+    log_info "Installing protobuf compiler (required for gRPC builds)..."
     case "$OS_DISTRO" in
     arch | manjaro | endeavouros) sudo pacman -S --noconfirm protobuf ;;
     debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y protobuf-compiler ;;

@@ -9,6 +9,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import type { PiModelInfo } from "@/lib/api/default-chat";
+import type { WorkspaceSkillCatalogEntry } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
@@ -34,6 +35,7 @@ export interface WorkspaceOverviewFormProps {
 	availableModels: PiModelInfo[];
 	sandboxProfiles: string[];
 	availableSkills: string[];
+	skillCatalog: WorkspaceSkillCatalogEntry[];
 	availableExtensions: ResourceEntry[];
 	onChange: (values: WorkspaceOverviewValues) => void;
 	onSave?: () => void;
@@ -49,6 +51,7 @@ export function WorkspaceOverviewForm({
 	availableModels,
 	sandboxProfiles,
 	availableSkills,
+	skillCatalog,
 	availableExtensions,
 	onChange,
 	onSave,
@@ -169,6 +172,55 @@ export function WorkspaceOverviewForm({
 						</label>
 					);
 				})}
+			</div>
+		</div>
+	);
+
+	const renderSkillCatalog = () => (
+		<div className="space-y-2">
+			<div className="text-xs text-muted-foreground">
+				Discovered from standard Agent Skills locations
+			</div>
+			<div className="grid grid-cols-1 gap-2">
+				{skillCatalog.map((skill) => (
+					<div
+						key={`${skill.id}:${skill.source_path}`}
+						className={cn(
+							"rounded-md border border-border px-3 py-2",
+							!skill.effective && "bg-muted/30 opacity-70",
+						)}
+					>
+						<div className="flex min-w-0 items-center justify-between gap-2">
+							<div className="truncate text-sm font-medium">{skill.name}</div>
+							<div className="flex shrink-0 gap-1 text-[10px] uppercase text-muted-foreground">
+								<span className="rounded bg-muted px-1.5 py-0.5">
+									{skill.scope}
+								</span>
+								<span className="rounded bg-muted px-1.5 py-0.5">
+									{skill.effective ? "active" : "overridden"}
+								</span>
+							</div>
+						</div>
+						{skill.description && (
+							<div className="mt-1 text-xs text-muted-foreground">
+								{skill.description}
+							</div>
+						)}
+						<div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+							{skill.source_path}
+						</div>
+						{skill.diagnostics.length > 0 && (
+							<div className="mt-1 text-xs text-destructive">
+								{skill.diagnostics.join(", ")}
+							</div>
+						)}
+					</div>
+				))}
+				{skillCatalog.length === 0 && (
+					<div className="text-xs text-muted-foreground">
+						{t("common.noEntriesFound")}
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -341,6 +393,7 @@ export function WorkspaceOverviewForm({
 					values.skillsMode,
 					values.selectedSkills,
 				)}
+				{renderSkillCatalog()}
 			</div>
 
 			<div className="space-y-2">

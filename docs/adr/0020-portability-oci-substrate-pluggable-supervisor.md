@@ -1,6 +1,8 @@
 # Portability: OCI container as isolation substrate; the placement supervisor is pluggable; no platform tooling in the core
 
-Status: proposed (grilled 2026-06-25). Generalizes ADR-0011 (placement contract) and **amends ADR-0002** (systemd is demoted from "the local supervisor" to one supervisor backend). Foundation for ADR-0019.
+Status: accepted (grilled 2026-06-25; accepted 2026-07-27 as the intended
+direction, not yet implemented). Amended 2026-07-27 for microVM placement and
+external runtime backends; see the addendum at the end. Generalizes ADR-0011 (placement contract) and **amends ADR-0002** (systemd is demoted from "the local supervisor" to one supervisor backend). Foundation for ADR-0019.
 
 Oqto must run across very different infrastructure: a single VPS, several VMs, a Kubernetes cluster, and developer machines on macOS/Windows. The temptation is to pick one mechanism (systemd, or podman, or k8s) and build on it. That repeats the ADR-0001 mistake at the deployment layer — baking one platform into the core. Instead we commit to portable abstractions and make every platform a swappable backend behind them. The runner already cross-compiles; what leaks platform assumptions is *how the runner is isolated and supervised*, so that is what we abstract.
 
@@ -37,3 +39,27 @@ Build the **contracts** (Placement Supervisor trait, mount-source type, runner r
 - `oqto-sandbox` becomes a portable, feature-gated, runtime-selected crate (Linux Landlock/seccomp/namespaces, macOS seatbelt, Windows best-effort) — see ADR-0019.
 - Mac/Windows become reachable: cross-compiled runner + OCI (via `podman machine`) for multi-tenant, or `local-process` for single-tenant dev.
 - New cross-cutting requirement: anything platform-specific lives behind a backend trait; a lint/review gate should reject systemd/podman/path assumptions in core crates.
+
+## Addendum (2026-07-27): microVMs and external runtimes
+
+Two backends were missing from the supervisor table.
+
+**MicroVM placement.** The table stops at containers, but a hardware boundary is
+the natural tier above a shared kernel for untrusted work, and `oqto-430k`
+already tracks it. A microVM supervisor (Firecracker/Cloud Hypervisor, or Kata
+presenting an OCI interface) is a fourth backend behind the same contract. It
+changes the isolation guarantee, not the runner protocol: a runner inside a
+microVM is still reached at a socket and still speaks the canonical protocol.
+Kata is the cheapest entry because it keeps the OCI surface of decision 1.
+
+**External runtimes.** The pluggable supervisor is also the seam where a
+third-party agent runtime can be adopted rather than reimplemented. NVIDIA
+OpenShell is the current candidate: Apache-2.0, Rust, with container/microVM/
+Kubernetes drivers and declarative filesystem policy, which ADR-0028's
+`path -> access` model can compile to. Its gateway is presently single-tenant,
+so it is a placement backend candidate, not a replacement for the workspace,
+history, or multi-user layers. Revisit when its multi-tenancy work lands or when
+container placement is built, whichever comes first.
+
+Neither changes the decisions above. Both are reasons the supervisor contract
+must stay narrow enough that a backend can be added without touching the core.

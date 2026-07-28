@@ -919,10 +919,50 @@ impl TtydConnectionRead {
     }
 }
 
-async fn connect_ttyd_socket(session_id: &str, ttyd_port: u16) -> anyhow::Result<TtydConnection> {
+/// base64("user:password"), used both for the Basic header and for ttyd's
+/// in-band AuthToken. ttyd checks the header at the handshake and the token
+/// before it spawns the shell, so both are required.
+fn ttyd_basic_credential(password: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(format!("oqto:{}", password))
+}
+
+/// Fetch a session's terminal credential from the runner that owns it.
+pub(super) async fn terminal_credential_for_session(
+    state: &AppState,
+    user_id: &str,
+    session: &Session,
+) -> Result<Option<String>, String> {
+    let target = crate::runner::router::resolve_target_for_workspace_path(
+        state,
+        user_id,
+        &session.workspace_path,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let client = crate::runner::router::resolve_runner_for_target(state, user_id, &target)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "runner not available for session".to_string())?;
+
+    let resp = client
+        .get_terminal_credential(&session.id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(resp.password)
+}
+
+async fn connect_ttyd_socket(
+    session_id: &str,
+    ttyd_port: u16,
+    password: &str,
+) -> anyhow::Result<TtydConnection> {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+    let credential = ttyd_basic_credential(password);
+    let auth = axum::http::HeaderValue::from_str(&format!("Basic {}", credential))?;
     let socket_path = ProcessManager::ttyd_socket_path(session_id);
     if socket_path.exists() {
         use tokio::net::UnixStream;
@@ -934,6 +974,11 @@ async fn connect_ttyd_socket(session_id: &str, ttyd_port: u16) -> anyhow::Result
             "Sec-WebSocket-Protocol",
             axum::http::HeaderValue::from_static("tty"),
         );
+        request.headers_mut().insert("Authorization", auth);
+        request.headers_mut().insert(
+            "Origin",
+            axum::http::HeaderValue::from_static("http://localhost"),
+        );
         let (socket, _response) = client_async(request, stream).await?;
         return Ok(TtydConnection::Unix(socket));
     }
@@ -944,6 +989,13 @@ async fn connect_ttyd_socket(session_id: &str, ttyd_port: u16) -> anyhow::Result
         "Sec-WebSocket-Protocol",
         axum::http::HeaderValue::from_static("tty"),
     );
+    request.headers_mut().insert("Authorization", auth);
+    // ttyd runs with --check-origin and rejects an upgrade whose Origin does
+    // not match the request host, including a missing one.
+    request.headers_mut().insert(
+        "Origin",
+        axum::http::HeaderValue::from_str(&format!("http://localhost:{}", ttyd_port))?,
+    );
     let (socket, _response) = connect_async(request).await?;
     Ok(TtydConnection::Tcp(socket))
 }
@@ -952,6 +1004,7 @@ pub(super) async fn start_terminal_task(
     terminal_id: String,
     session_id: String,
     ttyd_port: u16,
+    ttyd_password: String,
     cols: u16,
     rows: u16,
     event_tx: mpsc::UnboundedSender<WsEvent>,
@@ -970,7 +1023,7 @@ pub(super) async fn start_terminal_task(
         let mut attempts: u32 = 0;
         let socket = loop {
             attempts += 1;
-            match connect_ttyd_socket(&session_id, ttyd_port).await {
+            match connect_ttyd_socket(&session_id, ttyd_port, &ttyd_password).await {
                 Ok(socket) => break socket,
                 Err(err) => {
                     if start.elapsed() >= timeout {
@@ -989,8 +1042,11 @@ pub(super) async fn start_terminal_task(
 
         let (mut ttyd_write, mut ttyd_read) = socket.split();
 
+        // ttyd validates AuthToken before spawning the shell. An empty token
+        // leaves the websocket open with no child process, which surfaces as a
+        // terminal that connects and never prints a prompt.
         let init_msg = serde_json::json!({
-            "AuthToken": "",
+            "AuthToken": ttyd_basic_credential(&ttyd_password),
             "columns": cols,
             "rows": rows,
         });

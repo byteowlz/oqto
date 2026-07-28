@@ -18,12 +18,38 @@ use std::ffi::CString;
 ///   its other namespaces; bwrap must not also `--unshare-net` (the arg builder
 ///   suppresses it for proxy mode) or it would replace this namespace.
 /// - PR_SET_NO_NEW_PRIVS when enabled
+/// - `setrlimit` resource limits when configured
 /// - Seccomp fd wiring to descriptor 198 for bwrap `--seccomp 198`
 ///
 /// Note: Landlock is NOT applied here. It is installed by the inner shim
 /// (`crate::landlock_shim`) after bwrap completes user-namespace setup, because
 /// Landlock write restrictions applied before exec block bwrap's write to
 /// `/proc/self/uid_map`. See trx oqto-b4za for context.
+/// Translate configured limits into `(resource, value)` pairs for `setrlimit`.
+///
+/// Values are clamped to `rlim_t` so a config value larger than the platform's
+/// limit type cannot silently wrap into a small limit.
+#[cfg(target_os = "linux")]
+fn resource_rlimits(config: &SandboxConfig) -> Vec<(libc::__rlimit_resource_t, libc::rlim_t)> {
+    let limits = &config.resource_limits;
+    [
+        (libc::RLIMIT_AS, limits.max_memory_bytes),
+        (libc::RLIMIT_NOFILE, limits.max_open_files),
+        (libc::RLIMIT_CPU, limits.max_cpu_seconds),
+        (libc::RLIMIT_FSIZE, limits.max_file_size_bytes),
+    ]
+    .into_iter()
+    .filter_map(|(resource, value)| {
+        value.map(|v| {
+            (
+                resource,
+                libc::rlim_t::try_from(v).unwrap_or(libc::rlim_t::MAX),
+            )
+        })
+    })
+    .collect()
+}
+
 #[cfg(target_os = "linux")]
 pub fn configure_bwrap_pre_exec(
     cmd: &mut std::process::Command,
@@ -42,6 +68,9 @@ pub fn configure_bwrap_pre_exec(
         None
     };
     let no_new_privs = config.no_new_privs;
+    // bwrap execs the payload without resetting rlimits, so limits installed
+    // here are inherited by the sandboxed process and its children.
+    let rlimits = resource_rlimits(config);
     let netns_path_cstr = match egress {
         Some(plan) => Some(
             CString::new(plan.netns_path())
@@ -50,7 +79,11 @@ pub fn configure_bwrap_pre_exec(
         None => None,
     };
 
-    if seccomp_path_cstr.is_some() || no_new_privs || netns_path_cstr.is_some() {
+    if seccomp_path_cstr.is_some()
+        || no_new_privs
+        || netns_path_cstr.is_some()
+        || !rlimits.is_empty()
+    {
         // SAFETY: pre_exec runs in child after fork, before exec.
         unsafe {
             cmd.pre_exec(move || {
@@ -76,6 +109,16 @@ pub fn configure_bwrap_pre_exec(
                     }
                 }
 
+                for (resource, value) in rlimits.iter().copied() {
+                    let limit = libc::rlimit {
+                        rlim_cur: value,
+                        rlim_max: value,
+                    };
+                    if libc::setrlimit(resource, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+
                 if let Some(path) = seccomp_path_cstr.as_ref() {
                     let fd = libc::open(path.as_ptr(), libc::O_RDONLY);
                     if fd == -1 {
@@ -97,7 +140,58 @@ pub fn configure_bwrap_pre_exec(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: `setrlimit` is portable, so resource limits apply here too. Seccomp,
+/// Landlock and network namespaces have no macOS equivalent and are enforced by
+/// the Seatbelt profile or not at all.
+#[cfg(target_os = "macos")]
+pub fn configure_bwrap_pre_exec(
+    cmd: &mut std::process::Command,
+    config: &SandboxConfig,
+    _workspace: &Path,
+    _egress: Option<&EgressPlan>,
+) -> Result<()> {
+    let limits = &config.resource_limits;
+    let rlimits: Vec<(libc::c_int, libc::rlim_t)> = [
+        (libc::RLIMIT_AS, limits.max_memory_bytes),
+        (libc::RLIMIT_NOFILE, limits.max_open_files),
+        (libc::RLIMIT_CPU, limits.max_cpu_seconds),
+        (libc::RLIMIT_FSIZE, limits.max_file_size_bytes),
+    ]
+    .into_iter()
+    .filter_map(|(resource, value)| {
+        value.map(|v| {
+            (
+                resource,
+                libc::rlim_t::try_from(v).unwrap_or(libc::rlim_t::MAX),
+            )
+        })
+    })
+    .collect();
+
+    if rlimits.is_empty() {
+        return Ok(());
+    }
+
+    // SAFETY: pre_exec runs in the child after fork, before exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            for (resource, value) in rlimits.iter().copied() {
+                let limit = libc::rlimit {
+                    rlim_cur: value,
+                    rlim_max: value,
+                };
+                if libc::setrlimit(resource, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn configure_bwrap_pre_exec(
     _cmd: &mut std::process::Command,
     _config: &SandboxConfig,
@@ -105,4 +199,98 @@ pub fn configure_bwrap_pre_exec(
     _egress: Option<&EgressPlan>,
 ) -> Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::config::ResourceLimits;
+
+    #[test]
+    fn unset_limits_produce_no_rlimits() {
+        let config = SandboxConfig::default();
+        assert!(resource_rlimits(&config).is_empty());
+    }
+
+    #[test]
+    fn configured_limits_map_to_expected_resources() {
+        let config = SandboxConfig {
+            resource_limits: ResourceLimits {
+                max_memory_bytes: Some(1024),
+                max_open_files: Some(64),
+                max_cpu_seconds: None,
+                max_file_size_bytes: Some(2048),
+            },
+            ..SandboxConfig::default()
+        };
+
+        let limits = resource_rlimits(&config);
+
+        assert_eq!(
+            limits,
+            vec![
+                (libc::RLIMIT_AS, 1024),
+                (libc::RLIMIT_NOFILE, 64),
+                (libc::RLIMIT_FSIZE, 2048),
+            ],
+            "only configured limits are installed, CPU stays untouched"
+        );
+    }
+
+    #[test]
+    fn oversized_value_clamps_instead_of_wrapping() {
+        let config = SandboxConfig {
+            resource_limits: ResourceLimits {
+                max_memory_bytes: Some(u64::MAX),
+                ..ResourceLimits::default()
+            },
+            ..SandboxConfig::default()
+        };
+
+        let (_, value) = resource_rlimits(&config)[0];
+        assert_eq!(value, libc::rlim_t::MAX);
+    }
+}
+
+/// Live check that `setrlimit` limits reach the child on macOS. Linux has an
+/// equivalent path covered by the bwrap tests.
+#[cfg(all(test, target_os = "macos"))]
+mod macos_live {
+    use super::*;
+    use crate::config::ResourceLimits;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    #[test]
+    fn resource_limits_apply_to_the_child() {
+        let config = SandboxConfig {
+            resource_limits: ResourceLimits {
+                max_open_files: Some(64),
+                ..ResourceLimits::default()
+            },
+            ..SandboxConfig::default()
+        };
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("ulimit -n");
+        configure_bwrap_pre_exec(&mut cmd, &config, &PathBuf::from("/tmp"), None)
+            .expect("configure pre-exec");
+
+        let out = cmd.output().expect("spawn child");
+        let observed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_eq!(observed, "64", "RLIMIT_NOFILE must reach the child");
+    }
+
+    #[test]
+    fn no_limits_leaves_the_child_untouched() {
+        let config = SandboxConfig::default();
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("ulimit -n");
+        configure_bwrap_pre_exec(&mut cmd, &config, &PathBuf::from("/tmp"), None)
+            .expect("configure pre-exec");
+
+        let out = cmd.output().expect("spawn child");
+        let observed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_ne!(observed, "64");
+    }
 }

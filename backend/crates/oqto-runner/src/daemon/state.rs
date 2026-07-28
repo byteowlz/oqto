@@ -15,6 +15,8 @@ pub struct SessionState {
     pub ttyd_id: String,
     pub fileserver_port: u16,
     pub ttyd_port: u16,
+    /// None when the terminal is disabled.
+    pub ttyd_credential: Option<String>,
     pub agent: Option<String>,
     pub started_at: std::time::Instant,
 }

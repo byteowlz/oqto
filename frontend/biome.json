@@ -12,6 +12,12 @@
 			"recommended": true
 		}
 	},
+	"overrides": [
+		{
+			"include": ["src/generated/**"],
+			"organizeImports": { "enabled": false }
+		}
+	],
 	"files": {
 		"ignore": [
 			".next",
