@@ -125,6 +125,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { AgentErrorBody } from "@/features/chat/components/AgentErrorBody";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -4222,7 +4223,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 							<div
 								key={segment.key}
 								className={cn(
-									"rounded-md border px-3 py-2 text-sm flex items-center gap-2",
+									"rounded-md border px-3 py-2 text-sm flex gap-2",
+									isRetrying ? "items-center" : "items-start",
 									isRetrying
 										? "border-amber-500/30 bg-amber-500/10 text-amber-600"
 										: isRecoveredError
@@ -4253,7 +4255,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										/>
 									</svg>
 								)}
-								<span>{segment.text}</span>
+								{isRetrying ? (
+									<span>{segment.text}</span>
+								) : (
+									<AgentErrorBody text={segment.text} />
+								)}
 							</div>
 						);
 					}
