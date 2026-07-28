@@ -101,6 +101,18 @@ export function useCurrentUser() {
 }
 
 /**
+ * Whether the current user may use the terminal.
+ *
+ * Mirrors the backend Claims::may_use_terminal(): the admin and service roles
+ * may, the user role may not. Returns false while the session is still
+ * loading, which is cosmetic only - the backend gates the socket regardless.
+ */
+export function useMayUseTerminal(): boolean {
+	const { data: user } = useCurrentUser();
+	return user?.role === "admin" || user?.role === "service";
+}
+
+/**
  * Hook to log out the current user.
  * Invalidates the auth cache and redirects to login.
  */
