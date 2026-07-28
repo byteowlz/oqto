@@ -3,28 +3,29 @@
 /**
  * Request to convert a personal project into a shared workspace.
  */
-export type ConvertToSharedRequest = { 
-/**
- * Path to the personal project directory (must be owned by the user).
- */
-source_path: string, 
-/**
- * Name for the new shared workspace.
- */
-name: string, 
-/**
- * Optional description.
- */
-description: string | null, 
-/**
- * Lucide icon name.
- */
-icon: string | null, 
-/**
- * Hex color for accent.
- */
-color: string | null, 
-/**
- * User IDs to invite as initial members.
- */
-member_ids: Array<string>, };
+export type ConvertToSharedRequest = {
+	/**
+	 * Path to the personal project directory (must be owned by the user).
+	 */
+	source_path: string;
+	/**
+	 * Name for the new shared workspace.
+	 */
+	name: string;
+	/**
+	 * Optional description.
+	 */
+	description: string | null;
+	/**
+	 * Lucide icon name.
+	 */
+	icon: string | null;
+	/**
+	 * Hex color for accent.
+	 */
+	color: string | null;
+	/**
+	 * User IDs to invite as initial members.
+	 */
+	member_ids: Array<string>;
+};
