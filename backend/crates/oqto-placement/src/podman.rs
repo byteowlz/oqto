@@ -223,6 +223,7 @@ where
             kind: PlacementKind::RootlessPodman,
             runner_endpoint: spec.runner_endpoint.clone(),
             runtime_name,
+            spec: Some(spec.clone()),
         })
     }
 

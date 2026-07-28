@@ -278,6 +278,9 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// Placement registry used to resolve workspaces to typed runner endpoints.
     pub placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
+    /// Container placement lifecycle (provision/remove/reconcile). Present
+    /// only when placement mode is `container`.
+    pub placement_manager: Option<Arc<crate::runner::placement::PlacementManager>>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
     /// Audit logger for user-facing events.
@@ -363,6 +366,7 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             placement_store: None,
+            placement_manager: None,
             session_targets: Arc::new(session_targets),
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
@@ -447,6 +451,14 @@ impl AppState {
 
     pub fn with_placement_store(mut self, store: Arc<dyn oqto_placement::PlacementStore>) -> Self {
         self.placement_store = Some(store);
+        self
+    }
+
+    pub fn with_placement_manager(
+        mut self,
+        manager: Arc<crate::runner::placement::PlacementManager>,
+    ) -> Self {
+        self.placement_manager = Some(manager);
         self
     }
 

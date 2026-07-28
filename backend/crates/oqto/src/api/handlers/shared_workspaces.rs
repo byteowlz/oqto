@@ -39,6 +39,34 @@ pub async fn create_shared_workspace(
         .await
         .map_err(|e| ApiError::bad_request(format!("failed to create shared workspace: {}", e)))?;
 
+    // Container placement is fail-closed: a workspace without its container
+    // must not silently fall back to a host runner.
+    if let Some(manager) = state.placement_manager.as_ref()
+        && let Err(e) = manager
+            .provision(
+                &workspace.id,
+                user.id(),
+                std::path::PathBuf::from(&workspace.path),
+            )
+            .await
+    {
+        tracing::error!(
+            workspace_id = %workspace.id,
+            error = %e,
+            "failed to provision container placement; rolling back workspace"
+        );
+        if let Err(rollback) = service.delete(&workspace.id, user.id()).await {
+            tracing::error!(
+                workspace_id = %workspace.id,
+                error = %rollback,
+                "rollback of unplaced workspace failed"
+            );
+        }
+        return Err(ApiError::internal(format!(
+            "failed to provision workspace container: {e}"
+        )));
+    }
+
     // Provision EAVS virtual key + models.json for the shared workspace user
     // so Pi can use LLM providers. Best-effort: log warning if it fails.
     if multi_user
@@ -179,6 +207,16 @@ pub async fn delete_shared_workspace(
         .delete(&workspace_id, user.id())
         .await
         .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    if let Some(manager) = state.placement_manager.as_ref()
+        && let Err(e) = manager.remove(&workspace_id).await
+    {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            error = %e,
+            "failed to remove container placement for deleted workspace"
+        );
+    }
 
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

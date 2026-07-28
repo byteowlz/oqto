@@ -554,6 +554,8 @@ struct AppConfig {
     sldr: SldrConfig,
     /// Feedback collection configuration.
     feedback: feedback::FeedbackConfig,
+    /// Workspace placement configuration (local host runners vs containers).
+    placement: runner::placement::PlacementConfig,
 }
 
 /// Server configuration.
@@ -663,6 +665,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
             feedback: feedback::FeedbackConfig::default(),
+            placement: runner::placement::PlacementConfig::default(),
         }
     }
 }
@@ -2496,11 +2499,27 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     state = state.with_single_user(single_user);
     state = state.with_feedback_config(ctx.config.feedback.clone());
-    let placement_store =
+    let placement_store: Arc<dyn oqto_placement::PlacementStore> = Arc::new(
         oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
             .await
-            .context("initializing placement registry")?;
-    state = state.with_placement_store(Arc::new(placement_store));
+            .context("initializing placement registry")?,
+    );
+    state = state.with_placement_store(placement_store.clone());
+    if ctx.config.placement.mode == runner::placement::PlacementMode::Container {
+        let manager = Arc::new(runner::placement::PlacementManager::new(
+            Arc::new(oqto_placement::PodmanSupervisor::new()),
+            placement_store,
+            ctx.config.placement.clone(),
+            default_data_dir()?.join("placements"),
+            default_state_dir()?.join("placements"),
+        ));
+        state = state.with_placement_manager(manager.clone());
+        tokio::spawn(async move {
+            if let Err(error) = manager.reconcile().await {
+                warn!("placement reconcile failed: {error:#}");
+            }
+        });
+    }
 
     if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
         warn!("Failed to initialize feedback directories: {}", err);

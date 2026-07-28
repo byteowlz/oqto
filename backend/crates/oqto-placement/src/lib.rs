@@ -102,6 +102,11 @@ pub struct PlacementRecord {
     pub kind: PlacementKind,
     pub runner_endpoint: RunnerEndpointConfig,
     pub runtime_name: String,
+    /// The spec this placement was started from. Reconciliation needs it to
+    /// restart a stopped placement; records written before this field existed
+    /// cannot be auto-restarted.
+    #[serde(default)]
+    pub spec: Option<PlacementSpec>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
