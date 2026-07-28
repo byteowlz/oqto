@@ -475,7 +475,7 @@ print_summary() {
   echo "  - README.md"
   echo "  - SETUP.md (detailed setup guide)"
   echo "  - deploy/systemd/README.md (Linux systemd setup)"
-  echo "  - deploy/ansible/README.md (Ansible deployment)"
+  echo "  - deploy/DEPLOY.md (release deployment across hosts)"
   echo "  - backend/examples/config.toml (full config reference)"
 }
 

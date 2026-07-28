@@ -350,7 +350,7 @@ test-vm-deployment:
 
 After setup.sh testing is complete, the framework can be extended for:
 
-- **Ansible deployment testing** - Test `deploy/ansible/` playbook
+- **Fleet deployment testing** - Test `just deploy` staging/activation against a VM
 - **Container mode testing** - Test Docker/Podman deployments
 - **Upgrade testing** - Test upgrades from previous versions
 - **Load testing** - Performance tests on deployed systems

@@ -283,7 +283,7 @@ launchctl list | grep oqto
 | First-time setup, development | `./setup.sh` (interactive) |
 | CI/CD automation | `./setup.sh --non-interactive` |
 | Production server with hardening | `OQTO_DEV_MODE=false ./setup.sh` |
-| Multi-server deployment | Ansible playbook |
+| Multi-server deployment | `./setup.sh` per host, then `just deploy` |
 | Container-only deployment | Manual Docker setup |
 
 ## Troubleshooting Commands
