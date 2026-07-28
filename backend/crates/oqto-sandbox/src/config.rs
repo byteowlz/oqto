@@ -593,6 +593,46 @@ fn session_shard_rules() -> Vec<ScopedPathRule> {
         .collect()
 }
 
+/// Restrict co-resident agent state to the current workspace's project directory.
+///
+/// Extensions that bridge to another agent keep per-workspace state under a
+/// per-cwd directory, so granting the parent exposes every other workspace's
+/// state and granting nothing breaks the extension at startup with EACCES.
+/// These rules mask the parent and bind back only this workspace's directory.
+///
+/// The encoding differs from the harness session shard: the workspace path is
+/// not wrapped, and `.` and `_` collapse to `-` alongside `/`, so
+/// `/home/u/byteowlz/oqto_refactor` becomes `-home-u-byteowlz-oqto-refactor`.
+/// Verified against real directories rather than derived from documentation.
+fn agent_project_shard_rules() -> Vec<ScopedPathRule> {
+    ["~/.claude/projects"]
+        .into_iter()
+        .map(|base| ScopedPathRule {
+            name: format!("agent-project-shard:{base}"),
+            base_path: base.to_string(),
+            source: ScopedPathSource::WorkspacePath,
+            source_literal: None,
+            transforms: vec![
+                ScopedPathTransform::Replace {
+                    from: "/".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: ".".to_string(),
+                    to: "-".to_string(),
+                },
+                ScopedPathTransform::Replace {
+                    from: "_".to_string(),
+                    to: "-".to_string(),
+                },
+            ],
+            target_template: default_scoped_target_template(),
+            access: ScopedPathAccess::Rw,
+            missing: ScopedPathMissing::Create,
+        })
+        .collect()
+}
+
 /// Default access to the account home before any rule applies.
 ///
 /// This used to be derived from the profile *name*: `development` and `minimal`
@@ -997,7 +1037,10 @@ impl SandboxProfile {
             overlay_enabled: false,
             overlay_root: default_overlay_root(),
             overlay_paths: vec![],
-            scoped_paths: session_shard_rules(),
+            scoped_paths: session_shard_rules()
+                .into_iter()
+                .chain(agent_project_shard_rules())
+                .collect(),
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -1856,6 +1899,43 @@ impl SandboxConfig {
         }
     }
 
+    /// Resolve a scoped rule to the concrete path it grants for this workspace.
+    ///
+    /// Shared by mount emission and Landlock authorisation. Materialising the
+    /// mount is not sufficient: a writable bind that Landlock does not also
+    /// authorise fails at the first write with EACCES, which surfaces to the
+    /// user as an unrelated harness error rather than a permission problem.
+    fn scoped_rule_target(
+        rule: &ScopedPathRule,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> Option<PathBuf> {
+        let base = Self::expand_home_for_user(&rule.base_path, username);
+        if base.as_os_str().is_empty() {
+            return None;
+        }
+        let mut value = match rule.source {
+            ScopedPathSource::WorkspacePath => workspace.to_string_lossy().to_string(),
+            ScopedPathSource::Literal => rule.source_literal.clone().unwrap_or_default(),
+        };
+        for transform in &rule.transforms {
+            value = match transform {
+                ScopedPathTransform::StripPrefix { value: prefix } => {
+                    value.strip_prefix(prefix).unwrap_or(&value).to_string()
+                }
+                ScopedPathTransform::Replace { from, to } => value.replace(from, to),
+                ScopedPathTransform::Wrap { prefix, suffix } => {
+                    format!("{}{}{}", prefix, value, suffix)
+                }
+            };
+        }
+        let target_expr = rule
+            .target_template
+            .replace("{base_path}", &base.to_string_lossy())
+            .replace("{value}", &value);
+        Some(Self::expand_home_for_user(&target_expr, username))
+    }
+
     fn apply_scoped_path_rules(
         &self,
         args: &mut Vec<String>,
@@ -2433,6 +2513,17 @@ impl SandboxConfig {
                     args.push(crate::landlock_shim::ENV_WORKSPACE.to_string());
                     args.push(workspace.to_string_lossy().to_string());
 
+                    // Scoped rules resolve to a per-workspace path that is not
+                    // in allow_write, so the shim would rebuild a writable set
+                    // without them and every write to a scoped target would
+                    // fail with EACCES despite the bind being read-write.
+                    let scoped_writable = self.scoped_paths.iter().filter_map(|rule| {
+                        if !matches!(rule.access, ScopedPathAccess::Rw) {
+                            return None;
+                        }
+                        Self::scoped_rule_target(rule, workspace, username)
+                            .map(|t| t.to_string_lossy().to_string())
+                    });
                     let allow_write_joined = effective_allow_write
                         .iter()
                         .map(|p| {
@@ -2440,6 +2531,7 @@ impl SandboxConfig {
                                 .to_string_lossy()
                                 .to_string()
                         })
+                        .chain(scoped_writable)
                         .collect::<Vec<_>>()
                         .join(":");
                     args.push("--setenv".to_string());
@@ -2845,6 +2937,14 @@ impl SandboxConfig {
             writable_paths.insert(workspace.to_path_buf());
             for p in &self.allow_write {
                 writable_paths.insert(Self::expand_home_for_user(p, username));
+            }
+            for rule in &self.scoped_paths {
+                if !matches!(rule.access, ScopedPathAccess::Rw) {
+                    continue;
+                }
+                if let Some(target) = Self::scoped_rule_target(rule, workspace, username) {
+                    writable_paths.insert(target);
+                }
             }
             for dev in LANDLOCK_ALWAYS_WRITABLE_DEVICES {
                 writable_paths.insert(PathBuf::from(dev));
@@ -4100,6 +4200,119 @@ log_requests = true
     }
 
     #[test]
+    fn writable_scoped_targets_are_authorised_not_just_mounted() {
+        // A read-write bind that Landlock does not also authorise fails at the
+        // first write with EACCES while the mount itself looks correct. The
+        // shim rebuilds its writable set from the environment, so a scoped
+        // target absent from that list is mounted writable and then denied.
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        std::fs::create_dir_all(home.join(".claude/projects")).unwrap();
+        let workspace = home.join("byteowlz/demo");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        // Resolve while HOME still points at the fixture: these paths are
+        // relative to the home the arguments were built against.
+        let expected: Vec<(String, String)> = config
+            .scoped_paths
+            .iter()
+            .filter(|rule| matches!(rule.access, ScopedPathAccess::Rw))
+            .map(|rule| {
+                let target = SandboxConfig::scoped_rule_target(rule, &workspace, None)
+                    .expect("a writable scoped rule resolves to a target");
+                (rule.name.clone(), target.to_string_lossy().to_string())
+            })
+            .collect();
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        let landlock_paths = args
+            .windows(3)
+            .find(|w| w[0] == "--setenv" && w[1] == crate::landlock_shim::ENV_ALLOW_WRITE)
+            .map(|w| w[2].clone())
+            .expect("landlock allow_write is passed to the shim");
+
+        assert!(
+            !expected.is_empty(),
+            "strict must ship writable scoped rules"
+        );
+        for (name, target) in expected {
+            assert!(
+                landlock_paths.split(':').any(|p| target.starts_with(p)),
+                "scoped rule '{name}' is mounted writable but not authorised: \
+                 {target} not covered by {landlock_paths}"
+            );
+        }
+    }
+
+    fn agent_project_shard_is_scoped_and_created() {
+        // A co-resident agent extension fails at startup with EACCES if its
+        // per-workspace directory is absent, and that surfaces as an unrelated
+        // harness timeout rather than a permission error. The shard must exist
+        // and the parent must stay masked so other workspaces remain private.
+        let _env = env_guard();
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let original_home = env::var_os("HOME");
+        // SAFETY: serialized by env_guard; restored below.
+        unsafe { env::set_var("HOME", home) };
+
+        let projects = home.join(".claude/projects");
+        std::fs::create_dir_all(&projects).unwrap();
+        // Underscore and dot both collapse to a dash in the real layout.
+        let workspace = home.join("byteowlz/oqto_refactor");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let config = SandboxConfig::from_profile("strict");
+        let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
+
+        let expected = projects.join(workspace.to_string_lossy().replace(['/', '.', '_'], "-"));
+
+        match original_home {
+            Some(v) => unsafe { env::set_var("HOME", v) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+
+        assert!(
+            !expected.to_string_lossy().contains('_'),
+            "underscores must collapse to dashes: {}",
+            expected.display()
+        );
+        assert!(
+            expected.exists(),
+            "the shard must be created or the extension dies with EACCES"
+        );
+        let bind_sources: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--bind")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            bind_sources.contains(&&expected.to_string_lossy().to_string()),
+            "this workspace's directory must be bound back: {bind_sources:?}"
+        );
+        let tmpfs: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert!(
+            tmpfs.contains(&&projects.to_string_lossy().to_string()),
+            "the projects parent must be masked so other workspaces stay private"
+        );
+    }
+
     fn session_shard_encoding_matches_harness_layout() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
