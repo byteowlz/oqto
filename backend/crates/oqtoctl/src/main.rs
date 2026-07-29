@@ -47,6 +47,7 @@ async fn try_main() -> Result<()> {
         }
         Command::Session { command } => handle_session(&client, command, cli.json).await,
         Command::Container { command } => handle_container(&client, command, cli.json).await,
+        Command::Placement { command } => handle_placement(command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
         Command::Ui { command } => handle_ui(&client, command, cli.json).await,
@@ -157,6 +158,12 @@ enum Command {
     Container {
         #[command(subcommand)]
         command: ContainerCommand,
+    },
+
+    /// Inspect and debug Workspace placements
+    Placement {
+        #[command(subcommand)]
+        command: PlacementCommand,
     },
 
     /// Manage container images
@@ -296,6 +303,38 @@ enum ContainerCommand {
     List,
     /// Stop all running containers
     StopAll,
+}
+
+#[derive(Debug, Subcommand)]
+enum PlacementCommand {
+    /// List registered Workspace placements
+    List,
+    /// Show one placement by Workspace or placement ID
+    Show { target: String },
+    /// List live Podman processes carrying Oqto placement labels
+    Ps,
+    /// Stream or print logs from a Workspace placement
+    Logs {
+        target: String,
+        #[arg(long, short)]
+        follow: bool,
+        #[arg(long, default_value = "200")]
+        tail: String,
+    },
+    /// Show Podman's complete runtime inspection
+    Inspect { target: String },
+    /// Execute a command inside a Workspace placement
+    Exec {
+        target: String,
+        #[arg(required = true, trailing_var_arg = true)]
+        command: Vec<String>,
+    },
+    /// List a directory inside a Workspace placement
+    Fs {
+        target: String,
+        #[arg(default_value = "/workspace")]
+        path: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1596,6 +1635,175 @@ async fn handle_container(
             } else {
                 println!("Stopped {} container(s)", stopped);
             }
+        }
+    }
+    Ok(())
+}
+
+fn placement_store_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("OQTO_PLACEMENT_STORE").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::state_dir)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .ok_or_else(|| anyhow!("unable to determine state directory"))?;
+    Ok(state.join("oqto").join("placements.json"))
+}
+
+async fn resolve_placement(target: &str) -> Result<oqto_placement::PlacementRecord> {
+    use oqto_placement::PlacementStore;
+    let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+    store
+        .list()
+        .await?
+        .into_iter()
+        .find(|record| record.workspace_id == target || record.id.0 == target)
+        .ok_or_else(|| anyhow!("no placement registered for {target}"))
+}
+
+async fn verify_runtime_labels(record: &oqto_placement::PlacementRecord) -> Result<()> {
+    let output = tokio::process::Command::new("podman")
+        .args([
+            "inspect",
+            "--format",
+            "{{json .Config.Labels}}",
+            &record.runtime_name,
+        ])
+        .output()
+        .await
+        .context("inspecting placement labels")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "placement {} is not inspectable: {}",
+            record.runtime_name,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let labels: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(&output.stdout).context("parsing placement labels")?;
+    let expected = [
+        ("oqto.workspace", record.workspace_id.as_str()),
+        ("oqto.account", record.account_id.as_str()),
+        ("oqto.placement", "rootless-podman"),
+    ];
+    for (key, value) in expected {
+        anyhow::ensure!(
+            labels.get(key).is_some_and(|actual| actual == value),
+            "runtime {} has missing or mismatched label {key}={value}",
+            record.runtime_name
+        );
+    }
+    Ok(())
+}
+
+async fn handle_placement(command: PlacementCommand, json: bool) -> Result<()> {
+    use oqto_placement::PlacementStore;
+    match command {
+        PlacementCommand::List => {
+            let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+            let records = store.list().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&records)?);
+            } else if records.is_empty() {
+                println!("No registered placements");
+            } else {
+                println!(
+                    "{:<24} {:<24} {:<18} RUNTIME",
+                    "WORKSPACE", "PLACEMENT", "KIND"
+                );
+                for record in records {
+                    println!(
+                        "{:<24} {:<24} {:<18} {}",
+                        record.workspace_id,
+                        record.id.0,
+                        format!("{:?}", record.kind),
+                        record.runtime_name
+                    );
+                }
+            }
+        }
+        PlacementCommand::Show { target } => {
+            let record = resolve_placement(&target).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            } else {
+                println!("Workspace: {}", record.workspace_id);
+                println!("Placement: {}", record.id.0);
+                println!("Account:   {}", record.account_id);
+                println!("Kind:      {:?}", record.kind);
+                println!("Runtime:   {}", record.runtime_name);
+                println!("Endpoint:  {:?}", record.runner_endpoint);
+            }
+        }
+        PlacementCommand::Ps => {
+            let output = tokio::process::Command::new("podman")
+                .args([
+                    "ps",
+                    "--all",
+                    "--filter",
+                    "label=oqto.placement",
+                    "--format",
+                    if json {
+                        "json"
+                    } else {
+                        "table {{.Names}}\\t{{.Status}}\\t{{.Labels}}"
+                    },
+                ])
+                .output()
+                .await
+                .context("listing placement runtimes")?;
+            anyhow::ensure!(
+                output.status.success(),
+                "podman ps failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        PlacementCommand::Logs {
+            target,
+            follow,
+            tail,
+        } => {
+            anyhow::ensure!(!json, "--json is not supported for placement logs");
+            let record = resolve_placement(&target).await?;
+            verify_runtime_labels(&record).await?;
+            let mut command = std::process::Command::new("podman");
+            command.args(["logs", "--tail", &tail]);
+            if follow {
+                command.arg("--follow");
+            }
+            let status = command.arg(&record.runtime_name).status()?;
+            anyhow::ensure!(status.success(), "podman logs failed: {status}");
+        }
+        PlacementCommand::Inspect { target } => {
+            let record = resolve_placement(&target).await?;
+            verify_runtime_labels(&record).await?;
+            let status = std::process::Command::new("podman")
+                .args(["inspect", &record.runtime_name])
+                .status()?;
+            anyhow::ensure!(status.success(), "podman inspect failed: {status}");
+        }
+        PlacementCommand::Exec { target, command } => {
+            anyhow::ensure!(!json, "--json is not supported for placement exec");
+            let record = resolve_placement(&target).await?;
+            verify_runtime_labels(&record).await?;
+            let status = std::process::Command::new("podman")
+                .args(["exec", "--interactive", &record.runtime_name])
+                .args(command)
+                .status()?;
+            anyhow::ensure!(status.success(), "placement command failed: {status}");
+        }
+        PlacementCommand::Fs { target, path } => {
+            anyhow::ensure!(!json, "--json is not supported for placement fs");
+            let record = resolve_placement(&target).await?;
+            verify_runtime_labels(&record).await?;
+            let status = std::process::Command::new("podman")
+                .args(["exec", &record.runtime_name, "ls", "-la", "--", &path])
+                .status()?;
+            anyhow::ensure!(status.success(), "placement fs failed: {status}");
         }
     }
     Ok(())
@@ -5843,4 +6051,45 @@ async fn send_a2ui_surface(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod placement_cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn placement_debug_commands_parse_without_shell_ambiguity() {
+        let cases = [
+            vec!["oqtoctl", "placement", "list"],
+            vec!["oqtoctl", "placement", "show", "workspace-1"],
+            vec!["oqtoctl", "placement", "ps"],
+            vec!["oqtoctl", "placement", "logs", "workspace-1", "--follow"],
+            vec!["oqtoctl", "placement", "inspect", "workspace-1"],
+            vec![
+                "oqtoctl",
+                "placement",
+                "exec",
+                "workspace-1",
+                "printf",
+                "%s",
+                "hello world",
+            ],
+            vec![
+                "oqtoctl",
+                "placement",
+                "fs",
+                "workspace-1",
+                "/workspace/a b",
+            ],
+        ];
+        for args in cases {
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+    }
+
+    #[test]
+    fn placement_exec_requires_a_command() {
+        assert!(Cli::try_parse_from(["oqtoctl", "placement", "exec", "workspace-1"]).is_err());
+    }
 }

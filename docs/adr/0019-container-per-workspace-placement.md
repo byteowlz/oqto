@@ -80,6 +80,22 @@ Containerizing obscures the host-as-truth debug story (host files owned by mappe
 - **Logs always exported to oqto-log + host journal**, never trapped in a container.
 - A **Workspace → placement registry** (PlacementStore) answers "where is X". Transparency moves from the host filesystem to a queryable control plane — which is required anyway the moment you go multi-host/k8s, where "ssh and ls" never worked.
 
+## Operability (resolved 2026-07-29)
+
+`oqtoctl placement` is the stable operator surface. `list` and `show` read the
+Workspace-to-placement registry; `ps`, `logs`, `inspect`, `exec`, and `fs`
+resolve Workspace/placement IDs to runtime names and validate the mandatory
+`oqto.workspace`, `oqto.account`, and `oqto.placement` labels before touching a
+runtime. This is deliberately a thin Podman adapter today; a later Kubernetes
+adapter can preserve the CLI contract. `OQTO_PLACEMENT_STORE` allows explicit
+registry selection for repair/testing.
+
+`podman exec` replaces host `sudo -u` for auto-userns workspaces. Bind-mount
+sources are identified by the persisted `PlacementSpec` (they are not Podman
+volume objects and therefore cannot carry Podman labels). Runtime stdout/stderr
+uses the journald log driver so host diagnostics survive container deletion;
+agent/session history remains durably exported through oqto-log.
+
 ## Consequences
 
 - New epic `oqto-nppq`; blocked on `oqto-3ct7.16` (PlacementStore) and `oqto-3ct7.15` (delete dead container/runtime-mode code).

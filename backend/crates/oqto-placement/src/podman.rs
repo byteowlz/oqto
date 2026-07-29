@@ -117,6 +117,9 @@ impl<R> PodmanSupervisor<R> {
             pod_name.into(),
             // catatonit as PID1: zombie reaping + signal forwarding.
             "--init".into(),
+            // Runtime diagnostics must survive container deletion in the host
+            // journal; `podman logs` remains a label-resolved convenience.
+            "--log-driver=journald".into(),
             "--security-opt=no-new-privileges".into(),
             "--cap-drop=all".into(),
             "--cap-add=chown,dac_override,setuid,setgid".into(),
