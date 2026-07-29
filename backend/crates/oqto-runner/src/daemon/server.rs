@@ -3,7 +3,6 @@ use chrono::TimeZone;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -684,10 +683,7 @@ impl Runner {
         }
 
         // Build command - either direct or via oqto-sandbox
-        let mut seccomp_file_for_spawn: Option<std::fs::File> = None;
-        let mut set_no_new_privs = false;
-        let mut landlock_cfg_for_spawn: Option<SandboxConfig> = None;
-        let mut landlock_workspace_for_spawn: Option<PathBuf> = None;
+        let mut sandbox_config_for_spawn: Option<SandboxConfig> = None;
 
         let (program, args, effective_binary) = if use_sandbox {
             let Some(sandbox_config) = self.sandbox_config.as_ref() else {
@@ -706,20 +702,7 @@ impl Runner {
                     full_args.push(req.binary.clone());
                     full_args.extend(req.args.iter().cloned());
 
-                    match sandbox_config.open_seccomp_bpf_file(None) {
-                        Ok(file) => {
-                            seccomp_file_for_spawn = file;
-                        }
-                        Err(e) => {
-                            return error_response(
-                                ErrorCode::SandboxError,
-                                format!("Failed to prepare seccomp policy: {}", e),
-                            );
-                        }
-                    }
-                    set_no_new_privs = sandbox_config.no_new_privs;
-                    landlock_cfg_for_spawn = Some(sandbox_config.clone());
-                    landlock_workspace_for_spawn = Some(req.cwd.clone());
+                    sandbox_config_for_spawn = Some(sandbox_config.clone());
 
                     info!(
                         "Sandboxing process '{}' with {} bwrap args",
@@ -761,40 +744,14 @@ impl Runner {
         }
         cmd.envs(&req.env);
 
-        #[cfg(target_os = "linux")]
+        if let Some(config) = sandbox_config_for_spawn.as_ref()
+            && let Err(error) =
+                oqto_sandbox::configure_bwrap_pre_exec(cmd.as_std_mut(), config, &req.cwd, None)
         {
-            let seccomp_file = seccomp_file_for_spawn;
-            let seccomp_fd = seccomp_file.as_ref().map(AsRawFd::as_raw_fd);
-            let landlock_cfg = landlock_cfg_for_spawn;
-            let landlock_workspace = landlock_workspace_for_spawn;
-            if seccomp_fd.is_some() || set_no_new_privs || landlock_cfg.is_some() {
-                // Keep file alive until spawn by moving into closure.
-                let _keep_alive = seccomp_file;
-                // SAFETY: pre_exec runs in child process after fork and before exec.
-                unsafe {
-                    cmd.pre_exec(move || {
-                        if set_no_new_privs {
-                            let rc = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-                            if rc != 0 {
-                                return Err(std::io::Error::last_os_error());
-                            }
-                        }
-
-                        if let (Some(cfg), Some(workspace)) =
-                            (landlock_cfg.as_ref(), landlock_workspace.as_ref())
-                        {
-                            cfg.apply_landlock(workspace, None)?;
-                        }
-
-                        if let Some(fd) = seccomp_fd
-                            && libc::dup2(fd, 3) == -1
-                        {
-                            return Err(std::io::Error::last_os_error());
-                        }
-                        Ok(())
-                    });
-                }
-            }
+            return error_response(
+                ErrorCode::SandboxError,
+                format!("Failed to configure sandbox process: {error}"),
+            );
         }
 
         if is_rpc {
