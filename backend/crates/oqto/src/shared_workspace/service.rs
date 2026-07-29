@@ -34,6 +34,19 @@ use super::models::{
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::{generate_context_json, generate_users_md};
 
+/// How a new workspace's principal and storage are provisioned. The
+/// placement decision happens before principal provisioning so container
+/// placements never create host Linux users.
+#[derive(Debug, Clone)]
+pub enum WorkspaceProvisioning {
+    /// Multi-user host placement: dedicated Linux user via usermgr.
+    HostUser,
+    /// Single-user host placement: plain directories, no user management.
+    HostDirectory,
+    /// Container placement: durable state lives in the per-workspace volume.
+    ContainerVolume { state_root: std::path::PathBuf },
+}
+
 /// Service for managing shared workspaces.
 #[derive(Clone)]
 pub struct SharedWorkspaceService {
@@ -106,7 +119,7 @@ impl SharedWorkspaceService {
         &self,
         request: &CreateSharedWorkspaceRequest,
         creator_id: &str,
-        multi_user: bool,
+        provisioning: WorkspaceProvisioning,
     ) -> Result<SharedWorkspace> {
         let name = request.name.trim();
         if name.is_empty() {
@@ -124,9 +137,17 @@ impl SharedWorkspaceService {
         }
 
         let linux_user = format!("oqto_shared_{}", slug);
-        let home = format!("/home/{}", linux_user);
-        let path = format!("{}/oqto", home);
         let id = format!("sw_{}", nanoid::nanoid!(12));
+        // Container placement keeps all durable state in the workspace volume;
+        // host placements keep the historical /home/<user> layout.
+        let home = match &provisioning {
+            WorkspaceProvisioning::ContainerVolume { state_root } => {
+                state_root.join(&id).to_string_lossy().into_owned()
+            }
+            _ => format!("/home/{}", linux_user),
+        };
+        let path = format!("{}/oqto", home);
+        let multi_user = matches!(provisioning, WorkspaceProvisioning::HostUser);
 
         // Resolve icon and color (use provided or auto-assign from slug)
         let icon = request
@@ -140,11 +161,11 @@ impl SharedWorkspaceService {
             .filter(|c| c.starts_with('#') && c.len() == 7)
             .unwrap_or_else(|| SharedWorkspaceRepository::auto_color(&slug));
 
-        // Create Linux user via usermgr in multi-user mode
+        // Host multi-user placement provisions a Linux user; container and
+        // single-user placements only need the directory.
         if multi_user {
             self.create_linux_user(&linux_user, &home)?;
         } else {
-            // Single-user mode: just create the directory
             std::fs::create_dir_all(&home)
                 .with_context(|| format!("creating shared workspace dir: {}", home))?;
         }
@@ -973,8 +994,9 @@ impl SharedWorkspaceService {
         &self,
         request: &ConvertToSharedRequest,
         user_id: &str,
-        multi_user: bool,
+        provisioning: WorkspaceProvisioning,
     ) -> Result<SharedWorkspace> {
+        let multi_user = matches!(provisioning, WorkspaceProvisioning::HostUser);
         // First, create the shared workspace
         let create_req = CreateSharedWorkspaceRequest {
             name: request.name.clone(),
@@ -983,7 +1005,7 @@ impl SharedWorkspaceService {
             color: request.color.clone(),
             member_ids: request.member_ids.clone(),
         };
-        let workspace = self.create(&create_req, user_id, multi_user).await?;
+        let workspace = self.create(&create_req, user_id, provisioning).await?;
 
         // Copy the source project into the shared workspace
         let source = &request.source_path;

@@ -97,6 +97,11 @@ impl PlacementManager {
         }
     }
 
+    /// Root directory holding per-workspace durable state volumes.
+    pub fn state_root(&self) -> &std::path::Path {
+        &self.state_root
+    }
+
     /// Start (or restart) the host-side endpoint bridges for a workspace.
     async fn ensure_bridges(&self, workspace_id: &str) -> Result<()> {
         let endpoint_dir = self.runtime_root.join(workspace_id).join("endpoints");

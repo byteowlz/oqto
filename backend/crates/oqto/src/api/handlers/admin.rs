@@ -780,6 +780,49 @@ pub(crate) async fn sync_eavs_models_json(
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
+/// Provision an EAVS virtual key and Pi models.json directly into a home
+/// directory (container placement: the workspace state volume). No usermgr
+/// involvement; the backend owns the volume.
+pub(crate) async fn provision_eavs_into_home(
+    eavs_client: &crate::eavs::EavsClient,
+    home: &std::path::Path,
+    oqto_user_id: &str,
+    auto_rename_config: Option<&serde_json::Value>,
+) -> anyhow::Result<String> {
+    use crate::eavs::{CreateKeyRequest, generate_pi_models_json};
+    use anyhow::Context as _;
+
+    let key_resp = eavs_client
+        .create_key(CreateKeyRequest::new(format!("oqto-user-{}", oqto_user_id)))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create eavs key: {}", e))?;
+
+    let providers = eavs_client
+        .providers_detail()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
+    let models_json =
+        generate_pi_models_json(&providers, eavs_client.base_url(), Some(&key_resp.key));
+
+    let pi_dir = home.join(".pi").join("agent");
+    std::fs::create_dir_all(&pi_dir).with_context(|| format!("creating {}", pi_dir.display()))?;
+    std::fs::write(
+        pi_dir.join("models.json"),
+        serde_json::to_string_pretty(&models_json)?,
+    )
+    .with_context(|| format!("writing models.json into {}", pi_dir.display()))?;
+
+    if let Some(auto_rename) = auto_rename_config
+        && !auto_rename.is_null()
+        && auto_rename.is_object()
+        && let Ok(content) = serde_json::to_string_pretty(auto_rename)
+    {
+        let _ = std::fs::write(pi_dir.join("auto-rename.json"), content);
+    }
+
+    Ok(key_resp.key_id)
+}
+
 pub(crate) async fn sync_eavs_models_json_with_key(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,

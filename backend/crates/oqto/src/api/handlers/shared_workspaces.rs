@@ -22,6 +22,90 @@ use crate::api::state::AppState;
 // Shared workspace CRUD
 // ============================================================================
 
+/// Select principal provisioning from the placement decision.
+fn provisioning_for(state: &AppState) -> crate::shared_workspace::WorkspaceProvisioning {
+    match state.placement_manager.as_ref() {
+        Some(manager) => crate::shared_workspace::WorkspaceProvisioning::ContainerVolume {
+            state_root: manager.state_root().to_path_buf(),
+        },
+        None if state.linux_users.is_some() => {
+            crate::shared_workspace::WorkspaceProvisioning::HostUser
+        }
+        None => crate::shared_workspace::WorkspaceProvisioning::HostDirectory,
+    }
+}
+
+/// Container placement + EAVS provisioning for a freshly created workspace.
+/// Fail-closed: if the container cannot be provisioned the workspace is
+/// rolled back and an error returned.
+async fn finish_container_placement(
+    state: &AppState,
+    service: &crate::shared_workspace::SharedWorkspaceService,
+    workspace: &crate::shared_workspace::SharedWorkspace,
+    user_id: &str,
+) -> Result<(), ApiError> {
+    let Some(manager) = state.placement_manager.as_ref() else {
+        return Ok(());
+    };
+    if let Err(e) = manager
+        .provision(
+            &workspace.id,
+            user_id,
+            std::path::PathBuf::from(&workspace.path),
+        )
+        .await
+    {
+        tracing::error!(
+            workspace_id = %workspace.id,
+            error = %e,
+            "failed to provision container placement; rolling back workspace"
+        );
+        if let Err(rollback) = service.delete(&workspace.id, user_id).await {
+            tracing::error!(
+                workspace_id = %workspace.id,
+                error = %rollback,
+                "rollback of unplaced workspace failed"
+            );
+        }
+        return Err(ApiError::internal(format!(
+            "failed to provision workspace container: {e}"
+        )));
+    }
+
+    // EAVS into the workspace volume. Best-effort: log warning if it fails.
+    if let Some(eavs_client) = state.eavs_client.as_ref() {
+        let sw_user_id = format!("shared-{}", workspace.id);
+        let home = std::path::Path::new(&workspace.path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from(&workspace.path));
+        match super::admin::provision_eavs_into_home(
+            eavs_client,
+            &home,
+            &sw_user_id,
+            Some(&state.auto_rename_config),
+        )
+        .await
+        {
+            Ok(_) => {
+                tracing::info!(
+                    workspace_id = %workspace.id,
+                    home = %home.display(),
+                    "provisioned EAVS key and models.json into workspace volume"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    workspace_id = %workspace.id,
+                    error = %e,
+                    "failed to provision EAVS into workspace volume (sessions won't have LLM access)"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Create a new shared workspace.
 pub async fn create_shared_workspace(
     State(state): State<AppState>,
@@ -34,42 +118,19 @@ pub async fn create_shared_workspace(
         .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
 
     let multi_user = state.linux_users.is_some();
+    let container_placed = state.placement_manager.is_some();
     let workspace = service
-        .create(&request, user.id(), multi_user)
+        .create(&request, user.id(), provisioning_for(&state))
         .await
         .map_err(|e| ApiError::bad_request(format!("failed to create shared workspace: {}", e)))?;
 
-    // Container placement is fail-closed: a workspace without its container
-    // must not silently fall back to a host runner.
-    if let Some(manager) = state.placement_manager.as_ref()
-        && let Err(e) = manager
-            .provision(
-                &workspace.id,
-                user.id(),
-                std::path::PathBuf::from(&workspace.path),
-            )
-            .await
-    {
-        tracing::error!(
-            workspace_id = %workspace.id,
-            error = %e,
-            "failed to provision container placement; rolling back workspace"
-        );
-        if let Err(rollback) = service.delete(&workspace.id, user.id()).await {
-            tracing::error!(
-                workspace_id = %workspace.id,
-                error = %rollback,
-                "rollback of unplaced workspace failed"
-            );
-        }
-        return Err(ApiError::internal(format!(
-            "failed to provision workspace container: {e}"
-        )));
-    }
+    // Container placement (provision + rollback + EAVS into the volume) is
+    // handled by finish_container_placement; host placement provisions EAVS
+    // into the Linux user home below.
+    finish_container_placement(&state, service, &workspace, user.id()).await?;
 
-    // Provision EAVS virtual key + models.json for the shared workspace user
-    // so Pi can use LLM providers. Best-effort: log warning if it fails.
-    if multi_user
+    if !container_placed
+        && multi_user
         && let Some(eavs_client) = state.eavs_client.as_ref()
         && let Some(linux_users) = state.linux_users.as_ref()
     {
@@ -440,11 +501,12 @@ pub async fn convert_to_shared_workspace(
         .map_err(|e| ApiError::bad_request(format!("invalid source path: {}", e)))?;
     request.source_path = validated.to_string_lossy().to_string();
 
-    let multi_user = state.linux_users.is_some();
     let workspace = service
-        .convert_to_shared(&request, user.id(), multi_user)
+        .convert_to_shared(&request, user.id(), provisioning_for(&state))
         .await
         .map_err(|e| ApiError::bad_request(format!("failed to convert: {}", e)))?;
+
+    finish_container_placement(&state, service, &workspace, user.id()).await?;
 
     info!(
         workspace_id = %workspace.id,
