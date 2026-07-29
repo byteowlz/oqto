@@ -88,6 +88,27 @@ Containerizing obscures the host-as-truth debug story (host files owned by mappe
 - `RunnerHello` gains a `placement`/capability field; sessions stay placement-agnostic.
 - The existing all-in-one `deploy/docker` image is superseded for multi-tenant use; may remain as a personal/demo image.
 
+## Volume layout (resolved 2026-07-29)
+
+Two host directories per Workspace, both mounted into exactly one container
+(single-writer-local; never shared/NFS):
+
+| Host (backend-owned roots) | Container | Contents |
+|---|---|---|
+| `<data>/placements/<ws_id>/` | `/home/oqto` | durable state volume: `~/.pi` (Pi-owned session JSONL — sacred), `~/.local/share/mmry`, `~/.local/state/oqto` (oqto-log SQLite), `~/.cargo`, `~/.npm`, `~/.local`, venvs — agent tool installs persist without image rebuild |
+| workspace path (canonical) | same path + `/workspace` | work-dir files; canonical path preserved so session metadata and Pi JSONL cwd references stay stable |
+| `<state>/placements/<ws_id>/rsock/` | `/run/oqto` | runner socket (container-owned under auto userns) |
+| `<state>/placements/<ws_id>/endpoints/` | `/run/oqto/endpoints` | granted endpoint sockets (backend-owned) |
+
+Container = ephemeral compute; volume = durable truth; a filesystem snapshot
+of the two volumes is a consistent Workspace backup. Under `userns=auto`,
+volumes are chowned (`:U`) into the container's disjoint subuid range: tenant
+separation on the host filesystem, at the cost that backend post-start writes
+must go through the runner (oqto-nppq.15). Proof:
+`oqto-placement/tests/volume_truth_live.rs` — destroy + recreate under a new
+subuid range preserves Pi JSONL, mmry, oqto-log, tool installs, and
+workspace files.
+
 ## Remaining open questions
 
 1. **Remote reachability**: bind-mounted unix socket covers local; remote container hosts need dial-in registration — in scope now, or local-only first?
