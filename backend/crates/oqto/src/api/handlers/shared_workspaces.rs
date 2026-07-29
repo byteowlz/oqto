@@ -60,7 +60,7 @@ async fn finish_container_placement(
             error = %e,
             "failed to provision container placement; rolling back workspace"
         );
-        if let Err(rollback) = service.delete(&workspace.id, user_id).await {
+        if let Err(rollback) = service.delete(&workspace.id, user_id, false).await {
             tracing::error!(
                 workspace_id = %workspace.id,
                 error = %rollback,
@@ -104,6 +104,28 @@ async fn finish_container_placement(
         }
     }
     Ok(())
+}
+
+/// Host Linux users are removed only for host-placed workspaces in
+/// multi-user mode; container placements never created one.
+async fn should_remove_linux_user(state: &AppState, workspace_id: &str) -> bool {
+    if state.linux_users.is_none() {
+        return false;
+    }
+    match state.placement_store.as_ref() {
+        Some(store) => match store.find_workspace(workspace_id).await {
+            Ok(record) => record.is_none(),
+            Err(e) => {
+                tracing::warn!(
+                    workspace_id,
+                    error = %e,
+                    "placement lookup failed; not removing Linux user"
+                );
+                false
+            }
+        },
+        None => true,
+    }
 }
 
 /// Create a new shared workspace.
@@ -264,8 +286,9 @@ pub async fn delete_shared_workspace(
         .as_ref()
         .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
 
+    let remove_linux_user = should_remove_linux_user(&state, &workspace_id).await;
     service
-        .delete(&workspace_id, user.id())
+        .delete(&workspace_id, user.id(), remove_linux_user)
         .await
         .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
 
@@ -285,6 +308,86 @@ pub async fn delete_shared_workspace(
 // ============================================================================
 // Member management
 // ============================================================================
+
+/// Migrate a host-placed shared workspace into container placement:
+/// copy its durable state into a volume, repoint the path, provision the
+/// container. The legacy Linux user home is left untouched for operator
+/// cleanup after verification.
+pub async fn admin_migrate_shared_workspace_placement(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+    let manager = state.placement_manager.as_ref().ok_or_else(|| {
+        ApiError::bad_request("container placement is not enabled ([placement] mode)")
+    })?;
+    if let Some(store) = state.placement_store.as_ref()
+        && store
+            .find_workspace(&workspace_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("placement lookup failed: {e}")))?
+            .is_some()
+    {
+        return Err(ApiError::bad_request(
+            "workspace is already container-placed",
+        ));
+    }
+
+    let legacy = service
+        .admin_get(&workspace_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("{e}")))?
+        .ok_or_else(|| ApiError::not_found("workspace not found"))?;
+    let legacy_path = legacy.path.clone();
+
+    let migrated = service
+        .migrate_to_container_volume(&workspace_id, manager.state_root())
+        .await
+        .map_err(|e| ApiError::bad_request(format!("migration failed: {e}")))?;
+
+    if let Err(e) = manager
+        .provision(
+            &migrated.id,
+            &migrated.owner_id,
+            std::path::PathBuf::from(&migrated.path),
+        )
+        .await
+    {
+        tracing::error!(
+            workspace_id = %migrated.id,
+            error = %e,
+            "container provisioning failed after migration copy; reverting"
+        );
+        let dest_home = manager.state_root().join(&migrated.id);
+        if let Err(revert) = service
+            .revert_container_migration(&migrated.id, &legacy_path, &dest_home)
+            .await
+        {
+            tracing::error!(
+                workspace_id = %migrated.id,
+                error = %revert,
+                "migration revert failed; workspace may need manual repair"
+            );
+        }
+        return Err(ApiError::internal(format!(
+            "failed to provision migrated workspace container: {e}"
+        )));
+    }
+
+    info!(
+        workspace_id = %migrated.id,
+        path = %migrated.path,
+        "migrated shared workspace to container placement"
+    );
+    Ok(Json(serde_json::json!({
+        "migrated": true,
+        "id": migrated.id,
+        "path": migrated.path,
+    })))
+}
 
 /// List members of a shared workspace.
 pub async fn list_shared_workspace_members(
@@ -616,10 +719,21 @@ pub async fn admin_delete_shared_workspace(
         .as_ref()
         .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
 
+    let remove_linux_user = should_remove_linux_user(&state, &workspace_id).await;
     service
-        .admin_force_delete(&workspace_id)
+        .admin_force_delete(&workspace_id, remove_linux_user)
         .await
         .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    if let Some(manager) = state.placement_manager.as_ref()
+        && let Err(e) = manager.remove(&workspace_id).await
+    {
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            error = %e,
+            "failed to remove container placement for deleted workspace"
+        );
+    }
 
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

@@ -381,6 +381,10 @@ fn create_router_with_config_and_auth(
             patch(handlers::admin_transfer_shared_workspace_ownership),
         )
         .route(
+            "/admin/shared-workspaces/{workspace_id}/migrate-placement",
+            post(handlers::admin_migrate_shared_workspace_placement),
+        )
+        .route(
             "/admin/shared-workspaces/{workspace_id}/members/{user_id}",
             delete(handlers::admin_remove_shared_workspace_member),
         )

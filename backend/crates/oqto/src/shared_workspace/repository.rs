@@ -206,6 +206,25 @@ impl SharedWorkspaceRepository {
         Ok(row)
     }
 
+    /// Update the workspace's home-relative path (placement migration).
+    pub async fn update_path(&self, id: &str, path: &str) -> Result<SharedWorkspace> {
+        let row = sqlx::query_as::<sqlx::Sqlite, SharedWorkspace>(
+            r#"
+            UPDATE shared_workspaces
+            SET path = ?2, updated_at = datetime('now')
+            WHERE id = ?1
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await
+        .context("updating shared workspace path")?;
+
+        Ok(row)
+    }
+
     /// Delete a shared workspace (cascades to members).
     pub async fn delete(&self, id: &str) -> Result<()> {
         let result = sqlx::query("DELETE FROM shared_workspaces WHERE id = ?")

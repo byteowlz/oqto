@@ -34,6 +34,18 @@ use super::models::{
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::{generate_context_json, generate_users_md};
 
+/// Name of the user the backend runs as (volume owner for keep-id mapping).
+fn current_username() -> Result<String> {
+    let output = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .context("running id -un")?;
+    if !output.status.success() {
+        bail!("id -un failed");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// How a new workspace's principal and storage are provisioned. The
 /// placement decision happens before principal provisioning so container
 /// placements never create host Linux users.
@@ -294,8 +306,13 @@ impl SharedWorkspaceService {
     }
 
     /// Delete a shared workspace. Requires owner role.
-    pub async fn delete(&self, workspace_id: &str, user_id: &str) -> Result<()> {
-        let (_, role) = self
+    pub async fn delete(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        remove_linux_user: bool,
+    ) -> Result<()> {
+        let (ws, role) = self
             .get(workspace_id, user_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found or access denied"))?;
@@ -311,8 +328,28 @@ impl SharedWorkspaceService {
         // Delete from database (cascades to members)
         self.repo.delete(workspace_id).await?;
 
+        if remove_linux_user {
+            self.remove_linux_user(&ws.linux_user);
+        }
+
         info!(workspace_id = %workspace_id, "deleted shared workspace");
         Ok(())
+    }
+
+    /// Remove the workspace's dedicated Linux user (best-effort; the DB
+    /// record is already gone, so failures are logged, not returned).
+    fn remove_linux_user(&self, linux_user: &str) {
+        match crate::local::linux_users::usermgr_request(
+            "delete-user",
+            serde_json::json!({ "username": linux_user }),
+        ) {
+            Ok(_) => info!(linux_user, "removed shared workspace Linux user"),
+            Err(e) => warn!(
+                linux_user,
+                error = %e,
+                "failed to remove shared workspace Linux user; manual cleanup needed"
+            ),
+        }
     }
 
     // ========================================================================
@@ -1103,8 +1140,113 @@ impl SharedWorkspaceService {
         self.repo.admin_list_all().await
     }
 
+    /// Admin lookup without membership checks.
+    pub async fn admin_get(&self, workspace_id: &str) -> Result<Option<SharedWorkspace>> {
+        self.repo.get_by_id(workspace_id).await
+    }
+
     /// Admin force-delete a shared workspace.
-    pub async fn admin_force_delete(&self, workspace_id: &str) -> Result<()> {
+    /// Copy a host-placed workspace's durable state into a container state
+    /// volume and repoint the workspace path. Fail-closed: the DB path is
+    /// only updated after the copy succeeds; the legacy home is never
+    /// modified or removed.
+    pub async fn migrate_to_container_volume(
+        &self,
+        workspace_id: &str,
+        state_root: &std::path::Path,
+    ) -> Result<SharedWorkspace> {
+        let ws = self
+            .repo
+            .get_by_id(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+
+        let legacy_home = std::path::Path::new(&ws.path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| anyhow::anyhow!("workspace path has no parent: {}", ws.path))?;
+        if !legacy_home.exists() {
+            bail!(
+                "legacy workspace home {} does not exist",
+                legacy_home.display()
+            );
+        }
+        let dest_home = state_root.join(&ws.id);
+        if dest_home.exists() {
+            bail!(
+                "migration destination {} already exists; refusing to overwrite",
+                dest_home.display()
+            );
+        }
+
+        if self.linux_users.is_some() {
+            // Cross-user copy needs root (usermgr): the backend cannot read
+            // the workspace user's home. Volume ownership goes to the
+            // backend service user for keep-id container mapping.
+            let owner = current_username()?;
+            crate::local::linux_users::usermgr_request(
+                "copy-dir",
+                serde_json::json!({
+                    "source": legacy_home.to_string_lossy(),
+                    "dest": dest_home.to_string_lossy(),
+                    "owner": owner,
+                }),
+            )
+            .with_context(|| {
+                format!(
+                    "copying {} into container volume {}",
+                    legacy_home.display(),
+                    dest_home.display()
+                )
+            })?;
+        } else {
+            std::fs::create_dir_all(state_root)
+                .with_context(|| format!("creating state root {}", state_root.display()))?;
+            let status = std::process::Command::new("cp")
+                .arg("-a")
+                .arg(&legacy_home)
+                .arg(&dest_home)
+                .status()
+                .context("running cp -a for placement migration")?;
+            if !status.success() {
+                // Remove any partial copy so a retry starts clean.
+                let _ = std::fs::remove_dir_all(&dest_home);
+                bail!("cp -a failed with {status}");
+            }
+        }
+
+        let new_path = dest_home.join("oqto").to_string_lossy().into_owned();
+        let updated = self.repo.update_path(&ws.id, &new_path).await?;
+        info!(
+            workspace_id = %ws.id,
+            from = %legacy_home.display(),
+            to = %dest_home.display(),
+            "migrated workspace state into container volume"
+        );
+        Ok(updated)
+    }
+
+    /// Revert a migration whose container provisioning failed: restore the
+    /// legacy path and remove the copied volume (the legacy home is intact).
+    pub async fn revert_container_migration(
+        &self,
+        workspace_id: &str,
+        legacy_path: &str,
+        dest_home: &std::path::Path,
+    ) -> Result<()> {
+        self.repo.update_path(workspace_id, legacy_path).await?;
+        if dest_home.exists() {
+            std::fs::remove_dir_all(dest_home)
+                .with_context(|| format!("removing copied volume {}", dest_home.display()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn admin_force_delete(
+        &self,
+        workspace_id: &str,
+        remove_linux_user: bool,
+    ) -> Result<()> {
         let ws = self.repo.get_by_id(workspace_id).await?;
         let ws = ws.ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
 
@@ -1113,6 +1255,11 @@ impl SharedWorkspaceService {
             .await;
 
         self.repo.delete(workspace_id).await?;
+
+        if remove_linux_user {
+            self.remove_linux_user(&ws.linux_user);
+        }
+
         info!(workspace_id = %workspace_id, name = %ws.name, "admin force-deleted shared workspace");
         Ok(())
     }

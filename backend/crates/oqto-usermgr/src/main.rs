@@ -43,7 +43,12 @@ const PI_DEFAULT_EXTENSIONS: &[&str] = &[
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
-const ALLOWED_PATH_PREFIXES: &[&str] = &["/run/oqto/runner-sockets/", "/home/oqto_"];
+const ALLOWED_PATH_PREFIXES: &[&str] = &[
+    "/run/oqto/runner-sockets/",
+    "/home/oqto_",
+    // Placement state volumes (host->container migration copies).
+    "/var/lib/oqto/",
+];
 
 // --- Protocol types ---
 
