@@ -146,3 +146,61 @@ pub fn load_env_file() {
         }
     }
 }
+
+/// First file descriptor passed by systemd-style socket activation.
+const SD_LISTEN_FDS_START: i32 = 3;
+
+/// Adopt a Unix listener inherited via the systemd LISTEN_FDS protocol
+/// (podman-quadlet socket activation). Returns None when not activated;
+/// errors on a malformed or unsupported activation environment rather than
+/// silently binding a second socket.
+pub fn inherited_unix_listener() -> anyhow::Result<Option<std::os::unix::net::UnixListener>> {
+    let Some(fds) = std::env::var_os("LISTEN_FDS") else {
+        return Ok(None);
+    };
+    let fds: i32 = fds
+        .to_string_lossy()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("LISTEN_FDS is not a number"))?;
+    validate_activation(
+        fds,
+        std::env::var("LISTEN_PID").ok().as_deref(),
+        std::process::id(),
+    )?;
+    // SAFETY: the activation manager passed fd 3 open and close-on-exec
+    // cleared; validate_activation confirmed it is addressed to this process.
+    let listener = unsafe {
+        use std::os::fd::FromRawFd;
+        std::os::unix::net::UnixListener::from_raw_fd(SD_LISTEN_FDS_START)
+    };
+    Ok(Some(listener))
+}
+
+fn validate_activation(fds: i32, listen_pid: Option<&str>, my_pid: u32) -> anyhow::Result<()> {
+    let pid: u32 = listen_pid
+        .ok_or_else(|| anyhow::anyhow!("LISTEN_FDS set without LISTEN_PID"))?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("LISTEN_PID is not a pid"))?;
+    if pid != my_pid {
+        anyhow::bail!("LISTEN_PID {pid} does not match this process ({my_pid})");
+    }
+    if fds != 1 {
+        anyhow::bail!("expected exactly one activated socket, got {fds}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::validate_activation;
+
+    #[test]
+    fn activation_validation_is_strict() {
+        assert!(validate_activation(1, Some("42"), 42).is_ok());
+        assert!(validate_activation(1, None, 42).is_err());
+        assert!(validate_activation(1, Some("41"), 42).is_err());
+        assert!(validate_activation(2, Some("42"), 42).is_err());
+        assert!(validate_activation(0, Some("42"), 42).is_err());
+        assert!(validate_activation(1, Some("nope"), 42).is_err());
+    }
+}

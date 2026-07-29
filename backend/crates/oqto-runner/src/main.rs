@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oqto_runner::daemon::bootstrap::{
-    get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
+    get_default_socket_path, inherited_unix_listener, load_env_file, load_sandbox_config,
+    log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
 use oqto_runner::daemon::server::{Runner, SessionBinaries};
@@ -168,6 +169,13 @@ async fn main() -> Result<()> {
         terminal_enabled: user_config.terminal_enabled,
     };
     let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
+    if let Some(inherited) = inherited_unix_listener()? {
+        if args.listen_tls.is_some() {
+            anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
+        }
+        info!("Using socket-activated listener (LISTEN_FDS)");
+        return runner.run_inherited(inherited).await;
+    }
     if let Some(address) = args.listen_tls {
         let certificate = args
             .tls_cert

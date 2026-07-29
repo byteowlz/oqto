@@ -115,6 +115,8 @@ impl<R> PodmanSupervisor<R> {
             name.into(),
             "--pod".into(),
             pod_name.into(),
+            // catatonit as PID1: zombie reaping + signal forwarding.
+            "--init".into(),
             "--security-opt=no-new-privileges".into(),
             "--cap-drop=all".into(),
             "--cap-add=chown,dac_override,setuid,setgid".into(),

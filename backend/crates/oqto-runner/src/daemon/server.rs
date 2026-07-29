@@ -3967,6 +3967,34 @@ impl Runner {
         info!("Runner listening on {}", listener.endpoint_description());
         sd_notify_ready();
 
+        // Container-entrypoint correctness: SIGTERM/SIGINT trigger the same
+        // graceful shutdown as an explicit request, so `podman stop` cleans
+        // up sessions instead of timing out into SIGKILL.
+        {
+            let shutdown = self.shutdown_tx.clone();
+            match (
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()),
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()),
+            ) {
+                (Ok(mut term), Ok(mut int)) => {
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = term.recv() => info!("Received SIGTERM, shutting down"),
+                            _ = int.recv() => info!("Received SIGINT, shutting down"),
+                        }
+                        let _ = shutdown.send(());
+                    });
+                }
+                (term, int) => {
+                    warn!(
+                        "Failed to install signal handlers (term: {:?}, int: {:?})",
+                        term.err(),
+                        int.err()
+                    );
+                }
+            }
+        }
+
         // One-time index bootstrap: session lookups are O(1) via the oqto-log
         // session index; build it in the background if this home predates it.
         if let Some(home) = dirs::home_dir()
@@ -3997,6 +4025,19 @@ impl Runner {
                 let _ = process.child.kill().await;
             }
         }
+    }
+
+    /// Run the daemon on a Unix listener inherited via LISTEN_FDS
+    /// (systemd/quadlet socket activation). The activation manager owns the
+    /// socket file: no permission changes, no unlink on exit.
+    pub async fn run_inherited(&self, listener: std::os::unix::net::UnixListener) -> Result<()> {
+        listener
+            .set_nonblocking(true)
+            .context("setting inherited listener non-blocking")?;
+        let listener = UnixListener::from_std(listener)
+            .context("adopting inherited listener into the runtime")?;
+        let listener = UnixRunnerListener::new(listener, "<inherited-fd-3>");
+        self.run_transport(&listener).await
     }
 
     /// Run the daemon, listening on the given socket path.
