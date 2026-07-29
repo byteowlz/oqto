@@ -40,7 +40,7 @@ async fn runner_serves_on_inherited_fd_and_stops_on_sigterm() -> Result<()> {
     }
     let mut child = command.spawn().context("spawning oqto-runner")?;
 
-    let proof = async {
+    async {
         // The runner must accept connections on the activated socket.
         let client = oqto_runner::client::RunnerClient::new(socket_path.clone());
         tokio::time::timeout(Duration::from_secs(15), async {
@@ -80,7 +80,5 @@ async fn runner_serves_on_inherited_fd_and_stops_on_sigterm() -> Result<()> {
         );
         Ok::<_, anyhow::Error>(())
     }
-    .await;
-
-    proof
+    .await
 }
