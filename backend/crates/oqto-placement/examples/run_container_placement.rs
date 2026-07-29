@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         environment: BTreeMap::new(),
         cpu_limit: limits_enabled.then(|| "2".to_string()),
         memory_limit: limits_enabled.then(|| "2g".to_string()),
+        userns: Default::default(),
         network: PlacementNetwork {
             mode: PlacementNetworkMode::Open,
             endpoints: Vec::new(),

@@ -31,6 +31,15 @@ impl HostEndpointBridge {
         }
         let listener = UnixListener::bind(&socket_path)
             .with_context(|| format!("binding endpoint socket {}", socket_path.display()))?;
+        // World-connectable: auto-userns containers cannot satisfy uid/group
+        // checks. The backend-private parent directory is the access control.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o666))
+                .with_context(|| {
+                    format!("setting endpoint socket mode {}", socket_path.display())
+                })?;
+        }
         let handle = tokio::spawn({
             let target = target.clone();
             async move {

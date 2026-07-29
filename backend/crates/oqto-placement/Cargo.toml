@@ -17,6 +17,7 @@ uuid.workspace = true
 oqto-runner = { path = "../oqto-runner" }
 
 [dev-dependencies]
+libc.workspace = true
 tempfile.workspace = true
 
 [lints]

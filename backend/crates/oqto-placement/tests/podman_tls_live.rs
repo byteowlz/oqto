@@ -170,6 +170,7 @@ fn spec(
         environment: BTreeMap::new(),
         cpu_limit: Some("1".to_string()),
         memory_limit: Some("1g".to_string()),
+        userns: Default::default(),
         network: PlacementNetwork {
             mode: PlacementNetworkMode::Open,
             endpoints: Vec::new(),

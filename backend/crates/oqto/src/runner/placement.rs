@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use oqto_placement::{
     HostEndpointBridge, PlacementHealth, PlacementNetwork, PlacementNetworkMode, PlacementRecord,
-    PlacementSpec, PlacementStore, PlacementSupervisor,
+    PlacementSpec, PlacementStore, PlacementSupervisor, PlacementUserns,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -38,6 +38,9 @@ pub struct PlacementConfig {
     /// Workspace network containment. Isolated (default) means network=none;
     /// only listed endpoints are reachable.
     pub network: PlacementNetworkMode,
+    /// User-namespace strategy: keep_id (dev) or auto (disjoint subuid
+    /// range per workspace; production tenant separation).
+    pub userns: PlacementUserns,
     /// Named services granted to every workspace container.
     pub endpoints: Vec<EndpointConfig>,
 }
@@ -62,6 +65,7 @@ impl Default for PlacementConfig {
             cpu_limit: None,
             memory_limit: None,
             network: PlacementNetworkMode::Isolated,
+            userns: PlacementUserns::KeepId,
             endpoints: Vec::new(),
         }
     }
@@ -139,13 +143,26 @@ impl PlacementManager {
             image: self.config.image.clone(),
             workspace_dir,
             state_dir: self.state_root.join(workspace_id),
+            // Auto userns chowns the runner socket dir into the container's
+            // range; it gets its own subdirectory so endpoint sockets stay
+            // backend-owned next to it.
             runner_endpoint: oqto_runner::transport::RunnerEndpointConfig::Unix {
-                path: self.runtime_root.join(workspace_id).join("runner.sock"),
+                path: match self.config.userns {
+                    PlacementUserns::KeepId => {
+                        self.runtime_root.join(workspace_id).join("runner.sock")
+                    }
+                    PlacementUserns::Auto { .. } => self
+                        .runtime_root
+                        .join(workspace_id)
+                        .join("rsock")
+                        .join("runner.sock"),
+                },
             },
             server_tls: None,
             environment: BTreeMap::new(),
             cpu_limit: self.config.cpu_limit.clone(),
             memory_limit: self.config.memory_limit.clone(),
+            userns: self.config.userns.clone(),
             network: PlacementNetwork {
                 mode: self.config.network.clone(),
                 endpoints: self

@@ -43,6 +43,25 @@ pub struct PlacementSpec {
     pub memory_limit: Option<String>,
     #[serde(default)]
     pub network: PlacementNetwork,
+    #[serde(default)]
+    pub userns: PlacementUserns,
+}
+
+/// User-namespace strategy for container placements.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementUserns {
+    /// Development mapping: container user == host user. No cross-tenant
+    /// host-filesystem separation.
+    #[default]
+    KeepId,
+    /// Podman-managed disjoint subuid range per container. Volumes are
+    /// chowned into the range; host-side workspace files become unreadable
+    /// to other tenants and the backend user.
+    Auto {
+        #[serde(default)]
+        size: Option<u32>,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -217,6 +236,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             network: Default::default(),
+            userns: Default::default(),
         };
         assert!(spec.validate().is_err());
     }

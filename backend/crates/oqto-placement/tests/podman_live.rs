@@ -32,6 +32,7 @@ async fn rootless_podman_runner_is_reachable_and_stoppable() -> anyhow::Result<(
         cpu_limit: Some("1".to_string()),
         memory_limit: Some("1g".to_string()),
         network: Default::default(),
+        userns: Default::default(),
     };
 
     let supervisor = PodmanSupervisor::new();

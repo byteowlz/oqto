@@ -4005,15 +4005,25 @@ impl Runner {
         // Normally created by oqto-usermgr, but we create it ourselves if missing
         // (e.g. after systemd restart). The parent dir has SGID group oqto, mode 2770,
         // so our new dir inherits group oqto -- which lets the oqto backend traverse it.
+        // Socket permission policy. Default: SGID group dir + group socket so
+        // the backend (same group) can connect. World mode (auto-userns
+        // container placement): uid/group checks cannot cross the user
+        // namespace, so the socket is world-connectable; authorization is the
+        // backend-private host directory that contains it.
+        let world_mode = std::env::var("OQTO_SOCKET_MODE").as_deref() == Ok("world");
+        let (dir_mode, socket_mode) = if world_mode {
+            (0o711, 0o666)
+        } else {
+            (0o2770, 0o770)
+        };
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
                 info!("Socket directory {:?} does not exist, creating", parent);
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating socket directory {:?}", parent))?;
             }
-            // Ensure correct permissions (SGID + rwxrwx---)
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o2770))
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(dir_mode))
                 .with_context(|| format!("chmod socket dir {:?}", parent))?;
         }
 
@@ -4024,10 +4034,9 @@ impl Runner {
         let listener = UnixListener::bind(socket_path)
             .with_context(|| format!("binding to {:?}", socket_path))?;
 
-        // Allow group write so the oqto backend (same group) can connect.
         // Unix sockets require write permission for connect().
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o770))
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(socket_mode))
             .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
 
         let listener = UnixRunnerListener::new(listener, socket_path);

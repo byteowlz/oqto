@@ -1,6 +1,6 @@
 use crate::{
     PlacementHealth, PlacementId, PlacementKind, PlacementNetworkMode, PlacementRecord,
-    PlacementSpec, PlacementSupervisor, runtime_name,
+    PlacementSpec, PlacementSupervisor, PlacementUserns, runtime_name,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -74,7 +74,6 @@ impl<R> PodmanSupervisor<R> {
             "--replace".into(),
             "--name".into(),
             pod_name.into(),
-            "--userns=keep-id".into(),
             "--label".into(),
             format!("oqto.workspace={}", spec.workspace_id).into(),
             "--label".into(),
@@ -82,6 +81,16 @@ impl<R> PodmanSupervisor<R> {
             "--label".into(),
             "oqto.placement=rootless-podman".into(),
         ];
+        match &spec.userns {
+            PlacementUserns::KeepId => args.push("--userns=keep-id".into()),
+            PlacementUserns::Auto { size } => args.push(
+                match size {
+                    Some(size) => format!("--userns=auto:size={size}"),
+                    None => "--userns=auto".to_string(),
+                }
+                .into(),
+            ),
+        }
         if spec.network.mode == PlacementNetworkMode::Isolated {
             args.push("--network=none".into());
         }
@@ -92,6 +101,12 @@ impl<R> PodmanSupervisor<R> {
     }
 
     fn create_args(spec: &PlacementSpec, name: &str, pod_name: &str) -> Result<Vec<OsString>> {
+        // Auto userns: volumes are chowned into the container's subuid range
+        // (podman :U). Socket dirs are split: the runner socket dir belongs
+        // to the container; endpoint sockets stay backend-owned and made
+        // world-connectable, since uid/group checks cannot cross the userns.
+        let auto_userns = matches!(spec.userns, PlacementUserns::Auto { .. });
+        let owned = if auto_userns { "Z,U" } else { "Z" };
         let mut args = vec![
             "run".into(),
             "--detach".into(),
@@ -110,19 +125,22 @@ impl<R> PodmanSupervisor<R> {
             "--label".into(),
             "oqto.placement=rootless-podman".into(),
             "--volume".into(),
-            format!("{}:/workspace:Z", spec.workspace_dir.display()).into(),
+            format!("{}:/workspace:{owned}", spec.workspace_dir.display()).into(),
             // Preserve the canonical workspace path carried by session metadata.
             // This avoids transport-specific cwd rewriting and keeps Pi JSONL paths stable.
             "--volume".into(),
             format!(
-                "{}:{}:Z",
+                "{}:{}:{owned}",
                 spec.workspace_dir.display(),
                 spec.workspace_dir.display()
             )
             .into(),
             "--volume".into(),
-            format!("{}:/home/oqto:Z", spec.state_dir.display()).into(),
+            format!("{}:/home/oqto:{owned}", spec.state_dir.display()).into(),
         ];
+        if auto_userns {
+            args.extend(["--env".into(), "OQTO_SOCKET_MODE=world".into()]);
+        }
         if let Some(cpu) = &spec.cpu_limit {
             args.extend(["--cpus".into(), cpu.into()]);
         }
@@ -140,8 +158,23 @@ impl<R> PodmanSupervisor<R> {
                 })?;
                 args.extend([
                     "--volume".into(),
-                    format!("{}:/run/oqto:Z", parent.display()).into(),
+                    format!("{}:/run/oqto:{owned}", parent.display()).into(),
                 ]);
+                if auto_userns {
+                    // Endpoint sockets are backend-owned and cannot live in a
+                    // chowned volume; mount them separately from the sibling
+                    // endpoints directory.
+                    let endpoints = parent
+                        .parent()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("runner socket directory must have a parent")
+                        })?
+                        .join("endpoints");
+                    args.extend([
+                        "--volume".into(),
+                        format!("{}:/run/oqto/endpoints:Z", endpoints.display()).into(),
+                    ]);
+                }
                 vec![
                     "oqto-runner".into(),
                     "--socket".into(),
@@ -208,6 +241,13 @@ where
         spec.validate()?;
         tokio::fs::create_dir_all(&spec.workspace_dir).await?;
         tokio::fs::create_dir_all(&spec.state_dir).await?;
+        if matches!(spec.userns, PlacementUserns::Auto { .. })
+            && let RunnerEndpointConfig::Unix { path } = &spec.runner_endpoint
+            && let Some(parent) = path.parent()
+            && let Some(session_dir) = parent.parent()
+        {
+            tokio::fs::create_dir_all(session_dir.join("endpoints")).await?;
+        }
         let runtime_name = runtime_name(&spec.workspace_id);
         let pod_name = format!("{runtime_name}-pod");
         self.checked(&Self::pod_create_args(spec, &pod_name))
@@ -308,6 +348,7 @@ mod tests {
             cpu_limit: Some("2".to_string()),
             memory_limit: Some("2g".to_string()),
             network: Default::default(),
+            userns: Default::default(),
         };
         let args =
             PodmanSupervisor::<RecordingRunner>::create_args(&spec, "oqto-ws-a", "oqto-ws-a-pod")?;

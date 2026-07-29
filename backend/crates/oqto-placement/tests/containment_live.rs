@@ -64,6 +64,7 @@ async fn isolated_pod_reaches_only_granted_endpoints() -> anyhow::Result<()> {
         environment: BTreeMap::new(),
         cpu_limit: Some("1".to_string()),
         memory_limit: Some("1g".to_string()),
+        userns: Default::default(),
         network: PlacementNetwork {
             mode: PlacementNetworkMode::Isolated,
             endpoints: vec![PlacementEndpoint {
