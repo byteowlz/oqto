@@ -23,6 +23,26 @@ _Avoid_: event bus (transport, not truth), monitoring (observation, not authorit
 A platform identity in Oqto — who a person is to the product (roles, auth, API keys, ownership). Distinct from the OS principal they run as.
 _Avoid_: user (ambiguous — collides with the OS principal)
 
+**Deployment Target**:
+A named destination for operator actions: one Oqto Control Plane and its managed placements. The CLI's `--host` value names a Deployment Target, not a placement machine or SSH host.
+_Avoid_: host (reserved for the App capability contract), server (ambiguous)
+
+**Operator Identity**:
+The authenticated actor using the Operator API: either a human Account or an automation Service Identity. Authentication evidence identifies it; capabilities and resource scopes separately authorize it.
+_Avoid_: Principal (that is an OS identity), admin (a capability bundle, not an identity)
+
+**Service Identity**:
+A non-human Operator Identity for automation, with explicitly bounded capabilities and resource scopes. It never borrows a human login or claims human MFA.
+_Avoid_: service account (ambiguous with Account), bot user
+
+**Authentication Assurance**:
+The verified strength, methods, issuer, and freshness of an authentication event. Authorization may require a stronger or more recent assurance for sensitive actions.
+_Avoid_: `mfa=true` (loses method, strength, and freshness)
+
+**Enrollment**:
+A single-use, time-bounded delegation that lets a new Operator Identity bind its own authentication credentials up to a fixed authority ceiling. It is not a reusable login credential.
+_Avoid_: invite (ambiguous with Workspace membership invitation), bootstrap token
+
 **Principal**:
 The OS-level identity an agent's processes run as (a Linux uid). Created at provisioning time, never the same thing as an Account; one Account maps to one Principal in multi-user deployments.
 _Avoid_: user, linux user (use Principal when the OS identity is meant)
