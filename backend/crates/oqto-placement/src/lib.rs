@@ -25,6 +25,9 @@ pub use operator::{
 pub use podman::{CommandOutput, CommandRunner, PodmanSupervisor, TokioCommandRunner};
 pub use store::{JsonPlacementStore, PlacementStore};
 
+/// Home directory inside every Workspace container: the state volume mount.
+pub const CONTAINER_HOME: &str = "/home/oqto";
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlacementId(pub String);
 

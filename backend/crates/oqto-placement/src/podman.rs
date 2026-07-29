@@ -141,7 +141,12 @@ impl<R> PodmanSupervisor<R> {
             )
             .into(),
             "--volume".into(),
-            format!("{}:/home/oqto:{owned}", spec.state_dir.display()).into(),
+            format!(
+                "{}:{}:{owned}",
+                spec.state_dir.display(),
+                crate::CONTAINER_HOME
+            )
+            .into(),
         ];
         if auto_userns {
             args.extend(["--env".into(), "OQTO_SOCKET_MODE=world".into()]);

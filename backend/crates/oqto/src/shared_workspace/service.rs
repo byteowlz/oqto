@@ -71,6 +71,9 @@ pub struct SharedWorkspaceService {
     runner_socket_pattern: Option<String>,
     /// Path to oqto-templates repo root (for AGENTS.md, etc.).
     templates_repo_path: Option<std::path::PathBuf>,
+    /// Placement registry: container-placed workspaces resolve their runner
+    /// here instead of via the per-user socket pattern.
+    placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
 }
 
 impl std::fmt::Debug for SharedWorkspaceService {
@@ -92,7 +95,35 @@ impl SharedWorkspaceService {
             linux_users: None,
             runner_socket_pattern: None,
             templates_repo_path: None,
+            placement_store: None,
         }
+    }
+
+    /// Attach the placement registry for container-placed workspace routing.
+    pub fn with_placement_store(mut self, store: Arc<dyn oqto_placement::PlacementStore>) -> Self {
+        self.placement_store = Some(store);
+        self
+    }
+
+    /// Resolve the runner for a workspace: placement registry first (container
+    /// placements), then the host per-user socket pattern.
+    async fn runner_for_workspace(
+        &self,
+        workspace_id: &str,
+        linux_user: &str,
+    ) -> Result<oqto_runner::client::RunnerClient> {
+        if let Some(store) = &self.placement_store
+            && let Some(endpoint) = store.resolve_workspace(workspace_id).await?
+        {
+            return oqto_runner::client::RunnerClient::from_endpoint(&endpoint)
+                .with_context(|| format!("building placement runner for {workspace_id}"));
+        }
+        let pattern = self
+            .runner_socket_pattern
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+        oqto_runner::client::RunnerClient::for_user_with_pattern(linux_user, pattern)
+            .with_context(|| format!("creating runner client for {linux_user}"))
     }
 
     /// Create a new service with a WebSocket hub for real-time updates.
@@ -751,13 +782,7 @@ impl SharedWorkspaceService {
             bail!("can only delete top-level workdirs");
         }
 
-        let pattern = self
-            .runner_socket_pattern
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
-        let runner =
-            oqto_runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
-                .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
+        let runner = self.runner_for_workspace(&ws.id, &ws.linux_user).await?;
 
         let stat = runner
             .stat(target)
@@ -913,21 +938,9 @@ impl SharedWorkspaceService {
     /// All file writes go through the shared workspace's runner so they
     /// execute as the correct Linux user with proper ownership.
     pub async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
-        let pattern = self
-            .runner_socket_pattern
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
-
-        let runner = oqto_runner::client::RunnerClient::for_user_with_pattern(
-            &workspace.linux_user,
-            pattern,
-        )
-        .with_context(|| {
-            format!(
-                "creating runner client for shared workspace user {}",
-                workspace.linux_user
-            )
-        })?;
+        let runner = self
+            .runner_for_workspace(&workspace.id, &workspace.linux_user)
+            .await?;
 
         let members = self.repo.list_members(&workspace.id).await?;
         let users_md = generate_users_md(&workspace.name, &members);

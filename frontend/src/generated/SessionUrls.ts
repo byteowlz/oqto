@@ -3,17 +3,16 @@
 /**
  * URLs for accessing session services.
  */
-export type SessionUrls = {
-	/**
-	 * URL for agent runtime API (reserved).
-	 */
-	agent: string;
-	/**
-	 * URL for file server.
-	 */
-	fileserver: string;
-	/**
-	 * URL for terminal WebSocket.
-	 */
-	terminal: string;
-};
+export type SessionUrls = { 
+/**
+ * URL for agent runtime API (reserved).
+ */
+agent: string, 
+/**
+ * URL for file server.
+ */
+fileserver: string, 
+/**
+ * URL for terminal WebSocket.
+ */
+terminal: string, };

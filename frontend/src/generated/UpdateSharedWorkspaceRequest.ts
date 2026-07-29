@@ -3,9 +3,4 @@
 /**
  * Request to update a shared workspace.
  */
-export type UpdateSharedWorkspaceRequest = {
-	name: string | null;
-	description: string | null;
-	icon: string | null;
-	color: string | null;
-};
+export type UpdateSharedWorkspaceRequest = { name: string | null, description: string | null, icon: string | null, color: string | null, };

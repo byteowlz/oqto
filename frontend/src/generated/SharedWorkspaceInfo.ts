@@ -4,30 +4,20 @@ import type { MemberRole } from "./MemberRole";
 /**
  * Public shared workspace info (returned to clients).
  */
-export type SharedWorkspaceInfo = {
-	id: string;
-	name: string;
-	slug: string;
-	linux_user: string;
-	path: string;
-	owner_id: string;
-	description: string | null;
-	/**
-	 * Lucide icon name.
-	 */
-	icon: string;
-	/**
-	 * Hex color for accent.
-	 */
-	color: string;
-	created_at: string;
-	updated_at: string;
-	/**
-	 * The requesting user's role in this workspace.
-	 */
-	my_role: MemberRole;
-	/**
-	 * Number of members.
-	 */
-	member_count: bigint;
-};
+export type SharedWorkspaceInfo = { id: string, name: string, slug: string, linux_user: string, path: string, owner_id: string, description: string | null, 
+/**
+ * Lucide icon name.
+ */
+icon: string, 
+/**
+ * Hex color for accent.
+ */
+color: string, created_at: string, updated_at: string, 
+/**
+ * The requesting user's role in this workspace.
+ */
+my_role: MemberRole, 
+/**
+ * Number of members.
+ */
+member_count: bigint, };
