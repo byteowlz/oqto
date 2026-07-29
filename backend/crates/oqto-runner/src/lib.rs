@@ -7,6 +7,7 @@
 pub mod agent_browser;
 pub mod client;
 pub mod daemon;
+pub mod endpoint_bridge;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
 pub mod pi_manager;

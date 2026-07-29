@@ -1773,11 +1773,10 @@ type = "openai-compatible"
         let providers = doc["providers"].as_table().unwrap();
         assert!(providers.contains_key("foundry"));
         assert!(providers.contains_key("other"));
-        assert_eq!(
+        assert!(
             providers["fhgenie"]["compat"]["supports_developer_role"]
                 .as_bool()
-                .unwrap(),
-            true
+                .unwrap()
         );
         // Stale models from the previous definition are gone (subtree replaced).
         assert!(providers["fhgenie"].get("models").is_none());

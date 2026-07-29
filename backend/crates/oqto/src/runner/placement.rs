@@ -3,12 +3,15 @@
 
 use anyhow::{Context, Result};
 use oqto_placement::{
-    PlacementHealth, PlacementRecord, PlacementSpec, PlacementStore, PlacementSupervisor,
+    HostEndpointBridge, PlacementHealth, PlacementNetwork, PlacementNetworkMode, PlacementRecord,
+    PlacementSpec, PlacementStore, PlacementSupervisor,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +35,21 @@ pub struct PlacementConfig {
     pub runtime_root: Option<PathBuf>,
     pub cpu_limit: Option<String>,
     pub memory_limit: Option<String>,
+    /// Workspace network containment. Isolated (default) means network=none;
+    /// only listed endpoints are reachable.
+    pub network: PlacementNetworkMode,
+    /// Named services granted to every workspace container.
+    pub endpoints: Vec<EndpointConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointConfig {
+    /// Endpoint name; the container sees /run/oqto/endpoints/<name>.sock.
+    pub name: String,
+    /// Loopback port the runner exposes inside the container.
+    pub port: u16,
+    /// Host-side TCP target (host:port) the bridge forwards to.
+    pub target: String,
 }
 
 impl Default for PlacementConfig {
@@ -43,6 +61,8 @@ impl Default for PlacementConfig {
             runtime_root: None,
             cpu_limit: None,
             memory_limit: None,
+            network: PlacementNetworkMode::Isolated,
+            endpoints: Vec::new(),
         }
     }
 }
@@ -54,6 +74,7 @@ pub struct PlacementManager {
     config: PlacementConfig,
     state_root: PathBuf,
     runtime_root: PathBuf,
+    bridges: Mutex<HashMap<String, Vec<HostEndpointBridge>>>,
 }
 
 impl PlacementManager {
@@ -72,7 +93,33 @@ impl PlacementManager {
             config,
             state_root,
             runtime_root,
+            bridges: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Start (or restart) the host-side endpoint bridges for a workspace.
+    async fn ensure_bridges(&self, workspace_id: &str) -> Result<()> {
+        let endpoint_dir = self.runtime_root.join(workspace_id).join("endpoints");
+        let mut bridges = self.bridges.lock().await;
+        if bridges.contains_key(workspace_id) {
+            return Ok(());
+        }
+        let mut spawned = Vec::new();
+        for endpoint in &self.config.endpoints {
+            let socket = endpoint_dir.join(format!("{}.sock", endpoint.name));
+            spawned.push(
+                HostEndpointBridge::spawn(socket, endpoint.target.clone())
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "starting endpoint bridge {} for workspace {workspace_id}",
+                            endpoint.name
+                        )
+                    })?,
+            );
+        }
+        bridges.insert(workspace_id.to_string(), spawned);
+        Ok(())
     }
 
     fn spec_for(
@@ -94,6 +141,18 @@ impl PlacementManager {
             environment: BTreeMap::new(),
             cpu_limit: self.config.cpu_limit.clone(),
             memory_limit: self.config.memory_limit.clone(),
+            network: PlacementNetwork {
+                mode: self.config.network.clone(),
+                endpoints: self
+                    .config
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| oqto_placement::PlacementEndpoint {
+                        name: endpoint.name.clone(),
+                        port: endpoint.port,
+                    })
+                    .collect(),
+            },
         }
     }
 
@@ -105,6 +164,7 @@ impl PlacementManager {
         workspace_dir: PathBuf,
     ) -> Result<PlacementRecord> {
         let spec = self.spec_for(workspace_id, account_id, workspace_dir);
+        self.ensure_bridges(workspace_id).await?;
         let record = self
             .supervisor
             .start(&spec)
@@ -133,6 +193,7 @@ impl PlacementManager {
             .await
             .with_context(|| format!("stopping placement for workspace {workspace_id}"))?;
         self.store.remove(&record.id).await?;
+        self.bridges.lock().await.remove(workspace_id);
         info!(workspace_id, "removed container placement");
         Ok(())
     }
@@ -142,6 +203,13 @@ impl PlacementManager {
     /// a spec are reported but left alone.
     pub async fn reconcile(&self) -> Result<()> {
         for record in self.store.list().await? {
+            if let Err(error) = self.ensure_bridges(&record.workspace_id).await {
+                warn!(
+                    workspace_id = %record.workspace_id,
+                    %error,
+                    "failed to start endpoint bridges during reconcile"
+                );
+            }
             let health = match self.supervisor.health(&record).await {
                 Ok(health) => health,
                 Err(error) => {
@@ -197,7 +265,6 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use oqto_placement::{PlacementId, PlacementKind};
-    use oqto_runner::transport::RunnerEndpointConfig;
     use std::sync::Mutex;
 
     struct FakeSupervisor {
@@ -278,6 +345,54 @@ mod tests {
         assert_eq!(supervisor.stopped.lock().unwrap().as_slice(), ["ws-1"]);
         // Removing an unknown workspace is a no-op.
         manager.remove("ws-unknown").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provision_spawns_endpoint_bridge_sockets() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(FakeSupervisor::new(PlacementHealth::Ready));
+        let store = Arc::new(
+            oqto_placement::JsonPlacementStore::open(temp.path().join("placements.json")).await?,
+        );
+        let manager = PlacementManager::new(
+            supervisor,
+            store,
+            PlacementConfig {
+                mode: PlacementMode::Container,
+                endpoints: vec![EndpointConfig {
+                    name: "eavs".to_string(),
+                    port: 3033,
+                    target: "127.0.0.1:1".to_string(),
+                }],
+                ..Default::default()
+            },
+            temp.path().join("state"),
+            temp.path().join("runtime"),
+        );
+
+        let record = manager
+            .provision("ws-1", "acct-1", temp.path().join("work"))
+            .await?;
+        let spec = record.spec.expect("record carries spec");
+        assert_eq!(
+            spec.network.mode,
+            oqto_placement::PlacementNetworkMode::Isolated
+        );
+        assert_eq!(spec.network.endpoints.len(), 1);
+        assert!(
+            temp.path()
+                .join("runtime/ws-1/endpoints/eavs.sock")
+                .exists()
+        );
+
+        manager.remove("ws-1").await?;
+        assert!(
+            !temp
+                .path()
+                .join("runtime/ws-1/endpoints/eavs.sock")
+                .exists()
+        );
         Ok(())
     }
 

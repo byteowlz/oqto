@@ -1,6 +1,6 @@
 use oqto_placement::{
-    JsonPlacementStore, PlacementSpec, PlacementStore, PlacementSupervisor, PodmanSupervisor,
-    RunnerServerTlsConfig,
+    JsonPlacementStore, PlacementNetwork, PlacementNetworkMode, PlacementSpec, PlacementStore,
+    PlacementSupervisor, PodmanSupervisor, RunnerServerTlsConfig,
 };
 use oqto_runner::transport::RunnerEndpointConfig;
 use std::collections::BTreeMap;
@@ -55,6 +55,10 @@ async fn main() -> anyhow::Result<()> {
         environment: BTreeMap::new(),
         cpu_limit: limits_enabled.then(|| "2".to_string()),
         memory_limit: limits_enabled.then(|| "2g".to_string()),
+        network: PlacementNetwork {
+            mode: PlacementNetworkMode::Open,
+            endpoints: Vec::new(),
+        },
     };
     let supervisor = PodmanSupervisor::new();
     let placement = supervisor.start(&spec).await?;

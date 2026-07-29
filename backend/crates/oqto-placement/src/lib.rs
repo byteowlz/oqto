@@ -3,6 +3,7 @@
 //! Product code asks this module where a Workspace runs. Concrete adapters own
 //! process/container lifecycle and return a typed runner endpoint.
 
+mod host_bridge;
 mod local;
 mod podman;
 mod store;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub use host_bridge::HostEndpointBridge;
 pub use local::LocalProcessSupervisor;
 pub use podman::{CommandOutput, CommandRunner, PodmanSupervisor, TokioCommandRunner};
 pub use store::{JsonPlacementStore, PlacementStore};
@@ -39,6 +41,34 @@ pub struct PlacementSpec {
     pub cpu_limit: Option<String>,
     #[serde(default)]
     pub memory_limit: Option<String>,
+    #[serde(default)]
+    pub network: PlacementNetwork,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementNetworkMode {
+    /// No network at all; granted endpoints are the only reachable services.
+    #[default]
+    Isolated,
+    /// Ordinary rootless container networking (open egress).
+    Open,
+}
+
+/// A named service the workspace may reach. Inside the container the runner
+/// bridges 127.0.0.1:port to the bind-mounted socket /run/oqto/endpoints/<name>.sock.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlacementEndpoint {
+    pub name: String,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlacementNetwork {
+    #[serde(default)]
+    pub mode: PlacementNetworkMode,
+    #[serde(default)]
+    pub endpoints: Vec<PlacementEndpoint>,
 }
 
 impl PlacementSpec {
@@ -63,6 +93,31 @@ impl PlacementSpec {
             }
             (RunnerEndpointConfig::TcpTls { .. }, None) => {
                 anyhow::bail!("TCP/TLS runner placement requires server TLS material");
+            }
+        }
+        if self.network.mode == PlacementNetworkMode::Isolated
+            && matches!(self.runner_endpoint, RunnerEndpointConfig::TcpTls { .. })
+        {
+            anyhow::bail!(
+                "isolated network placement cannot expose a TCP runner endpoint; use open mode"
+            );
+        }
+        let mut seen_names = std::collections::BTreeSet::new();
+        let mut seen_ports = std::collections::BTreeSet::new();
+        for endpoint in &self.network.endpoints {
+            if endpoint.name.is_empty()
+                || !endpoint
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                anyhow::bail!("endpoint name must be alphanumeric/dash/underscore");
+            }
+            if endpoint.port == 0 {
+                anyhow::bail!("endpoint port must be non-zero");
+            }
+            if !seen_names.insert(&endpoint.name) || !seen_ports.insert(endpoint.port) {
+                anyhow::bail!("duplicate endpoint name or port: {}", endpoint.name);
             }
         }
         for key in self.environment.keys() {
@@ -161,6 +216,7 @@ mod tests {
             )]),
             cpu_limit: None,
             memory_limit: None,
+            network: Default::default(),
         };
         assert!(spec.validate().is_err());
     }

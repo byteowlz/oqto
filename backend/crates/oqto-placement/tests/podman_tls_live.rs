@@ -1,6 +1,9 @@
 #![cfg(target_os = "linux")]
 
-use oqto_placement::{PlacementSpec, PlacementSupervisor, PodmanSupervisor, RunnerServerTlsConfig};
+use oqto_placement::{
+    PlacementNetwork, PlacementNetworkMode, PlacementSpec, PlacementSupervisor, PodmanSupervisor,
+    RunnerServerTlsConfig,
+};
 use oqto_runner::client::RunnerClient;
 use oqto_runner::transport::RunnerEndpointConfig;
 use std::collections::BTreeMap;
@@ -167,6 +170,10 @@ fn spec(
         environment: BTreeMap::new(),
         cpu_limit: Some("1".to_string()),
         memory_limit: Some("1g".to_string()),
+        network: PlacementNetwork {
+            mode: PlacementNetworkMode::Open,
+            endpoints: Vec::new(),
+        },
     }
 }
 

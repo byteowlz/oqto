@@ -1,6 +1,6 @@
 use crate::{
-    PlacementHealth, PlacementId, PlacementKind, PlacementRecord, PlacementSpec,
-    PlacementSupervisor, runtime_name,
+    PlacementHealth, PlacementId, PlacementKind, PlacementNetworkMode, PlacementRecord,
+    PlacementSpec, PlacementSupervisor, runtime_name,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -82,6 +82,9 @@ impl<R> PodmanSupervisor<R> {
             "--label".into(),
             "oqto.placement=rootless-podman".into(),
         ];
+        if spec.network.mode == PlacementNetworkMode::Isolated {
+            args.push("--network=none".into());
+        }
         if let RunnerEndpointConfig::TcpTls { address, .. } = &spec.runner_endpoint {
             args.extend(["--publish".into(), format!("{}:7443", address).into()]);
         }
@@ -172,6 +175,12 @@ impl<R> PodmanSupervisor<R> {
         };
         args.push(spec.image.clone().into());
         args.extend(runner_args);
+        for endpoint in &spec.network.endpoints {
+            args.extend([
+                "--endpoint".into(),
+                format!("{}={}", endpoint.name, endpoint.port).into(),
+            ]);
+        }
         Ok(args)
     }
 
@@ -298,6 +307,7 @@ mod tests {
             environment: Default::default(),
             cpu_limit: Some("2".to_string()),
             memory_limit: Some("2g".to_string()),
+            network: Default::default(),
         };
         let args =
             PodmanSupervisor::<RecordingRunner>::create_args(&spec, "oqto-ws-a", "oqto-ws-a-pod")?;

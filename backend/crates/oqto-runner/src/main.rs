@@ -46,6 +46,10 @@ struct Args {
     fileserver_binary: Option<String>,
     #[arg(long)]
     ttyd_binary: Option<String>,
+    /// Endpoint bridges (NAME=PORT): listen on 127.0.0.1:PORT and forward to
+    /// the bind-mounted Unix socket /run/oqto/endpoints/NAME.sock.
+    #[arg(long = "endpoint", value_name = "NAME=PORT")]
+    endpoints: Vec<String>,
 }
 
 #[tokio::main]
@@ -67,6 +71,21 @@ async fn main() -> Result<()> {
     );
 
     load_env_file();
+
+    // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
+    // aborts startup rather than starting a workspace missing its services.
+    let endpoint_socket_dir = PathBuf::from("/run/oqto/endpoints");
+    for endpoint in &args.endpoints {
+        let spec = oqto_runner::endpoint_bridge::EndpointBridgeSpec::parse(
+            endpoint,
+            &endpoint_socket_dir,
+        )?;
+        tokio::spawn(async move {
+            if let Err(error) = oqto_runner::endpoint_bridge::serve(spec).await {
+                log::error!("endpoint bridge failed: {error:#}");
+            }
+        });
+    }
 
     let user_config = args
         .config
