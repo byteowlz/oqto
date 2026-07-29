@@ -691,6 +691,14 @@ pub async fn delete_user(
     // Delete from oqto DB first
     state.users.delete_user(&user_id).await?;
 
+    // Remove the personal container placement (compute + registry record).
+    // The durable state volume is retained for operator-controlled cleanup.
+    if let Some(manager) = &state.placement_manager
+        && let Err(e) = manager.remove(&user_id).await
+    {
+        warn!(user_id = %user_id, error = %e, "failed to remove personal placement");
+    }
+
     // In multi-user mode, clean up the Linux user + services
     if let Some(ref linux_user) = linux_username {
         let linux_user = linux_user.clone();

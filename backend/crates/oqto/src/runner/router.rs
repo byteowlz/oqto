@@ -52,6 +52,39 @@ pub async fn resolve_runner_for_target(
                 .with_context(|| format!("runner not ready for workspace {workspace_id}"))?;
             return Ok(Some(client));
         }
+
+        // Container mode: personal Workspaces are provisioned lazily on first
+        // use. Shared Workspaces provision explicitly at creation; a missing
+        // shared record falls through to host resolution (mixed placement).
+        if matches!(target, ExecutionTarget::Personal)
+            && let Some(manager) = &state.placement_manager
+        {
+            let record = manager
+                .provision_personal(user_id)
+                .await
+                .with_context(|| format!("provisioning personal placement for {user_id}"))?;
+            let client = RunnerClient::from_endpoint(&record.runner_endpoint)
+                .with_context(|| format!("building runner endpoint for {user_id}"))?;
+            wait_for_runner_ready(&client, user_id).await?;
+
+            if let Some(eavs_client) = &state.eavs_client
+                && let Err(error) = crate::api::handlers::admin::sync_eavs_models_json_via_runner(
+                    eavs_client,
+                    &client,
+                    std::path::Path::new(oqto_placement::CONTAINER_HOME),
+                    user_id,
+                    Some(&state.auto_rename_config),
+                )
+                .await
+            {
+                tracing::warn!(
+                        user_id,
+                        %error,
+                    "EAVS model config provisioning failed for new personal placement"
+                );
+            }
+            return Ok(Some(client));
+        }
     }
 
     match target {
@@ -60,6 +93,20 @@ pub async fn resolve_runner_for_target(
             resolve_shared_workspace_runner(state, user_id, workspace_id).await
         }
     }
+}
+
+/// Container starts take a few seconds; poll readiness with a bounded budget.
+async fn wait_for_runner_ready(client: &RunnerClient, workspace_id: &str) -> Result<()> {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if client.ensure_ready_with_recovery().await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("runner for {workspace_id} did not become ready within 30s"))
 }
 
 async fn ensure_runner_healthy(

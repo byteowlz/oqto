@@ -204,6 +204,16 @@ impl PlacementManager {
         Ok(record)
     }
 
+    /// Provision the personal Workspace container for an Account. The work
+    /// directory lives inside the durable state volume, so one volume carries
+    /// both home state and files.
+    pub async fn provision_personal(&self, user_id: &str) -> Result<PlacementRecord> {
+        let workspace_dir = self.state_root.join(user_id).join("workspace");
+        std::fs::create_dir_all(&workspace_dir)
+            .with_context(|| format!("creating personal workspace dir for {user_id}"))?;
+        self.provision(user_id, user_id, workspace_dir).await
+    }
+
     /// Tear down the placement for a workspace. The durable state volume is
     /// retained; only the disposable compute is removed.
     pub async fn remove(&self, workspace_id: &str) -> Result<()> {
@@ -415,6 +425,25 @@ mod tests {
                 .join("runtime/ws-1/endpoints/eavs.sock")
                 .exists()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn personal_provisioning_keeps_workdir_inside_state_volume() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(FakeSupervisor::new(PlacementHealth::Ready));
+        let manager = manager(supervisor.clone(), temp.path()).await?;
+
+        let record = manager.provision_personal("user-1").await?;
+        assert_eq!(record.workspace_id, "user-1");
+        assert_eq!(record.account_id, "user-1");
+        let spec = record.spec.expect("record carries spec");
+        assert_eq!(spec.state_dir, temp.path().join("state/user-1"));
+        assert_eq!(
+            spec.workspace_dir,
+            temp.path().join("state/user-1/workspace")
+        );
+        assert!(spec.workspace_dir.is_dir());
         Ok(())
     }
 
