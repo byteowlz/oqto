@@ -14,6 +14,8 @@ async fn rootless_podman_runner_is_reachable_and_stoppable() -> anyhow::Result<(
     let image = std::env::var("OQTO_WORKSPACE_IMAGE")?;
     let temp = tempfile::tempdir()?;
     let workspace_dir = temp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir)?;
+    std::fs::write(workspace_dir.join("durable.txt"), "runner-visible")?;
     let state_dir = temp.path().join("state");
     let runtime_dir = temp.path().join("runtime");
     std::fs::create_dir_all(&runtime_dir)?;
@@ -22,7 +24,7 @@ async fn rootless_podman_runner_is_reachable_and_stoppable() -> anyhow::Result<(
         workspace_id: format!("live-{}", std::process::id()),
         account_id: "placement-live-test".to_string(),
         image,
-        workspace_dir,
+        workspace_dir: workspace_dir.clone(),
         state_dir,
         runner_endpoint: RunnerEndpointConfig::Unix {
             path: runtime_dir.join("runner.sock"),
@@ -51,6 +53,35 @@ async fn rootless_podman_runner_is_reachable_and_stoppable() -> anyhow::Result<(
         anyhow::ensure!(
             matches!(health, oqto_placement::PlacementHealth::Ready),
             "unexpected placement health: {health:?}"
+        );
+
+        // Workspace operations use the runner endpoint, never `podman exec`.
+        let listing = oqto_placement::workspace_list_directory(&placement, &workspace_dir).await?;
+        anyhow::ensure!(
+            listing
+                .entries
+                .iter()
+                .any(|entry| entry.name == "durable.txt"),
+            "runner directory listing missed durable.txt"
+        );
+        let execution = oqto_placement::workspace_exec(
+            &placement,
+            &["/bin/printf".to_string(), "runner-exec-ok".to_string()],
+        )
+        .await?;
+        anyhow::ensure!(
+            execution.exit_code == 0 && execution.output.trim_end() == "runner-exec-ok"
+        );
+
+        let operator = oqto_placement::operator_for(&placement);
+        let status = operator.status(&placement).await?;
+        anyhow::ensure!(status.ready && status.backend == "rootless_podman");
+        let inspection = operator.inspect(&placement).await?;
+        anyhow::ensure!(inspection.backend == "rootless_podman");
+        let logs = operator.logs(&placement, "200").await?;
+        anyhow::ensure!(
+            logs.contains("Runner listening"),
+            "runner log was not exported"
         );
         Ok::<_, anyhow::Error>(())
     }

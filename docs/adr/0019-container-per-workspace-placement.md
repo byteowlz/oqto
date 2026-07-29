@@ -75,26 +75,34 @@ A future supervisor capability may select a defense-in-depth backend that works 
 Containerizing obscures the host-as-truth debug story (host files owned by mapped subuids, processes in PID namespaces). This is **a first-class deliverable of this epic, not an afterthought** — otherwise debugging regresses:
 
 - **Mandatory labels** (`oqto.workspace`, `oqto.account`, `oqto.placement`) on every container/volume — the identity layer replacing `/etc/passwd`.
-- **`oqtoctl` debug verbs** (`ws ls / ps / exec / logs / inspect / fs`) — thin, label-driven wrappers over podman now, kubectl later (identical mental model).
-- `podman unshare` makes mapped subuids legible again; `podman exec` is the new `sudo -u`.
+- **`oqtoctl` debug verbs** (`ws ls / ps / exec / logs / inspect / fs`) — one Workspace vocabulary across placement backends.
+- `exec` and `fs` use the canonical runner protocol; backend-specific status/log/inspection lives behind `PlacementOperator`.
 - **Logs always exported to oqto-log + host journal**, never trapped in a container.
 - A **Workspace → placement registry** (PlacementStore) answers "where is X". Transparency moves from the host filesystem to a queryable control plane — which is required anyway the moment you go multi-host/k8s, where "ssh and ls" never worked.
 
 ## Operability (resolved 2026-07-29)
 
-`oqtoctl placement` is the stable operator surface. `list` and `show` read the
-Workspace-to-placement registry; `ps`, `logs`, `inspect`, `exec`, and `fs`
-resolve Workspace/placement IDs to runtime names and validate the mandatory
-`oqto.workspace`, `oqto.account`, and `oqto.placement` labels before touching a
-runtime. This is deliberately a thin Podman adapter today; a later Kubernetes
-adapter can preserve the CLI contract. `OQTO_PLACEMENT_STORE` allows explicit
-registry selection for repair/testing.
+`oqtoctl ws` is the stable operator surface: `ls`, `show`, `ps`, `logs`,
+`inspect`, `exec`, and `fs`. The unreleased longer `placement` spelling has no
+compatibility alias. Workspace/placement IDs resolve through `PlacementStore`.
 
-`podman exec` replaces host `sudo -u` for auto-userns workspaces. Bind-mount
-sources are identified by the persisted `PlacementSpec` (they are not Podman
-volume objects and therefore cannot carry Podman labels). Runtime stdout/stderr
-uses the journald log driver so host diagnostics survive container deletion;
-agent/session history remains durably exported through oqto-log.
+Workspace operations are placement-neutral: `exec` uses the runner's managed
+process protocol and `fs` its typed filesystem protocol. LocalProcess execution
+is oqto-sandboxed because it has no outer boundary; RootlessPodman execution
+already occurs inside the Workspace container (in-container defense-in-depth is
+tracked by oqto-nppq.7/.11). Runtime operations dispatch through
+`PlacementOperator`: LocalProcess uses runner health and typed inspection;
+RootlessPodman uses label-validated Podman inspection and journald logs. Local
+per-placement logs fail explicitly until local runner processes have durable
+journal identities.
+
+The current CLI adapter operates on the local registry/host. A remote placement
+operator must run behind the authenticated backend admin API; the public `ws`
+contract and runner-mediated Workspace operations remain unchanged.
+`OQTO_PLACEMENT_STORE` allows explicit local registry selection for repair and
+testing. Bind-mount sources are identified by persisted `PlacementSpec` (they
+are not Podman volume objects and cannot carry Podman labels). Runtime
+stdout/stderr uses journald; agent/session history remains oqto-log authority.
 
 ## Consequences
 

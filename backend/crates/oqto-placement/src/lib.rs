@@ -5,6 +5,7 @@
 
 mod host_bridge;
 mod local;
+mod operator;
 mod podman;
 mod store;
 
@@ -17,6 +18,10 @@ use std::path::PathBuf;
 
 pub use host_bridge::HostEndpointBridge;
 pub use local::LocalProcessSupervisor;
+pub use operator::{
+    LocalProcessOperator, PlacementOperator, PlacementRuntimeInspection, PlacementRuntimeStatus,
+    PodmanOperator, WorkspaceExecResult, operator_for, workspace_exec, workspace_list_directory,
+};
 pub use podman::{CommandOutput, CommandRunner, PodmanSupervisor, TokioCommandRunner};
 pub use store::{JsonPlacementStore, PlacementStore};
 
