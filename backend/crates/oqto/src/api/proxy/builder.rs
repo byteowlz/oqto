@@ -248,6 +248,48 @@ pub async fn proxy_http_request_with_query(
     }
 
     enforce_proxy_body_limit(&parts.headers, max_body_bytes)?;
+
+    // Large declared bodies (uploads) stream through with bounded memory: one
+    // attempt, no replay buffer. Small/undeclared bodies keep the buffered
+    // path so startup connect-retries can replay them.
+    const STREAM_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+    let declared_length = parts
+        .headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if let Some(length) = declared_length
+        && length > STREAM_THRESHOLD_BYTES
+    {
+        let mut forwarded = Request::builder()
+            .method(parts.method.clone())
+            .uri(uri.clone())
+            .version(parts.version)
+            .body(body)
+            .map_err(|e| {
+                error!("Failed to build streaming proxy request: {:?}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        *forwarded.headers_mut() = parts.headers.clone();
+        if let Some(authority) = forwarded.uri().authority() {
+            let value = axum::http::HeaderValue::from_str(authority.as_str())
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            forwarded
+                .headers_mut()
+                .insert(axum::http::header::HOST, value);
+        }
+        let response = client.request(forwarded).await.map_err(|err| {
+            error!("Streaming proxy request failed: {:?}", err);
+            if retry_on_connect && err.is_connect() {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::BAD_GATEWAY
+            }
+        })?;
+        let (parts, body) = response.into_parts();
+        return Ok(Response::from_parts(parts, Body::new(body)));
+    }
+
     let body_bytes = axum::body::to_bytes(body, max_body_bytes)
         .await
         .map_err(|e| {
