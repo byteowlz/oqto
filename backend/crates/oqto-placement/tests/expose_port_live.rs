@@ -11,7 +11,7 @@
 
 use anyhow::Context;
 use oqto_placement::{PlacementSpec, PlacementSupervisor, PlacementUserns, PodmanSupervisor};
-use oqto_runner::protocol::ExposedEndpoint;
+use oqto_runner::protocol::{ExposedEndpoint, PiCreateSessionRequest, PiSessionConfig};
 use oqto_runner::transport::RunnerEndpointConfig;
 use std::collections::BTreeMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -92,7 +92,28 @@ async fn exposed_fileserver_socket_carries_streamed_upload() -> anyhow::Result<(
         .await
         .context("runner not ready")?;
 
-        // Real session: runner spawns oqto-files and ttyd on container loopback.
+        // Functional agent-runtime proof: Pi must start through runner RPC
+        // with its adjacent runtime assets and execute a deterministic local
+        // command. Full prompt/history proof requires the EAVS endpoint and is
+        // covered by the clean-VPS journey, not this network-hermetic test.
+        let created = client
+            .pi_create_session(PiCreateSessionRequest {
+                session_id: "image-runtime-live".to_string(),
+                config: PiSessionConfig {
+                    cwd: "/workspace".into(),
+                    ..Default::default()
+                },
+            })
+            .await
+            .context("create Pi session in workspace image")?;
+        let bash = client
+            .pi_bash(&created.session_id, "printf oqto-image-runtime-ok")
+            .await
+            .context("execute Pi bash RPC")?;
+        anyhow::ensure!(bash.output.contains("oqto-image-runtime-ok"));
+        client.pi_close_session(&created.session_id).await?;
+
+        // Real service session: runner spawns oqto-files and ttyd on container loopback.
         client
             .start_session(
                 "expose-live",

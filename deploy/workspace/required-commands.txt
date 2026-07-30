@@ -1,0 +1,38 @@
+# Runtime-critical
+oqto-runner
+oqto-files
+oqto-sandbox
+pi
+pi-bridge
+ttyd
+node
+npm
+npx
+
+# Curated agent toolchain
+agntz
+eavs
+mmry
+scrpr
+skdlr
+sldr
+sx
+tmpltr
+trx
+typst
+uv
+uvx
+
+# Expected shell/tool parity
+bash
+bat
+eza
+fd
+fzf
+git
+jq
+python3
+rg
+starship
+tmux
+zoxide

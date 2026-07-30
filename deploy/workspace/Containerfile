@@ -51,9 +51,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && echo "$sha  /tmp/pi.tar.gz" | sha256sum --check --strict \
     && mkdir -p /out \
     && tar -xzf /tmp/pi.tar.gz -C /tmp \
-    && install -m 0755 /tmp/pi/pi /out/pi
+    && install -m 0755 /tmp/pi/pi /out/pi \
+    && cp -a /tmp/pi/theme /out/theme \
+    && test -f /out/theme/dark.json \
+    && test -f /out/theme/light.json
 
 FROM node:22-bookworm-slim AS node-runtime
+
+FROM ubuntu:24.04 AS starship-runtime
+ARG TARGETARCH
+ARG STARSHIP_VERSION=1.26.0
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$TARGETARCH" in \
+         amd64|"") target=x86_64-unknown-linux-musl; sha=b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3 ;; \
+         arm64) target=aarch64-unknown-linux-musl; sha=dc30189378d2f2e287384e8a692d3f95ad1df64cf0e8c36aa9201516028aed6b ;; \
+         *) exit 64 ;; \
+       esac \
+    && curl -fsSL --retry 3 \
+         "https://github.com/starship/starship/releases/download/v${STARSHIP_VERSION}/starship-${target}.tar.gz" \
+         -o /tmp/starship.tar.gz \
+    && echo "$sha  /tmp/starship.tar.gz" | sha256sum --check --strict \
+    && tar -xzf /tmp/starship.tar.gz -C /usr/local/bin starship
 
 FROM ubuntu:24.04
 LABEL org.opencontainers.image.title="oqto-workspace" \
@@ -61,18 +80,31 @@ LABEL org.opencontainers.image.title="oqto-workspace" \
       org.opencontainers.image.source="https://github.com/byteowlz/oqto"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      bubblewrap ca-certificates coreutils curl findutils git jq openssh-client procps python3 \
-      python3-venv ripgrep tini tmux ttyd unzip xz-utils \
+      bat bubblewrap ca-certificates coreutils curl eza fd-find findutils fzf git jq \
+      openssh-client procps python3 python3-venv ripgrep tini tmux ttyd unzip xz-utils zoxide \
     && rm -rf /var/lib/apt/lists/* \
     && if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi
 RUN if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi \
     && groupadd --gid 1000 oqto \
-    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash oqto
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash oqto \
+    # Ubuntu names these binaries after their packages; expose the canonical
+    # cross-platform command names expected by agents and host placements.
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && ln -s /usr/bin/batcat /usr/local/bin/bat
 
 # Pi is the official checksummed standalone Bun executable. Node remains for
 # workspace tools, but Pi no longer depends on host npm resolution.
-COPY --from=pi-runtime /out/pi /usr/local/bin/pi
+# Pi's built-in theme assets are runtime-critical and must stay adjacent to
+# the standalone executable; copying only the binary crashes before RPC init.
+COPY --from=pi-runtime /out/ /usr/local/bin/
+# Copy Node's coherent npm installation, not only the node executable. Pi
+# package loading invokes npm directly.
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && npm --version >/dev/null
+COPY --from=starship-runtime /usr/local/bin/starship /usr/local/bin/starship
 
 COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=typst-runtime /usr/local/bin/typst /usr/local/bin/typst
@@ -80,15 +112,36 @@ COPY --from=uv-runtime /uv /uvx /usr/local/bin/
 COPY dist/immutable/bin/oqto-runner /usr/local/bin/oqto-runner
 COPY dist/immutable/bin/oqto-sandbox /usr/local/bin/oqto-sandbox
 COPY dist/immutable/bin/oqto-files /usr/local/bin/oqto-files
+COPY dist/immutable/bin/pi-bridge /usr/local/bin/pi-bridge
 COPY dist/immutable/seccomp/default.bpf /usr/local/share/oqto/seccomp/default.bpf
 COPY deploy/workspace/sandbox.toml /etc/oqto/sandbox.toml
 # Same upload-limit template as host deployments; baked because container
 # /etc is immutable. Keep aligned with [server].max_upload_size_mb.
 COPY dist/mutable-templates/etc/oqto/files.toml /etc/oqto/files.toml
 COPY deploy/workspace/entrypoint.sh /usr/local/bin/oqto-workspace-entrypoint
+COPY deploy/workspace/shell-init.sh /etc/oqto/shell-init.sh
+COPY deploy/workspace/required-commands.txt /usr/local/share/oqto/workspace-required-commands.txt
+
+# Fail the image build on runtime/toolchain drift. oqto-log is intentionally
+# not a command: it is embedded in oqto-runner via oqto-history and receives a
+# functional chat persistence test in the placement live suite.
+RUN missing=0; \
+    while IFS= read -r command; do \
+      case "$command" in ''|'#'*) continue ;; esac; \
+      if ! command -v "$command" >/dev/null 2>&1; then \
+        echo "ERROR: required workspace command missing: $command" >&2; missing=1; \
+      fi; \
+    done < /usr/local/share/oqto/workspace-required-commands.txt; \
+    test "$missing" -eq 0; \
+    npm --version >/dev/null; \
+    pi-bridge --help >/dev/null; \
+    starship --version >/dev/null
 
 RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
     && mkdir -p /workspace /run/oqto \
+    # HOME is a durable volume and may hide image-layer dotfiles. System-wide
+    # bashrc is therefore the stable, preserve-first initialization seam.
+    && printf '\n# Oqto workspace shell\n. /etc/oqto/shell-init.sh\n' >> /etc/bash.bashrc \
     && chown -R 1000:1000 /workspace /run/oqto /home/oqto
 
 ENV HOME=/home/oqto \
