@@ -62,7 +62,7 @@ LABEL org.opencontainers.image.title="oqto-workspace" \
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bubblewrap ca-certificates coreutils curl findutils git jq openssh-client procps python3 \
-      python3-venv ripgrep tini tmux unzip xz-utils \
+      python3-venv ripgrep tini tmux ttyd unzip xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi
 RUN if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi \
@@ -82,6 +82,9 @@ COPY dist/immutable/bin/oqto-sandbox /usr/local/bin/oqto-sandbox
 COPY dist/immutable/bin/oqto-files /usr/local/bin/oqto-files
 COPY dist/immutable/seccomp/default.bpf /usr/local/share/oqto/seccomp/default.bpf
 COPY deploy/workspace/sandbox.toml /etc/oqto/sandbox.toml
+# Same upload-limit template as host deployments; baked because container
+# /etc is immutable. Keep aligned with [server].max_upload_size_mb.
+COPY dist/mutable-templates/etc/oqto/files.toml /etc/oqto/files.toml
 COPY deploy/workspace/entrypoint.sh /usr/local/bin/oqto-workspace-entrypoint
 
 RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
