@@ -4,22 +4,22 @@
 # Run `just update-deps` to refresh this manifest from local repos and git tags.
 
 [oqto]
-version = "0.4.0"
+version = "0.5.0"
 description = "Main platform (this repo)"
 
 [byteowlz]
 # Core backend services. All published via the shared byt release pipeline
 # (ADR-0021): {name}-v{ver}-{triple}.tar.gz + bin/ + checksums.txt, consumed by
 # `oqto-setup acquire`. Refresh with `just update-deps`.
-eavs = "0.7.3"
+eavs = "0.8.1"
 mmry = "0.13.4"
 trx = "0.6.3"
 agntz = "0.3.2"
 sx = "2.5.0"
-scrpr = "1.1.1"
+scrpr = "1.1.2"
 tmpltr = "0.3.2"
 sldr = "0.8.1"
-skdlr = "0.2.7"
+skdlr = "0.2.8"
 ignr = "0.1.3"
 
 [optional]
@@ -37,9 +37,6 @@ kokorox = "0.2.3"
 pi = "0.80.10"  # official standalone release; staged + RPC-verified before atomic promotion
 pi-linux-x64-sha256 = "ab6604f6c3f3d050783e7abbbdd1f79b775b20f3969833ce9721740685d01e13"
 pi-linux-arm64-sha256 = "dfe4340063dfe27406fa64aac99d904726fac079197c4579b9e8155175d05272"
-pi-extensions = "9884c7a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
+pi-extensions = "e9f158619aa11a92f050baf75340298755bc686a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
-slidev = "latest"  # Required by sldr: https://sli.dev
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv
-yt-dlp = "latest"  # Media downloader: https://github.com/yt-dlp/yt-dlp
-whisper-cpp = "latest"  # Speech-to-text: https://github.com/ggerganov/whisper.cpp
