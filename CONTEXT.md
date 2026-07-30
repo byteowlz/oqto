@@ -52,7 +52,7 @@ A named collection of work directories, owned by one Account (personal) or share
 _Avoid_: project; and note the code's current `workspace_path` / `SharedWorkspace.path` actually name a work directory / Workspace respectively — a pending rename.
 
 **Work directory**:
-The directory a harness process runs in and loads its `AGENTS.md` from — the unit carrying a single agent persona. A Workspace contains many; each can run its own agent.
+The directory a harness process runs in and loads its `AGENTS.md` from — the unit carrying a single agent persona. A Workspace contains many; each can run its own agent. Oqto identifies it publicly with one stable work-directory id; host paths and mount sources are changeable binding facts, not public identity.
 _Avoid_: workspace (that is the whole), cwd, repo.
 
 **Harness**:
@@ -85,6 +85,10 @@ The harness-agnostic message/event/command format spoken between frontend, backe
 **Surface**:
 A top-level section of the Oqto shell itself — routed, role-gated, build-time linked, and trusted. Surfaces have no capability boundary because they *are* the shell (see ADR-0027).
 _Avoid_: app (a Surface is not installable, shareable, or sandboxed)
+
+**Workbench**:
+The interactive area scoped to one work directory where an Account delegates and inspects work across Sessions, files, and optional tools. A Workbench may focus one Session without hiding the work directory's shared files or destroying other Session state.
+_Avoid_: app (an App may run inside a Workbench), workspace (that is the collaborative container), session (one Workbench can expose several Sessions)
 
 **App**:
 A UI unit that reaches everything outside itself through the Host capability contract. Installable, shareable, and promotable without rebuilding Oqto; runs standalone or embedded from the same artifact. Distinguish its three independent layers: the Artifact (versioned, content-addressed code + manifest), an Instance (one isolated running copy), and its Data binding (the mounts granted to it).
