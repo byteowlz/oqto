@@ -122,6 +122,56 @@ impl SessionReadiness for HttpSessionReadiness {
     }
 }
 
+/// Single bounded HTTP probe against a resolved service target. Any HTTP
+/// response (including auth challenges) proves the service is accepting
+/// connections.
+async fn http_probe_ok(
+    target: &crate::runner::router::ServiceTarget,
+    path_and_query: &str,
+) -> bool {
+    use http_body_util::Empty;
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+
+    let request_uri: hyper::Uri = match target {
+        crate::runner::router::ServiceTarget::Tcp { host, port } => {
+            match format!("http://{host}:{port}{path_and_query}").parse() {
+                Ok(uri) => uri,
+                Err(_) => return false,
+            }
+        }
+        crate::runner::router::ServiceTarget::Unix { path } => {
+            hyperlocal::Uri::new(path, path_and_query).into()
+        }
+    };
+
+    let request = match hyper::Request::builder()
+        .uri(request_uri)
+        .body(Empty::<hyper::body::Bytes>::new())
+    {
+        Ok(request) => request,
+        Err(_) => return false,
+    };
+
+    let probe = async {
+        match target {
+            crate::runner::router::ServiceTarget::Tcp { .. } => {
+                let client = Client::builder(TokioExecutor::new())
+                    .build(hyper_util::client::legacy::connect::HttpConnector::new());
+                client.request(request).await.is_ok()
+            }
+            crate::runner::router::ServiceTarget::Unix { .. } => {
+                let client = Client::builder(TokioExecutor::new()).build(hyperlocal::UnixConnector);
+                client.request(request).await.is_ok()
+            }
+        }
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), probe)
+        .await
+        .unwrap_or(false)
+}
+
 /// Inject `AGENT_CTX_*` platform/identity metadata into an agent's environment.
 ///
 /// Schema: `schemas/agent-context-env`. Ownership split (ADR-0013): the
@@ -369,6 +419,10 @@ pub struct SessionService {
     eavs: Option<Arc<dyn EavsApi>>,
     readiness: Arc<dyn SessionReadiness>,
     agent_browser: AgentBrowserManager,
+    /// Placement records for container-placed workspaces. Sessions whose
+    /// workspace lives inside a placement are served by that placement's
+    /// runner and their services are reached via exposed sockets.
+    placements: Option<Arc<dyn oqto_placement::PlacementStore>>,
     config: SessionServiceConfig,
 }
 
@@ -398,8 +452,19 @@ impl SessionService {
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
+            placements: None,
             config,
         }
+    }
+
+    /// Attach the placement store so container-placed workspaces route
+    /// session services through their placement runner.
+    pub fn with_placement_store(
+        mut self,
+        placements: Arc<dyn oqto_placement::PlacementStore>,
+    ) -> Self {
+        self.placements = Some(placements);
+        self
     }
 
     /// Create a new session service with EAVS integration.
@@ -419,6 +484,7 @@ impl SessionService {
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
+            placements: None,
             config,
         }
     }
@@ -443,6 +509,7 @@ impl SessionService {
             eavs: None,
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
+            placements: None,
             config,
         }
     }
@@ -465,6 +532,7 @@ impl SessionService {
             eavs: Some(eavs),
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
+            placements: None,
             config,
         }
     }
@@ -501,6 +569,102 @@ impl SessionService {
                 RunnerClient::for_user(&linux_user)
             }
         }
+    }
+
+    /// Find the placement record (if any) whose host workspace directory
+    /// contains `workspace_path`.
+    async fn placement_for_workspace_path(
+        &self,
+        workspace_path: &str,
+    ) -> Option<oqto_placement::PlacementRecord> {
+        let store = self.placements.as_ref()?;
+        let path = std::path::Path::new(workspace_path);
+        let records = match store.list().await {
+            Ok(records) => records,
+            Err(err) => {
+                warn!("placement store list failed: {err:#}");
+                return None;
+            }
+        };
+        records.into_iter().find(|record| {
+            record
+                .spec
+                .as_ref()
+                .is_some_and(|spec| path.starts_with(&spec.workspace_dir))
+        })
+    }
+
+    /// Resolve the runner that owns a session's workspace: the placement
+    /// runner when the workspace is container-placed, otherwise the host
+    /// runner for the session's user.
+    async fn runner_for_session(
+        &self,
+        session: &Session,
+    ) -> Result<(RunnerClient, Option<oqto_placement::PlacementRecord>)> {
+        if let Some(record) = self
+            .placement_for_workspace_path(&session.workspace_path)
+            .await
+        {
+            let client =
+                RunnerClient::from_endpoint(&record.runner_endpoint).with_context(|| {
+                    format!(
+                        "building placement runner endpoint for session {} (workspace {})",
+                        session.id, record.workspace_id
+                    )
+                })?;
+            return Ok((client, Some(record)));
+        }
+        Ok((self.runner_for_user(&session.user_id)?, None))
+    }
+
+    /// Readiness for container-placed sessions: services listen on the
+    /// container's loopback, so probe through runner-exposed sockets instead
+    /// of host ports.
+    async fn wait_for_placed_session_services(
+        &self,
+        runner: &RunnerClient,
+        record: &oqto_placement::PlacementRecord,
+        fileserver_port: u16,
+        ttyd_port: u16,
+    ) -> Result<()> {
+        const ATTEMPTS: u32 = 60;
+        const DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+        let mut last_error = String::new();
+        for _ in 0..ATTEMPTS {
+            let fileserver_ok = match crate::runner::router::exposed_service_target(
+                runner,
+                record,
+                fileserver_port,
+            )
+            .await
+            {
+                Ok(target) => http_probe_ok(&target, "/tree?path=.").await,
+                Err(err) => {
+                    last_error = format!("fileserver expose failed: {err:#}");
+                    false
+                }
+            };
+            let ttyd_ok = match crate::runner::router::exposed_service_target(
+                runner, record, ttyd_port,
+            )
+            .await
+            {
+                Ok(target) => http_probe_ok(&target, "/").await,
+                Err(err) => {
+                    last_error = format!("ttyd expose failed: {err:#}");
+                    false
+                }
+            };
+            if fileserver_ok && ttyd_ok {
+                return Ok(());
+            }
+            tokio::time::sleep(DELAY).await;
+        }
+        anyhow::bail!(
+            "placed session services not ready (fileserver port {fileserver_port}, ttyd port \
+             {ttyd_port}) for workspace {}: {last_error}",
+            record.workspace_id
+        )
     }
 
     async fn stop_session_for_user(&self, user_id: &str, session_id: &str) -> Result<()> {
@@ -716,6 +880,21 @@ impl SessionService {
         } else {
             self.workspace_root_for_user(user_id).join(&requested)
         };
+
+        // Container-placed workspaces live under the placement data root, not
+        // the host workspace roots; the placement record is the authority.
+        // With userns=auto the path may not even be readable host-side.
+        if let Some(record) = self
+            .placement_for_workspace_path(&resolved.to_string_lossy())
+            .await
+        {
+            debug!(
+                "workspace path {} resolved via placement {}",
+                resolved.display(),
+                record.workspace_id
+            );
+            return Ok(resolved);
+        }
 
         if !resolved.exists() {
             if let Some(location) = self
@@ -1397,7 +1576,7 @@ impl SessionService {
         session: &Session,
         eavs_virtual_key: Option<&str>,
     ) -> Result<()> {
-        let runner = self.runner_for_user(&session.user_id)?;
+        let (runner, placement) = self.runner_for_session(session).await?;
 
         let agent_port = session.agent_port as u16;
         let fileserver_port = session.fileserver_port as u16;
@@ -1485,11 +1664,18 @@ impl SessionService {
             .await?;
 
         // Wait for core services to become reachable
-        if let Err(e) = self
-            .readiness
-            .wait_for_session_services(fileserver_port, ttyd_port)
-            .await
-        {
+        let readiness_result = match placement.as_ref() {
+            Some(record) => {
+                self.wait_for_placed_session_services(&runner, record, fileserver_port, ttyd_port)
+                    .await
+            }
+            None => {
+                self.readiness
+                    .wait_for_session_services(fileserver_port, ttyd_port)
+                    .await
+            }
+        };
+        if let Err(e) = readiness_result {
             // Best-effort cleanup: stop the session via runner
             if let Err(stop_err) = runner.stop_session(&session.id).await {
                 warn!(
@@ -1551,8 +1737,8 @@ impl SessionService {
             }
             RuntimeMode::Local => {
                 // Stop the local processes via runner (per-user in multi-user mode)
-                match self.runner_for_user(&session.user_id) {
-                    Ok(runner) => {
+                match self.runner_for_session(&session).await {
+                    Ok((runner, _)) => {
                         if let Err(e) = runner.stop_session(session_id).await {
                             warn!("Failed to stop local processes for {}: {:?}", session_id, e);
                         }
@@ -1733,18 +1919,24 @@ impl SessionService {
                 }
             }
             RuntimeMode::Local => {
-                let runner = self.runner_for_user(&session.user_id)?;
-
-                // Use local_runtime for port utilities only
-                let local_runtime = self
-                    .local_runtime()
-                    .context("local runtime not available")?;
+                let (runner, placement) = self.runner_for_session(session).await?;
 
                 let mut agent_port = session.agent_port as u16;
                 let mut fileserver_port = session.fileserver_port as u16;
                 let mut ttyd_port = session.ttyd_port as u16;
 
-                if !local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port) {
+                // Placement sessions bind ports on the container's loopback;
+                // host port availability is irrelevant there.
+                let host_ports_conflict = if placement.is_none() {
+                    let local_runtime = self
+                        .local_runtime()
+                        .context("local runtime not available")?;
+                    !local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port)
+                } else {
+                    false
+                };
+
+                if host_ports_conflict {
                     warn!(
                         "Ports {}/{}/{} are in use for session {}, selecting a new free range",
                         agent_port, fileserver_port, ttyd_port, session_id
@@ -1874,14 +2066,26 @@ impl SessionService {
                 }
 
                 // Wait for services to become ready
-                if let Err(e) = self
-                    .readiness
-                    .wait_for_session_services(
-                        session.fileserver_port as u16,
-                        session.ttyd_port as u16,
-                    )
-                    .await
-                {
+                let readiness_result = match placement.as_ref() {
+                    Some(record) => {
+                        self.wait_for_placed_session_services(
+                            &runner,
+                            record,
+                            session.fileserver_port as u16,
+                            session.ttyd_port as u16,
+                        )
+                        .await
+                    }
+                    None => {
+                        self.readiness
+                            .wait_for_session_services(
+                                session.fileserver_port as u16,
+                                session.ttyd_port as u16,
+                            )
+                            .await
+                    }
+                };
+                if let Err(e) = readiness_result {
                     error!(
                         "Services not ready after resume for session {}: {:?}",
                         session_id, e
@@ -2020,8 +2224,8 @@ impl SessionService {
             }
             RuntimeMode::Local => {
                 // Stop any remaining processes via runner (should already be stopped)
-                match self.runner_for_user(&session.user_id) {
-                    Ok(runner) => {
+                match self.runner_for_session(&session).await {
+                    Ok((runner, _)) => {
                         let _ = runner.stop_session(session_id).await;
                     }
                     Err(e) => {

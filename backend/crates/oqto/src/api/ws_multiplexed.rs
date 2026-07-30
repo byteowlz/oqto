@@ -1258,7 +1258,11 @@ async fn process_ws_command(
 
     let cmd_id = ws_command_id(&cmd);
 
+    // With container placement active, agent commands are routed per-command
+    // to placement runners; the connection-level host runner is only a
+    // fallback and must not fail-close commands a placement runner can serve.
     if matches!(&cmd, WsCommand::Agent(_))
+        && state.placement_manager.is_none()
         && let Some(client) = rc_snapshot.as_ref()
         && let Err(err) = client.ensure_ready_with_recovery().await
     {

@@ -253,12 +253,15 @@ where
         spec.validate()?;
         tokio::fs::create_dir_all(&spec.workspace_dir).await?;
         tokio::fs::create_dir_all(&spec.state_dir).await?;
-        if matches!(spec.userns, PlacementUserns::Auto { .. })
-            && let RunnerEndpointConfig::Unix { path } = &spec.runner_endpoint
+        if let RunnerEndpointConfig::Unix { path } = &spec.runner_endpoint
             && let Some(parent) = path.parent()
-            && let Some(session_dir) = parent.parent()
         {
-            tokio::fs::create_dir_all(session_dir.join("endpoints")).await?;
+            tokio::fs::create_dir_all(parent).await?;
+            if matches!(spec.userns, PlacementUserns::Auto { .. })
+                && let Some(session_dir) = parent.parent()
+            {
+                tokio::fs::create_dir_all(session_dir.join("endpoints")).await?;
+            }
         }
         let runtime_name = runtime_name(&spec.workspace_id);
         let pod_name = format!("{runtime_name}-pod");
@@ -300,14 +303,23 @@ where
     }
 
     async fn health(&self, placement: &PlacementRecord) -> Result<PlacementHealth> {
-        let output = self
+        let output = match self
             .checked(&[
                 "inspect".into(),
                 "--format".into(),
                 "{{.State.Running}}".into(),
                 placement.runtime_name.clone().into(),
             ])
-            .await?;
+            .await
+        {
+            Ok(output) => output,
+            // A removed container is definitively stopped; reconcile must be
+            // able to restart it from the recorded spec.
+            Err(error) if error.to_string().contains("no such object") => {
+                return Ok(PlacementHealth::Stopped);
+            }
+            Err(error) => return Err(error),
+        };
         if String::from_utf8_lossy(&output.stdout).trim() != "true" {
             return Ok(PlacementHealth::Stopped);
         }
@@ -376,6 +388,37 @@ mod tests {
         assert!(rendered.contains("oqto.placement=rootless-podman"));
         assert!(rendered.contains("--security-opt=no-new-privileges"));
         assert!(!rendered.contains("sh -c"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_creates_runner_socket_and_endpoint_dirs_before_mounting() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let spec = PlacementSpec {
+            workspace_id: "workspace-A".to_string(),
+            account_id: "account-A".to_string(),
+            image: "localhost/oqto-workspace:test".to_string(),
+            workspace_dir: temp.path().join("workspace"),
+            state_dir: temp.path().join("state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: temp.path().join("runtime/rsock/runner.sock"),
+            },
+            server_tls: None,
+            environment: Default::default(),
+            cpu_limit: None,
+            memory_limit: None,
+            network: Default::default(),
+            userns: PlacementUserns::Auto { size: None },
+        };
+        let supervisor = PodmanSupervisor {
+            podman_binary: "podman".to_string(),
+            command: RecordingRunner {
+                calls: Mutex::new(Vec::new()),
+            },
+        };
+        supervisor.start(&spec).await?;
+        assert!(temp.path().join("runtime/rsock").is_dir());
+        assert!(temp.path().join("runtime/endpoints").is_dir());
         Ok(())
     }
 }

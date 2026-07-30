@@ -36,3 +36,4 @@ rg
 starship
 tmux
 zoxide
+zsh

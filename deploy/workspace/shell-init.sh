@@ -12,10 +12,18 @@ if command -v eza >/dev/null 2>&1; then
   alias ll='eza --group-directories-first --long --all --git'
 fi
 
+if [ -n "${ZSH_VERSION:-}" ]; then
+  _oqto_shell=zsh
+else
+  _oqto_shell=bash
+fi
+
 if command -v zoxide >/dev/null 2>&1; then
-  eval "$(zoxide init bash)"
+  eval "$(zoxide init "$_oqto_shell")"
 fi
 
 if command -v starship >/dev/null 2>&1; then
-  eval "$(starship init bash)"
+  eval "$(starship init "$_oqto_shell")"
 fi
+
+unset _oqto_shell

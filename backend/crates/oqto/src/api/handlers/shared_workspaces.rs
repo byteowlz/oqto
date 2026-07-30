@@ -47,32 +47,11 @@ async fn finish_container_placement(
     let Some(manager) = state.placement_manager.as_ref() else {
         return Ok(());
     };
-    if let Err(e) = manager
-        .provision(
-            &workspace.id,
-            user_id,
-            std::path::PathBuf::from(&workspace.path),
-        )
-        .await
-    {
-        tracing::error!(
-            workspace_id = %workspace.id,
-            error = %e,
-            "failed to provision container placement; rolling back workspace"
-        );
-        if let Err(rollback) = service.delete(&workspace.id, user_id, false).await {
-            tracing::error!(
-                workspace_id = %workspace.id,
-                error = %rollback,
-                "rollback of unplaced workspace failed"
-            );
-        }
-        return Err(ApiError::internal(format!(
-            "failed to provision workspace container: {e}"
-        )));
-    }
 
-    // EAVS into the workspace volume. Best-effort: log warning if it fails.
+    // EAVS into the workspace volume BEFORE the container starts: with
+    // userns=auto the volume is chowned into the container's subuid range at
+    // start, after which the backend user can no longer write into it.
+    // Best-effort: log warning if it fails.
     if let Some(eavs_client) = state.eavs_client.as_ref() {
         let sw_user_id = format!("shared-{}", workspace.id);
         let home = std::path::Path::new(&workspace.path)
@@ -102,6 +81,31 @@ async fn finish_container_placement(
                 );
             }
         }
+    }
+
+    if let Err(e) = manager
+        .provision(
+            &workspace.id,
+            user_id,
+            std::path::PathBuf::from(&workspace.path),
+        )
+        .await
+    {
+        tracing::error!(
+            workspace_id = %workspace.id,
+            error = format!("{e:#}"),
+            "failed to provision container placement; rolling back workspace"
+        );
+        if let Err(rollback) = service.delete(&workspace.id, user_id, false).await {
+            tracing::error!(
+                workspace_id = %workspace.id,
+                error = %rollback,
+                "rollback of unplaced workspace failed"
+            );
+        }
+        return Err(ApiError::internal(format!(
+            "failed to provision workspace container: {e:#}"
+        )));
     }
     Ok(())
 }

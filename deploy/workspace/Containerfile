@@ -81,12 +81,12 @@ LABEL org.opencontainers.image.title="oqto-workspace" \
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bat bubblewrap ca-certificates coreutils curl eza fd-find findutils fzf git jq \
-      openssh-client procps python3 python3-venv ripgrep tini tmux ttyd unzip xz-utils zoxide \
+      openssh-client procps python3 python3-venv ripgrep tini tmux ttyd unzip xz-utils zoxide zsh \
     && rm -rf /var/lib/apt/lists/* \
     && if id ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi
 RUN if getent group ubuntu >/dev/null 2>&1; then groupdel ubuntu; fi \
     && groupadd --gid 1000 oqto \
-    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash oqto \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/zsh oqto \
     # Ubuntu names these binaries after their packages; expose the canonical
     # cross-platform command names expected by agents and host placements.
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
@@ -142,6 +142,7 @@ RUN chmod 0755 /usr/local/bin/pi /usr/local/bin/oqto-workspace-entrypoint \
     # HOME is a durable volume and may hide image-layer dotfiles. System-wide
     # bashrc is therefore the stable, preserve-first initialization seam.
     && printf '\n# Oqto workspace shell\n. /etc/oqto/shell-init.sh\n' >> /etc/bash.bashrc \
+    && printf '\n# Oqto workspace shell\n. /etc/oqto/shell-init.sh\n' >> /etc/zsh/zshrc \
     && chown -R 1000:1000 /workspace /run/oqto /home/oqto
 
 ENV HOME=/home/oqto \

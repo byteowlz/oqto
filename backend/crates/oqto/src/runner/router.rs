@@ -69,6 +69,17 @@ pub async fn resolve_service_target(
     };
     let client = RunnerClient::from_endpoint(&record.runner_endpoint)
         .with_context(|| format!("building runner endpoint for workspace {workspace_id}"))?;
+    exposed_service_target(&client, &record, port).await
+}
+
+/// Ask a placement's runner to expose `port` (idempotent) and translate the
+/// returned endpoint into a host-side dialable target.
+pub async fn exposed_service_target(
+    client: &RunnerClient,
+    record: &oqto_placement::PlacementRecord,
+    port: u16,
+) -> Result<ServiceTarget> {
+    let workspace_id = &record.workspace_id;
     let endpoint = client
         .expose_port(port)
         .await

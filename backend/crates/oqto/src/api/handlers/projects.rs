@@ -341,6 +341,58 @@ fn read_template_defaults(template_dir: &std::path::Path) -> Option<ProjectTempl
     if has_any { Some(defaults) } else { None }
 }
 
+/// Copy a template tree into a container-placed workspace through its
+/// runner. With userns=auto the workspace volume is owned by the container's
+/// subuid range, so the backend cannot write into it host-side.
+async fn copy_template_dir_via_runner(
+    runner: &oqto_runner::client::RunnerClient,
+    src: &std::path::Path,
+    dest: &std::path::Path,
+) -> Result<(), ApiError> {
+    let mut dirs = vec![(src.to_path_buf(), dest.to_path_buf())];
+    runner
+        .create_directory(dest, true)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to create project dir: {e:#}")))?;
+    while let Some((src_dir, dest_dir)) = dirs.pop() {
+        for entry in fs::read_dir(&src_dir)
+            .map_err(|e| ApiError::internal(format!("Failed to read template dir: {}", e)))?
+        {
+            let entry = entry
+                .map_err(|e| ApiError::internal(format!("Failed to read template entry: {}", e)))?;
+            let file_type = entry.file_type().map_err(|e| {
+                ApiError::internal(format!("Failed to read template entry type: {}", e))
+            })?;
+            let file_name = entry.file_name();
+            if file_name.to_string_lossy() == ".git" {
+                continue;
+            }
+            let src_path = entry.path();
+            let dest_path = dest_dir.join(&file_name);
+            if file_type.is_dir() {
+                runner
+                    .create_directory(&dest_path, true)
+                    .await
+                    .map_err(|e| {
+                        ApiError::internal(format!("Failed to create project dir: {e:#}"))
+                    })?;
+                dirs.push((src_path, dest_path));
+            } else if file_type.is_file() {
+                let content = fs::read(&src_path).map_err(|e| {
+                    ApiError::internal(format!("Failed to read template file: {}", e))
+                })?;
+                runner
+                    .write_file(&dest_path, &content, true)
+                    .await
+                    .map_err(|e| {
+                        ApiError::internal(format!("Failed to copy template file: {e:#}"))
+                    })?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), ApiError> {
     fs::create_dir_all(dest)
         .map_err(|e| ApiError::internal(format!("Failed to create project dir: {}", e)))?;
@@ -536,6 +588,68 @@ pub async fn create_project_from_template(
         };
 
     let target_dir = workspace_root.join(&project_rel);
+
+    // Container-placed shared workspace: the volume belongs to the container's
+    // user namespace, so all writes must go through the workspace runner.
+    let container_runner = match request.shared_workspace_id.as_deref() {
+        Some(sw_id) => {
+            let placed = match state.placement_store.as_ref() {
+                Some(store) => store
+                    .find_workspace(sw_id)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("placement lookup failed: {e:#}")))?
+                    .is_some(),
+                None => false,
+            };
+            if placed {
+                let target = crate::runner::router::ExecutionTarget::SharedWorkspace {
+                    workspace_id: sw_id.to_string(),
+                };
+                crate::runner::router::resolve_runner_for_target(&state, user.id(), &target)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("resolving workspace runner: {e:#}")))?
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    if let Some(runner) = container_runner {
+        if runner
+            .stat(&target_dir)
+            .await
+            .map(|stat| stat.exists)
+            .unwrap_or(false)
+        {
+            return Err(ApiError::bad_request("project path already exists"));
+        }
+        copy_template_dir_via_runner(&runner, &template_dir, &target_dir).await?;
+        // Best-effort git init inside the container.
+        if let Err(e) = runner
+            .spawn_process(
+                format!("git-init-{}", Uuid::new_v4()),
+                "git",
+                vec!["init".to_string(), "-b".to_string(), "main".to_string()],
+                &target_dir,
+                HashMap::new(),
+                false,
+            )
+            .await
+        {
+            tracing::warn!("git init via workspace runner failed (non-fatal): {e:#}");
+        }
+        let name = target_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| request.project_path.clone());
+        return Ok(Json(WorkspaceDirEntry {
+            name,
+            path: project_rel.to_string_lossy().to_string(),
+            entry_type: "directory".to_string(),
+            logo: None,
+        }));
+    }
 
     // In multi-user mode, delegate to usermgr (runs as root, can write to user homes).
     let is_multi_user = state.linux_users.as_ref().is_some_and(|lu| lu.enabled);

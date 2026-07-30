@@ -127,8 +127,44 @@ pub(super) async fn handle_files_command(
         }
     }
 
+    // Container-placed workspaces must use their placement runner. Their
+    // auto-userns volumes are intentionally inaccessible to both the backend
+    // process and the connection-level host runner.
+    let placement_plane: Option<Arc<dyn UserPlane>> = if state.placement_manager.is_some() {
+        let workspace_root_str = workspace_root.to_string_lossy();
+        match resolve_target_for_workspace_path(state, user_id, &workspace_root_str).await {
+            Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
+                Ok(Some(client)) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(RunnerUserPlane::new(client));
+                    Some(Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    )))
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: format!("File access unavailable: placement runner error ({err:#})"),
+                    }));
+                }
+            },
+            Err(err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!("File access unavailable: placement target error ({err:#})"),
+                }));
+            }
+        }
+    } else {
+        None
+    };
+
     let is_multi_user = state.user_isolation_enabled();
-    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
+    let user_plane: Arc<dyn UserPlane> = if let Some(plane) = placement_plane {
+        plane
+    } else if is_multi_user {
         let Some(pattern) = state.runner_socket_pattern.as_deref() else {
             error!("Multi-user mode without runner_socket_pattern configured");
             return Some(WsEvent::Files(FilesWsEvent::Error {

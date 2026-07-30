@@ -2308,6 +2308,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
+    let placement_store: Arc<dyn oqto_placement::PlacementStore> = Arc::new(
+        oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
+            .await
+            .context("initializing placement registry")?,
+    );
+
     // Create session service based on runtime mode
     let session_service = if local_mode {
         let Some(local_rt) = local_runtime else {
@@ -2345,6 +2351,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             session::SessionService::new(session_repo, container_rt, session_config.clone())
         }
     };
+    let session_service = session_service.with_placement_store(placement_store.clone());
 
     let mut sldr_users: Option<local::UserSldrManager> = None;
 
@@ -2499,11 +2506,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     state = state.with_single_user(single_user);
     state = state.with_feedback_config(ctx.config.feedback.clone());
-    let placement_store: Arc<dyn oqto_placement::PlacementStore> = Arc::new(
-        oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
-            .await
-            .context("initializing placement registry")?,
-    );
     state = state.with_placement_store(placement_store.clone());
     if ctx.config.placement.mode == runner::placement::PlacementMode::Container {
         let manager = Arc::new(runner::placement::PlacementManager::new(
@@ -2680,8 +2682,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             eavs_config.oauth.redirect_uri.clone(),
         );
 
-        if let Some(ref master_key) = eavs_config.master_key {
-            match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+        // The configured value may be a literal, `env:VAR` or `file:PATH`.
+        let resolved_master_key = match eavs_config.master_key.as_deref() {
+            Some(value) => match crate::auth::resolve_secret_value(value) {
+                Ok(resolved) => Some(resolved),
+                Err(err) => {
+                    warn!("Failed to resolve eavs.master_key: {err}");
+                    None
+                }
+            },
+            None => None,
+        };
+        if let Some(master_key) = resolved_master_key {
+            match eavs::EavsClient::new(&eavs_config.base_url, &master_key) {
                 Ok(client) => {
                     info!("EAVS client initialized at {}", eavs_config.base_url);
                     state = state.with_eavs_client(client);
