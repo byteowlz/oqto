@@ -102,14 +102,29 @@ async fn proxy_fileserver_for_workspace_inner(
     query: WorkspaceProxyQuery,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
-    let session = get_io_session_for_workspace(&state, &user, &query.workspace_path).await?;
+    let (session, target) =
+        get_io_session_for_workspace(&state, &user, &query.workspace_path).await?;
     let directory_query = build_fileserver_query(&query.workspace_path, req.uri().query());
+    let service_target = crate::runner::router::resolve_service_target(
+        &state,
+        user.id(),
+        &target,
+        session.fileserver_port as u16,
+    )
+    .await
+    .map_err(|e| {
+        error!(
+            "Failed to resolve fileserver target for workspace {}: {:?}",
+            query.workspace_path, e
+        );
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
 
     let starting = matches!(session.status, SessionStatus::Starting);
     proxy_http_request_with_query(
         state.http_client.clone(),
         req,
-        session.fileserver_port as u16,
+        &service_target,
         &path,
         starting,
         Some(&directory_query),
@@ -160,7 +175,10 @@ async fn proxy_sldr_internal(
     proxy_http_request(
         state.http_client.clone(),
         req,
-        port,
+        &crate::runner::router::ServiceTarget::Tcp {
+            host: "localhost".to_string(),
+            port,
+        },
         &path,
         true,
         state.max_proxy_body_bytes,

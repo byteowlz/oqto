@@ -189,6 +189,8 @@ impl<R> PodmanSupervisor<R> {
                     "oqto-runner".into(),
                     "--socket".into(),
                     "/run/oqto/runner.sock".into(),
+                    "--expose-dir".into(),
+                    "/run/oqto".into(),
                 ]
             }
             RunnerEndpointConfig::TcpTls { .. } => {

@@ -108,6 +108,16 @@ pub enum RunnerRequest {
     /// Fetch the terminal credential for a session.
     GetTerminalCredential(GetTerminalCredentialRequest),
 
+    /// Expose a workspace-local loopback port to the backend.
+    ///
+    /// Placement-neutral: host placements return the loopback address
+    /// unchanged; container placements return a bind-mounted Unix socket
+    /// path (container-side; the backend translates it to the host path).
+    ExposePort(ExposePortRequest),
+
+    /// Tear down a previously exposed port.
+    UnexposePort(UnexposePortRequest),
+
     // ========================================================================
     // Main Chat Operations (user-plane)
     // ========================================================================
@@ -385,6 +395,12 @@ pub enum RunnerResponse {
     /// Session started (with service ports/PIDs).
     SessionStarted(SessionStartedResponse),
     TerminalCredential(TerminalCredentialResponse),
+
+    /// Port exposed (response to ExposePort).
+    PortExposed(PortExposedResponse),
+
+    /// Port exposure removed (response to UnexposePort).
+    PortUnexposed,
 
     /// Session stopped.
     SessionStopped(SessionStoppedResponse),
@@ -1619,6 +1635,35 @@ pub struct TerminalCredentialResponse {
     pub username: String,
     /// None when the terminal is disabled by policy.
     pub password: Option<String>,
+}
+
+/// Request to expose a workspace-local loopback port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExposePortRequest {
+    pub port: u16,
+}
+
+/// Request to tear down an exposed port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnexposePortRequest {
+    pub port: u16,
+}
+
+/// Typed endpoint returned by ExposePort. The transport is the placement's
+/// concern; callers get one resolvable address, no placement branches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExposedEndpoint {
+    /// Directly reachable TCP address (shared-loopback host placements).
+    Tcp { host: String, port: u16 },
+    /// Unix socket path as seen inside the placement (`/run/oqto/...`).
+    Unix { path: PathBuf },
+}
+
+/// Response to ExposePort.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortExposedResponse {
+    pub endpoint: ExposedEndpoint,
 }
 
 /// Response when session is stopped.

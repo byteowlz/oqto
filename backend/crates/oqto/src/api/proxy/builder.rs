@@ -16,7 +16,7 @@ use log::{debug, error, warn};
 use std::time::Duration;
 
 use crate::auth::CurrentUser;
-use crate::runner::router::{ExecutionTarget, resolve_target_for_workspace_path};
+use crate::runner::router::{ExecutionTarget, ServiceTarget, resolve_target_for_workspace_path};
 use crate::session::{Session, SessionStatus};
 
 use super::super::state::AppState;
@@ -65,13 +65,15 @@ pub async fn get_session_by_id(state: &AppState, session_id: &str) -> Result<Ses
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// Get or create an IO session for a workspace path.
+/// Get or create an IO session for a workspace path, along with the
+/// execution target it resolved to (needed to reach the session's services
+/// through the placement layer).
 pub async fn get_io_session_for_workspace(
     state: &AppState,
     user: &CurrentUser,
     workspace_path: &str,
-) -> Result<Session, StatusCode> {
-    let session_owner = match resolve_target_for_workspace_path(state, user.id(), workspace_path)
+) -> Result<(Session, ExecutionTarget), StatusCode> {
+    let target = resolve_target_for_workspace_path(state, user.id(), workspace_path)
         .await
         .map_err(|e| {
             error!(
@@ -81,7 +83,8 @@ pub async fn get_io_session_for_workspace(
                 e
             );
             StatusCode::SERVICE_UNAVAILABLE
-        })? {
+        })?;
+    let session_owner = match &target {
         ExecutionTarget::Personal => user.id().to_string(),
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state.shared_workspaces.as_ref().ok_or_else(|| {
@@ -92,7 +95,7 @@ pub async fn get_io_session_for_workspace(
                 StatusCode::SERVICE_UNAVAILABLE
             })?;
 
-            sw.linux_user_for_id(&workspace_id)
+            sw.linux_user_for_id(workspace_id)
                 .await
                 .map_err(|e| {
                     error!(
@@ -111,7 +114,7 @@ pub async fn get_io_session_for_workspace(
         }
     };
 
-    state
+    let session = state
         .sessions
         .for_user(&session_owner)
         .get_or_create_io_session_for_workspace(workspace_path)
@@ -122,7 +125,8 @@ pub async fn get_io_session_for_workspace(
                 workspace_path, session_owner, e
             );
             StatusCode::SERVICE_UNAVAILABLE
-        })
+        })?;
+    Ok((session, target))
 }
 
 /// Ensure a session is active for IO proxy requests (fileserver, terminal).
@@ -183,19 +187,38 @@ pub fn enforce_proxy_body_limit(
 // HTTP Proxy Core
 // ============================================================================
 
-/// Proxy an HTTP request to a target port with retry logic.
+/// Dial-side abstraction over the two service transports. One request
+/// surface; the placement decided the connector, not the call site.
+enum TargetClient {
+    Tcp(Client<HttpConnector, Body>),
+    Unix(Client<hyperlocal::UnixConnector, Body>),
+}
+
+impl TargetClient {
+    async fn request(
+        &self,
+        req: Request<Body>,
+    ) -> Result<hyper::Response<hyper::body::Incoming>, hyper_util::client::legacy::Error> {
+        match self {
+            Self::Tcp(client) => client.request(req).await,
+            Self::Unix(client) => client.request(req).await,
+        }
+    }
+}
+
+/// Proxy an HTTP request to a resolved service target with retry logic.
 ///
 /// # Arguments
-/// * `client` - The hyper client to use
+/// * `client` - The hyper client to use for TCP targets
 /// * `req` - The incoming request
-/// * `target_port` - The localhost port to proxy to
+/// * `target` - The resolved service target (loopback port or Unix socket)
 /// * `target_path` - The path on the target server
 /// * `retry_on_connect` - Whether to retry connection errors (for starting services)
 /// * `max_body_bytes` - Maximum body size to accept
 pub async fn proxy_http_request(
     client: Client<HttpConnector, Body>,
     req: Request<Body>,
-    target_port: u16,
+    target: &ServiceTarget,
     target_path: &str,
     retry_on_connect: bool,
     max_body_bytes: usize,
@@ -203,7 +226,7 @@ pub async fn proxy_http_request(
     proxy_http_request_with_query(
         client,
         req,
-        target_port,
+        target,
         target_path,
         retry_on_connect,
         None,
@@ -216,7 +239,7 @@ pub async fn proxy_http_request(
 pub async fn proxy_http_request_with_query(
     client: Client<HttpConnector, Body>,
     req: Request<Body>,
-    target_port: u16,
+    target: &ServiceTarget,
     target_path: &str,
     retry_on_connect: bool,
     query_override: Option<&str>,
@@ -224,18 +247,30 @@ pub async fn proxy_http_request_with_query(
 ) -> Result<Response<Body>, StatusCode> {
     let query = req.uri().query().unwrap_or("");
     let query = query_override.unwrap_or(query);
-    let mut target_uri = format!("http://localhost:{}/{}", target_port, target_path);
+    let mut path_and_query = format!("/{}", target_path);
     if !query.is_empty() {
-        target_uri.push('?');
-        target_uri.push_str(query);
+        path_and_query.push('?');
+        path_and_query.push_str(query);
     }
 
-    debug!("Proxying request to {}", target_uri);
+    debug!("Proxying request to {:?} {}", target, path_and_query);
 
-    let uri: Uri = target_uri.parse().map_err(|e| {
-        error!("Invalid target URI {}: {:?}", target_uri, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let (uri, client): (Uri, TargetClient) = match target {
+        ServiceTarget::Tcp { host, port } => {
+            let target_uri = format!("http://{host}:{port}{path_and_query}");
+            let uri = target_uri.parse().map_err(|e| {
+                error!("Invalid target URI {}: {:?}", target_uri, e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            (uri, TargetClient::Tcp(client))
+        }
+        ServiceTarget::Unix { path } => {
+            let uri = hyperlocal::Uri::new(path, &path_and_query).into();
+            let unix_client = Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build(hyperlocal::UnixConnector);
+            (uri, TargetClient::Unix(unix_client))
+        }
+    };
 
     let (parts, body) = req.into_parts();
 

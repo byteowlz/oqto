@@ -955,7 +955,7 @@ pub(super) async fn terminal_credential_for_session(
 
 async fn connect_ttyd_socket(
     session_id: &str,
-    ttyd_port: u16,
+    target: &crate::runner::router::ServiceTarget,
     password: &str,
 ) -> anyhow::Result<TtydConnection> {
     use tokio_tungstenite::connect_async;
@@ -983,27 +983,49 @@ async fn connect_ttyd_socket(
         return Ok(TtydConnection::Unix(socket));
     }
 
-    let url = format!("ws://localhost:{}/ws", ttyd_port);
-    let mut request = url.into_client_request()?;
-    request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        axum::http::HeaderValue::from_static("tty"),
-    );
-    request.headers_mut().insert("Authorization", auth);
-    // ttyd runs with --check-origin and rejects an upgrade whose Origin does
-    // not match the request host, including a missing one.
-    request.headers_mut().insert(
-        "Origin",
-        axum::http::HeaderValue::from_str(&format!("http://localhost:{}", ttyd_port))?,
-    );
-    let (socket, _response) = connect_async(request).await?;
-    Ok(TtydConnection::Tcp(socket))
+    match target {
+        crate::runner::router::ServiceTarget::Unix { path } => {
+            use tokio::net::UnixStream;
+            use tokio_tungstenite::client_async;
+
+            let stream = UnixStream::connect(path).await?;
+            let mut request = "ws://localhost/ws".into_client_request()?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                axum::http::HeaderValue::from_static("tty"),
+            );
+            request.headers_mut().insert("Authorization", auth);
+            request.headers_mut().insert(
+                "Origin",
+                axum::http::HeaderValue::from_static("http://localhost"),
+            );
+            let (socket, _response) = client_async(request, stream).await?;
+            Ok(TtydConnection::Unix(socket))
+        }
+        crate::runner::router::ServiceTarget::Tcp { host, port } => {
+            let url = format!("ws://{host}:{port}/ws");
+            let mut request = url.into_client_request()?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                axum::http::HeaderValue::from_static("tty"),
+            );
+            request.headers_mut().insert("Authorization", auth);
+            // ttyd runs with --check-origin and rejects an upgrade whose Origin does
+            // not match the request host, including a missing one.
+            request.headers_mut().insert(
+                "Origin",
+                axum::http::HeaderValue::from_str(&format!("http://{host}:{port}"))?,
+            );
+            let (socket, _response) = connect_async(request).await?;
+            Ok(TtydConnection::Tcp(socket))
+        }
+    }
 }
 
 pub(super) async fn start_terminal_task(
     terminal_id: String,
     session_id: String,
-    ttyd_port: u16,
+    ttyd_target: crate::runner::router::ServiceTarget,
     ttyd_password: String,
     cols: u16,
     rows: u16,
@@ -1023,7 +1045,7 @@ pub(super) async fn start_terminal_task(
         let mut attempts: u32 = 0;
         let socket = loop {
             attempts += 1;
-            match connect_ttyd_socket(&session_id, ttyd_port, &ttyd_password).await {
+            match connect_ttyd_socket(&session_id, &ttyd_target, &ttyd_password).await {
                 Ok(socket) => break socket,
                 Err(err) => {
                     if start.elapsed() >= timeout {

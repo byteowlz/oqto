@@ -51,6 +51,11 @@ struct Args {
     /// the bind-mounted Unix socket /run/oqto/endpoints/NAME.sock.
     #[arg(long = "endpoint", value_name = "NAME=PORT")]
     endpoints: Vec<String>,
+    /// Directory shared with the host for exposed-port sockets. Set in
+    /// container placements; when unset, ExposePort returns the loopback
+    /// address directly (host placements share loopback with the backend).
+    #[arg(long, value_name = "DIR")]
+    expose_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -168,7 +173,13 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
     };
-    let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
+    let runner = Runner::new(
+        sandbox_config,
+        binaries,
+        legacy_user_config,
+        pi_manager,
+        args.expose_dir.clone(),
+    );
     if let Some(inherited) = inherited_unix_listener()? {
         if args.listen_tls.is_some() {
             anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");

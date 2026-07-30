@@ -29,6 +29,87 @@ impl ExecutionTarget {
     }
 }
 
+/// Backend-dialable address of a workspace service (fileserver, ttyd,
+/// previews). Resolved through the placement layer: host placements share
+/// loopback, container placements expose a Unix socket via the runner's
+/// reverse bridge. Call sites never branch on placement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceTarget {
+    Tcp { host: String, port: u16 },
+    Unix { path: std::path::PathBuf },
+}
+
+/// Resolve how the backend reaches a service listening on `port` inside the
+/// placement of `target`'s workspace.
+///
+/// No placement record means a host placement: loopback is shared, dial it
+/// directly. With a record, ask the runner to expose the port (idempotent)
+/// and translate the returned container socket path (`/run/oqto/...`) to its
+/// host-side location: exposed sockets live in the same bind-mounted
+/// directory as the runner socket.
+pub async fn resolve_service_target(
+    state: &AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+    port: u16,
+) -> Result<ServiceTarget> {
+    let localhost = ServiceTarget::Tcp {
+        host: "localhost".to_string(),
+        port,
+    };
+    let Some(store) = &state.placement_store else {
+        return Ok(localhost);
+    };
+    let workspace_id = match target {
+        ExecutionTarget::Personal => user_id,
+        ExecutionTarget::SharedWorkspace { workspace_id } => workspace_id.as_str(),
+    };
+    let Some(record) = store.find_workspace(workspace_id).await? else {
+        return Ok(localhost);
+    };
+    let client = RunnerClient::from_endpoint(&record.runner_endpoint)
+        .with_context(|| format!("building runner endpoint for workspace {workspace_id}"))?;
+    let endpoint = client
+        .expose_port(port)
+        .await
+        .with_context(|| format!("exposing port {port} for workspace {workspace_id}"))?;
+    match endpoint {
+        oqto_runner::protocol::ExposedEndpoint::Tcp { host, port } => {
+            Ok(ServiceTarget::Tcp { host, port })
+        }
+        oqto_runner::protocol::ExposedEndpoint::Unix { path } => {
+            let oqto_runner::transport::RunnerEndpointConfig::Unix {
+                path: runner_socket,
+            } = &record.runner_endpoint
+            else {
+                anyhow::bail!(
+                    "workspace {workspace_id} exposed a unix socket over a non-unix runner \
+                     endpoint; remote placements need a transport mapping"
+                );
+            };
+            Ok(ServiceTarget::Unix {
+                path: translate_exposed_socket(runner_socket, &path)?,
+            })
+        }
+    }
+}
+
+/// Map a container-side exposed socket path to its host-side location.
+/// Exposed sockets share the bind-mounted directory of the runner socket, so
+/// the host path is the runner socket's directory plus the socket file name.
+fn translate_exposed_socket(
+    host_runner_socket: &std::path::Path,
+    exposed: &std::path::Path,
+) -> Result<std::path::PathBuf> {
+    let dir = host_runner_socket
+        .parent()
+        .context("runner socket path has no parent directory")?;
+    let name = exposed
+        .file_name()
+        .context("exposed socket path has no file name")?;
+    Ok(dir.join(name))
+}
+
 /// Resolve a concrete runner client from an execution target.
 ///
 /// This is the single place where target -> runner mapping should live.
@@ -261,4 +342,31 @@ async fn resolve_shared_workspace_runner(
     Ok(Some(
         ensure_runner_healthy(state, &linux_user, client).await?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn exposed_socket_translates_to_runner_socket_directory() {
+        let host = translate_exposed_socket(
+            Path::new("/var/lib/oqto/runtime/ws-1/rsock/runner.sock"),
+            Path::new("/run/oqto/port-4101.sock"),
+        )
+        .unwrap();
+        assert_eq!(
+            host,
+            Path::new("/var/lib/oqto/runtime/ws-1/rsock/port-4101.sock")
+        );
+    }
+
+    #[test]
+    fn exposed_socket_translation_rejects_bare_paths() {
+        assert!(translate_exposed_socket(Path::new("/"), Path::new("/run/oqto/x.sock")).is_err());
+        assert!(
+            translate_exposed_socket(Path::new("/run/oqto/runner.sock"), Path::new("/")).is_err()
+        );
+    }
 }

@@ -1796,6 +1796,31 @@ impl RunnerClient {
     }
 
     /// Query runner-advertised capabilities.
+    /// Expose a workspace-local loopback port; returns the placement-neutral
+    /// endpoint the backend can dial. Idempotent per port.
+    pub async fn expose_port(&self, port: u16) -> Result<ExposedEndpoint> {
+        let resp = self
+            .request(&RunnerRequest::ExposePort(ExposePortRequest { port }))
+            .await?;
+        match resp {
+            RunnerResponse::PortExposed(r) => Ok(r.endpoint),
+            RunnerResponse::Error(e) => anyhow::bail!("expose_port failed: {}", e.message),
+            _ => anyhow::bail!("unexpected response to expose_port"),
+        }
+    }
+
+    /// Tear down an exposed port. Unknown ports are a no-op.
+    pub async fn unexpose_port(&self, port: u16) -> Result<()> {
+        let resp = self
+            .request(&RunnerRequest::UnexposePort(UnexposePortRequest { port }))
+            .await?;
+        match resp {
+            RunnerResponse::PortUnexposed => Ok(()),
+            RunnerResponse::Error(e) => anyhow::bail!("unexpose_port failed: {}", e.message),
+            _ => anyhow::bail!("unexpected response to unexpose_port"),
+        }
+    }
+
     pub async fn get_capabilities(&self) -> Result<RunnerCapabilitiesResponse> {
         let resp = self.request(&RunnerRequest::GetCapabilities).await?;
         match resp {

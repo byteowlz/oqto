@@ -4,6 +4,8 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
         RunnerRequest::GetCapabilities => runner.get_capabilities().await,
+        RunnerRequest::ExposePort(r) => runner.expose_port(r.port).await,
+        RunnerRequest::UnexposePort(r) => runner.unexpose_port(r.port).await,
         RunnerRequest::Shutdown => {
             info!("Shutdown requested");
             let _ = runner.shutdown_tx.send(());

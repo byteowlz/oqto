@@ -42,6 +42,11 @@ pub struct Runner {
     pi_manager: Arc<PiSessionManager>,
     /// Background Pi JSONL -> oqto-log ingest task.
     jsonl_ingest: super::jsonl_ingest::IngestHandle,
+    /// Directory shared with the host for exposed-port sockets (container
+    /// placements). None on host placements: loopback is already shared.
+    expose_dir: Option<PathBuf>,
+    /// Live reverse bridges keyed by exposed port.
+    exposed_ports: Arc<tokio::sync::Mutex<HashMap<u16, crate::reverse_bridge::ReverseBridge>>>,
 }
 
 /// Basic-auth username for the session terminal.
@@ -564,6 +569,7 @@ impl Runner {
         binaries: SessionBinaries,
         user_config: RunnerUserConfig,
         pi_manager: Arc<PiSessionManager>,
+        expose_dir: Option<PathBuf>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
@@ -574,7 +580,52 @@ impl Runner {
             user_config,
             pi_manager,
             jsonl_ingest: super::jsonl_ingest::spawn(),
+            expose_dir,
+            exposed_ports: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Expose a loopback port. Idempotent per port. Host placements (no
+    /// expose dir) return the loopback address itself.
+    pub(crate) async fn expose_port(&self, port: u16) -> RunnerResponse {
+        if port == 0 {
+            return error_response(ErrorCode::InvalidRequest, "port must be non-zero");
+        }
+        let Some(dir) = &self.expose_dir else {
+            return RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                endpoint: crate::protocol::ExposedEndpoint::Tcp {
+                    host: "127.0.0.1".to_string(),
+                    port,
+                },
+            });
+        };
+        let mut exposed = self.exposed_ports.lock().await;
+        if let Some(bridge) = exposed.get(&port) {
+            return RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                endpoint: crate::protocol::ExposedEndpoint::Unix {
+                    path: bridge.socket.clone(),
+                },
+            });
+        }
+        match crate::reverse_bridge::spawn(dir, port) {
+            Ok(bridge) => {
+                let path = bridge.socket.clone();
+                exposed.insert(port, bridge);
+                RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                    endpoint: crate::protocol::ExposedEndpoint::Unix { path },
+                })
+            }
+            Err(error) => error_response(
+                ErrorCode::IoError,
+                format!("exposing port {port}: {error:#}"),
+            ),
+        }
+    }
+
+    /// Remove an exposed port. Unknown ports are a no-op.
+    pub(crate) async fn unexpose_port(&self, port: u16) -> RunnerResponse {
+        self.exposed_ports.lock().await.remove(&port);
+        RunnerResponse::PortUnexposed
     }
 
     fn request_kind(req: &RunnerRequest) -> String {
@@ -1549,6 +1600,13 @@ impl Runner {
                 force: false,
             })
             .await;
+
+        // Tear down any reverse bridges exposing this session's services.
+        {
+            let mut exposed = self.exposed_ports.lock().await;
+            exposed.remove(&session_state.fileserver_port);
+            exposed.remove(&session_state.ttyd_port);
+        }
 
         info!("Session {} stopped", req.session_id);
 
@@ -3898,6 +3956,8 @@ impl Runner {
                                 user_config: self.user_config.clone(),
                                 pi_manager: Arc::clone(&self.pi_manager),
                                 jsonl_ingest: self.jsonl_ingest.clone(),
+                                expose_dir: self.expose_dir.clone(),
+                                exposed_ports: Arc::clone(&self.exposed_ports),
                             };
                             tokio::spawn(async move {
                                 runner.handle_connection(stream).await;

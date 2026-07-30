@@ -160,10 +160,42 @@ pub(super) async fn handle_terminal_command(
                     }
                 };
 
+            let ttyd_target = match async {
+                let exec_target = crate::runner::router::resolve_target_for_workspace_path(
+                    state,
+                    user_id,
+                    &session.workspace_path,
+                )
+                .await?;
+                crate::runner::router::resolve_service_target(
+                    state,
+                    user_id,
+                    &exec_target,
+                    ttyd_port,
+                )
+                .await
+            }
+            .await
+            {
+                Ok(target) => target,
+                Err(err) => {
+                    tracing::error!(
+                        session_id = %session_id,
+                        error = %err,
+                        "failed to resolve terminal service target"
+                    );
+                    return Some(WsEvent::Terminal(TerminalWsEvent::Error {
+                        id,
+                        terminal_id: Some(terminal_id),
+                        error: "Terminal is not available for this session".into(),
+                    }));
+                }
+            };
+
             let (command_tx, task) = match files::start_terminal_task(
                 terminal_id.clone(),
                 session_id,
-                ttyd_port,
+                ttyd_target,
                 ttyd_password,
                 cols,
                 rows,
