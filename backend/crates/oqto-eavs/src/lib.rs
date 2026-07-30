@@ -63,14 +63,10 @@ pub fn generate_pi_models_json(
 
         let base_url = format!("{}/{}/v1", base, provider.name);
 
-        // MiniMax models frequently emit inline <think> traces in text output.
-        // Route them through Pi's think-tag conversion adapter so downstream
-        // consumers (e.g. auto-rename) receive clean text.
-        let provider_api = if provider.models.iter().any(|m| m.id.contains("MiniMax")) {
-            "openai-completions-convert-think-tags"
-        } else {
-            pi_api
-        };
+        // models.json must only name APIs provided by the Pi runtime itself.
+        // Optional extensions may add adapters, but provisioning cannot assume
+        // they are installed in every workspace image.
+        let provider_api = pi_api;
 
         let models: Vec<serde_json::Value> = provider
             .models
@@ -125,4 +121,29 @@ pub fn generate_pi_models_json(
     serde_json::json!({
         "providers": pi_providers,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimax_uses_provider_builtin_api_without_optional_extension_adapter() {
+        let provider: ProviderDetail = serde_json::from_value(serde_json::json!({
+            "name": "fhgenie",
+            "type": "openai-compatible",
+            "pi_api": "openai-completions",
+            "oauth": false,
+            "has_api_key": true,
+            "models": [{ "id": "MiniMaxAI/MiniMax-M2.5" }]
+        }))
+        .expect("provider fixture should deserialize");
+
+        let generated = generate_pi_models_json(&[provider], "http://127.0.0.1:3033", Some("key"));
+
+        assert_eq!(
+            generated["providers"]["eavs-fhgenie"]["api"],
+            "openai-completions"
+        );
+    }
 }

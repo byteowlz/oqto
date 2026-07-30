@@ -49,9 +49,8 @@ pub async fn bootstrap_new_user_environment(
                         && let Some(providers) = config.get("providers").and_then(|p| p.as_object())
                     {
                         // Prefer broadly compatible APIs for default selection.
-                        // Some providers may rely on optional extension APIs (e.g.
-                        // openai-completions-convert-think-tags) which can fail if
-                        // extension installation drifts. Pick a stable built-in API first.
+                        // Optional extension-provided APIs can fail if extension
+                        // installation drifts, so pick a stable built-in API first.
                         let preferred_apis = [
                             "openai-responses",
                             "openai-completions",

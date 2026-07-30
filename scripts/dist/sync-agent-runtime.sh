@@ -23,19 +23,23 @@ DO_EXT=true
 PI_DEFAULT_EXTENSIONS=(
   pi-auto-rename pi-azure-empty-response-guard pi-introspection pi-oqto-bridge
   pi-oqto-todos pi-custom-context-files pi-read-image-guard pi-read-file-guard
-  pi-openai-completions-convert-think-tags
 )
 
-# Superseded extension dir names left by the octo->oqto and pre-`pi-` renames.
-# These register the same tools as their pi-* successors, so a stale copy
-# alongside the canonical one makes Pi fail to load with a fatal tool conflict
-# (aborting RPC startup -> zero models -> deploy verification failure). They are
-# byteowlz-owned names, never user-custom, so pruning them is safe.
+# Superseded or fully removed extension dir names. Pruning them on every sync
+# both clears stale duplicates from the octo->oqto and pre-`pi-` renames (a
+# stale copy alongside its pi-* successor aborts Pi RPC startup with a fatal
+# tool conflict -> zero models -> deploy verification failure) and retires
+# extensions that have been dropped entirely. All are byteowlz-owned names,
+# never user-custom, so pruning is safe.
+# pi-openai-completions-convert-think-tags: removed -- MiniMax works on the
+# built-in openai-completions api via reasoning_content; the think-tag adapter
+# is no longer needed (see oqto-4brd).
 PI_LEGACY_EXTENSIONS=(
   auto-rename azure-empty-response-guard introspection
   oqto-bridge octo-bridge oqto-todos octo-todos
   custom-context-files read-image-guard read-file-guard
   openai-completions-convert-think-tags
+  pi-openai-completions-convert-think-tags
 )
 
 while [[ $# -gt 0 ]]; do

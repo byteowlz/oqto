@@ -39,7 +39,6 @@ const PI_DEFAULT_EXTENSIONS: &[&str] = &[
     "pi-custom-context-files",
     "pi-read-image-guard",
     "pi-read-file-guard",
-    "pi-openai-completions-convert-think-tags",
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.

@@ -622,7 +622,7 @@ BANNER
 
     # Pi extensions - verify they're actually on disk
     verify_or_rerun "pi_extensions" "Pi extensions" \
-      "test -d $HOME/.pi/agent/extensions/pi-oqto-bridge && test -d $HOME/.pi/agent/extensions/pi-custom-context-files && test -d $HOME/.pi/agent/extensions/pi-openai-completions-convert-think-tags" \
+      "test -d $HOME/.pi/agent/extensions/pi-oqto-bridge && test -d $HOME/.pi/agent/extensions/pi-custom-context-files" \
       "$(if [[ "$SELECTED_USER_MODE" == "multi" ]]; then echo install_pi_extensions_all_users; else echo install_pi_extensions; fi)"
 
     # Agent tools
