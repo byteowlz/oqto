@@ -146,18 +146,46 @@ impl RunnerClient {
         };
 
         if !socket_path.exists() {
+            // A failed auto-start must not be retried unboundedly: every call
+            // path that touches the default runner would otherwise spawn a
+            // fresh process (and leave a zombie) on each request, which has
+            // exhausted the host PID table in production.
+            static LAST_AUTOSTART: std::sync::OnceLock<
+                std::sync::Mutex<Option<std::time::Instant>>,
+            > = std::sync::OnceLock::new();
+            const AUTOSTART_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+            let allowed = {
+                let slot = LAST_AUTOSTART.get_or_init(|| std::sync::Mutex::new(None));
+                let mut last = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                match *last {
+                    Some(at) if at.elapsed() < AUTOSTART_MIN_INTERVAL => false,
+                    _ => {
+                        *last = Some(std::time::Instant::now());
+                        true
+                    }
+                }
+            };
+            if !allowed {
+                return Ok(false);
+            }
+
             tracing::warn!(
                 socket = %socket_path.display(),
                 error = %reason,
                 "Runner socket unavailable; attempting oqto-runner auto-start"
             );
 
-            std::process::Command::new("oqto-runner")
+            let mut child = tokio::process::Command::new("oqto-runner")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
                 .context("spawning oqto-runner for single-user recovery")?;
+            // Reap the child whenever it exits so failed starts cannot
+            // accumulate as zombies.
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
         }
 
         // Bounded readiness handshake: ping + capabilities.

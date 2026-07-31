@@ -743,6 +743,16 @@ impl PiSessionManager {
 
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
+        // RPC sessions are non-interactive: Pi's first-use trust prompt can
+        // never be answered, so the runner (workspace authority) records the
+        // workdir as trusted before spawning.
+        if let Err(err) = ensure_workdir_trusted(&config.cwd) {
+            warn!(
+                "Failed to pre-trust workdir {:?} for session '{}': {err:#}",
+                config.cwd, session_id
+            );
+        }
+
         // Use explicit session file if provided (for resuming).
         // For new sessions, do NOT pass --session: let Pi create its
         // own session file and generate its own ID. The runner will
@@ -5016,6 +5026,43 @@ fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
 
 fn is_direct_pi_provider(provider: &str) -> bool {
     matches!(provider, "openai-codex" | "claude-bridge")
+}
+
+/// Record `cwd` in Pi's trust store (`~/.pi/agent/trust.json`), preserving
+/// all existing entries. Pi's trust file is a flat map of absolute workdir
+/// paths to booleans.
+fn ensure_workdir_trusted(cwd: &std::path::Path) -> Result<()> {
+    use anyhow::Context as _;
+
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let trust_path = std::path::Path::new(&home).join(".pi/agent/trust.json");
+
+    let mut entries: serde_json::Map<String, serde_json::Value> =
+        match std::fs::read_to_string(&trust_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .with_context(|| format!("parsing {}", trust_path.display()))?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", trust_path.display()));
+            }
+        };
+
+    let key = cwd.to_string_lossy().to_string();
+    if entries.get(&key).and_then(|value| value.as_bool()) == Some(true) {
+        return Ok(());
+    }
+    entries.insert(key, serde_json::Value::Bool(true));
+
+    if let Some(parent) = trust_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(
+        &trust_path,
+        serde_json::to_string_pretty(&serde_json::Value::Object(entries))?,
+    )
+    .with_context(|| format!("writing {}", trust_path.display()))?;
+    Ok(())
 }
 
 fn model_available_for_provider(
