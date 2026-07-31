@@ -1059,6 +1059,13 @@ pub fn usermgr_request_with_data(
 fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
     match cmd {
         "/usr/sbin/groupadd" => {
+            // Own-group form (`groupadd -g <gid> <username>`): the usermgr
+            // `create-user` command creates the user's own primary group
+            // itself, and its `create-group` contract only admits the service
+            // group. The pre-step is satisfied there, so acknowledge it.
+            if args.first() == Some(&"-g") {
+                return Some(Ok(()));
+            }
             let group = args.first()?;
             Some(usermgr_request(
                 "create-group",
@@ -1106,12 +1113,18 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
                     }
                 }
             }
+            // `-g` on the useradd command line is the user's *primary* group
+            // (their own, equal to the username since the service-group
+            // migration). The usermgr `group` parameter is the *service*
+            // group used for home/workspace group ownership, and its contract
+            // admits only "oqto"; usermgr sets the primary group itself.
+            let _primary_group = group?;
             Some(usermgr_request(
                 "create-user",
                 serde_json::json!({
                     "username": username?,
                     "uid": uid?,
-                    "group": group?,
+                    "group": "oqto",
                     "shell": shell?,
                     "gecos": gecos?,
                     "create_home": create_home,
@@ -1376,6 +1389,15 @@ fn run_as_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_group_groupadd_form_is_acknowledged_without_usermgr_call() {
+        // `groupadd -g <gid> <username>` (own primary group) must not be
+        // translated into a `create-group` request: usermgr's create-group
+        // only admits the service group and would reject `-g` as the name.
+        let result = try_usermgr("/usr/sbin/groupadd", &["-g", "2001", "alice-x1"]);
+        assert!(matches!(result, Some(Ok(()))));
+    }
 
     #[test]
     fn test_sanitize_username_simple() {
