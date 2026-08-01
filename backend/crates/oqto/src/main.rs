@@ -2711,6 +2711,65 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
+    // Personal placements provisioned before an EAVS config change (or before
+    // EAVS was enabled) may lack models.json; the sync is idempotent and
+    // preserves existing virtual keys. Must run after EAVS client init and
+    // gives reconcile a head start so restarted containers are dialable.
+    if state.placement_manager.is_some()
+        && let (Some(eavs), Some(store)) =
+            (state.eavs_client.clone(), state.placement_store.clone())
+    {
+        let auto_rename = state.auto_rename_config.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let records = match store.list().await {
+                Ok(records) => records,
+                Err(error) => {
+                    warn!("placement list failed for models sync: {error:#}");
+                    return;
+                }
+            };
+            for record in records {
+                if record.workspace_id != record.account_id {
+                    continue;
+                }
+                let client =
+                    match oqto_runner::client::RunnerClient::from_endpoint(&record.runner_endpoint)
+                    {
+                        Ok(client) => client,
+                        Err(error) => {
+                            warn!(
+                                "building runner client for models sync failed for {}: {error:#}",
+                                record.workspace_id
+                            );
+                            continue;
+                        }
+                    };
+                if client.ensure_ready_with_recovery().await.is_err() {
+                    continue;
+                }
+                match api::handlers::admin::sync_eavs_models_json_via_runner(
+                    &eavs,
+                    &client,
+                    std::path::Path::new(oqto_placement::CONTAINER_HOME),
+                    &record.workspace_id,
+                    Some(&auto_rename),
+                )
+                .await
+                {
+                    Ok(()) => info!(
+                        "EAVS models.json synced for personal placement {}",
+                        record.workspace_id
+                    ),
+                    Err(error) => warn!(
+                        "EAVS models.json sync failed for {}: {error:#}",
+                        record.workspace_id
+                    ),
+                }
+            }
+        });
+    }
+
     // Pi default provider/model from config. Used during registration to write
     // settings.json (and optionally models.json) for new users when eavs is not configured.
     {

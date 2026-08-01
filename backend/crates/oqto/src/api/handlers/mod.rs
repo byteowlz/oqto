@@ -21,7 +21,7 @@ mod feedback;
 mod invites;
 mod misc;
 mod oauth;
-mod projects;
+pub(crate) mod projects;
 mod sessions;
 mod settings;
 mod shared_workspaces;

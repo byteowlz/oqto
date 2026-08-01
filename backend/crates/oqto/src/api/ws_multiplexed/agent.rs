@@ -145,8 +145,18 @@ pub(super) async fn handle_agent_command(
             // 3) fail closed (unknown target)
 
             if session_id == "_system" {
-                match runner_client {
-                    Some(r) => r.clone(),
+                // With container placement, the personal plane is a placement
+                // runner; the connection-level host client is host-mode only.
+                let placement_personal = if state.placement_manager.is_some() {
+                    resolve_runner_for_target(state, user_id, &ExecutionTarget::Personal)
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+                match placement_personal.or_else(|| runner_client.cloned()) {
+                    Some(r) => r,
                     None => {
                         return Some(agent_response(
                             &session_id,

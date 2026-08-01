@@ -344,7 +344,7 @@ fn read_template_defaults(template_dir: &std::path::Path) -> Option<ProjectTempl
 /// Copy a template tree into a container-placed workspace through its
 /// runner. With userns=auto the workspace volume is owned by the container's
 /// subuid range, so the backend cannot write into it host-side.
-async fn copy_template_dir_via_runner(
+pub(crate) async fn copy_template_dir_via_runner(
     runner: &oqto_runner::client::RunnerClient,
     src: &std::path::Path,
     dest: &std::path::Path,
@@ -611,6 +611,18 @@ pub async fn create_project_from_template(
             } else {
                 None
             }
+        }
+        // Personal plane: with container placement active the personal
+        // workspace volume is also namespaced; route writes via the
+        // (lazily provisioned) personal placement runner.
+        None if state.placement_manager.is_some() => {
+            crate::runner::router::resolve_runner_for_target(
+                &state,
+                user.id(),
+                &crate::runner::router::ExecutionTarget::Personal,
+            )
+            .await
+            .map_err(|e| ApiError::internal(format!("resolving personal runner: {e:#}")))?
         }
         None => None,
     };
