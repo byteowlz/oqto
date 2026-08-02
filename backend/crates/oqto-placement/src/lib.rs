@@ -3,6 +3,7 @@
 //! Product code asks this module where a Workspace runs. Concrete adapters own
 //! process/container lifecycle and return a typed runner endpoint.
 
+mod doctor;
 mod host_bridge;
 mod local;
 mod operator;
@@ -16,6 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub use doctor::{
+    CheckStatus, ContainerCheck, ContainerDoctorOptions, MIN_PODMAN_VERSION, MIN_SUBID_COUNT,
+    run_container_doctor,
+};
 pub use host_bridge::HostEndpointBridge;
 pub use local::LocalProcessSupervisor;
 pub use operator::{

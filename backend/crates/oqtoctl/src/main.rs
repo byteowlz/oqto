@@ -200,7 +200,7 @@ enum Command {
         /// Print the provisioning contract instead of probing the host.
         #[arg(long, default_value_t = false)]
         contract: bool,
-        /// Install profile for --contract: auto, personal, or team.
+        /// Install profile for --contract: auto, personal, team, or container.
         #[arg(long, default_value = "auto")]
         profile: String,
         /// Exit non-zero when contract evaluation finds error-severity drift.
@@ -4117,6 +4117,9 @@ async fn handle_doctor(
     config_path: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if profile == "container" {
+        return handle_container_doctor(target_user, apply, strict, config_path, json).await;
+    }
     if contract {
         if (apply_services || apply_runners) && !apply {
             anyhow::bail!("--apply-services/--apply-runners require --apply");
@@ -4335,6 +4338,208 @@ fn group_gid(group: &str) -> Result<Option<u32>> {
         .split(':')
         .nth(2)
         .and_then(|gid| gid.trim().parse().ok()))
+}
+
+/// Resolve the Oqto server config path (explicit override or default).
+fn resolve_config_path(config_path: Option<&str>) -> std::path::PathBuf {
+    config_path
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("OQTO_CONFIG")
+                .ok()
+                .map(std::path::PathBuf::from)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("/etc/oqto/config.toml"))
+}
+
+/// Best-effort extraction of placement settings from the server config TOML.
+/// The container doctor does not require these (image/root checks skip when
+/// absent), but reading the real configured image makes attestation useful.
+fn placement_options_from_config(
+    opts: &mut oqto_placement::ContainerDoctorOptions,
+    config_path: &std::path::Path,
+) {
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(toml) = content.parse::<toml::Value>() else {
+        return;
+    };
+    let Some(placement) = toml.get("placement") else {
+        return;
+    };
+    if let Some(image) = placement.get("image").and_then(|v| v.as_str()) {
+        opts.image = Some(image.to_string());
+    }
+    if let Some(digest) = placement.get("image_digest").and_then(|v| v.as_str()) {
+        opts.image_digest = Some(digest.to_string());
+    }
+    if let Some(root) = placement.get("state_root").and_then(|v| v.as_str()) {
+        opts.state_root = Some(std::path::PathBuf::from(root));
+    }
+    if let Some(root) = placement.get("runtime_root").and_then(|v| v.as_str()) {
+        opts.runtime_root = Some(std::path::PathBuf::from(root));
+    }
+}
+
+async fn handle_container_doctor(
+    target_user: Option<&str>,
+    apply: bool,
+    strict: bool,
+    config_path: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use oqto_placement::{CheckStatus, ContainerCheck, TokioCommandRunner, run_container_doctor};
+
+    let user = target_user
+        .map(str::to_string)
+        .or_else(|| std::env::var("USER").ok())
+        .or_else(|| std::env::var("LOGNAME").ok());
+
+    let mut opts = oqto_placement::ContainerDoctorOptions {
+        user: user.clone(),
+        ..Default::default()
+    };
+    let cfg_path = resolve_config_path(config_path);
+    placement_options_from_config(&mut opts, &cfg_path);
+
+    let runner = TokioCommandRunner;
+    let mut checks = run_container_doctor(&opts, &runner).await;
+
+    let mut applied = Vec::<String>::new();
+    if apply {
+        applied = apply_container_safe_fixes(&checks, &opts).await;
+        if !applied.is_empty() {
+            checks = run_container_doctor(&opts, &runner).await;
+        }
+    }
+
+    let blockers: Vec<&ContainerCheck> = checks.iter().filter(|c| c.is_blocker()).collect();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "profile": "container",
+                "checks": checks,
+                "applied_fixes": applied,
+                "blockers": blockers.len(),
+            }))?
+        );
+    } else {
+        println!("Container-placement doctor (profile=container)");
+        if let Some(u) = &user {
+            println!("Backend user: {u}");
+        }
+        if let Some(img) = &opts.image {
+            println!("Image: {img}");
+        }
+        println!();
+        for check in &checks {
+            let tag = match check.status {
+                CheckStatus::Pass => "PASS",
+                CheckStatus::Fail => "FAIL",
+                CheckStatus::Skip => "SKIP",
+            };
+            println!(
+                "[{tag}] {:>8} {}",
+                format!("{:?}", check.severity).to_lowercase(),
+                check.id
+            );
+            println!("        {}", check.description);
+            if !check.evidence.is_empty() {
+                println!("        evidence: {}", check.evidence);
+            }
+            if check.status == CheckStatus::Fail && !check.remediation.is_empty() {
+                println!("        remediation: {}", check.remediation);
+            }
+        }
+        if !applied.is_empty() {
+            println!("\nApplied safe remediation(s):");
+            for fix in &applied {
+                println!("- {fix}");
+            }
+        }
+        let (pass, fail, skip) = tally(&checks);
+        println!(
+            "\nSummary: {pass} pass, {fail} fail, {skip} skip, {} blocker(s)",
+            blockers.len()
+        );
+    }
+
+    if strict && !blockers.is_empty() {
+        anyhow::bail!(
+            "container-placement prerequisites not met: {} blocker(s)",
+            blockers.len()
+        );
+    }
+    Ok(())
+}
+
+fn tally(checks: &[oqto_placement::ContainerCheck]) -> (usize, usize, usize) {
+    let mut pass = 0;
+    let mut fail = 0;
+    let mut skip = 0;
+    for c in checks {
+        match c.status {
+            oqto_placement::CheckStatus::Pass => pass += 1,
+            oqto_placement::CheckStatus::Fail => fail += 1,
+            oqto_placement::CheckStatus::Skip => skip += 1,
+        }
+    }
+    (pass, fail, skip)
+}
+
+/// `--apply` performs only declared safe/idempotent changes: enable linger and
+/// create missing placement roots. Privileged/ambiguous operations stop with
+/// instructions instead of mutating blindly.
+async fn apply_container_safe_fixes(
+    checks: &[oqto_placement::ContainerCheck],
+    opts: &oqto_placement::ContainerDoctorOptions,
+) -> Vec<String> {
+    let mut applied = Vec::new();
+    let linger_failed: Vec<_> = checks
+        .iter()
+        .filter(|c| c.id == "linger.enabled" && c.status == oqto_placement::CheckStatus::Fail)
+        .collect();
+    if let (Some(user), Some(_)) = (opts.user.as_deref(), linger_failed.first()) {
+        match tokio::process::Command::new("loginctl")
+            .args(["enable-linger", user])
+            .output()
+            .await
+        {
+            Ok(o) if o.status.success() => applied.push(format!("enabled linger for {user}")),
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                applied.push(format!(
+                    "could not enable linger for {user} (needs sudo/polkit): {}",
+                    err.trim()
+                ));
+            }
+            Err(e) => applied.push(format!("could not run loginctl: {e}")),
+        }
+    }
+    for (root, id) in [
+        (opts.state_root.as_deref(), "roots.state"),
+        (opts.runtime_root.as_deref(), "roots.runtime"),
+    ] {
+        let needs = checks
+            .iter()
+            .any(|c| c.id == id && c.status == oqto_placement::CheckStatus::Fail);
+        if let Some(root) = needs.then_some(root).flatten() {
+            match std::fs::create_dir_all(root) {
+                Ok(()) => {
+                    let _ = std::fs::set_permissions(
+                        root,
+                        std::os::unix::fs::PermissionsExt::from_mode(0o750),
+                    );
+                    applied.push(format!("created root {} (0750)", root.display()));
+                }
+                Err(e) => applied.push(format!("could not create {}: {e}", root.display())),
+            }
+        }
+    }
+    applied
 }
 
 async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {
