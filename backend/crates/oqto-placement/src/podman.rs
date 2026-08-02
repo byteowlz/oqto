@@ -1,6 +1,6 @@
 use crate::{
-    PlacementHealth, PlacementId, PlacementKind, PlacementNetworkMode, PlacementRecord,
-    PlacementSpec, PlacementSupervisor, PlacementUserns, runtime_name,
+    ImageAttestation, PlacementHealth, PlacementId, PlacementKind, PlacementNetworkMode,
+    PlacementRecord, PlacementSpec, PlacementSupervisor, PlacementUserns, runtime_name,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -331,6 +331,52 @@ where
             }),
         }
     }
+
+    async fn resolve_image_attestation(&self, image: &str) -> Result<ImageAttestation> {
+        resolve_image_attestation_with(self, image).await
+    }
+}
+
+async fn resolve_image_attestation_with<R>(
+    supervisor: &PodmanSupervisor<R>,
+    image: &str,
+) -> Result<ImageAttestation>
+where
+    R: CommandRunner,
+{
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct InspectImage {
+        #[serde(default)]
+        digest: Option<String>,
+        #[serde(default)]
+        labels: Option<BTreeMap<String, String>>,
+    }
+
+    // Podman guarantees the image is pulled before inspect resolves a remote
+    // reference; a missing local image surfaces as a failed command.
+    let output = supervisor
+        .checked(&[
+            "inspect".into(),
+            "--format".into(),
+            "json".into(),
+            image.into(),
+        ])
+        .await
+        .with_context(|| format!("inspecting workspace image {image}"))?;
+    let parsed: Vec<InspectImage> = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parsing podman inspect output for {image}"))?;
+    let entry = parsed
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("podman inspect returned no image for {image}"))?;
+    Ok(ImageAttestation {
+        labels: entry.labels.unwrap_or_default(),
+        digest: entry.digest.unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]
@@ -420,5 +466,84 @@ mod tests {
         assert!(temp.path().join("runtime/rsock").is_dir());
         assert!(temp.path().join("runtime/endpoints").is_dir());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_image_attestation_parses_labels_and_digest() -> Result<()> {
+        // Canned `podman inspect --format json <image>` payload. Podman emits a
+        // top-level JSON array; .RepoDigests carry the registry digest while
+        // .Labels carry stamped provenance. The resolver reads .digest and
+        // .labels, so we provide both shapes the parser accepts.
+        let inspect_json = serde_json::json!([{
+            "Digest": "sha256:abc123",
+            "Labels": {
+                "io.oqto.version": "0.5.0",
+                "io.oqto.role": "workspace",
+                "org.opencontainers.image.revision": "deadbeef"
+            }
+        }])
+        .to_string();
+        let runner = CannedRunner {
+            stdout: inspect_json.into_bytes(),
+            status: ExitStatus::from_raw(0),
+        };
+        let supervisor = PodmanSupervisor {
+            podman_binary: "podman".to_string(),
+            command: runner,
+        };
+        let attestation = supervisor
+            .resolve_image_attestation("ghcr.io/byteowlz/oqto-workspace:0.5.0")
+            .await?;
+        assert_eq!(attestation.digest, "sha256:abc123");
+        assert_eq!(
+            attestation
+                .labels
+                .get("io.oqto.version")
+                .map(String::as_str),
+            Some("0.5.0")
+        );
+        assert_eq!(
+            attestation
+                .labels
+                .get("org.opencontainers.image.revision")
+                .map(String::as_str),
+            Some("deadbeef")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_image_attestation_errors_on_empty_inspect() -> Result<()> {
+        let runner = CannedRunner {
+            stdout: b"[]".to_vec(),
+            status: ExitStatus::from_raw(0),
+        };
+        let supervisor = PodmanSupervisor {
+            podman_binary: "podman".to_string(),
+            command: runner,
+        };
+        let error = supervisor
+            .resolve_image_attestation("ghcr.io/byteowlz/oqto-workspace:0.5.0")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no image"), "{error}");
+        Ok(())
+    }
+
+    struct CannedRunner {
+        stdout: Vec<u8>,
+        status: ExitStatus,
+    }
+
+    #[async_trait]
+    impl CommandRunner for CannedRunner {
+        async fn run(&self, _program: &str, _args: &[OsString]) -> Result<CommandOutput> {
+            Ok(CommandOutput {
+                status: self.status,
+                stdout: self.stdout.clone(),
+                stderr: Vec::new(),
+            })
+        }
     }
 }

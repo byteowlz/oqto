@@ -214,6 +214,25 @@ items = [
   "pi-oqto-todos",
 ]
 
+# ---------- Published workspace OCI image ----------
+# The per-Workspace runner image is a published OCI artifact, not an installed
+# file. It is pulled by Podman at provision time. This table is the release
+# metadata that oqto-setup/deploy uses to generate production placement config;
+# it is filled by the workspace-image workflow on release and must agree with
+# the Cargo workspace version (ADR-0016/0018). Production deploys pin the exact
+# reference + digest; `latest`/moving aliases are for humans only.
+[workspace_image]
+registry = "ghcr.io"
+repository = "byteowlz/oqto-workspace"
+# `version` equals the Cargo workspace release semver and the release tag (minus
+# leading `v`). Fill from the workspace-image workflow output.
+version = ""
+# Multi-arch manifest digest (`sha256:...`). Required for production pinning.
+digest = ""
+compat_label = "io.oqto.version"
+role_label = "io.oqto.role"
+architectures = ["linux/amd64", "linux/arm64"]
+
 # ---------- Mutable user/workspace defaults (copy once) ----------
 
 [[assets]]

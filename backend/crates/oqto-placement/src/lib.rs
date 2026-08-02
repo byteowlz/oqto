@@ -200,11 +200,32 @@ pub enum PlacementHealth {
     Unhealthy { detail: String },
 }
 
+/// OCI compatibility label the backend keys workspace-image attestation off of.
+/// Distinct from `org.opencontainers.image.version`, which base images pollute
+/// (e.g. Ubuntu stamps it with `24.04`).
+pub const IMAGE_VERSION_LABEL: &str = "io.oqto.version";
+pub const IMAGE_REVISION_LABEL: &str = "org.opencontainers.image.revision";
+
+/// Provenance resolved from a workspace container image via `podman inspect`.
+/// Product code compares `labels[IMAGE_VERSION_LABEL]` against the backend
+/// release version and `digest` against a configured pin to detect drift.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImageAttestation {
+    pub labels: BTreeMap<String, String>,
+    /// Canonical content digest (`sha256:...`) of the resolved image.
+    pub digest: String,
+}
+
 #[async_trait]
 pub trait PlacementSupervisor: Send + Sync {
     async fn start(&self, spec: &PlacementSpec) -> Result<PlacementRecord>;
     async fn stop(&self, placement: &PlacementRecord) -> Result<()>;
     async fn health(&self, placement: &PlacementRecord) -> Result<PlacementHealth>;
+    /// Resolve labels + digest for a workspace image reference. Pulls the image
+    /// if it is not present locally. Used for compatibility attestation.
+    async fn resolve_image_attestation(&self, _image: &str) -> Result<ImageAttestation> {
+        anyhow::bail!("this placement supervisor does not resolve container image attestation")
+    }
 }
 
 pub fn runtime_name(workspace_id: &str) -> String {

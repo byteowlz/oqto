@@ -3,8 +3,9 @@
 
 use anyhow::{Context, Result};
 use oqto_placement::{
-    HostEndpointBridge, PlacementHealth, PlacementNetwork, PlacementNetworkMode, PlacementRecord,
-    PlacementSpec, PlacementStore, PlacementSupervisor, PlacementUserns,
+    HostEndpointBridge, IMAGE_VERSION_LABEL, ImageAttestation, PlacementHealth, PlacementNetwork,
+    PlacementNetworkMode, PlacementRecord, PlacementSpec, PlacementStore, PlacementSupervisor,
+    PlacementUserns,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -13,6 +14,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+
+/// Backend release version this binary was built as. The workspace image's
+/// `io.oqto.version` label must match this exactly for a strict placement.
+const EXPECTED_IMAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,12 +28,79 @@ pub enum PlacementMode {
     Container,
 }
 
+/// Workspace-image attestation policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageVerification {
+    /// Strict for registry refs, Dev for local refs (`localhost/`). Default.
+    #[default]
+    Auto,
+    /// Require `io.oqto.version` label == backend version and (if set) digest
+    /// pin. Applied to registry images under `Auto`.
+    Strict,
+    /// Skip attestation entirely. Only safe for local dev images.
+    Dev,
+}
+
+impl ImageVerification {
+    /// Resolve `Auto` against an image reference to a concrete policy.
+    fn resolve(&self, image: &str) -> ResolvedPolicy {
+        match self {
+            ImageVerification::Strict => ResolvedPolicy::Strict,
+            ImageVerification::Dev => ResolvedPolicy::Dev,
+            ImageVerification::Auto => {
+                if is_local_ref(image) {
+                    ResolvedPolicy::Dev
+                } else {
+                    ResolvedPolicy::Strict
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedPolicy {
+    Strict,
+    Dev,
+}
+
+/// An image reference is "local" when it carries no registry host, i.e. it
+/// resolves only from the local Podman store (`localhost/...`, `:dev`, bare
+/// names without a `/`-separated host). Registry images (`ghcr.io/...`,
+/// `docker.io/...`) are treated as remote and attested.
+fn is_local_ref(image: &str) -> bool {
+    let name = image.split(':').next().unwrap_or(image);
+    if let Some(first_segment) = name.split('/').next() {
+        // A first segment containing '.' or ':' or a port is a registry host.
+        if first_segment.contains('.') || first_segment.contains(':') {
+            return false;
+        }
+        // `localhost` (with or without a port) is the local registry daemon;
+        // treat as local.
+        if first_segment == "localhost" {
+            return true;
+        }
+    }
+    // Bare single-segment names (e.g. `oqto-workspace:dev`) resolve locally.
+    !name.contains('/')
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlacementConfig {
     pub mode: PlacementMode,
     /// Workspace container image.
     pub image: String,
+    /// Expected image digest (`sha256:...`) for production drift detection.
+    /// When set and verification is not `Dev`, the resolved image digest must
+    /// match exactly; mismatch fails closed.
+    #[serde(default)]
+    pub image_digest: Option<String>,
+    /// Image attestation policy. `Auto` (default) enforces labels + digest for
+    /// registry images and skips for clearly-local refs (`localhost/`).
+    #[serde(default)]
+    pub image_verification: ImageVerification,
     /// Root for per-workspace durable state (home) directories.
     pub state_root: Option<PathBuf>,
     /// Root for per-workspace runtime (socket) directories.
@@ -60,6 +132,8 @@ impl Default for PlacementConfig {
         Self {
             mode: PlacementMode::Local,
             image: "localhost/oqto-workspace:dev".to_string(),
+            image_digest: None,
+            image_verification: ImageVerification::default(),
             state_root: None,
             runtime_root: None,
             cpu_limit: None,
@@ -79,6 +153,9 @@ pub struct PlacementManager {
     state_root: PathBuf,
     runtime_root: PathBuf,
     bridges: Mutex<HashMap<String, Vec<HostEndpointBridge>>>,
+    /// Cached image attestation result. Verified once per process before the
+    /// first provision; reconcile of already-recorded placements bypasses it.
+    image_attestation: Mutex<Option<Result<ImageAttestation, String>>>,
 }
 
 impl PlacementManager {
@@ -98,7 +175,85 @@ impl PlacementManager {
             state_root,
             runtime_root,
             bridges: Mutex::new(HashMap::new()),
+            image_attestation: Mutex::new(None),
         }
+    }
+
+    /// Verify the configured workspace image's compatibility attestation.
+    ///
+    /// Enforces, under a non-`Dev` policy:
+    /// - the `io.oqto.version` label is present and equals the backend release
+    ///   version (rejects unlabelled `:dev` and version drift like `X.Y.(Z-1)`);
+    /// - when `image_digest` is configured, the resolved digest matches exactly
+    ///   (rejects digest drift in production).
+    ///
+    /// The result is cached for the process lifetime; the first provision pays
+    /// the `podman inspect` cost, subsequent provisions reuse the verdict.
+    pub async fn verify_image(&self) -> Result<ImageAttestation> {
+        let mut cache = self.image_attestation.lock().await;
+        if let Some(cached) = cache.as_ref() {
+            return match cached {
+                Ok(attestation) => Ok(attestation.clone()),
+                Err(message) => Err(anyhow::anyhow!(message.clone())),
+            };
+        }
+        let outcome = self.verify_image_uncached().await;
+        let stored = outcome
+            .as_ref()
+            .map(|a| a.clone())
+            .map_err(|error| error.to_string());
+        *cache = Some(stored);
+        outcome
+    }
+
+    async fn verify_image_uncached(&self) -> Result<ImageAttestation> {
+        let image = &self.config.image;
+        let policy = self.config.image_verification.resolve(image);
+        if policy == ResolvedPolicy::Dev {
+            tracing::debug!(
+                image,
+                "image attestation skipped (dev policy); production deploys must pin a registry image"
+            );
+            return Ok(ImageAttestation::default());
+        }
+        let attestation = self
+            .supervisor
+            .resolve_image_attestation(image)
+            .await
+            .with_context(|| format!("resolving attestation for workspace image {image}"))?;
+        match attestation.labels.get(IMAGE_VERSION_LABEL) {
+            None => anyhow::bail!(
+                "workspace image {image} is missing the {IMAGE_VERSION_LABEL} label; \
+                 it is an unattested (likely :dev) image. Pull a version-matched release \
+                 (ghcr.io/byteowlz/oqto-workspace:<version>) or set placement.image_verification = dev"
+            ),
+            Some(version) if version.is_empty() => anyhow::bail!(
+                "workspace image {image} has an empty {IMAGE_VERSION_LABEL} label; \
+                 build with deploy/workspace/build.sh --release so provenance is stamped"
+            ),
+            Some(version) if version != EXPECTED_IMAGE_VERSION => anyhow::bail!(
+                "workspace image version mismatch: image reports {version}, backend expects \
+                 {EXPECTED_IMAGE_VERSION}. Use ghcr.io/byteowlz/oqto-workspace:{EXPECTED_IMAGE_VERSION}"
+            ),
+            Some(_) => {}
+        }
+        if let Some(expected_digest) = &self.config.image_digest
+            && !expected_digest.is_empty()
+            && expected_digest != &attestation.digest
+        {
+            anyhow::bail!(
+                "workspace image digest drift: configured {expected_digest} but {image} \
+                 resolved to {}. Update placement.image_digest or repull the pinned image",
+                attestation.digest
+            );
+        }
+        tracing::info!(
+            image,
+            version = attestation.labels.get(IMAGE_VERSION_LABEL),
+            digest = %attestation.digest,
+            "workspace image attestation verified"
+        );
+        Ok(attestation)
     }
 
     /// Root directory holding per-workspace durable state volumes.
@@ -185,6 +340,7 @@ impl PlacementManager {
         account_id: &str,
         workspace_dir: PathBuf,
     ) -> Result<PlacementRecord> {
+        self.verify_image().await?;
         let spec = self.spec_for(workspace_id, account_id, workspace_dir);
         self.ensure_bridges(workspace_id).await?;
         let record = self
@@ -303,6 +459,7 @@ mod tests {
         started: Mutex<Vec<String>>,
         stopped: Mutex<Vec<String>>,
         health: PlacementHealth,
+        attestation: Mutex<Option<Result<ImageAttestation, String>>>,
     }
 
     impl FakeSupervisor {
@@ -311,7 +468,13 @@ mod tests {
                 started: Mutex::new(Vec::new()),
                 stopped: Mutex::new(Vec::new()),
                 health,
+                attestation: Mutex::new(None),
             }
+        }
+
+        fn with_attestation(self, outcome: Result<ImageAttestation, &str>) -> Self {
+            *self.attestation.lock().unwrap() = Some(outcome.map_err(|e| e.to_string()));
+            self
         }
     }
 
@@ -340,6 +503,14 @@ mod tests {
 
         async fn health(&self, _placement: &PlacementRecord) -> Result<PlacementHealth> {
             Ok(self.health.clone())
+        }
+
+        async fn resolve_image_attestation(&self, _image: &str) -> Result<ImageAttestation> {
+            match self.attestation.lock().unwrap().clone() {
+                Some(Ok(a)) => Ok(a),
+                Some(Err(msg)) => Err(anyhow::anyhow!(msg)),
+                None => Err(anyhow::anyhow!("image not found locally (FakeSupervisor)")),
+            }
         }
     }
 
@@ -461,5 +632,155 @@ mod tests {
         manager.reconcile().await?;
         assert_eq!(supervisor.started.lock().unwrap().as_slice(), ["ws-1"]);
         Ok(())
+    }
+
+    fn labelled(version: &str, digest: &str) -> ImageAttestation {
+        let mut labels = BTreeMap::new();
+        if !version.is_empty() {
+            labels.insert(IMAGE_VERSION_LABEL.to_string(), version.to_string());
+        }
+        ImageAttestation {
+            labels,
+            digest: digest.to_string(),
+        }
+    }
+
+    async fn strict_manager(
+        supervisor: Arc<FakeSupervisor>,
+        dir: &std::path::Path,
+        image: &str,
+        digest: Option<&str>,
+    ) -> PlacementManager {
+        let store = Arc::new(
+            oqto_placement::JsonPlacementStore::open(dir.join("placements.json"))
+                .await
+                .unwrap(),
+        );
+        PlacementManager::new(
+            supervisor,
+            store,
+            PlacementConfig {
+                mode: PlacementMode::Container,
+                image: image.to_string(),
+                image_digest: digest.map(str::to_string),
+                image_verification: ImageVerification::Strict,
+                ..Default::default()
+            },
+            dir.join("state"),
+            dir.join("runtime"),
+        )
+    }
+
+    #[tokio::test]
+    async fn verify_image_accepts_matching_release_labels() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(
+            FakeSupervisor::new(PlacementHealth::Ready)
+                .with_attestation(Ok(labelled(EXPECTED_IMAGE_VERSION, "sha256:deadbeef"))),
+        );
+        let manager = strict_manager(
+            supervisor,
+            temp.path(),
+            "ghcr.io/byteowlz/oqto-workspace:0.5.0",
+            None,
+        )
+        .await;
+        manager.verify_image().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_image_rejects_version_drift() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(
+            FakeSupervisor::new(PlacementHealth::Ready).with_attestation(Ok(labelled("0.4.9", ""))),
+        );
+        let manager = strict_manager(
+            supervisor,
+            temp.path(),
+            "ghcr.io/byteowlz/oqto-workspace:0.4.9",
+            None,
+        )
+        .await;
+        let error = manager.verify_image().await.unwrap_err().to_string();
+        assert!(error.contains("version mismatch"), "{error}");
+        assert!(error.contains("0.4.9"), "{error}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_image_rejects_unlabelled_dev_image() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(
+            FakeSupervisor::new(PlacementHealth::Ready).with_attestation(Ok(labelled("", ""))),
+        );
+        let manager = strict_manager(
+            supervisor,
+            temp.path(),
+            "ghcr.io/byteowlz/oqto-workspace:dev",
+            None,
+        )
+        .await;
+        let error = manager.verify_image().await.unwrap_err().to_string();
+        assert!(
+            error.contains("empty") || error.contains("missing"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_image_rejects_digest_drift() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let supervisor = Arc::new(
+            FakeSupervisor::new(PlacementHealth::Ready)
+                .with_attestation(Ok(labelled(EXPECTED_IMAGE_VERSION, "sha256:actual"))),
+        );
+        let manager = strict_manager(
+            supervisor,
+            temp.path(),
+            "ghcr.io/byteowlz/oqto-workspace:0.5.0",
+            Some("sha256:configured"),
+        )
+        .await;
+        let error = manager.verify_image().await.unwrap_err().to_string();
+        assert!(error.contains("digest drift"), "{error}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_image_skipped_for_local_dev_ref_under_auto() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        // No attestation configured -> the default trait impl would bail, but
+        // Auto policy must short-circuit before calling the supervisor.
+        let supervisor = Arc::new(FakeSupervisor::new(PlacementHealth::Ready));
+        let store = Arc::new(
+            oqto_placement::JsonPlacementStore::open(temp.path().join("placements.json"))
+                .await
+                .unwrap(),
+        );
+        let manager = PlacementManager::new(
+            supervisor,
+            store,
+            PlacementConfig {
+                mode: PlacementMode::Container,
+                image: "localhost/oqto-workspace:dev".to_string(),
+                image_verification: ImageVerification::Auto,
+                ..Default::default()
+            },
+            temp.path().join("state"),
+            temp.path().join("runtime"),
+        );
+        manager.verify_image().await?;
+        Ok(())
+    }
+
+    #[test]
+    fn local_ref_detection() {
+        assert!(is_local_ref("localhost/oqto-workspace:dev"));
+        assert!(is_local_ref("oqto-workspace:dev"));
+        assert!(!is_local_ref("ghcr.io/byteowlz/oqto-workspace:0.5.0"));
+        assert!(!is_local_ref("docker.io/library/ubuntu:24.04"));
+        assert!(!is_local_ref("registry.example.com:5000/oqto:1.0"));
     }
 }

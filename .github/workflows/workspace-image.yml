@@ -1,0 +1,196 @@
+name: Workspace Image
+
+# Publish the version-matched oqto-workspace OCI image. Runs only AFTER a
+# release is published, so the binary artifacts for the same tag already exist
+# and the image never consumes mutable `latest` bins. The image is stamped with
+# release provenance (org.opencontainers.image.version/revision + io.oqto.version)
+# and the backend rejects placements whose io.oqto.version drifts from its own.
+#
+# Image lives in this repo (byteowlz/containers is reserved for shared
+# multi-project images). See oqto-nppq.17.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build from (e.g. v0.5.0). Defaults to latest release.'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: byteowlz/oqto-workspace
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  meta:
+    name: Resolve release version + revision
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      revision: ${{ steps.ver.outputs.revision }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - name: Derive version and revision
+        id: ver
+        run: |
+          set -euo pipefail
+          # Version must exactly match the Cargo workspace version
+          # (critical repository versioning rule, ADR-0016/0018).
+          VERSION="$(grep -m1 '^version = ' backend/Cargo.toml | sed 's/version = "\(.*\)".*/\1/')"
+          REVISION="$(git rev-parse HEAD)"
+          TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "v${VERSION}")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          # Fail closed if the release tag does not match the declared version.
+          case "$TAG" in
+            v"$VERSION") echo "tag/version match: $TAG == v$VERSION" ;;
+            *) echo "::error::release tag '$TAG' does not match Cargo version '$VERSION'"; exit 1 ;;
+          esac
+          test -n "$REVISION"
+
+  build:
+    name: Build + smoke (${{ matrix.arch }})
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Multi-arch: amd64 native, arm64 via QEMU.
+        include:
+          - arch: amd64
+            podman_arch: linux/amd64
+          - arch: arm64
+            podman_arch: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Stage release binaries for the image
+        run: |
+          set -euo pipefail
+          # The image COPYs dist/immutable/bin/{oqto-runner,oqto-files,
+          # oqto-sandbox,pi-bridge,oqto-setup}; stage them from the tagged
+          # checkout using the canonical distribution pipeline so the image
+          # carries the exact released bytes, not a `latest` build.
+          DIST_REQUIRE_GLIBC_FLOOR=1 just dist-stage-binaries --build
+          just dist-stage-frontend --build
+          test -x dist/immutable/bin/oqto-runner
+          test -x dist/immutable/bin/oqto-files
+          test -x dist/immutable/bin/pi-bridge
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform ${{ matrix.podman_arch }} \
+            --build-arg OQTO_VERSION="${{ needs.meta.outputs.version }}" \
+            --build-arg OQTO_REVISION="${{ needs.meta.outputs.revision }}" \
+            -f deploy/workspace/Containerfile \
+            -t oqto-workspace:${{ matrix.arch }} \
+            .
+
+      - name: Smoke contract (amd64 only; arm64 runs under QEMU, skip exec gate)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          # test-image.sh validates the required-commands contract against the
+          # local image. Run it against the built image.
+          OQTO_WORKSPACE_IMAGE="oqto-workspace:${{ matrix.arch }}" \
+            bash deploy/workspace/test-image.sh
+
+      - name: Verify provenance labels
+        run: |
+          set -euo pipefail
+          V="$(docker inspect "oqto-workspace:${{ matrix.arch }}" --format '{{ index .Config.Labels "io.oqto.version" }}')"
+          R="$(docker inspect "oqto-workspace:${{ matrix.arch }}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          test "$V" = "${{ needs.meta.outputs.version }}"
+          test "$R" = "${{ needs.meta.outputs.revision }}"
+          echo "labels verified: version=$V revision=$R"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push by-arch + capture digest
+        id: push
+        run: |
+          set -euo pipefail
+          REF="${REGISTRY}/${IMAGE_NAME}:${{ needs.meta.outputs.version }}-${{ matrix.arch }}"
+          docker tag "oqto-workspace:${{ matrix.arch }}" "$REF"
+          docker push "$REF"
+          DIGEST="$(docker inspect "$REF" --format '{{ index .RepoDigests 0 }}' | sed 's/.*@//')"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "pushed $REF @ ${DIGEST}"
+
+  manifest:
+    name: Publish multi-arch manifest + record digest
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create + push multi-arch manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.meta.outputs.version }}"
+          REF="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          docker manifest create "$REF" \
+            "${REF}-amd64" \
+            "${REF}-arm64"
+          docker manifest annotate "$REF" "${REF}-arm64" --os linux --arch arm64
+          docker manifest push "$REF"
+          # The manifest digest is the deploy pin; production placement config
+          # must pin this exact digest, never `latest`.
+          DIGEST="$(docker manifest inspect "$REF" | jq -r '.manifests[0].digest')"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "published $REF @ ${DIGEST}"
+          echo "## oqto-workspace ${VERSION}" > /tmp/release-note.md
+          echo "" >> /tmp/release-note.md
+          echo "\`ghcr.io/byteowlz/oqto-workspace:${VERSION}\`" >> /tmp/release-note.md
+          echo "" >> /tmp/release-note.md
+          echo "Multi-arch (amd64+arm64). Pin for production:" >> /tmp/release-note.md
+          echo "" >> /tmp/release-note.md
+          echo '```toml' >> /tmp/release-note.md
+          echo "[placement]" >> /tmp/release-note.md
+          echo "image = \"${REF}\"" >> /tmp/release-note.md
+          echo "image_digest = \"${DIGEST}\"" >> /tmp/release-note.md
+          echo '```' >> /tmp/release-note.md
+          cat /tmp/release-note.md
+
+      - name: Attach image reference as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          files: /tmp/release-note.md
+          body_path: /tmp/release-note.md

@@ -74,10 +74,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && echo "$sha  /tmp/starship.tar.gz" | sha256sum --check --strict \
     && tar -xzf /tmp/starship.tar.gz -C /usr/local/bin starship
 
+# Build-time provenance. CI injects OQTO_VERSION (Cargo release semver) and
+# OQTO_REVISION (release commit SHA). Empty values (local `:dev` builds)
+# leave these labels unset, which the backend treats as an unattested image
+# accepted only in dev placements.
 FROM ubuntu:24.04
+ARG OQTO_VERSION=""
+ARG OQTO_REVISION=""
+ARG OQTO_SOURCE="https://github.com/byteowlz/oqto"
 LABEL org.opencontainers.image.title="oqto-workspace" \
       org.opencontainers.image.description="Isolated Oqto Workspace runner and curated agent toolchain" \
-      org.opencontainers.image.source="https://github.com/byteowlz/oqto"
+      org.opencontainers.image.source="${OQTO_SOURCE}" \
+      org.opencontainers.image.version="${OQTO_VERSION}" \
+      org.opencontainers.image.revision="${OQTO_REVISION}" \
+      io.oqto.role="workspace" \
+      io.oqto.version="${OQTO_VERSION}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bat bubblewrap ca-certificates coreutils curl eza fd-find findutils fzf git jq \
