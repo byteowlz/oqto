@@ -220,6 +220,7 @@ print_summary() {
   echo
   echo "  User mode:       $SELECTED_USER_MODE"
   echo "  Backend mode:    $SELECTED_BACKEND_MODE"
+  echo "  Placement:       ${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
   echo "  Deployment mode: $([[ "$PRODUCTION_MODE" == "true" ]] && echo "Production" || echo "Development")"
   echo "  Config file:     $OQTO_CONFIG_DIR/config.toml"
   echo

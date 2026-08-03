@@ -37,6 +37,18 @@
           ],
           "description": "Container runtime when backend_mode=container"
         },
+        "placement_mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "container"
+          ],
+          "description": "Where Workspace runners execute (ADR-0019/0020). container = per-Workspace rootless Podman, requires Podman >= 4.0"
+        },
+        "workspace_image": {
+          "type": "string",
+          "description": "Workspace container image override when placement_mode=container; defaults to the version-matched release image"
+        },
         "workspace_dir": {
           "type": "string",
           "description": "Workspace directory for local mode"

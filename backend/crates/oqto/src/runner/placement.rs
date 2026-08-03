@@ -775,6 +775,43 @@ mod tests {
         Ok(())
     }
 
+    // scripts/setup/14-config.sh generates this block for
+    // OQTO_PLACEMENT_MODE=container. Without this test, setup could emit TOML
+    // the backend cannot load and the break would only surface at deploy time.
+    #[test]
+    fn setup_generated_container_placement_toml_deserializes() {
+        let toml_text = r#"
+mode = "container"
+image = "ghcr.io/byteowlz/oqto-workspace:0.5.0"
+network = "isolated"
+
+[userns.auto]
+
+[[endpoints]]
+name = "eavs"
+port = 3033
+target = "127.0.0.1:3033"
+"#;
+        let cfg: PlacementConfig =
+            toml::from_str(toml_text).expect("setup-generated placement TOML must deserialize");
+        assert_eq!(cfg.mode, PlacementMode::Container);
+        assert_eq!(cfg.image, "ghcr.io/byteowlz/oqto-workspace:0.5.0");
+        assert_eq!(cfg.network, PlacementNetworkMode::Isolated);
+        assert_eq!(cfg.endpoints.len(), 1);
+        assert_eq!(cfg.endpoints[0].name, "eavs");
+        assert_eq!(cfg.endpoints[0].port, 3033);
+        assert!(matches!(cfg.userns, PlacementUserns::Auto { .. }));
+        // A setup-generated production image must never be `latest`.
+        assert!(!cfg.image.ends_with(":latest"));
+    }
+
+    #[test]
+    fn setup_generated_local_placement_toml_deserializes() {
+        let cfg: PlacementConfig =
+            toml::from_str("mode = \"local\"").expect("local placement TOML must deserialize");
+        assert_eq!(cfg.mode, PlacementMode::Local);
+    }
+
     #[test]
     fn local_ref_detection() {
         assert!(is_local_ref("localhost/oqto-workspace:dev"));

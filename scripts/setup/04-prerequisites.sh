@@ -155,6 +155,13 @@ check_prerequisites() {
     check_container_runtime
   fi
 
+  # Container placement needs rootless Podman on the host (ADR-0019/0020).
+  # Only fires when container placement was actually requested.
+  local placement_mode="${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
+  if [[ "$placement_mode" == "container" ]]; then
+    ensure_podman_for_placement || missing+=("podman")
+  fi
+
   if [[ ${#missing[@]} -gt 0 ]]; then
     log_error "Missing required tools: ${missing[*]}"
     log_error "Please install them and run this script again."
@@ -383,6 +390,85 @@ APPARMOR
       log_warn "Run manually: uv tool install --force --upgrade --with ${python_pdf_with} ${python_pdf_tool}"
     fi
   fi
+}
+
+# Minimum Podman for userns=auto placements. Must stay in sync with
+# oqto_placement::doctor::MIN_PODMAN_VERSION, which enforces it fail-closed.
+PLACEMENT_MIN_PODMAN_MAJOR=4
+
+# Install rootless Podman from the distribution archive when container
+# placement is requested. Deliberately conservative:
+# - never adds third-party repositories (the classic OBS/kubic route for old
+#   Ubuntu/Debian is deprecated and a liability)
+# - never upgrades an existing Podman, since it is shared system state that
+#   other workloads may depend on
+# Hosts whose archive predates Podman 4 (Ubuntu 22.04 -> 3.4, Debian 11 -> 3.0)
+# are reported with an actionable message and left untouched; `oqtoctl doctor
+# --profile container --strict` is the authoritative gate.
+ensure_podman_for_placement() {
+  if [[ "$OS" != "linux" ]]; then
+    log_error "Container placement requires Linux (rootless Podman); this host is $OS"
+    return 1
+  fi
+
+  if command_exists podman; then
+    local version major
+    version="$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)"
+    [[ -z "$version" ]] && version="$(podman --version 2>/dev/null | awk '{print $3}')"
+    major="${version%%.*}"
+    if [[ -n "$major" ]] && ((major >= PLACEMENT_MIN_PODMAN_MAJOR)); then
+      log_success "Podman: $version (container placement supported)"
+      return 0
+    fi
+    log_error "Podman $version is too old for container placement (need >= ${PLACEMENT_MIN_PODMAN_MAJOR}.0)"
+    log_info "Not upgrading automatically: Podman is shared system state."
+    log_info "Use a distro whose archive ships Podman >= ${PLACEMENT_MIN_PODMAN_MAJOR} (Ubuntu 24.04+, Debian 12+,"
+    log_info "Fedora, RHEL/Rocky/Alma 9+, or a rolling distro), or upgrade Podman yourself."
+    log_info "Alternatively re-run with OQTO_PLACEMENT_MODE=local for host placement."
+    return 1
+  fi
+
+  if [[ "$OQTO_INSTALL_DEPS" != "yes" ]]; then
+    log_error "Podman not found and OQTO_INSTALL_DEPS=no; cannot set up container placement"
+    return 1
+  fi
+
+  log_info "Installing Podman for container placement..."
+  case "$OS_DISTRO" in
+  arch | manjaro | endeavouros) sudo pacman -S --noconfirm podman ;;
+  debian | ubuntu | pop | linuxmint)
+    apt_update_once
+    sudo apt-get install -y podman uidmap slirp4netns
+    ;;
+  fedora | centos | rhel | rocky | alma*) sudo dnf install -y podman ;;
+  opensuse*) sudo zypper install -y podman ;;
+  *)
+    log_error "Unsupported distribution '$OS_DISTRO' for automatic Podman install"
+    log_info "Install rootless Podman >= ${PLACEMENT_MIN_PODMAN_MAJOR}.0 manually, then re-run setup."
+    return 1
+    ;;
+  esac
+
+  if ! command_exists podman; then
+    log_error "Podman installation did not produce a usable 'podman' binary"
+    return 1
+  fi
+
+  # Re-check the version: some archives satisfy the package name but not the
+  # placement floor.
+  local installed major
+  installed="$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)"
+  [[ -z "$installed" ]] && installed="$(podman --version 2>/dev/null | awk '{print $3}')"
+  major="${installed%%.*}"
+  if [[ -z "$major" ]] || ((major < PLACEMENT_MIN_PODMAN_MAJOR)); then
+    log_error "Installed Podman $installed is older than ${PLACEMENT_MIN_PODMAN_MAJOR}.0 required for container placement"
+    log_info "This distribution's archive is too old. Use Ubuntu 24.04+, Debian 12+, Fedora,"
+    log_info "RHEL/Rocky/Alma 9+, or a rolling distro; or re-run with OQTO_PLACEMENT_MODE=local."
+    return 1
+  fi
+
+  log_success "Podman installed: $installed"
+  return 0
 }
 
 check_container_runtime() {

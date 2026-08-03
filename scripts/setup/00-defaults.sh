@@ -15,6 +15,11 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 : "${OQTO_USER_MODE:=single}"        # single or multi
 : "${OQTO_BACKEND_MODE:=local}"      # local only (container setup currently disabled)
 : "${OQTO_CONTAINER_RUNTIME:=auto}"  # docker, podman, or auto
+# Workspace placement (ADR-0019/0020): where a Workspace runner runs.
+# local     = runner as a host process (default)
+# container = per-Workspace rootless Podman container (requires Podman >= 4.0)
+: "${OQTO_PLACEMENT_MODE:=local}"    # local or container
+: "${OQTO_WORKSPACE_IMAGE:=}"        # placement image; empty = version-matched release default
 : "${OQTO_INSTALL_DEPS:=yes}"        # yes or no
 : "${OQTO_INSTALL_SERVICE:=yes}"     # yes or no
 : "${OQTO_INSTALL_AGENT_TOOLS:=yes}" # yes or no (agntz, mmry, trx)

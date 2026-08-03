@@ -64,3 +64,34 @@ select_backend_mode() {
   log_info "Selected backend mode: $SELECTED_BACKEND_MODE"
 }
 
+# Workspace placement (ADR-0019/0020). Distinct from the legacy backend mode
+# above: placement decides where a *Workspace runner* runs, not how the backend
+# hosts sessions. Container placement needs rootless Podman >= 4.0, which
+# check_prerequisites installs and `oqtoctl doctor --profile container`
+# verifies fail-closed.
+select_placement_mode() {
+  log_step "Workspace Placement Selection"
+
+  echo
+  echo "Where should Workspace runners execute?"
+  echo
+  echo -e "  ${BOLD}Host${NC} - Runner as a host process (default)"
+  echo "    - Lowest overhead, no container runtime required"
+  echo "    - Workspaces share the host filesystem and network"
+  echo
+  echo -e "  ${BOLD}Container${NC} - Per-Workspace rootless Podman container"
+  echo "    - Tenant isolation via userns=auto, network=none by default"
+  echo "    - Only granted endpoints (EAVS) are reachable from a Workspace"
+  echo "    - Requires rootless Podman >= 4.0 and systemd cgroup v2"
+
+  local choice
+  choice=$(prompt_choice "Select workspace placement:" "Host" "Container")
+
+  case "$choice" in
+  "Container") SELECTED_PLACEMENT_MODE="container" ;;
+  *) SELECTED_PLACEMENT_MODE="local" ;;
+  esac
+
+  log_info "Selected workspace placement: $SELECTED_PLACEMENT_MODE"
+}
+

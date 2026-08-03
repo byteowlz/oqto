@@ -253,6 +253,49 @@ create_home = true
 EOF
   fi
 
+  # Workspace placement (ADR-0019/0020). Container placement pins an exact
+  # version-matched image: the backend rejects label/digest drift fail-closed,
+  # so `latest` is never generated here.
+  local placement_mode="${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
+  if [[ "$placement_mode" == "container" ]]; then
+    local placement_image="$OQTO_WORKSPACE_IMAGE"
+    if [[ -z "$placement_image" ]]; then
+      local workspace_version
+      workspace_version="$(resolve_oqto_version)"
+      if [[ -z "$workspace_version" ]]; then
+        log_error "Could not determine the Oqto version for the Workspace image tag"
+        log_info "Set OQTO_WORKSPACE_IMAGE explicitly (e.g. ghcr.io/byteowlz/oqto-workspace:0.6.0)"
+        return 1
+      fi
+      placement_image="ghcr.io/byteowlz/oqto-workspace:${workspace_version}"
+    fi
+
+    cat >>"$config_file" <<EOF
+
+[placement]
+mode = "container"
+image = "$placement_image"
+network = "isolated"
+
+# Disjoint subuid/subgid range per Workspace: host files of one tenant are
+# unreadable to another tenant and to the backend user.
+[placement.userns.auto]
+
+# network="isolated" means no egress; only the endpoints listed here are
+# reachable, bridged over a Unix socket into the container.
+[[placement.endpoints]]
+name = "eavs"
+port = ${EAVS_PORT}
+target = "127.0.0.1:${EAVS_PORT}"
+EOF
+  else
+    cat >>"$config_file" <<EOF
+
+[placement]
+mode = "local"
+EOF
+  fi
+
   cat >>"$config_file" <<EOF
 
 [eavs]

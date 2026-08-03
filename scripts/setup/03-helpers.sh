@@ -247,3 +247,48 @@ install_latest_nodejs() {
   log_success "Node.js: v${latest_version} installed to ${NODE_INSTALL_DIR}"
 }
 
+
+# Resolve the Oqto release version for version-matched artifacts (notably the
+# Workspace container image, which must equal the backend version or the
+# backend rejects it fail-closed).
+#
+# Order: explicit override -> release manifest metadata -> source Cargo.toml ->
+# an installed oqto binary. Prints nothing when it cannot be determined so the
+# caller can fail loudly instead of generating a wrong pin.
+resolve_oqto_version() {
+  if [[ -n "${OQTO_VERSION:-}" ]]; then
+    echo "$OQTO_VERSION"
+    return 0
+  fi
+
+  local manifest="${SCRIPT_DIR:-.}/dist/manifest.toml"
+  if [[ -f "$manifest" ]]; then
+    local from_manifest
+    from_manifest="$(sed -n '/^\[workspace_image\]/,/^\[/{s/^version *= *"\([^"]\+\)".*/\1/p}' "$manifest" | head -1)"
+    if [[ -n "$from_manifest" ]]; then
+      echo "$from_manifest"
+      return 0
+    fi
+  fi
+
+  local cargo="${SCRIPT_DIR:-.}/backend/Cargo.toml"
+  if [[ -f "$cargo" ]]; then
+    local from_cargo
+    from_cargo="$(grep -m1 '^version = ' "$cargo" | sed 's/version = "\(.*\)".*/\1/')"
+    if [[ -n "$from_cargo" ]]; then
+      echo "$from_cargo"
+      return 0
+    fi
+  fi
+
+  if command_exists oqto; then
+    local from_binary
+    from_binary="$(oqto --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [[ -n "$from_binary" ]]; then
+      echo "$from_binary"
+      return 0
+    fi
+  fi
+
+  return 1
+}

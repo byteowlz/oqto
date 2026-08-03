@@ -73,6 +73,9 @@ Environment Variables:
   OQTO_USER_MODE          single or multi (default: single)
   OQTO_BACKEND_MODE       local or container (default: local)
   OQTO_CONTAINER_RUNTIME  docker, podman, or auto (default: auto)
+  OQTO_PLACEMENT_MODE     local or container (default: local)
+                          container = per-Workspace rootless Podman (needs Podman >= 4.0)
+  OQTO_WORKSPACE_IMAGE    Workspace image override (default: version-matched release)
   OQTO_INSTALL_DEPS       yes or no (default: yes)
   OQTO_INSTALL_SERVICE    yes or no (default: yes)
   OQTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
@@ -176,6 +179,7 @@ print_setup_summary() {
   echo "Profile:        $profile"
   echo "User mode:      ${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
   echo "Backend mode:   ${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+  echo "Placement:      ${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
   echo "Auth mode:      $(if [[ "$OQTO_DEV_MODE" == "true" ]]; then echo "development"; else echo "production/real auth"; fi)"
   echo "Hardening:      ${OQTO_HARDEN_SERVER:-prompt}"
   echo "Services:       ${OQTO_INSTALL_SERVICE:-yes}"
@@ -589,6 +593,7 @@ BANNER
     if [[ "$NONINTERACTIVE" != "true" ]]; then
       select_user_mode
       select_backend_mode
+      select_placement_mode
       select_deployment_mode
     else
       # Non-interactive: dev mode is disabled unless explicitly enabled
@@ -596,8 +601,20 @@ BANNER
         OQTO_DEV_MODE="false"
       fi
       PRODUCTION_MODE="$([[ "$OQTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
+      SELECTED_PLACEMENT_MODE="$OQTO_PLACEMENT_MODE"
     fi
   fi
+
+  # Fail closed on an unsupported placement value rather than silently
+  # falling back to host placement.
+  SELECTED_PLACEMENT_MODE="${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
+  case "$SELECTED_PLACEMENT_MODE" in
+  local | container) ;;
+  *)
+    log_error "Unsupported OQTO_PLACEMENT_MODE '$SELECTED_PLACEMENT_MODE' (expected 'local' or 'container')"
+    exit 1
+    ;;
+  esac
 
   print_setup_summary
 
