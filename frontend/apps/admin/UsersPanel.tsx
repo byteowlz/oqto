@@ -151,21 +151,8 @@ function CreateEditDialog({
 		}
 	};
 
-	// Reset form when dialog opens with different user
-	const handleOpenChange = (newOpen: boolean) => {
-		if (newOpen) {
-			setUsername(user?.username ?? "");
-			setEmail(user?.email ?? "");
-			setDisplayName(user?.display_name ?? "");
-			setRole(user?.role ?? "user");
-			setPassword("");
-			setError(null);
-		}
-		onOpenChange(newOpen);
-	};
-
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<form onSubmit={handleSubmit}>
 					<DialogHeader>
@@ -638,13 +625,21 @@ export function UsersPanel() {
 				)}
 			</div>
 
-			<CreateEditDialog
-				open={dialogOpen}
-				onOpenChange={setDialogOpen}
-				user={editingUser}
-				onSave={handleSave}
-				isLoading={createUserMutation.isPending || updateUserMutation.isPending}
-			/>
+			{/* Mounted only while open so the form's state initializers observe the
+			    selected user. A permanently mounted dialog initializes once with
+			    editingUser === null and never repopulates, because Radix fires
+			    onOpenChange only for dialog-initiated changes, not programmatic ones. */}
+			{dialogOpen && (
+				<CreateEditDialog
+					open={dialogOpen}
+					onOpenChange={setDialogOpen}
+					user={editingUser}
+					onSave={handleSave}
+					isLoading={
+						createUserMutation.isPending || updateUserMutation.isPending
+					}
+				/>
+			)}
 		</>
 	);
 }
