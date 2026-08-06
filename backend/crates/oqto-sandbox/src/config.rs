@@ -343,6 +343,48 @@ fn network_restrictiveness(mode: &NetworkMode) -> u8 {
 /// Merge two network policies so a workspace override can only tighten, never
 /// loosen, the global policy. On equal restrictiveness the workspace wins (it
 /// may, e.g., point proxy mode at its own ports).
+/// Merge SSH agent proxy config: the workspace opts in per work directory,
+/// while a global grant list acts as a ceiling on which keys it may use.
+///
+/// Both files belong to the same user, so this is scoping rather than a
+/// privilege boundary: the point is that a work directory reaches only the
+/// keys it was granted, not every key in the user's agent.
+fn merge_ssh(
+    global: &Option<SshProxyConfig>,
+    workspace: &Option<SshProxyConfig>,
+) -> Option<SshProxyConfig> {
+    match (global, workspace) {
+        (None, None) => None,
+        (Some(g), None) => Some(g.clone()),
+        (None, Some(w)) => Some(w.clone()),
+        (Some(g), Some(w)) => {
+            let allowed_keys = if g.allowed_keys.is_empty() {
+                w.allowed_keys.clone()
+            } else if w.allowed_keys.is_empty() {
+                g.allowed_keys.clone()
+            } else {
+                w.allowed_keys
+                    .iter()
+                    .filter(|k| g.allowed_keys.contains(k))
+                    .cloned()
+                    .collect()
+            };
+
+            Some(SshProxyConfig {
+                enabled: g.enabled || w.enabled,
+                allowed_keys,
+                allowed_hosts: if w.allowed_hosts.is_empty() {
+                    g.allowed_hosts.clone()
+                } else {
+                    w.allowed_hosts.clone()
+                },
+                prompt_unknown: g.prompt_unknown || w.prompt_unknown,
+                log_connections: g.log_connections || w.log_connections,
+            })
+        }
+    }
+}
+
 fn merge_network(
     global: &Option<NetworkConfig>,
     workspace: &Option<NetworkConfig>,
@@ -1281,6 +1323,11 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub network: Option<NetworkConfig>,
 
+    /// SSH agent proxy grants. Carried from the profile so the runner can start
+    /// a per-session agent proxy instead of exposing key material.
+    #[serde(default)]
+    pub ssh: Option<SshProxyConfig>,
+
     /// Per-process resource limits applied before exec.
     #[serde(default)]
     pub resource_limits: ResourceLimits,
@@ -1334,6 +1381,7 @@ impl Default for SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1400,6 +1448,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: file.profiles,
         };
 
@@ -1498,6 +1547,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1533,6 +1583,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1589,6 +1640,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: custom_profiles.clone(),
         };
 
@@ -1709,6 +1761,7 @@ impl SandboxConfig {
                         overlay_paths: profile.overlay_paths,
                         scoped_paths: profile.scoped_paths,
                         network: profile.network,
+                        ssh: profile.ssh,
                         profiles: merged_profiles,
                     };
 
@@ -1876,6 +1929,8 @@ impl SandboxConfig {
             scoped_paths,
             // Network policy: workspace may only tighten (Open < Proxy < Isolated).
             network: merge_network(&self.network, &workspace_config.network),
+            // SSH agent proxy: per-workdir opt-in, global grants are a ceiling.
+            ssh: merge_ssh(&self.ssh, &workspace_config.ssh),
             profiles,
         }
     }

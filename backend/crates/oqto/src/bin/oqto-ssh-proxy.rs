@@ -34,11 +34,13 @@
 //! - SSH_AGENTC_REMOVE_IDENTITY (18) - Remove key (blocked in proxy)
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use clap::Parser;
 use glob::Pattern;
 use log::{debug, error, info, warn};
 use oqto_sandbox::{SandboxConfig, SshProxyConfig};
 use rustix::process::getuid;
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -97,6 +99,74 @@ struct Args {
     /// Dry run (don't actually connect to upstream)
     #[arg(long)]
     dry_run: bool,
+
+    /// Grant use of a key, by comment substring or `SHA256:` fingerprint.
+    /// Repeatable. Overrides `allowed_keys` from config when present.
+    #[arg(long = "allow-key")]
+    allow_key: Vec<String>,
+
+    /// Never prompt: keys outside the grant are refused outright.
+    #[arg(long)]
+    no_prompt: bool,
+}
+
+/// SSH agent wire helpers: length-prefixed fields inside a message body.
+fn read_u32(buf: &[u8], at: usize) -> Option<u32> {
+    let end = at.checked_add(4)?;
+    let bytes: [u8; 4] = buf.get(at..end)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
+}
+
+/// Read a `u32`-length-prefixed field, returning it and the offset past it.
+fn read_field(buf: &[u8], at: usize) -> Option<(&[u8], usize)> {
+    let len = read_u32(buf, at)? as usize;
+    let start = at.checked_add(4)?;
+    let end = start.checked_add(len)?;
+    Some((buf.get(start..end)?, end))
+}
+
+fn write_field(out: &mut Vec<u8>, field: &[u8]) {
+    out.extend_from_slice(&(field.len() as u32).to_be_bytes());
+    out.extend_from_slice(field);
+}
+
+/// Resolve a grant written as a key path to its fingerprint.
+///
+/// Key comments rarely match the filename people think in (`~/.ssh/forgejo`
+/// commonly carries a `user@host` comment), and the agent protocol exposes
+/// only the comment. The proxy runs outside the sandbox, so it can read the
+/// public key and translate the path into the fingerprint the wire uses.
+/// Returns `None` when the grant is not a readable key path.
+fn fingerprint_from_key_path(grant: &str) -> Option<String> {
+    let expanded = if let Some(rest) = grant.strip_prefix("~/") {
+        PathBuf::from(std::env::var("HOME").ok()?).join(rest)
+    } else if grant.starts_with('/') {
+        PathBuf::from(grant)
+    } else {
+        return None;
+    };
+
+    let public_key = if expanded.extension().is_some_and(|ext| ext == "pub") {
+        expanded
+    } else {
+        expanded.with_extension("pub")
+    };
+
+    let contents = std::fs::read_to_string(&public_key).ok()?;
+    let encoded = contents.split_whitespace().nth(1)?;
+    let blob = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    Some(key_fingerprint(&blob))
+}
+
+/// OpenSSH-style key fingerprint (`SHA256:` + unpadded base64 of the digest).
+fn key_fingerprint(blob: &[u8]) -> String {
+    let digest = Sha256::digest(blob);
+    format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest)
+    )
 }
 
 /// Policy for SSH connections.
@@ -149,15 +219,57 @@ impl SshPolicy {
         }
     }
 
-    /// Check if a key is allowed by comment.
-    #[allow(dead_code)]
-    fn is_key_allowed(&self, key_comment: &str) -> bool {
-        // If no key restrictions, allow all
+    /// Check whether a key may be used, by comment substring or fingerprint.
+    ///
+    /// An empty grant list means no key restriction (host policy still applies).
+    fn is_key_allowed(&self, key_comment: &str, fingerprint: &str) -> bool {
         if self.allowed_keys.is_empty() {
             return true;
         }
 
-        self.allowed_keys.iter().any(|k| key_comment.contains(k))
+        self.allowed_keys
+            .iter()
+            .any(|k| key_comment.contains(k) || fingerprint == k)
+    }
+
+    /// Drop identities the workspace was not granted from an
+    /// `SSH_AGENT_IDENTITIES_ANSWER`, so the client never offers a key it
+    /// cannot use. Returns the rewritten message.
+    fn filter_identities(&self, response: &[u8]) -> Result<Vec<u8>> {
+        if self.allowed_keys.is_empty() {
+            return Ok(response.to_vec());
+        }
+        if response.first() != Some(&ssh_agent::SSH_AGENT_IDENTITIES_ANSWER) {
+            return Ok(response.to_vec());
+        }
+
+        let count = read_u32(response, 1).context("identities answer truncated")?;
+        let mut offset = 5;
+        let mut kept: Vec<u8> = Vec::new();
+        let mut kept_count = 0u32;
+
+        for _ in 0..count {
+            let (blob, next) = read_field(response, offset).context("identity blob truncated")?;
+            let (comment, next) =
+                read_field(response, next).context("identity comment truncated")?;
+            offset = next;
+
+            let comment = String::from_utf8_lossy(comment);
+            let fingerprint = key_fingerprint(blob);
+            if self.is_key_allowed(&comment, &fingerprint) {
+                write_field(&mut kept, blob);
+                write_field(&mut kept, comment.as_bytes());
+                kept_count += 1;
+            } else {
+                debug!("Withholding ungranted key '{}' ({})", comment, fingerprint);
+            }
+        }
+
+        let mut out = Vec::with_capacity(kept.len() + 5);
+        out.push(ssh_agent::SSH_AGENT_IDENTITIES_ANSWER);
+        out.extend_from_slice(&kept_count.to_be_bytes());
+        out.extend_from_slice(&kept);
+        Ok(out)
     }
 
     /// Request approval from oqto server.
@@ -236,6 +348,45 @@ fn send_failure(stream: &mut UnixStream) -> Result<()> {
     write_message(stream, &[ssh_agent::SSH_AGENT_FAILURE])
 }
 
+/// Ask upstream for its identities and resolve the grant list to concrete
+/// fingerprints.
+///
+/// A sign request names only the key blob, so comment-based grants
+/// (`allowed_keys = ["forgejo"]`) must be resolved to fingerprints before any
+/// signature can be authorised.
+fn resolve_granted_fingerprints(
+    upstream: &mut UnixStream,
+    policy: &SshPolicy,
+) -> Result<std::collections::HashSet<String>> {
+    let mut granted = std::collections::HashSet::new();
+    if policy.allowed_keys.is_empty() {
+        return Ok(granted);
+    }
+
+    write_message(upstream, &[ssh_agent::SSH_AGENTC_REQUEST_IDENTITIES])?;
+    let response = read_message(upstream)?;
+    if response.first() != Some(&ssh_agent::SSH_AGENT_IDENTITIES_ANSWER) {
+        return Ok(granted);
+    }
+
+    let count = read_u32(&response, 1).context("identities answer truncated")?;
+    let mut offset = 5;
+    for _ in 0..count {
+        let (blob, next) = read_field(&response, offset).context("identity blob truncated")?;
+        let (comment, next) = read_field(&response, next).context("identity comment truncated")?;
+        offset = next;
+
+        let comment = String::from_utf8_lossy(comment);
+        let fingerprint = key_fingerprint(blob);
+        if policy.is_key_allowed(&comment, &fingerprint) {
+            debug!("Granted key '{}' ({})", comment, fingerprint);
+            granted.insert(fingerprint);
+        }
+    }
+
+    Ok(granted)
+}
+
 /// Handle a single client connection.
 fn handle_client(
     mut client: UnixStream,
@@ -251,6 +402,11 @@ fn handle_client(
         None
     } else {
         Some(UnixStream::connect(upstream_path).context("Failed to connect to upstream agent")?)
+    };
+
+    let granted = match upstream.as_mut() {
+        Some(upstream) => resolve_granted_fingerprints(upstream, policy)?,
+        None => std::collections::HashSet::new(),
     };
 
     loop {
@@ -272,13 +428,12 @@ fn handle_client(
 
         match msg_type {
             ssh_agent::SSH_AGENTC_REQUEST_IDENTITIES => {
-                // List keys - forward to upstream
+                // List keys - forward to upstream, then withhold ungranted keys
                 if let Some(ref mut upstream) = upstream {
                     write_message(upstream, &request)?;
                     let response = read_message(upstream)?;
-
-                    // TODO: Filter keys based on policy.allowed_keys
-                    write_message(&mut client, &response)?;
+                    let filtered = policy.filter_identities(&response)?;
+                    write_message(&mut client, &filtered)?;
                 } else {
                     // Dry run - return empty key list
                     let response = [ssh_agent::SSH_AGENT_IDENTITIES_ANSWER, 0, 0, 0, 0];
@@ -296,11 +451,28 @@ fn handle_client(
                     continue;
                 }
 
-                // For now, we can't reliably extract the target host from the sign request
-                // The host info is in the data being signed, but parsing SSH protocol is complex
-                // We'll prompt for all sign requests if prompt_unknown is true
+                // The sign request names the key, not the destination: SSH puts
+                // the session id and username in the signed blob, never the
+                // hostname. Key identity is therefore the enforceable grant
+                // here; per-destination scoping needs the connection path.
+                let (key_blob, _) = match read_field(&request, 1) {
+                    Some(parsed) => parsed,
+                    None => {
+                        warn!("Malformed sign request: truncated key blob");
+                        send_failure(&mut client)?;
+                        continue;
+                    }
+                };
+                let fingerprint = key_fingerprint(key_blob);
 
-                let host = "[unknown host]"; // TODO: Parse from signed data
+                if !policy.allowed_keys.is_empty() && !granted.contains(&fingerprint) {
+                    warn!("Refusing sign request for ungranted key {}", fingerprint);
+                    send_failure(&mut client)?;
+                    continue;
+                }
+                debug!("Signing with granted key {}", fingerprint);
+
+                let host = "[unknown host]";
 
                 match policy.is_host_allowed(host) {
                     PolicyResult::Allow => {
@@ -366,7 +538,7 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     // Load config
-    let ssh_config = if let Some(config_path) = &args.config {
+    let mut ssh_config = if let Some(config_path) = &args.config {
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("Failed to read config: {:?}", config_path))?;
         let sandbox: SandboxConfig = toml::from_str(&content)?;
@@ -380,6 +552,26 @@ fn main() -> Result<()> {
     } else {
         SshProxyConfig::default()
     };
+
+    // CLI grants override config: the runner passes the workspace's grant set.
+    if !args.allow_key.is_empty() {
+        ssh_config.allowed_keys = args.allow_key.clone();
+    }
+    // Translate path-shaped grants into fingerprints while ~/.ssh is readable.
+    ssh_config.allowed_keys = ssh_config
+        .allowed_keys
+        .iter()
+        .map(|grant| match fingerprint_from_key_path(grant) {
+            Some(fingerprint) => {
+                info!("Grant '{}' resolved to {}", grant, fingerprint);
+                fingerprint
+            }
+            None => grant.clone(),
+        })
+        .collect();
+    if args.no_prompt {
+        ssh_config.prompt_unknown = false;
+    }
 
     // Determine socket paths
     let listen_path = args.listen.unwrap_or_else(|| {
@@ -400,6 +592,7 @@ fn main() -> Result<()> {
     info!("  Upstream: {:?}", upstream_path);
     info!("  Profile: {}", args.profile);
     info!("  Allowed hosts: {:?}", ssh_config.allowed_hosts);
+    info!("  Granted keys: {:?}", ssh_config.allowed_keys);
     info!("  Prompt unknown: {}", ssh_config.prompt_unknown);
 
     // Create policy (used in handle_client, created per-connection for thread safety)
@@ -458,4 +651,72 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identities_answer(entries: &[(&[u8], &str)]) -> Vec<u8> {
+        let mut out = vec![ssh_agent::SSH_AGENT_IDENTITIES_ANSWER];
+        out.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        for (blob, comment) in entries {
+            write_field(&mut out, blob);
+            write_field(&mut out, comment.as_bytes());
+        }
+        out
+    }
+
+    fn policy(allowed_keys: &[&str]) -> SshPolicy {
+        SshPolicy {
+            allowed_hosts: vec![],
+            allowed_keys: allowed_keys.iter().map(|k| k.to_string()).collect(),
+            prompt_unknown: false,
+            oqto_server: String::new(),
+        }
+    }
+
+    #[test]
+    fn identities_outside_the_grant_are_withheld() {
+        let response =
+            identities_answer(&[(b"blob-forgejo", "forgejo"), (b"blob-github", "github")]);
+
+        let filtered = policy(&["forgejo"]).filter_identities(&response).unwrap();
+
+        let count = read_u32(&filtered, 1).unwrap();
+        assert_eq!(count, 1, "only the granted key should be offered");
+        let (blob, next) = read_field(&filtered, 5).unwrap();
+        assert_eq!(blob, b"blob-forgejo");
+        let (comment, _) = read_field(&filtered, next).unwrap();
+        assert_eq!(comment, b"forgejo");
+    }
+
+    #[test]
+    fn an_empty_grant_list_withholds_nothing() {
+        let response = identities_answer(&[(b"blob-a", "a"), (b"blob-b", "b")]);
+
+        let filtered = policy(&[]).filter_identities(&response).unwrap();
+
+        assert_eq!(filtered, response);
+    }
+
+    #[test]
+    fn grants_match_by_fingerprint_as_well_as_comment() {
+        let fingerprint = key_fingerprint(b"blob-forgejo");
+        let response = identities_answer(&[(b"blob-forgejo", "unrelated-comment")]);
+
+        let filtered = policy(&[&fingerprint])
+            .filter_identities(&response)
+            .unwrap();
+
+        assert_eq!(read_u32(&filtered, 1).unwrap(), 1);
+    }
+
+    #[test]
+    fn fingerprints_are_openssh_formatted() {
+        // ssh-keygen prints unpadded base64 of the SHA256 digest.
+        let fingerprint = key_fingerprint(b"some-key-blob");
+        assert!(fingerprint.starts_with("SHA256:"));
+        assert!(!fingerprint.ends_with('='));
+    }
 }

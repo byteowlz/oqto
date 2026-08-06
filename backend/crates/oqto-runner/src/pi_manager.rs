@@ -628,6 +628,9 @@ struct PiSession {
     /// its `Drop` tears the namespace down when the session ends; inert for
     /// open/isolated modes. The runner never touches the namespace directly.
     _egress_guard: EgressGuard,
+    /// SSH agent proxy for this session, when the work directory granted keys.
+    /// Dropping it stops the proxy and removes its socket.
+    _ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy>,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
     /// The Pi external_id for this session.
@@ -851,6 +854,9 @@ impl PiSessionManager {
         // Egress namespace guard; replaced with a live one for proxy mode below.
         // Held in the session so teardown runs when the session ends.
         let mut egress_guard = EgressGuard::inert();
+        // SSH agent proxy, when the work directory was granted keys. Held in
+        // the session so the socket and process die with it.
+        let mut ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy> = None;
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
@@ -889,6 +895,14 @@ impl PiSessionManager {
                         egress_guard = effective_config
                             .prepare_egress()
                             .context("Failed to prepare network egress namespace")?;
+
+                        // SSH keys stay in the user's agent; the session gets a
+                        // policy-filtered socket instead of key material.
+                        if let Some(ref ssh_config) = effective_config.ssh {
+                            ssh_agent_proxy =
+                                crate::ssh_agent_proxy::spawn(ssh_config, &session_socket_dir)
+                                    .context("Failed to start SSH agent proxy")?;
+                        }
 
                         info!(
                             "Sandboxing Pi session '{}' with profile '{}' ({} bwrap args)",
@@ -948,6 +962,15 @@ impl PiSessionManager {
         // Set OQTO_SESSION_ID so agents can use oqtoctl a2ui commands
         if !config.env.contains_key("OQTO_SESSION_ID") {
             cmd.env("OQTO_SESSION_ID", &session_id);
+        }
+        // Point SSH at the proxy socket; the real agent stays outside.
+        if let Some(ref proxy) = ssh_agent_proxy {
+            cmd.env("SSH_AUTH_SOCK", proxy.socket_path());
+            if !config.env.contains_key("GIT_SSH_COMMAND")
+                && let Some(git_ssh_command) = proxy.git_ssh_command()
+            {
+                cmd.env("GIT_SSH_COMMAND", git_ssh_command);
+            }
         }
 
         // Configure pipes
@@ -1090,6 +1113,7 @@ impl PiSessionManager {
             config,
             process: child,
             _egress_guard: egress_guard,
+            _ssh_agent_proxy: ssh_agent_proxy,
             state: Arc::clone(&state),
             session_external_id,
             active_provider,

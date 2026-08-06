@@ -14,6 +14,7 @@ pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;
 pub mod reverse_bridge;
+pub mod ssh_agent_proxy;
 pub mod tls;
 pub mod transport;
 pub mod wire;
