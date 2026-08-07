@@ -100,8 +100,10 @@ struct Args {
     #[arg(long)]
     dry_run: bool,
 
-    /// Grant use of a key, by comment substring or `SHA256:` fingerprint.
-    /// Repeatable. Overrides `allowed_keys` from config when present.
+    /// Grant use of a key. Accepts a key path, a `SHA256:` fingerprint, a
+    /// comment substring, `ca:<path|fingerprint>` for any certificate signed by
+    /// that CA, or `principal:<name>`. Repeatable. Overrides `allowed_keys`
+    /// from config when present.
     #[arg(long = "allow-key")]
     allow_key: Vec<String>,
 
@@ -169,6 +171,118 @@ fn key_fingerprint(blob: &[u8]) -> String {
     )
 }
 
+/// What an OpenSSH certificate says about the key it wraps.
+///
+/// A certificate is a distinct blob from the key inside it, so its own digest
+/// changes every time the CA issues a new one. Grants must therefore name
+/// something stable: the key being certified, the CA that signed it, or a
+/// principal it carries.
+struct CertificateIdentity {
+    /// Fingerprint of the certified public key (what `ssh-keygen -l` reports).
+    key_fingerprint: Option<String>,
+    /// Fingerprint of the signing CA's public key.
+    ca_fingerprint: Option<String>,
+    key_id: String,
+    principals: Vec<String>,
+    valid_before: u64,
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_u64(buf: &[u8], at: usize) -> Option<u64> {
+    let end = at.checked_add(8)?;
+    let bytes: [u8; 8] = buf.get(at..end)?.try_into().ok()?;
+    Some(u64::from_be_bytes(bytes))
+}
+
+/// Rebuild the plain public key blob embedded in a certificate.
+///
+/// The certified key's fields sit inline after the nonce, in the same order and
+/// encoding a plain key blob uses, so the plain blob is the base algorithm name
+/// followed by those fields verbatim.
+fn certified_key_blob(base_algorithm: &str, body: &[u8], after_nonce: usize) -> Option<Vec<u8>> {
+    let field_count = match base_algorithm {
+        "ssh-ed25519" => 1,                           // public key
+        "ssh-rsa" | "ssh-dss" => 2,                   // e, n
+        name if name.starts_with("ecdsa-sha2-") => 2, // curve, point
+        _ => return None,
+    };
+
+    let mut blob = Vec::new();
+    write_field(&mut blob, base_algorithm.as_bytes());
+
+    let mut offset = after_nonce;
+    for _ in 0..field_count {
+        let (field, next) = read_field(body, offset)?;
+        write_field(&mut blob, field);
+        offset = next;
+    }
+
+    Some(blob)
+}
+
+/// Parse an OpenSSH certificate blob. Returns `None` for plain keys.
+fn parse_certificate(blob: &[u8]) -> Option<CertificateIdentity> {
+    let (algorithm, offset) = read_field(blob, 0)?;
+    let algorithm = std::str::from_utf8(algorithm).ok()?;
+    let base_algorithm = algorithm.strip_suffix("-cert-v01@openssh.com")?;
+
+    let (_nonce, offset) = read_field(blob, offset)?;
+    let certified_fingerprint =
+        certified_key_blob(base_algorithm, blob, offset).map(|blob| key_fingerprint(&blob));
+
+    // Skip the certified key's own fields to reach the certificate body.
+    let mut cursor = offset;
+    let field_count = match base_algorithm {
+        "ssh-ed25519" => 1,
+        "ssh-rsa" | "ssh-dss" => 2,
+        name if name.starts_with("ecdsa-sha2-") => 2,
+        _ => return None,
+    };
+    for _ in 0..field_count {
+        let (_, next) = read_field(blob, cursor)?;
+        cursor = next;
+    }
+
+    let _serial = read_u64(blob, cursor)?;
+    let cursor = cursor + 8;
+    let _cert_type = read_u32(blob, cursor)?;
+    let cursor = cursor + 4;
+
+    let (key_id, cursor) = read_field(blob, cursor)?;
+    let (principals_blob, cursor) = read_field(blob, cursor)?;
+
+    let mut principals = Vec::new();
+    let mut principal_offset = 0;
+    while principal_offset < principals_blob.len() {
+        let (principal, next) = read_field(principals_blob, principal_offset)?;
+        principals.push(String::from_utf8_lossy(principal).into_owned());
+        principal_offset = next;
+    }
+
+    let _valid_after = read_u64(blob, cursor)?;
+    let valid_before = read_u64(blob, cursor + 8)?;
+    let cursor = cursor + 16;
+
+    let (_critical_options, cursor) = read_field(blob, cursor)?;
+    let (_extensions, cursor) = read_field(blob, cursor)?;
+    let (_reserved, cursor) = read_field(blob, cursor)?;
+    let (signature_key, _) = read_field(blob, cursor)?;
+
+    Some(CertificateIdentity {
+        key_fingerprint: certified_fingerprint,
+        ca_fingerprint: Some(key_fingerprint(signature_key)),
+        key_id: String::from_utf8_lossy(key_id).into_owned(),
+        principals,
+        valid_before,
+    })
+}
+
 /// Policy for SSH connections.
 struct SshPolicy {
     /// Allowed host patterns (glob)
@@ -219,17 +333,54 @@ impl SshPolicy {
         }
     }
 
-    /// Check whether a key may be used, by comment substring or fingerprint.
+    /// Check whether an identity may be used.
+    ///
+    /// Grants match a plain key by fingerprint or comment substring. For
+    /// certificates they may instead name the certified key, the signing CA
+    /// (`ca:<fingerprint>`), or a principal (`principal:<name>`), none of which
+    /// change when the CA issues a fresh certificate.
     ///
     /// An empty grant list means no key restriction (host policy still applies).
-    fn is_key_allowed(&self, key_comment: &str, fingerprint: &str) -> bool {
+    fn is_identity_allowed(&self, key_comment: &str, blob: &[u8]) -> bool {
         if self.allowed_keys.is_empty() {
             return true;
         }
 
-        self.allowed_keys
-            .iter()
-            .any(|k| key_comment.contains(k) || fingerprint == k)
+        let fingerprint = key_fingerprint(blob);
+        let certificate = parse_certificate(blob);
+
+        if let Some(certificate) = certificate.as_ref()
+            && certificate.valid_before < now_seconds()
+        {
+            warn!(
+                "Certificate '{}' expired at {}; refusing it",
+                certificate.key_id, certificate.valid_before
+            );
+            return false;
+        }
+
+        self.allowed_keys.iter().any(|grant| {
+            if let Some(ca) = grant.strip_prefix("ca:") {
+                return certificate
+                    .as_ref()
+                    .and_then(|certificate| certificate.ca_fingerprint.as_deref())
+                    .is_some_and(|ca_fingerprint| ca_fingerprint == ca);
+            }
+            if let Some(principal) = grant.strip_prefix("principal:") {
+                return certificate.as_ref().is_some_and(|certificate| {
+                    certificate.principals.iter().any(|p| p == principal)
+                });
+            }
+
+            if fingerprint == *grant || key_comment.contains(grant) {
+                return true;
+            }
+
+            certificate.as_ref().is_some_and(|certificate| {
+                certificate.key_fingerprint.as_deref() == Some(grant.as_str())
+                    || certificate.key_id.contains(grant)
+            })
+        })
     }
 
     /// Drop identities the workspace was not granted from an
@@ -255,13 +406,16 @@ impl SshPolicy {
             offset = next;
 
             let comment = String::from_utf8_lossy(comment);
-            let fingerprint = key_fingerprint(blob);
-            if self.is_key_allowed(&comment, &fingerprint) {
+            if self.is_identity_allowed(&comment, blob) {
                 write_field(&mut kept, blob);
                 write_field(&mut kept, comment.as_bytes());
                 kept_count += 1;
             } else {
-                debug!("Withholding ungranted key '{}' ({})", comment, fingerprint);
+                debug!(
+                    "Withholding ungranted key '{}' ({})",
+                    comment,
+                    key_fingerprint(blob)
+                );
             }
         }
 
@@ -377,9 +531,11 @@ fn resolve_granted_fingerprints(
         offset = next;
 
         let comment = String::from_utf8_lossy(comment);
-        let fingerprint = key_fingerprint(blob);
-        if policy.is_key_allowed(&comment, &fingerprint) {
-            debug!("Granted key '{}' ({})", comment, fingerprint);
+        if policy.is_identity_allowed(&comment, blob) {
+            // Keyed on the blob's own digest: a sign request names the
+            // certificate, not the key inside it.
+            let fingerprint = key_fingerprint(blob);
+            debug!("Granted identity '{}' ({})", comment, fingerprint);
             granted.insert(fingerprint);
         }
     }
@@ -561,12 +717,19 @@ fn main() -> Result<()> {
     ssh_config.allowed_keys = ssh_config
         .allowed_keys
         .iter()
-        .map(|grant| match fingerprint_from_key_path(grant) {
-            Some(fingerprint) => {
-                info!("Grant '{}' resolved to {}", grant, fingerprint);
-                fingerprint
+        .map(|grant| {
+            let (prefix, path) = match grant.strip_prefix("ca:") {
+                Some(path) => ("ca:", path),
+                None => ("", grant.as_str()),
+            };
+            match fingerprint_from_key_path(path) {
+                Some(fingerprint) => {
+                    let resolved = format!("{}{}", prefix, fingerprint);
+                    info!("Grant '{}' resolved to {}", grant, resolved);
+                    resolved
+                }
+                None => grant.clone(),
             }
-            None => grant.clone(),
         })
         .collect();
     if args.no_prompt {
@@ -718,5 +881,82 @@ mod tests {
         let fingerprint = key_fingerprint(b"some-key-blob");
         assert!(fingerprint.starts_with("SHA256:"));
         assert!(!fingerprint.ends_with('='));
+    }
+
+    /// Real artifacts from `ssh-keygen`: an ed25519 key, a CA, and a
+    /// certificate for that key signed by that CA (principals forgejo-ro, git).
+    fn decode(name: &str) -> Vec<u8> {
+        let encoded = match name {
+            "cert" => include_str!("testdata/cert.b64"),
+            "user" => include_str!("testdata/user.b64"),
+            "ca" => include_str!("testdata/ca.b64"),
+            "cert-expired" => include_str!("testdata/cert-expired.b64"),
+            other => panic!("unknown fixture {other}"),
+        };
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded.trim())
+            .expect("fixture decodes")
+    }
+
+    #[test]
+    fn a_certificate_reports_the_key_and_ca_it_binds() {
+        let certificate = parse_certificate(&decode("cert")).expect("parses as a certificate");
+
+        assert_eq!(
+            certificate.key_fingerprint.as_deref(),
+            Some(key_fingerprint(&decode("user")).as_str()),
+            "the certified key is what ssh-keygen -l reports"
+        );
+        assert_eq!(
+            certificate.ca_fingerprint.as_deref(),
+            Some(key_fingerprint(&decode("ca")).as_str())
+        );
+        assert_eq!(certificate.key_id, "tommy@oqto");
+        assert_eq!(certificate.principals, vec!["forgejo-ro", "git"]);
+    }
+
+    #[test]
+    fn plain_keys_are_not_certificates() {
+        assert!(parse_certificate(&decode("user")).is_none());
+    }
+
+    #[test]
+    fn a_certificate_is_granted_by_its_ca() {
+        let ca_grant = format!("ca:{}", key_fingerprint(&decode("ca")));
+
+        assert!(policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("cert")));
+        // The CA grant must not leak to a plain key that no CA vouched for.
+        assert!(!policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("user")));
+    }
+
+    #[test]
+    fn a_certificate_is_granted_by_principal() {
+        assert!(policy(&["principal:forgejo-ro"]).is_identity_allowed("user-key", &decode("cert")));
+        assert!(
+            !policy(&["principal:production"]).is_identity_allowed("user-key", &decode("cert"))
+        );
+    }
+
+    #[test]
+    fn a_certificate_is_granted_by_the_key_it_certifies() {
+        // Grants written against the key survive certificate reissue, whose
+        // own digest changes every time.
+        let key_grant = key_fingerprint(&decode("user"));
+
+        assert!(policy(&[&key_grant]).is_identity_allowed("user-key", &decode("cert")));
+    }
+
+    #[test]
+    fn an_unrelated_grant_does_not_match_a_certificate() {
+        let unrelated = key_fingerprint(b"some-other-key");
+
+        assert!(!policy(&[&unrelated]).is_identity_allowed("", &decode("cert")));
+    }
+
+    #[test]
+    fn an_expired_certificate_is_refused_even_when_its_ca_is_granted() {
+        let ca_grant = format!("ca:{}", key_fingerprint(&decode("ca")));
+
+        assert!(!policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("cert-expired")));
     }
 }
