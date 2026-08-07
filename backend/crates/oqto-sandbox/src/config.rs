@@ -862,6 +862,10 @@ impl SandboxProfile {
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 // The platform's own config holds the backend signing secret and the
@@ -910,6 +914,10 @@ impl SandboxProfile {
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 // The platform's own config holds the backend signing secret and the
@@ -1042,6 +1050,10 @@ impl SandboxProfile {
             },
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 "~/.config".to_string(),
@@ -3711,6 +3723,25 @@ timeout_secs = 120
     }
 
     #[test]
+    #[test]
+    fn profiles_mask_system_ssh_includes() {
+        // Root-owned files under /etc/ssh appear as `nobody` in the user
+        // namespace, and SSH refuses to start rather than ignore them, which
+        // breaks git over SSH before the agent proxy is ever consulted.
+        for profile in [
+            SandboxProfile::minimal(),
+            SandboxProfile::development(),
+            SandboxProfile::strict(),
+        ] {
+            assert!(
+                profile
+                    .deny_read
+                    .contains(&"/etc/ssh/ssh_config.d".to_string()),
+                "profile must mask system ssh includes"
+            );
+        }
+    }
+
     fn test_profile_with_ssh_config() {
         let toml_content = r#"
 enabled = true
