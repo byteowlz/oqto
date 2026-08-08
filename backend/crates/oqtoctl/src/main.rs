@@ -21,6 +21,22 @@ use hyperlocal::{UnixConnector, Uri as UnixUri};
 const DEFAULT_SERVER_URL: &str = "http://localhost:8080/api";
 const DEFAULT_ADMIN_SOCKET: &str = "/run/oqto/oqtoctl.sock";
 
+/// Where the admin socket lives when nothing overrides it.
+///
+/// The default config places it under `$XDG_RUNTIME_DIR`, so preferring that
+/// keeps the CLI aligned with a default server install. Without this, oqtoctl
+/// silently falls back to unauthenticated HTTP and every admin command fails.
+fn admin_socket_for_runtime_dir(runtime_dir: Option<&str>) -> PathBuf {
+    match runtime_dir {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir).join("oqtoctl.sock"),
+        _ => PathBuf::from(DEFAULT_ADMIN_SOCKET),
+    }
+}
+
+fn default_admin_socket() -> PathBuf {
+    admin_socket_for_runtime_dir(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+}
+
 fn main() -> ExitCode {
     if let Err(err) = try_main() {
         let _ = writeln!(io::stderr(), "Error: {err:?}");
@@ -889,6 +905,13 @@ impl OqtoResponse {
     }
 
     async fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        // Error bodies are JSON objects, so deserializing them into the
+        // expected type reports a shape mismatch instead of the actual
+        // failure (a 401 surfaced as "invalid type: map, expected a sequence").
+        if !self.status.is_success() {
+            let body = String::from_utf8_lossy(&self.body);
+            anyhow::bail!("server returned {}: {}", self.status, body.trim());
+        }
         serde_json::from_slice(&self.body).context("decoding JSON response")
     }
 }
@@ -926,7 +949,7 @@ impl OqtoClient {
             let socket_path = admin_socket
                 .map(PathBuf::from)
                 .or_else(|| admin_socket_env.map(PathBuf::from))
-                .or_else(|| Some(PathBuf::from(DEFAULT_ADMIN_SOCKET)));
+                .or_else(|| Some(default_admin_socket()));
 
             let use_admin_socket = admin_socket_requested || base_url == DEFAULT_SERVER_URL;
             let can_use_admin_socket = auth_token.is_none()
@@ -3919,6 +3942,35 @@ fn suggested_contract_commands(findings: &[oqto_provisioning::ContractFinding]) 
         }
     }
     commands
+}
+
+#[cfg(test)]
+mod admin_socket_tests {
+    use super::*;
+
+    /// The server's default config puts the admin socket under
+    /// `$XDG_RUNTIME_DIR`. When the CLI looked somewhere else it fell back to
+    /// unauthenticated HTTP, and every admin command failed with a decoding
+    /// error instead of an auth error.
+    #[test]
+    fn default_socket_follows_the_runtime_dir() {
+        assert_eq!(
+            admin_socket_for_runtime_dir(Some("/run/user/4242")),
+            PathBuf::from("/run/user/4242/oqtoctl.sock")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_system_socket_without_a_runtime_dir() {
+        assert_eq!(
+            admin_socket_for_runtime_dir(None),
+            PathBuf::from("/run/oqto/oqtoctl.sock")
+        );
+        assert_eq!(
+            admin_socket_for_runtime_dir(Some("")),
+            PathBuf::from("/run/oqto/oqtoctl.sock")
+        );
+    }
 }
 
 #[cfg(test)]

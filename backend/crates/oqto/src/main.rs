@@ -2900,7 +2900,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             _ = terminate => {},
         }
 
-        info!("Shutdown signal received, stopping containers...");
+        // Workspace placements deliberately outlive the backend: startup
+        // reconciles them from their specs, and tearing them down here would
+        // kill agent work on every restart. `oqtoctl container stop-all`
+        // removes them.
+        info!("Shutdown signal received; leaving workspace placements running");
 
         // Kill browser daemon processes
         {
