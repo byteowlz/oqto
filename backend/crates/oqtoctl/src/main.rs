@@ -313,11 +313,13 @@ enum ContainerCommand {
         #[arg(long)]
         outdated_only: bool,
     },
-    /// Clean up orphan containers (containers without sessions)
+    /// Clean up orphan local-mode session processes.
+    /// Workspace placements are managed with `oqtoctl ws`.
     Cleanup,
-    /// List all managed containers
+    /// List sessions and the containers backing them
     List,
-    /// Stop all running containers
+    /// Stop all running sessions. This does not remove Workspace placements;
+    /// use `oqtoctl ws rm` for that.
     StopAll,
 }
 
@@ -349,6 +351,24 @@ enum WorkspaceCommand {
         target: String,
         #[arg(default_value = "/workspace")]
         path: String,
+    },
+    /// Stop a Workspace placement, leaving it registered so it is reconciled
+    /// back on the next backend start
+    Stop {
+        /// Workspace or placement ID
+        target: Option<String>,
+        /// Stop every registered placement
+        #[arg(long)]
+        all: bool,
+    },
+    /// Stop a Workspace placement and unregister it, so it is not reconciled
+    /// back. This is the teardown path; workspace data on disk is untouched.
+    Rm {
+        /// Workspace or placement ID
+        target: Option<String>,
+        /// Remove every registered placement
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -1582,7 +1602,7 @@ async fn handle_container(
             }
         }
         ContainerCommand::Cleanup => {
-            let response = client.post("/admin/cleanup").await?;
+            let response = client.post("/admin/local/cleanup").await?;
             if response.status().is_success() {
                 let body = response.text().await?;
                 if json {
@@ -1807,8 +1827,100 @@ async fn handle_workspace(command: WorkspaceCommand, json: bool) -> Result<()> {
                 }
             }
         }
+        WorkspaceCommand::Stop { target, all } => {
+            teardown_placements(target, all, false, json).await?;
+        }
+        WorkspaceCommand::Rm { target, all } => {
+            teardown_placements(target, all, true, json).await?;
+        }
     }
     Ok(())
+}
+
+/// Stop placements, optionally unregistering them.
+///
+/// Runs against the placement store and the placement backend directly, so
+/// teardown works with the backend stopped. Unregistering matters: a stopped
+/// placement whose record survives is reconciled back on the next start.
+async fn teardown_placements(
+    target: Option<String>,
+    all: bool,
+    unregister: bool,
+    json: bool,
+) -> Result<()> {
+    use oqto_placement::PlacementStore;
+
+    let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+    let records = match (target, all) {
+        (Some(target), false) => vec![resolve_placement(&target).await?],
+        (None, true) => store.list().await?,
+        (Some(_), true) => anyhow::bail!("pass either a target or --all, not both"),
+        (None, false) => anyhow::bail!("pass a Workspace/placement ID or --all"),
+    };
+
+    if records.is_empty() {
+        if json {
+            println!(r#"{{"stopped":[],"failed":[]}}"#);
+        } else {
+            println!("No registered Workspaces");
+        }
+        return Ok(());
+    }
+
+    let mut stopped = Vec::new();
+    let mut failed = Vec::new();
+
+    for record in records {
+        match stop_placement(&record).await {
+            Ok(()) => {
+                if unregister {
+                    store.remove(&record.id).await?;
+                }
+                stopped.push(record.workspace_id.clone());
+                if !json {
+                    let verb = if unregister { "removed" } else { "stopped" };
+                    println!("{} {}", verb, record.workspace_id);
+                }
+            }
+            Err(error) => {
+                failed.push(serde_json::json!({
+                    "workspace": record.workspace_id,
+                    "error": error.to_string(),
+                }));
+                if !json {
+                    eprintln!("failed {}: {}", record.workspace_id, error);
+                }
+            }
+        }
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "stopped": stopped, "failed": failed })
+        );
+    }
+
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("{} placement(s) could not be stopped", failed.len())
+    }
+}
+
+/// Stop one placement through its backend.
+async fn stop_placement(record: &oqto_placement::PlacementRecord) -> Result<()> {
+    use oqto_placement::{PlacementKind, PlacementSupervisor};
+
+    match record.kind {
+        PlacementKind::RootlessPodman => oqto_placement::PodmanSupervisor::new().stop(record).await,
+        // The local supervisor only tracks children it spawned in its own
+        // process, so it cannot stop anything from here.
+        PlacementKind::LocalProcess => anyhow::bail!(
+            "local-process placements are owned by the running backend; \
+             use `oqtoctl local cleanup` instead"
+        ),
+    }
 }
 
 async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) -> Result<()> {

@@ -23,6 +23,15 @@ pub trait CommandRunner: Send + Sync {
 
 pub struct TokioCommandRunner;
 
+/// Podman reports an absent pod or container as an error, with wording that
+/// differs by object type ("no such pod", "no such object").
+fn is_missing_object(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_lowercase();
+    message.contains("no such object")
+        || message.contains("no such pod")
+        || message.contains("no such container")
+}
+
 #[async_trait]
 impl CommandRunner for TokioCommandRunner {
     async fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput> {
@@ -292,14 +301,23 @@ where
     }
 
     async fn stop(&self, placement: &PlacementRecord) -> Result<()> {
-        self.checked(&[
-            "pod".into(),
-            "rm".into(),
-            "--force".into(),
-            format!("{}-pod", placement.runtime_name).into(),
-        ])
-        .await?;
-        Ok(())
+        match self
+            .checked(&[
+                "pod".into(),
+                "rm".into(),
+                "--force".into(),
+                format!("{}-pod", placement.runtime_name).into(),
+            ])
+            .await
+        {
+            Ok(_) => Ok(()),
+            // An absent pod is the desired end state. Teardown must be
+            // repeatable, and callers unregister a placement only once its
+            // stop succeeds -- failing here would strand the record and let
+            // reconciliation recreate the workspace.
+            Err(error) if is_missing_object(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     async fn health(&self, placement: &PlacementRecord) -> Result<PlacementHealth> {
@@ -315,7 +333,7 @@ where
             Ok(output) => output,
             // A removed container is definitively stopped; reconcile must be
             // able to restart it from the recorded spec.
-            Err(error) if error.to_string().contains("no such object") => {
+            Err(error) if is_missing_object(&error) => {
                 return Ok(PlacementHealth::Stopped);
             }
             Err(error) => return Err(error),
@@ -399,6 +417,45 @@ mod tests {
                 stderr: Vec::new(),
             })
         }
+    }
+
+    /// Podman fails when the pod is already gone. Teardown has to be
+    /// repeatable: callers unregister a placement only after stop succeeds, so
+    /// an error here would strand the record and let reconciliation bring the
+    /// workspace back.
+    #[tokio::test]
+    async fn stopping_an_already_removed_pod_succeeds() {
+        struct MissingPodRunner;
+
+        #[async_trait]
+        impl CommandRunner for MissingPodRunner {
+            async fn run(&self, _program: &str, _args: &[OsString]) -> Result<CommandOutput> {
+                Ok(CommandOutput {
+                    status: ExitStatus::from_raw(1 << 8),
+                    stdout: Vec::new(),
+                    stderr: b"Error: no pod with name or ID oqto-ws-x-pod found: no such pod"
+                        .to_vec(),
+                })
+            }
+        }
+
+        let supervisor = PodmanSupervisor::with_command_runner(MissingPodRunner);
+        let record = PlacementRecord {
+            id: PlacementId("placement-x".to_string()),
+            workspace_id: "workspace-x".to_string(),
+            account_id: "account-x".to_string(),
+            kind: PlacementKind::RootlessPodman,
+            runtime_name: "oqto-ws-x".to_string(),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: std::path::PathBuf::from("/tmp/runner.sock"),
+            },
+            spec: None,
+        };
+
+        supervisor
+            .stop(&record)
+            .await
+            .expect("an absent pod is the desired end state");
     }
 
     #[test]
