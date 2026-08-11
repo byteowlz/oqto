@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>OqtoUI — Big Picture concepts</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main id="concept-root" tabindex="-1"></main>
+  </div>
+
+  <button id="menu-toggle" type="button" aria-expanded="false" aria-controls="menu-panel" aria-label="Open concept study menu">
+    <span aria-hidden="true">O</span>
+  </button>
+
+  <div id="menu-panel" hidden>
+    <div class="menu-head">
+      <div>
+        <span class="eyebrow" id="concept-number">CONCEPT 01</span>
+        <h1 id="concept-title">Spatial Matrix</h1>
+        <p id="concept-summary">Work directories are vertical workspaces. Sessions run horizontally like episodes.</p>
+      </div>
+    </div>
+
+    <nav class="concept-tabs" aria-label="Mockup concept">
+      <button type="button" data-concept="matrix" aria-label="Concept 1: Spatial Matrix" aria-pressed="true"><kbd>1</kbd><span>Matrix</span></button>
+      <button type="button" data-concept="cinema" aria-label="Concept 2: Project Cinema" aria-pressed="false"><kbd>2</kbd><span>Cinema</span></button>
+      <button type="button" data-concept="focus" aria-label="Concept 3: Focus and Filmstrip" aria-pressed="false"><kbd>3</kbd><span>Focus</span></button>
+      <button type="button" data-concept="atlas" aria-label="Concept 4: Activity Atlas" aria-pressed="false"><kbd>4</kbd><span>Atlas</span></button>
+      <button type="button" data-concept="anchor" aria-label="Concept 5: Anchor Carousel" aria-pressed="false"><kbd>5</kbd><span>Anchor</span></button>
+      <button type="button" data-concept="hybrid" aria-label="Concept 6: Stage and Rail" aria-pressed="false"><kbd>6</kbd><span>Stage</span></button>
+    </nav>
+
+    <div class="menu-actions">
+      <button type="button" id="search-button"><kbd>/</kbd><span>Search</span></button>
+      <button type="button" id="compare-button"><span>Design notes</span></button>
+    </div>
+
+    <div class="menu-hints">
+      <span><kbd>↑↓←→</kbd> Move</span>
+      <span><kbd>Enter</kbd> Open</span>
+      <span><kbd>1–6</kbd> Concept</span>
+    </div>
+  </div>
+
+  <dialog id="peek-dialog" class="peek-dialog" aria-labelledby="peek-title">
+    <button class="dialog-close" type="button" aria-label="Close preview">×</button>
+    <div id="peek-content"></div>
+  </dialog>
+
+  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
+    <div class="search-head">
+      <span aria-hidden="true" data-icon="search"></span>
+      <label id="search-title" for="search-input">Jump anywhere</label>
+      <button class="dialog-close" type="button" aria-label="Close search">×</button>
+    </div>
+    <input id="search-input" type="search" autocomplete="off" placeholder="Work directory, Session, or status…" />
+    <div id="search-results" role="listbox" aria-label="Search results"></div>
+  </dialog>
+
+  <dialog id="notes-dialog" class="notes-dialog" aria-labelledby="notes-title">
+    <div class="notes-head">
+      <div><span class="eyebrow">DESIGN REVIEW</span><h2 id="notes-title">Compare the six models</h2></div>
+      <button class="dialog-close" type="button" aria-label="Close design notes">×</button>
+    </div>
+    <div class="comparison-grid" id="comparison-grid"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
