@@ -4,4 +4,4 @@ import type { MemberRole } from "./MemberRole";
 /**
  * Request to add a member to a shared workspace.
  */
-export type AddMemberRequest = { user_id: string, role: MemberRole, };
+export type AddMemberRequest = { user_id: string; role: MemberRole };
