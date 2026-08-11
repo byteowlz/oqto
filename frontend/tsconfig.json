@@ -15,7 +15,8 @@
 		"incremental": true,
 		"types": ["vite/client"],
 		"paths": {
-			"@/*": ["./*"]
+			"@/*": ["./*"],
+			"@byteowlz/design-system": ["./vendor/design-system/src/index.ts"]
 		}
 	},
 	"include": [

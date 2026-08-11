@@ -230,7 +230,7 @@ async function readExceptions(exceptionsPath) {
 	}
 	for (const [index, exception] of parsed.exceptions.entries()) {
 		if (
-			exception?.approvedBy !== "Tommy" ||
+			exception?.approvedBy !== "owner" ||
 			typeof exception.rule !== "string" ||
 			typeof exception.file !== "string" ||
 			typeof exception.reason !== "string" ||
@@ -241,7 +241,7 @@ async function readExceptions(exceptionsPath) {
 			!/^oqto-[a-z0-9.]+$/.test(exception.issue)
 		) {
 			throw new Error(
-				`Invalid Workbench exception at index ${index}; Tommy approval, exact rule/file, reason, removalCondition, and oqto issue are required`,
+				`Invalid Workbench exception at index ${index}; owner approval (approvedBy: "owner"), exact rule/file, reason, removalCondition, and oqto issue are required`,
 			);
 		}
 		if (exception.line !== undefined && !Number.isInteger(exception.line)) {
@@ -940,6 +940,67 @@ function inspectFile(
 			);
 		}
 
+		if (
+			ts.isTypeReferenceNode(node) &&
+			node.typeArguments?.length === 2 &&
+			node.typeArguments[0].kind === ts.SyntaxKind.StringKeyword &&
+			(node.typeArguments[1].kind === ts.SyntaxKind.UnknownKeyword ||
+				node.typeArguments[1].kind === ts.SyntaxKind.AnyKeyword)
+		) {
+			violations.push(
+				violation(
+					"types/record-unknown",
+					relative,
+					node,
+					sourceFile,
+					`${node.typeName.getText()}<string, unknown/any> erases key knowledge; model the expected keys explicitly`,
+				),
+			);
+		}
+
+		if (node.kind === ts.SyntaxKind.UnknownKeyword && layer !== "adapters") {
+			let current = node.parent;
+			while (current && !ts.isSourceFile(current) && !ts.isBlock(current)) {
+				const modifiers = ts.canHaveModifiers(current)
+					? ts.getModifiers(current)
+					: undefined;
+				if (
+					modifiers?.some(
+						(modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+					)
+				) {
+					violations.push(
+						violation(
+							"types/exported-unknown",
+							relative,
+							node,
+							sourceFile,
+							"Exported signatures outside adapters must not expose 'unknown'; narrow at the adapter boundary",
+						),
+					);
+					break;
+				}
+				current = current.parent;
+			}
+		}
+
+		if (
+			ts.isIndexSignatureDeclaration(node) &&
+			node.type &&
+			(node.type.kind === ts.SyntaxKind.UnknownKeyword ||
+				node.type.kind === ts.SyntaxKind.AnyKeyword)
+		) {
+			violations.push(
+				violation(
+					"types/record-unknown",
+					relative,
+					node,
+					sourceFile,
+					"Index signatures with unknown/any values erase key knowledge; model the expected keys explicitly",
+				),
+			);
+		}
+
 		if (ts.isJsxAttribute(node) && node.name.text === "style") {
 			violations.push(
 				violation(
@@ -1147,7 +1208,7 @@ async function main() {
 		const baseline =
 			result.approvedExceptions === 0
 				? "zero-baseline"
-				: `${result.approvedExceptions} Tommy-approved exception(s)`;
+				: `${result.approvedExceptions} owner-approved exception(s)`;
 		console.log(
 			`Workbench guardrails OK (${result.files} source files, ${baseline}).`,
 		);

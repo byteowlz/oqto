@@ -571,6 +571,162 @@
 		"provisioningHealth": "Verifying service health...",
 		"provisioningAlmost": "Almost there..."
 	},
+	"workbench": {
+		"brandLabel": "Oqto workbench",
+		"lab": "Preview",
+		"theme": {
+			"label": "Base24 color scheme",
+			"oqto-dark": "Oqto Dark",
+			"oqto-light": "Oqto Light",
+			"nord-dark": "Nord Dark",
+			"nord-light": "Nord Light"
+		},
+		"person": {
+			"name": "You"
+		},
+		"navigation": {
+			"label": "Workspace and session navigation",
+			"collapse": "Collapse navigation",
+			"searchMode": "Choose search mode",
+			"searchPlaceholder": "Search...",
+			"sessions": "Sessions",
+			"newSession": "New session",
+			"newProject": "New project",
+			"sortSessions": "Sort sessions",
+			"workDirectories": "Work directories",
+			"settings": "Settings",
+			"admin": "Administration",
+			"toggleTheme": "Toggle theme",
+			"logout": "Sign out",
+			"toggleSessions": "Toggle sessions of {{name}}"
+		},
+		"status": {
+			"working": "Working",
+			"blocked": "Blocked",
+			"done": "Done",
+			"idle": "Idle",
+			"unknown": "Unknown"
+		},
+		"tools": {
+			"label": "Workspace tools",
+			"tasks": "Tasks",
+			"files": "Files",
+			"canvas": "Canvas",
+			"memories": "Memories",
+			"terminal": "Terminal",
+			"browser": "Browser",
+			"settings": "Settings"
+		},
+		"chat": {
+			"label": "Session conversation",
+			"timeline": "Conversation timeline",
+			"forkHere": "Fork here",
+			"copy": "Copy message",
+			"download": "Download session as markdown",
+			"search": "Search in session",
+			"togglePanel": "Toggle side panel",
+			"contextUsage": "Context window usage",
+			"placeholder": "Type a message...",
+			"attach": "Attach a file",
+			"send": "Send message",
+			"contextReadout": "{{tokens}} · {{percent}}%",
+			"model": "Model",
+			"contextModel": "Model",
+			"contextWindow": "Context window",
+			"contextUsed": "Used"
+		},
+		"activity": {
+			"label": "Agent activity",
+			"heading": "Agent activity",
+			"read": "Reading",
+			"edit": "Editing",
+			"test": "Testing"
+		},
+		"taskProgress": {
+			"label": "Tasks",
+			"summary": "{{completed}} of {{total}} tasks completed",
+			"openPlan": "Open complete task plan",
+			"closePlan": "Close task plan",
+			"status": {
+				"completed": "Completed",
+				"active": "In progress",
+				"pending": "Pending"
+			},
+			"fixture": {
+				"inspect": "Inspect the existing shell",
+				"plan": "Define the Workbench boundaries",
+				"implement": "Build the responsive surfaces",
+				"verify": "Verify themes and accessibility",
+				"summarize": "Prepare approval evidence"
+			}
+		},
+		"files": {
+			"label": "Files",
+			"home": "Go to workspace root",
+			"parentFolder": "Go to parent folder",
+			"rootLabel": "Home",
+			"upload": "Upload files",
+			"newFolder": "New folder",
+			"viewTree": "Tree view",
+			"viewList": "List view",
+			"viewGrid": "Grid view",
+			"tree": "Work directory files"
+		},
+		"mobile": {
+			"label": "Workbench destinations",
+			"chat": "Chat",
+			"files": "Files",
+			"activity": "Activity",
+			"switchSession": "Switch workspace or session",
+			"closeSessions": "Close session navigation"
+		},
+		"statusBar": {
+			"runningSessions": "Your running sessions",
+			"onlineUsers": "Online users",
+			"runnerLoad": "Running sessions / total",
+			"version": "Oqto version"
+		},
+		"workArea": {
+			"label": "Work area tabs",
+			"sessionOwned": "Session tab",
+			"workDirectoryOwned": "Work directory tab",
+			"pinned": "Pinned",
+			"openTool": "Open a tool tab"
+		},
+		"themeLab": {
+			"label": "Customize theme",
+			"reset": "Reset to scheme defaults",
+			"radius": "Corner radius",
+			"jsonLabel": "User theme JSON",
+			"applyJson": "Apply JSON theme",
+			"invalidJson": "Invalid theme JSON: {{message}}",
+			"clear": "Remove override for {{token}}",
+			"tokens": {
+				"primary": "Primary",
+				"background": "Background",
+				"card": "Card",
+				"border": "Border",
+				"sidebar": "Sidebar"
+			},
+			"radiusValue": "{{value}}px",
+			"shadows": "Shadows",
+			"shadowPresets": {
+				"none": "None",
+				"soft": "Soft",
+				"strong": "Strong"
+			},
+			"blur": "Backdrop blur",
+			"fontSans": "Interface font",
+			"fontMono": "Code font",
+			"fontPresets": {
+				"system": "System default",
+				"mono": "JetBrains Mono",
+				"humanist": "Helvetica / Arial",
+				"serif": "Georgia (serif)",
+				"custom": "Custom"
+			}
+		}
+	},
 	"permissions": {
 		"title": "Permission Required",
 		"categoryShell": "Shell Command",

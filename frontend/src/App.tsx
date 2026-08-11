@@ -1,9 +1,18 @@
+import { Suspense, lazy } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { AppShellRoute } from "./routes/AppShellRoute";
 import { AuthLayout } from "./routes/AuthLayout";
 import { LoginPage } from "./routes/LoginPage";
 import { RegisterPage } from "./routes/RegisterPage";
 import { RequireAuth } from "./routes/RequireAuth";
+
+const AppShellRoute = lazy(() =>
+	import("./routes/AppShellRoute").then((module) => ({
+		default: module.AppShellRoute,
+	})),
+);
+const WorkbenchLabRoute = lazy(
+	() => import("./workbench/routes/WorkbenchLabRoute"),
+);
 
 export function App() {
 	return (
@@ -14,6 +23,18 @@ export function App() {
 			}}
 		>
 			<Routes>
+				{import.meta.env.DEV ? (
+					<Route
+						path="/workbench-lab"
+						element={
+							<RequireAuth>
+								<Suspense fallback={null}>
+									<WorkbenchLabRoute />
+								</Suspense>
+							</RequireAuth>
+						}
+					/>
+				) : null}
 				<Route
 					path="/login"
 					element={
@@ -34,7 +55,9 @@ export function App() {
 					path="/*"
 					element={
 						<RequireAuth>
-							<AppShellRoute />
+							<Suspense fallback={null}>
+								<AppShellRoute />
+							</Suspense>
 						</RequireAuth>
 					}
 				/>

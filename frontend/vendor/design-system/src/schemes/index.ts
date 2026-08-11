@@ -11,6 +11,7 @@
 import type { Scheme, ThemeMode } from "../types.js";
 import emberJson from "./ember.json" with { type: "json" };
 import nordBase16Json from "./nord-base16.json" with { type: "json" };
+import nordLightJson from "./nord-light.json" with { type: "json" };
 import oqtoDarkJson from "./oqto-dark.json" with { type: "json" };
 import oqtoLightJson from "./oqto-light.json" with { type: "json" };
 
@@ -18,6 +19,7 @@ export const oqtoDark = oqtoDarkJson as Scheme;
 export const oqtoLight = oqtoLightJson as Scheme;
 export const ember = emberJson as Scheme;
 export const nordBase16 = nordBase16Json as Scheme;
+export const nordLight = nordLightJson as Scheme;
 
 /** All house schemes, keyed by id. */
 export const builtInSchemes: Readonly<Record<string, Scheme>> = {
@@ -25,6 +27,7 @@ export const builtInSchemes: Readonly<Record<string, Scheme>> = {
 	[oqtoLight.id]: oqtoLight,
 	[ember.id]: ember,
 	[nordBase16.id]: nordBase16,
+	[nordLight.id]: nordLight,
 };
 
 /** Ordered list for pickers. */
@@ -33,6 +36,7 @@ export const builtInSchemeList: ReadonlyArray<Scheme> = [
 	oqtoLight,
 	ember,
 	nordBase16,
+	nordLight,
 ];
 
 /** Canonical default for a mode (oqto's, until oqto owns these). */

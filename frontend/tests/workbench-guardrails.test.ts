@@ -60,6 +60,18 @@ describe("Workbench architecture guardrails", () => {
 		).not.toThrow();
 	});
 
+	it("accepts internal unknown narrowing and adapter-boundary unknown", () => {
+		const root = fixture({
+			"modules/data/model.ts":
+				'export function parse(text: string): string {\n\tconst raw: unknown = JSON.parse(text);\n\treturn typeof raw === "string" ? raw : "";\n}\n',
+			"adapters/config/parse.ts":
+				"export function narrow(value: unknown): string {\n\treturn typeof value === 'string' ? value : '';\n}\n",
+		});
+		expect(() =>
+			execFileSync(process.execPath, [SCRIPT, "--source-root", root]),
+		).not.toThrow();
+	});
+
 	it("accepts react-i18next Trans fallback content", () => {
 		const root = fixture({
 			"surfaces/chat/View.tsx":
@@ -70,7 +82,7 @@ describe("Workbench architecture guardrails", () => {
 		).not.toThrow();
 	});
 
-	it("rejects an exception not approved by Tommy", () => {
+	it("rejects an exception not approved by the project owner", () => {
 		const root = fixture({
 			"surfaces/chat/View.tsx":
 				"export const View = () => <p>Unapproved text</p>;\n",
@@ -100,10 +112,10 @@ describe("Workbench architecture guardrails", () => {
 			{ encoding: "utf8" },
 		);
 		expect(result.status).toBe(1);
-		expect(result.stderr).toContain("Tommy approval");
+		expect(result.stderr).toContain("owner approval");
 	});
 
-	it("honors only an exact Tommy-approved exception manifest entry", () => {
+	it("honors only an exact owner-approved exception manifest entry", () => {
 		const root = fixture({
 			"surfaces/chat/View.tsx":
 				"export const View = () => <p>Temporary approved text</p>;\n",
@@ -114,10 +126,10 @@ describe("Workbench architecture guardrails", () => {
 						rule: "i18n/untranslated-text",
 						file: "surfaces/chat/View.tsx",
 						line: 1,
-						reason: "Tommy approved this fixture exception",
+						reason: "Owner approved this fixture exception",
 						removalCondition: "Remove when the fixture test completes",
 						issue: "oqto-2jjm.1",
-						approvedBy: "Tommy",
+						approvedBy: "owner",
 					},
 				],
 			}),
@@ -360,6 +372,46 @@ describe("Workbench architecture guardrails", () => {
 				"modules/options/model.ts":
 					'import type { RunOptions } from "./types";\nexport function run(options: RunOptions) { return options; }\n',
 				"modules/options/types.ts": `export interface RunOptions {\n${Array.from({ length: 9 }, (_, index) => `field${index}: string;`).join("\n")}\n}\n`,
+			},
+		},
+		{
+			name: "Record with unknown values",
+			rule: "types/record-unknown",
+			files: {
+				"modules/data/model.ts":
+					"export type Payload = { fields: Record<string, unknown> };\nexport function read(payload: Payload) { return payload; }\n",
+			},
+		},
+		{
+			name: "index signature with any values",
+			rule: "types/record-unknown",
+			files: {
+				"modules/data/model.ts":
+					"export interface Bag {\n\t[key: string]: any;\n}\nexport function read(bag: Bag) { return bag; }\n",
+			},
+		},
+		{
+			name: "non-Record container with string-unknown arguments",
+			rule: "types/record-unknown",
+			files: {
+				"modules/data/model.ts":
+					"export type Cache = Map<string, unknown>;\nexport function read(cache: Cache) { return cache; }\n",
+			},
+		},
+		{
+			name: "exported unknown parameter outside adapters",
+			rule: "types/exported-unknown",
+			files: {
+				"modules/data/model.ts":
+					"export function parse(value: unknown) { return String(value); }\n",
+			},
+		},
+		{
+			name: "exported unknown type alias outside adapters",
+			rule: "types/exported-unknown",
+			files: {
+				"modules/data/model.ts":
+					"export type Loose = { value: unknown };\nexport function read(input: Loose) { return input; }\n",
 			},
 		},
 		{

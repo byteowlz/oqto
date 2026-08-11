@@ -11,4 +11,4 @@ adapters/  -> generated protocol/client types
 
 Imports may stay within the same named area (for example `modules/timeline/*`) but may not cross sideways into another area. Reusable visual primitives come from `@byteowlz/design-system` rather than this tree.
 
-Run `bun run lint:workbench-guardrails` before adding functional code. The Workbench starts with a zero baseline; suppressions require Tommy's documented approval.
+Run `bun run lint:workbench-guardrails` before adding functional code. The Workbench starts with a zero baseline; suppressions require the project owner's documented approval.

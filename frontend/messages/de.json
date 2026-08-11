@@ -571,6 +571,162 @@
 		"provisioningHealth": "Dienststatus wird überprüft...",
 		"provisioningAlmost": "Fast geschafft..."
 	},
+	"workbench": {
+		"brandLabel": "Oqto-Workbench",
+		"lab": "Vorschau",
+		"theme": {
+			"label": "Base24-Farbschema",
+			"oqto-dark": "Oqto Dark",
+			"oqto-light": "Oqto Light",
+			"nord-dark": "Nord Dark",
+			"nord-light": "Nord Light"
+		},
+		"person": {
+			"name": "Du"
+		},
+		"navigation": {
+			"label": "Arbeitsbereichs- und Sitzungsnavigation",
+			"collapse": "Navigation einklappen",
+			"searchMode": "Suchmodus wählen",
+			"searchPlaceholder": "Suchen...",
+			"sessions": "Sitzungen",
+			"newSession": "Neue Sitzung",
+			"newProject": "Neues Projekt",
+			"sortSessions": "Sitzungen sortieren",
+			"workDirectories": "Arbeitsverzeichnisse",
+			"settings": "Einstellungen",
+			"admin": "Verwaltung",
+			"toggleTheme": "Design umschalten",
+			"logout": "Abmelden",
+			"toggleSessions": "Sitzungen von {{name}} ein-/ausklappen"
+		},
+		"status": {
+			"working": "Arbeitet",
+			"blocked": "Blockiert",
+			"done": "Fertig",
+			"idle": "Inaktiv",
+			"unknown": "Unbekannt"
+		},
+		"tools": {
+			"label": "Arbeitsbereichswerkzeuge",
+			"tasks": "Aufgaben",
+			"files": "Dateien",
+			"canvas": "Canvas",
+			"memories": "Erinnerungen",
+			"terminal": "Terminal",
+			"browser": "Browser",
+			"settings": "Einstellungen"
+		},
+		"chat": {
+			"label": "Sitzungsunterhaltung",
+			"timeline": "Verlaufsansicht",
+			"forkHere": "Hier verzweigen",
+			"copy": "Nachricht kopieren",
+			"download": "Sitzung als Markdown herunterladen",
+			"search": "In Sitzung suchen",
+			"togglePanel": "Seitenleiste umschalten",
+			"contextUsage": "Kontextfenster-Auslastung",
+			"placeholder": "Nachricht eingeben...",
+			"attach": "Datei anhängen",
+			"send": "Nachricht senden",
+			"contextReadout": "{{tokens}} · {{percent}}%",
+			"model": "Modell",
+			"contextModel": "Modell",
+			"contextWindow": "Kontextfenster",
+			"contextUsed": "Belegt"
+		},
+		"activity": {
+			"label": "Agentenaktivität",
+			"heading": "Agentenaktivität",
+			"read": "Liest",
+			"edit": "Bearbeitet",
+			"test": "Testet"
+		},
+		"taskProgress": {
+			"label": "Aufgaben",
+			"summary": "{{completed}} von {{total}} Aufgaben abgeschlossen",
+			"openPlan": "Vollständigen Aufgabenplan öffnen",
+			"closePlan": "Aufgabenplan schließen",
+			"status": {
+				"completed": "Abgeschlossen",
+				"active": "In Bearbeitung",
+				"pending": "Ausstehend"
+			},
+			"fixture": {
+				"inspect": "Bestehende Shell untersuchen",
+				"plan": "Workbench-Grenzen definieren",
+				"implement": "Responsive Oberflächen erstellen",
+				"verify": "Themes und Barrierefreiheit prüfen",
+				"summarize": "Freigabenachweise vorbereiten"
+			}
+		},
+		"files": {
+			"label": "Dateien",
+			"home": "Zum Arbeitsbereichsstamm",
+			"parentFolder": "Zum übergeordneten Ordner",
+			"rootLabel": "Home",
+			"upload": "Dateien hochladen",
+			"newFolder": "Neuer Ordner",
+			"viewTree": "Baumansicht",
+			"viewList": "Listenansicht",
+			"viewGrid": "Rasteransicht",
+			"tree": "Dateien des Arbeitsverzeichnisses"
+		},
+		"mobile": {
+			"label": "Workbench-Ziele",
+			"chat": "Chat",
+			"files": "Dateien",
+			"activity": "Aktivität",
+			"switchSession": "Workspace oder Session wechseln",
+			"closeSessions": "Session-Navigation schließen"
+		},
+		"statusBar": {
+			"runningSessions": "Deine laufenden Sitzungen",
+			"onlineUsers": "Angemeldete Nutzer",
+			"runnerLoad": "Laufende Sitzungen / gesamt",
+			"version": "Oqto-Version"
+		},
+		"workArea": {
+			"label": "Arbeitsbereich-Tabs",
+			"sessionOwned": "Sitzungs-Tab",
+			"workDirectoryOwned": "Arbeitsverzeichnis-Tab",
+			"pinned": "Angeheftet",
+			"openTool": "Werkzeug-Tab öffnen"
+		},
+		"themeLab": {
+			"label": "Theme anpassen",
+			"reset": "Auf Schema zurücksetzen",
+			"radius": "Eckenradius",
+			"jsonLabel": "Benutzer-Theme-JSON",
+			"applyJson": "JSON-Theme anwenden",
+			"invalidJson": "Ungültiges Theme-JSON: {{message}}",
+			"clear": "Überschreibung für {{token}} entfernen",
+			"tokens": {
+				"primary": "Primärfarbe",
+				"background": "Hintergrund",
+				"card": "Karte",
+				"border": "Rahmen",
+				"sidebar": "Seitenleiste"
+			},
+			"radiusValue": "{{value}}px",
+			"shadows": "Schatten",
+			"shadowPresets": {
+				"none": "Keine",
+				"soft": "Weich",
+				"strong": "Stark"
+			},
+			"blur": "Hintergrund-Unschärfe",
+			"fontSans": "Oberflächen-Schrift",
+			"fontMono": "Code-Schrift",
+			"fontPresets": {
+				"system": "Systemstandard",
+				"mono": "JetBrains Mono",
+				"humanist": "Helvetica / Arial",
+				"serif": "Georgia (Serif)",
+				"custom": "Benutzerdefiniert"
+			}
+		}
+	},
 	"permissions": {
 		"title": "Berechtigung erforderlich",
 		"categoryShell": "Shell-Befehl",
