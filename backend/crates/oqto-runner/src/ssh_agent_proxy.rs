@@ -11,7 +11,7 @@
 //! into the sandbox, so the same wiring carries over to placements that mount
 //! their endpoint directory the same way.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{debug, info, warn};
 use oqto_sandbox::SshProxyConfig;
 use std::path::{Path, PathBuf};
@@ -78,23 +78,49 @@ fn proxy_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("oqto-ssh-proxy"))
 }
 
+/// Locate the agent to proxy for.
+///
+/// The runner inherits `SSH_AUTH_SOCK` only if it was started from a session
+/// that had one, which is not true for a service. Fall back to the well-known
+/// per-user socket so an agent started later is still found.
+fn resolve_agent_socket(auth_sock: Option<&str>, runtime_dir: Option<&str>) -> Option<PathBuf> {
+    if let Some(value) = auth_sock.filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(value);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    let candidate = PathBuf::from(runtime_dir?).join("ssh-agent.socket");
+    candidate.exists().then_some(candidate)
+}
+
+fn upstream_agent_socket() -> Option<PathBuf> {
+    resolve_agent_socket(
+        std::env::var("SSH_AUTH_SOCK").ok().as_deref(),
+        std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
+    )
+}
+
 /// Start a proxy for one session.
 ///
-/// Returns `Ok(None)` when the work directory did not enable it. Fails when it
-/// was enabled but cannot be honoured: a session that expects SSH must not
-/// start believing it has an agent when it does not.
+/// Returns `Ok(None)` when the work directory did not enable it, or when no
+/// agent is reachable. A missing agent means the session simply has no keys,
+/// which is less privileged than running without the grant -- refusing to
+/// start the session would deny service without protecting anything.
 pub fn spawn(config: &SshProxyConfig, session_socket_dir: &Path) -> Result<Option<SshAgentProxy>> {
     if !config.enabled {
         return Ok(None);
     }
 
-    let upstream = std::env::var("SSH_AUTH_SOCK")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .context(
-            "SSH agent proxy enabled but SSH_AUTH_SOCK is unset: \
-             start an ssh-agent holding the granted keys, or disable [ssh] for this work directory",
-        )?;
+    let Some(upstream) = upstream_agent_socket() else {
+        warn!(
+            "SSH keys are granted to this work directory but no ssh-agent was found \
+             (SSH_AUTH_SOCK unset and no $XDG_RUNTIME_DIR/ssh-agent.socket). \
+             Starting the session without SSH access."
+        );
+        return Ok(None);
+    };
 
     let socket = session_socket_dir.join("ssh-agent.sock");
     let _ = std::fs::remove_file(&socket);
@@ -114,12 +140,21 @@ pub fn spawn(config: &SshProxyConfig, session_socket_dir: &Path) -> Result<Optio
         command.arg("--no-prompt");
     }
 
-    let child = command
+    let child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("Failed to spawn {}", binary.display()))?;
+    {
+        Ok(child) => child,
+        Err(error) => {
+            warn!(
+                "Could not start {} ({error}). Starting the session without SSH access.",
+                binary.display()
+            );
+            return Ok(None);
+        }
+    };
 
     let known_hosts = materialize_known_hosts(session_socket_dir);
 
@@ -141,7 +176,8 @@ pub fn spawn(config: &SshProxyConfig, session_socket_dir: &Path) -> Result<Optio
     }
 
     warn!(
-        "SSH agent proxy did not create {} in time",
+        "SSH agent proxy did not create {} in time. \
+         Starting the session without SSH access.",
         socket.display()
     );
     drop(SshAgentProxy {
@@ -149,5 +185,48 @@ pub fn spawn(config: &SshProxyConfig, session_socket_dir: &Path) -> Result<Optio
         socket,
         known_hosts,
     });
-    anyhow::bail!("SSH agent proxy failed to start")
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefers_the_inherited_agent_socket() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sock = dir.path().join("agent.sock");
+        std::fs::write(&sock, b"").expect("create");
+
+        let resolved = resolve_agent_socket(Some(sock.to_str().unwrap()), None);
+
+        assert_eq!(resolved.as_deref(), Some(sock.as_path()));
+    }
+
+    /// A runner started as a service inherits no SSH_AUTH_SOCK, so an agent
+    /// started later must still be found at the well-known per-user path.
+    #[test]
+    fn falls_back_to_the_runtime_dir_socket() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sock = dir.path().join("ssh-agent.socket");
+        std::fs::write(&sock, b"").expect("create");
+
+        let resolved = resolve_agent_socket(None, dir.path().to_str());
+
+        assert_eq!(resolved.as_deref(), Some(sock.as_path()));
+    }
+
+    #[test]
+    fn ignores_a_stale_socket_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let resolved = resolve_agent_socket(Some("/nonexistent/agent.sock"), dir.path().to_str());
+
+        assert_eq!(resolved, None, "a path that does not exist is not an agent");
+    }
+
+    #[test]
+    fn reports_no_agent_when_nothing_is_available() {
+        assert_eq!(resolve_agent_socket(None, None), None);
+    }
 }
