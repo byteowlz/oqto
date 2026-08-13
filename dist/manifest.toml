@@ -41,6 +41,19 @@ mode = "0755"
 profiles = ["personal", "team"]
 
 [[assets]]
+id = "bin-oqto-ssh-proxy"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-ssh-proxy"
+stage_path = "bin/oqto-ssh-proxy"
+install_path = "/usr/local/bin/oqto-ssh-proxy"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
 id = "bin-oqto-sandbox"
 class = "immutable_symlink"
 kind = "binary"
