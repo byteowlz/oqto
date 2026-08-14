@@ -187,6 +187,9 @@ pub async fn run_container_doctor<R: CommandRunner>(
     checks.push(image_reference_check(opts));
     checks.push(image_attestation_check(opts, runner).await);
 
+    // --- nested user namespaces (per-session grant scope) ---
+    checks.push(nested_userns_check(opts, runner).await);
+
     // --- roots ---
     checks.push(root_check(
         "roots.state",
@@ -686,6 +689,68 @@ fn root_check(
 
 // ---------- helpers ----------
 
+/// Can a session be sandboxed *inside* a placement?
+///
+/// Grants can only be scoped per session where an isolation boundary exists per
+/// session (ADR-0039). In a container that boundary is nested bwrap, which needs
+/// unprivileged user namespaces to work inside an already-unprivileged
+/// container. Where it does not, sessions in one placement share a boundary and
+/// the placement may only advertise per-workspace grant scope.
+async fn nested_userns_check<R: CommandRunner>(
+    opts: &ContainerDoctorOptions,
+    runner: &R,
+) -> ContainerCheck {
+    const ID: &str = "userns.nested";
+    const DESCRIPTION: &str = "Nested user namespaces for per-session sandboxing";
+
+    let Some(image) = opts.image.as_deref() else {
+        return ContainerCheck::skip(ID, DESCRIPTION, "no image configured");
+    };
+    let podman = opts
+        .podman_binary
+        .clone()
+        .unwrap_or_else(|| "podman".to_string());
+
+    let args: Vec<std::ffi::OsString> = [
+        "run",
+        "--rm",
+        "--userns=auto",
+        "--network=none",
+        image,
+        "bwrap",
+        "--unshare-user",
+        "--unshare-pid",
+        "--dev-bind",
+        "/",
+        "/",
+        "true",
+    ]
+    .iter()
+    .map(std::ffi::OsString::from)
+    .collect();
+
+    match runner.run(&podman, &args).await {
+        Ok(output) if output.status.success() => ContainerCheck::pass(
+            ID,
+            DESCRIPTION,
+            "bwrap runs inside the workspace image; per-session grant scope is enforceable",
+        ),
+        Ok(output) => ContainerCheck::fail(
+            ID,
+            CheckSeverity::Warn,
+            DESCRIPTION,
+            format!(
+                "bwrap failed inside {image}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            "Sessions in one placement then share an isolation boundary. Advertise \
+             per-workspace grant scope, or enable unprivileged user namespaces \
+             (kernel.unprivileged_userns_clone=1) so sessions can be sandboxed individually.",
+        ),
+        Err(error) => ContainerCheck::skip(ID, DESCRIPTION, format!("probe not run: {error}")),
+    }
+}
+
 fn parse_semver(s: &str) -> Option<(u32, u32, u32)> {
     let s = s.trim().trim_start_matches('v');
     let mut parts = s.split('.');
@@ -765,6 +830,84 @@ fn is_local_ref(image: &str) -> bool {
 mod tests {
     use super::*;
     use crate::TokioCommandRunner;
+
+    struct ScriptedRunner {
+        status: i32,
+        stderr: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for ScriptedRunner {
+        async fn run(
+            &self,
+            _program: &str,
+            _args: &[std::ffi::OsString],
+        ) -> anyhow::Result<crate::podman::CommandOutput> {
+            use std::os::unix::process::ExitStatusExt;
+            Ok(crate::podman::CommandOutput {
+                status: std::process::ExitStatus::from_raw(self.status << 8),
+                stdout: Vec::new(),
+                stderr: self.stderr.as_bytes().to_vec(),
+            })
+        }
+    }
+
+    fn image_opts() -> ContainerDoctorOptions {
+        ContainerDoctorOptions {
+            image: Some("localhost/oqto-workspace:dev".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn nested_userns_passes_when_bwrap_runs_in_the_image() {
+        let check = nested_userns_check(
+            &image_opts(),
+            &ScriptedRunner {
+                status: 0,
+                stderr: "",
+            },
+        )
+        .await;
+
+        assert_eq!(check.status, CheckStatus::Pass);
+    }
+
+    /// A placement that cannot sandbox sessions individually may only advertise
+    /// per-workspace grant scope, so this warns rather than passing silently.
+    #[tokio::test]
+    async fn nested_userns_warns_when_bwrap_cannot_run() {
+        let check = nested_userns_check(
+            &image_opts(),
+            &ScriptedRunner {
+                status: 1,
+                stderr: "bwrap: No permissions to create new namespace",
+            },
+        )
+        .await;
+
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert_eq!(check.severity, CheckSeverity::Warn);
+        assert!(check.evidence.contains("No permissions"));
+        assert!(
+            !check.is_blocker(),
+            "grant scope degrades, placements still run"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_userns_skips_without_an_image() {
+        let check = nested_userns_check(
+            &ContainerDoctorOptions::default(),
+            &ScriptedRunner {
+                status: 0,
+                stderr: "",
+            },
+        )
+        .await;
+
+        assert_eq!(check.status, CheckStatus::Skip);
+    }
 
     #[test]
     fn parse_semver_handles_dev_and_rc_suffixes() {
