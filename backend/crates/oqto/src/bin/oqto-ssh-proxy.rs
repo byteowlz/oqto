@@ -289,14 +289,12 @@ struct SshPolicy {
     allowed_hosts: Vec<Pattern>,
     /// Allowed key comments/fingerprints
     allowed_keys: Vec<String>,
-    /// Prompt for unknown hosts
+    /// Prompt for unknown hosts. Not enforceable through the agent protocol.
     prompt_unknown: bool,
-    /// Oqto server URL for prompts
-    oqto_server: String,
 }
 
 impl SshPolicy {
-    fn from_config(config: &SshProxyConfig, oqto_server: &str) -> Self {
+    fn from_config(config: &SshProxyConfig) -> Self {
         let allowed_hosts = config
             .allowed_hosts
             .iter()
@@ -307,29 +305,6 @@ impl SshPolicy {
             allowed_hosts,
             allowed_keys: config.allowed_keys.clone(),
             prompt_unknown: config.prompt_unknown,
-            oqto_server: oqto_server.to_string(),
-        }
-    }
-
-    /// Check if a host is allowed.
-    fn is_host_allowed(&self, host: &str) -> PolicyResult {
-        // Check explicit allows
-        for pattern in &self.allowed_hosts {
-            if pattern.matches(host) {
-                return PolicyResult::Allow;
-            }
-        }
-
-        // If no patterns defined and prompt_unknown is false, allow all
-        if self.allowed_hosts.is_empty() && !self.prompt_unknown {
-            return PolicyResult::Allow;
-        }
-
-        // Otherwise, need to prompt
-        if self.prompt_unknown {
-            PolicyResult::Prompt
-        } else {
-            PolicyResult::Deny
         }
     }
 
@@ -431,52 +406,6 @@ impl SshPolicy {
         out.extend_from_slice(&kept);
         Ok(out)
     }
-
-    /// Request approval from oqto server.
-    async fn request_approval(&self, host: &str, key_comment: Option<&str>) -> Result<bool> {
-        let client = reqwest::Client::new();
-
-        let body = serde_json::json!({
-            "source": "octo_ssh_proxy",
-            "prompt_type": "ssh_sign",
-            "resource": host,
-            "description": format!(
-                "SSH connection to {}{}",
-                host,
-                key_comment.map(|k| format!(" using key '{}'", k)).unwrap_or_default()
-            ),
-            "timeout_secs": 60,
-        });
-
-        info!("Requesting approval for SSH to {} from oqto server", host);
-
-        let response = client
-            .post(format!("{}/internal/prompt", self.oqto_server))
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send prompt request")?;
-
-        if !response.status().is_success() {
-            warn!("Prompt request failed: {}", response.status());
-            return Ok(false);
-        }
-
-        let result: serde_json::Value = response.json().await?;
-
-        if let Some(action) = result.get("action").and_then(|a| a.as_str()) {
-            Ok(action == "allow_once" || action == "allow_session")
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PolicyResult {
-    Allow,
-    Deny,
-    Prompt,
 }
 
 /// Read a length-prefixed message from the socket.
@@ -551,7 +480,6 @@ fn handle_client(
     mut client: UnixStream,
     upstream_path: &PathBuf,
     policy: &SshPolicy,
-    runtime: &tokio::runtime::Handle,
     dry_run: bool,
 ) -> Result<()> {
     debug!("New client connection");
@@ -631,29 +559,12 @@ fn handle_client(
                 }
                 debug!("Signing with granted key {}", fingerprint);
 
-                let host = "[unknown host]";
-
-                match policy.is_host_allowed(host) {
-                    PolicyResult::Allow => {
-                        debug!("Host {} allowed by policy", host);
-                    }
-                    PolicyResult::Deny => {
-                        warn!("Host {} denied by policy", host);
-                        send_failure(&mut client)?;
-                        continue;
-                    }
-                    PolicyResult::Prompt => {
-                        // Request approval synchronously using tokio runtime
-                        let approved = runtime.block_on(policy.request_approval(host, None))?;
-
-                        if !approved {
-                            warn!("User denied SSH to {}", host);
-                            send_failure(&mut client)?;
-                            continue;
-                        }
-                        info!("User approved SSH to {}", host);
-                    }
-                }
+                // Destination policy is deliberately not consulted here. A sign
+                // request carries the session id and username, never the host,
+                // so any host rule can only ever fail to match -- denying every
+                // legitimate signature while stopping nothing. Per-destination
+                // scoping needs the connection path (oqto-deer); until then the
+                // key grant is the enforceable unit.
 
                 // Forward to upstream
                 if let Some(ref mut upstream) = upstream {
@@ -759,10 +670,16 @@ fn main() -> Result<()> {
     info!("  Profile: {}", args.profile);
     info!("  Allowed hosts: {:?}", ssh_config.allowed_hosts);
     info!("  Granted keys: {:?}", ssh_config.allowed_keys);
+    if !ssh_config.allowed_hosts.is_empty() || ssh_config.prompt_unknown {
+        warn!(
+            "allowed_hosts/prompt_unknown are not enforced: a sign request names the key, \
+             never the destination, so grants are key-scoped (see oqto-deer)"
+        );
+    }
     info!("  Prompt unknown: {}", ssh_config.prompt_unknown);
 
     // Create policy (used in handle_client, created per-connection for thread safety)
-    let _policy = SshPolicy::from_config(&ssh_config, &args.oqto_server);
+    let _policy = SshPolicy::from_config(&ssh_config);
     drop(_policy); // Just validate config parses correctly
 
     // Remove existing socket
@@ -786,26 +703,16 @@ fn main() -> Result<()> {
 
     info!("Listening for connections...");
 
-    // Create tokio runtime for async operations (prompts)
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
-    let handle = runtime.handle().clone();
-
     // Accept connections
     for stream in listener.incoming() {
         match stream {
             Ok(client) => {
                 let upstream = upstream_path.clone();
-                let policy_clone = SshPolicy::from_config(&ssh_config, &args.oqto_server);
-                let handle_clone = handle.clone();
+                let policy_clone = SshPolicy::from_config(&ssh_config);
                 let dry_run = args.dry_run;
 
                 std::thread::spawn(move || {
-                    if let Err(e) =
-                        handle_client(client, &upstream, &policy_clone, &handle_clone, dry_run)
-                    {
+                    if let Err(e) = handle_client(client, &upstream, &policy_clone, dry_run) {
                         error!("Client error: {}", e);
                     }
                 });
@@ -838,7 +745,6 @@ mod tests {
             allowed_hosts: vec![],
             allowed_keys: allowed_keys.iter().map(|k| k.to_string()).collect(),
             prompt_unknown: false,
-            oqto_server: String::new(),
         }
     }
 

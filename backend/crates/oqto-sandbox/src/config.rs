@@ -1780,7 +1780,9 @@ impl SandboxConfig {
                         overlay_paths: profile.overlay_paths,
                         scoped_paths: profile.scoped_paths,
                         network: profile.network,
-                        ssh: profile.ssh,
+                        // The work directory's own grants, not the profile's default of
+                        // "enabled for everything and nothing granted".
+                        ssh: file.ssh.clone().or(profile.ssh),
                         profiles: merged_profiles,
                     };
 
@@ -3748,6 +3750,29 @@ prompt_unknown = false
         let ssh = config.ssh.expect("ssh config survives conversion");
         assert!(ssh.enabled);
         assert_eq!(ssh.allowed_keys, vec!["~/.ssh/forgejo".to_string()]);
+    }
+
+    /// Exercises the path the runner actually takes. The struct is built by
+    /// hand there, so a field added to the file type does not automatically
+    /// reach it -- which is how workdir grants were dropped twice.
+    #[test]
+    fn workspace_loader_honours_ssh_grants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".oqto")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".oqto").join("sandbox.toml"),
+            "[ssh]\nenabled = true\nallowed_keys = [\"~/.ssh/forgejo\"]\n",
+        )
+        .expect("write");
+
+        let loaded = SandboxConfig::load_from_workspace(dir.path(), &HashMap::new())
+            .expect("workspace config loads");
+
+        assert_eq!(
+            loaded.ssh.expect("ssh present").allowed_keys,
+            vec!["~/.ssh/forgejo".to_string()],
+            "the profile default must not replace the work directory's grants"
+        );
     }
 
     /// The work directory's grants must win over a profile default, which
