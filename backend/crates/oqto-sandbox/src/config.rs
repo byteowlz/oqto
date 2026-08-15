@@ -1201,6 +1201,13 @@ pub struct SandboxConfigFile {
 
     // Scalars override the profile. Global config is admin-owned, so it may
     // legitimately loosen as well as tighten.
+    /// Grant this work directory the use of specific SSH keys.
+    ///
+    /// Without this the file fails to parse (unknown field), which silently
+    /// discards every override in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshProxyConfig>,
+
     /// Override the profile's network isolation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub isolate_network: Option<bool>,
@@ -1460,7 +1467,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
-            ssh: profile.ssh,
+            ssh: file.ssh.or(profile.ssh),
             profiles: file.profiles,
         };
 
@@ -3723,6 +3730,47 @@ timeout_secs = 120
     }
 
     #[test]
+    /// A workspace file naming [ssh] must parse. The struct denies unknown
+    /// fields, so a missing `ssh` field silently discarded every override in
+    /// the file and the work directory's key grants were never applied.
+    #[test]
+    fn workspace_config_accepts_ssh_grants() {
+        let toml = r#"
+[ssh]
+enabled = true
+allowed_keys = ["~/.ssh/forgejo"]
+prompt_unknown = false
+"#;
+
+        let file: SandboxConfigFile = toml::from_str(toml).expect("workspace config parses");
+        let config = SandboxConfig::from(file);
+
+        let ssh = config.ssh.expect("ssh config survives conversion");
+        assert!(ssh.enabled);
+        assert_eq!(ssh.allowed_keys, vec!["~/.ssh/forgejo".to_string()]);
+    }
+
+    /// The work directory's grants must win over a profile default, which
+    /// enables the proxy with no keys at all.
+    #[test]
+    fn workspace_ssh_grants_override_the_profile_default() {
+        let toml = r#"
+profile = "development"
+
+[ssh]
+enabled = true
+allowed_keys = ["~/.ssh/forgejo"]
+"#;
+
+        let file: SandboxConfigFile = toml::from_str(toml).expect("parses");
+        let config = SandboxConfig::from(file);
+
+        assert_eq!(
+            config.ssh.expect("ssh present").allowed_keys,
+            vec!["~/.ssh/forgejo".to_string()]
+        );
+    }
+
     #[test]
     fn profiles_mask_system_ssh_includes() {
         // Root-owned files under /etc/ssh appear as `nobody` in the user

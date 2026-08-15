@@ -340,17 +340,25 @@ impl SshPolicy {
     /// (`ca:<fingerprint>`), or a principal (`principal:<name>`), none of which
     /// change when the CA issues a fresh certificate.
     ///
-    /// An empty grant list means no key restriction (host policy still applies).
+    /// An empty grant list grants nothing. Treating it as "unrestricted" would
+    /// hand every key in the agent to any work directory that merely enabled
+    /// the proxy, which is the opposite of what a grant means.
     fn is_identity_allowed(&self, key_comment: &str, blob: &[u8]) -> bool {
+        self.is_identity_allowed_at(key_comment, blob, now_seconds())
+    }
+
+    /// Same decision against an explicit clock, so certificate validity is
+    /// testable without fixtures that rot.
+    fn is_identity_allowed_at(&self, key_comment: &str, blob: &[u8], now: u64) -> bool {
         if self.allowed_keys.is_empty() {
-            return true;
+            return false;
         }
 
         let fingerprint = key_fingerprint(blob);
         let certificate = parse_certificate(blob);
 
         if let Some(certificate) = certificate.as_ref()
-            && certificate.valid_before < now_seconds()
+            && certificate.valid_before < now
         {
             warn!(
                 "Certificate '{}' expired at {}; refusing it",
@@ -387,14 +395,12 @@ impl SshPolicy {
     /// `SSH_AGENT_IDENTITIES_ANSWER`, so the client never offers a key it
     /// cannot use. Returns the rewritten message.
     fn filter_identities(&self, response: &[u8]) -> Result<Vec<u8>> {
-        if self.allowed_keys.is_empty() {
-            return Ok(response.to_vec());
-        }
         if response.first() != Some(&ssh_agent::SSH_AGENT_IDENTITIES_ANSWER) {
             return Ok(response.to_vec());
         }
 
         let count = read_u32(response, 1).context("identities answer truncated")?;
+        let now = now_seconds();
         let mut offset = 5;
         let mut kept: Vec<u8> = Vec::new();
         let mut kept_count = 0u32;
@@ -406,7 +412,7 @@ impl SshPolicy {
             offset = next;
 
             let comment = String::from_utf8_lossy(comment);
-            if self.is_identity_allowed(&comment, blob) {
+            if self.is_identity_allowed_at(&comment, blob, now) {
                 write_field(&mut kept, blob);
                 write_field(&mut kept, comment.as_bytes());
                 kept_count += 1;
@@ -513,9 +519,6 @@ fn resolve_granted_fingerprints(
     policy: &SshPolicy,
 ) -> Result<std::collections::HashSet<String>> {
     let mut granted = std::collections::HashSet::new();
-    if policy.allowed_keys.is_empty() {
-        return Ok(granted);
-    }
 
     write_message(upstream, &[ssh_agent::SSH_AGENTC_REQUEST_IDENTITIES])?;
     let response = read_message(upstream)?;
@@ -621,7 +624,7 @@ fn handle_client(
                 };
                 let fingerprint = key_fingerprint(key_blob);
 
-                if !policy.allowed_keys.is_empty() && !granted.contains(&fingerprint) {
+                if !granted.contains(&fingerprint) {
                     warn!("Refusing sign request for ungranted key {}", fingerprint);
                     send_failure(&mut client)?;
                     continue;
@@ -854,13 +857,16 @@ mod tests {
         assert_eq!(comment, b"forgejo");
     }
 
+    /// A work directory that enables the proxy without naming keys must get
+    /// nothing. Treating an empty list as "unrestricted" handed the whole agent
+    /// to any session using a profile that enables ssh by default.
     #[test]
-    fn an_empty_grant_list_withholds_nothing() {
+    fn an_empty_grant_list_withholds_everything() {
         let response = identities_answer(&[(b"blob-a", "a"), (b"blob-b", "b")]);
 
         let filtered = policy(&[]).filter_identities(&response).unwrap();
 
-        assert_eq!(filtered, response);
+        assert_eq!(read_u32(&filtered, 1).unwrap(), 0, "no keys are granted");
     }
 
     #[test]
@@ -898,6 +904,15 @@ mod tests {
             .expect("fixture decodes")
     }
 
+    /// A moment inside the fixture certificate's validity window, read from the
+    /// certificate itself so these tests never rot.
+    fn while_valid() -> u64 {
+        parse_certificate(&decode("cert"))
+            .expect("fixture parses")
+            .valid_before
+            - 60
+    }
+
     #[test]
     fn a_certificate_reports_the_key_and_ca_it_binds() {
         let certificate = parse_certificate(&decode("cert")).expect("parses as a certificate");
@@ -924,17 +939,31 @@ mod tests {
     fn a_certificate_is_granted_by_its_ca() {
         let ca_grant = format!("ca:{}", key_fingerprint(&decode("ca")));
 
-        assert!(policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("cert")));
+        assert!(policy(&[&ca_grant]).is_identity_allowed_at(
+            "user-key",
+            &decode("cert"),
+            while_valid()
+        ));
         // The CA grant must not leak to a plain key that no CA vouched for.
-        assert!(!policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("user")));
+        assert!(!policy(&[&ca_grant]).is_identity_allowed_at(
+            "user-key",
+            &decode("user"),
+            while_valid()
+        ));
     }
 
     #[test]
     fn a_certificate_is_granted_by_principal() {
-        assert!(policy(&["principal:forgejo-ro"]).is_identity_allowed("user-key", &decode("cert")));
-        assert!(
-            !policy(&["principal:production"]).is_identity_allowed("user-key", &decode("cert"))
-        );
+        assert!(policy(&["principal:forgejo-ro"]).is_identity_allowed_at(
+            "user-key",
+            &decode("cert"),
+            while_valid()
+        ));
+        assert!(!policy(&["principal:production"]).is_identity_allowed_at(
+            "user-key",
+            &decode("cert"),
+            while_valid()
+        ));
     }
 
     #[test]
@@ -943,20 +972,28 @@ mod tests {
         // own digest changes every time.
         let key_grant = key_fingerprint(&decode("user"));
 
-        assert!(policy(&[&key_grant]).is_identity_allowed("user-key", &decode("cert")));
+        assert!(policy(&[&key_grant]).is_identity_allowed_at(
+            "user-key",
+            &decode("cert"),
+            while_valid()
+        ));
     }
 
     #[test]
     fn an_unrelated_grant_does_not_match_a_certificate() {
         let unrelated = key_fingerprint(b"some-other-key");
 
-        assert!(!policy(&[&unrelated]).is_identity_allowed("", &decode("cert")));
+        assert!(!policy(&[&unrelated]).is_identity_allowed_at("", &decode("cert"), while_valid()));
     }
 
     #[test]
     fn an_expired_certificate_is_refused_even_when_its_ca_is_granted() {
         let ca_grant = format!("ca:{}", key_fingerprint(&decode("ca")));
 
-        assert!(!policy(&[&ca_grant]).is_identity_allowed("user-key", &decode("cert-expired")));
+        assert!(!policy(&[&ca_grant]).is_identity_allowed_at(
+            "user-key",
+            &decode("cert-expired"),
+            while_valid()
+        ));
     }
 }
