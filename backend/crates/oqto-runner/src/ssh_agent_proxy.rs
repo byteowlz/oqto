@@ -113,6 +113,15 @@ pub fn spawn(config: &SshProxyConfig, session_socket_dir: &Path) -> Result<Optio
         return Ok(None);
     }
 
+    // Profiles enable the proxy by default, so most work directories reach here
+    // with nothing granted. A proxy that may offer no key cannot do anything.
+    if config.allowed_keys.is_empty() {
+        debug!(
+            "No SSH keys granted to this work directory; starting the session without SSH access"
+        );
+        return Ok(None);
+    }
+
     let Some(upstream) = upstream_agent_socket() else {
         warn!(
             "SSH keys are granted to this work directory but no ssh-agent was found \
