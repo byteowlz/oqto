@@ -1486,10 +1486,43 @@ export function FileTreeView({
 			if (dirIdx >= 0) {
 				setLightboxIndex(dirIdx);
 				setLightboxOpen(true);
+				return;
+			}
+			// Collapsed directory: its children may never have been fetched, so
+			// the media list cannot contain them yet. Load, then open via the
+			// pending path below.
+			const node = findNode(tree, filePath);
+			if (node?.type === "directory") {
+				setPendingGalleryPath(dirPrefix);
+				void lazyLoadChildren(filePath);
 			}
 		},
-		[lightboxItems],
+		[lightboxItems, tree, findNode, lazyLoadChildren],
 	);
+
+	const [pendingGalleryPath, setPendingGalleryPath] = useState<string | null>(
+		null,
+	);
+
+	// useeffect-guardrail: allow — lightbox items derive from async tree merges;
+	// a deferred gallery request can only resolve once the loaded media lands
+	useEffect(() => {
+		if (!pendingGalleryPath) return;
+		const idx = lightboxItems.findIndex((item) =>
+			item.path.startsWith(pendingGalleryPath),
+		);
+		if (idx >= 0) {
+			setPendingGalleryPath(null);
+			setLightboxIndex(idx);
+			setLightboxOpen(true);
+			return;
+		}
+		const dirPath = pendingGalleryPath.replace(/\/$/, "");
+		if (!loadingDirs.has(dirPath)) {
+			// Load finished (or failed) and the folder holds no media
+			setPendingGalleryPath(null);
+		}
+	}, [pendingGalleryPath, lightboxItems, loadingDirs]);
 
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
