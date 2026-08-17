@@ -7,7 +7,9 @@ use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use tokio::sync::Mutex;
 
-use crate::oqto_log::bindings::{append_pi_session_binding, resolve_pi_session_identity_for_write};
+use crate::oqto_log::bindings::{
+    SessionBindingError, append_pi_session_binding, resolve_pi_session_identity_for_write,
+};
 use crate::oqto_log::ids::{MessageIdInput, TurnIdInput, derive_message_id, derive_turn_id};
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
 use oqto_pi::AgentMessage;
@@ -316,17 +318,35 @@ async fn canonicalize_session_identity(
     session_id: &str,
     platform_id: &str,
     external_id: Option<&str>,
+    reconcile_legacy_conflict: bool,
 ) -> Result<(String, String)> {
     let binding = external_id
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or(platform_id);
 
-    if let Some(existing) = resolve_pi_session_identity_for_write(tx, binding)
-        .await
-        .context("resolve pi session identity for write")?
-    {
-        return Ok((existing.session_id, existing.platform_id));
+    match resolve_pi_session_identity_for_write(tx, binding).await {
+        Ok(Some(existing)) => return Ok((existing.session_id, existing.platform_id)),
+        Ok(None) => {}
+        Err(SessionBindingError::LegacyConflict { .. })
+            if reconcile_legacy_conflict && is_canonical_session_id(platform_id) =>
+        {
+            // Exact replace is the authority-backed repair path. Its caller
+            // chooses the canonical public identity and the same transaction
+            // removes competing legacy rows before inserting the snapshot.
+            if let Some(session_id) = sqlx::query_scalar::<_, String>(
+                "SELECT session_id FROM oqto_log_sessions WHERE platform_id = ? LIMIT 1",
+            )
+            .bind(platform_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("resolve explicit canonical replace target")?
+            {
+                return Ok((session_id, platform_id.to_string()));
+            }
+            return Ok((platform_id.to_string(), platform_id.to_string()));
+        }
+        Err(error) => return Err(error).context("resolve pi session identity for write"),
     }
 
     if is_canonical_session_id(platform_id) {
@@ -366,7 +386,7 @@ pub async fn append_agent_end_snapshot(
     let mut tx = pool.begin().await.context("begin oqto-log tx")?;
 
     let (session_id, platform_id) =
-        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id).await?;
+        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id, false).await?;
     let (session_id, platform_id) = (session_id.as_str(), platform_id.as_str());
 
     sqlx::query(
@@ -839,7 +859,7 @@ async fn replace_session_with_snapshot_inner(
     let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
 
     let (session_id, platform_id) =
-        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id).await?;
+        canonicalize_session_identity(&mut tx, session_id, platform_id, external_id, true).await?;
     let (session_id, platform_id) = (session_id.as_str(), platform_id.as_str());
 
     sqlx::query(
@@ -903,6 +923,95 @@ async fn replace_session_with_snapshot_inner(
         .execute(&mut *tx)
         .await
         .context("drop update trigger (replace)")?;
+
+    let mut competing_session_ids = Vec::new();
+    if let Some(external_id) = external_id.map(str::trim).filter(|value| !value.is_empty()) {
+        competing_session_ids = sqlx::query_scalar::<_, String>(
+            "SELECT session_id FROM oqto_log_sessions WHERE external_id = ? AND session_id != ? AND user_id = ? AND workspace_id = ?",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .context("list competing external sessions (replace)")?;
+
+        // Exact JSONL replacement is also the safe split-repair choke point.
+        // Remove competing legacy rows in this same transaction *before*
+        // inserting source tuples, so global source uniqueness cannot make the
+        // canonical snapshot partial. Any later failure rolls all deletions
+        // back and preserves the prior timeline.
+        sqlx::query(
+            "DELETE FROM oqto_log_message_fts WHERE rowid IN (SELECT m.rowid FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id JOIN oqto_log_sessions s ON s.session_id = t.session_id WHERE s.session_id = ? OR (s.external_id = ? AND s.session_id != ? AND s.user_id = ? AND s.workspace_id = ?))",
+        )
+        .bind(session_id)
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete affected FTS rows (replace)")?;
+        sqlx::query(
+            "DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT t.turn_id FROM oqto_log_turns t JOIN oqto_log_sessions s ON s.session_id = t.session_id WHERE s.external_id = ? AND s.session_id != ? AND s.user_id = ? AND s.workspace_id = ?)",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete competing external messages (replace)")?;
+        sqlx::query(
+            "DELETE FROM oqto_log_turns WHERE session_id IN (SELECT session_id FROM oqto_log_sessions WHERE external_id = ? AND session_id != ? AND user_id = ? AND workspace_id = ?)",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete competing external turns (replace)")?;
+        sqlx::query(
+            "DELETE FROM oqto_log_import_checkpoints WHERE session_id IN (SELECT session_id FROM oqto_log_sessions WHERE external_id = ? AND session_id != ? AND user_id = ? AND workspace_id = ?)",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete competing external checkpoints (replace)")?;
+        sqlx::query(
+            "DELETE FROM oqto_log_branches WHERE session_id IN (SELECT session_id FROM oqto_log_sessions WHERE external_id = ? AND session_id != ? AND user_id = ? AND workspace_id = ?)",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete competing external branches (replace)")?;
+        sqlx::query(
+            "DELETE FROM oqto_log_sessions WHERE external_id = ? AND session_id != ? AND user_id = ? AND workspace_id = ?",
+        )
+        .bind(external_id)
+        .bind(session_id)
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete competing external sessions (replace)")?;
+    } else {
+        sqlx::query(
+            "DELETE FROM oqto_log_message_fts WHERE rowid IN (SELECT m.rowid FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ?)",
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete session FTS rows (replace)")?;
+    }
 
     sqlx::query("DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT turn_id FROM oqto_log_turns WHERE session_id = ?)")
         .bind(session_id)
@@ -1023,6 +1132,15 @@ async fn replace_session_with_snapshot_inner(
         parent_turn_id = Some(turn_id);
     }
 
+    if turns_written != messages.len() || messages_written != messages.len() {
+        bail!(
+            "exact Session replace was partial: expected {} records, wrote {} turns and {} messages",
+            messages.len(),
+            turns_written,
+            messages_written
+        );
+    }
+
     sqlx::query(
         r#"
         UPDATE oqto_log_branches
@@ -1060,18 +1178,41 @@ async fn replace_session_with_snapshot_inner(
     .await
     .context("update oqto_log_sessions timestamps from source timestamps (replace)")?;
 
-    // Recreate FTS triggers that were dropped earlier.
+    // Index only the replacement rows. A full-shard FTS rebuild per changed
+    // JSONL file turns bootstrap into O(files × shard size) and holds the
+    // writer lock long enough to race live Sessions.
+    sqlx::query(
+        r#"
+        INSERT INTO oqto_log_message_fts (
+          rowid, message_id, turn_id, session_id, role, content
+        )
+        SELECT m.rowid, m.message_id, m.turn_id, t.session_id,
+               COALESCE(m.role, ''), m.content
+        FROM oqto_log_messages m
+        JOIN oqto_log_turns t ON t.turn_id = m.turn_id
+        WHERE t.session_id = ? AND m.content IS NOT NULL
+        "#,
+    )
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("index replacement FTS rows")?;
+
     recreate_fts_triggers(&mut tx)
         .await
         .context("recreate FTS triggers (replace)")?;
 
-    // Rebuild the FTS index for correctness after bulk replace.
-    sqlx::query("INSERT INTO oqto_log_message_fts(oqto_log_message_fts) VALUES('rebuild')")
-        .execute(&mut *tx)
-        .await
-        .context("rebuild FTS index (replace)")?;
-
     tx.commit().await.context("commit oqto-log replace tx")?;
+
+    for competing_session_id in competing_session_ids {
+        if let Err(err) =
+            crate::oqto_log::index::remove_session(user_home, &competing_session_id).await
+        {
+            tracing::debug!(
+                "oqto-log index cleanup failed for collapsed session {competing_session_id}: {err:#}"
+            );
+        }
+    }
 
     if let Err(err) = crate::oqto_log::index::upsert_for_workspace_id(
         user_home,

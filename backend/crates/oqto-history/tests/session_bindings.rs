@@ -11,7 +11,8 @@ use oqto_history::oqto_log::ops::{
 };
 use oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path;
 use oqto_history::oqto_log::store::{
-    append_agent_end_snapshot, migrate_db_path, replace_session_with_snapshot,
+    PiJsonlMessageRecord, append_agent_end_snapshot, migrate_db_path,
+    replace_session_with_pi_jsonl_records, replace_session_with_snapshot,
 };
 use oqto_pi::AgentMessage;
 use serde_json::Value;
@@ -299,6 +300,209 @@ async fn migration_preserves_legacy_conflicts_and_resolution_fails_closed() -> R
         .await
         .expect_err("ambiguous legacy identity must fail closed");
     assert!(matches!(error, SessionBindingError::LegacyConflict { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn exact_jsonl_replace_repairs_split_in_one_transaction() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let workspace = "/tmp/session-binding-split-repair";
+    let external_id = "pi-split";
+    let public_id = "oqto-split";
+    let db_path = resolve_user_home_workspace_db_path(temp.path(), workspace)?;
+    migrate_db_path(&db_path).await?;
+    let pool = open_pool(&db_path).await?;
+    let mut connection = pool.acquire().await?;
+    insert_session(&mut connection, public_id, public_id, Some(external_id)).await?;
+    insert_session(
+        &mut connection,
+        "legacy-storage",
+        "legacy-platform",
+        Some(external_id),
+    )
+    .await?;
+    sqlx::query("UPDATE oqto_log_sessions SET workspace_id = ? WHERE external_id = ?")
+        .bind(workspace)
+        .bind(external_id)
+        .execute(&mut *connection)
+        .await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_branches (branch_id, session_id) VALUES ('branch:legacy-storage:main', 'legacy-storage')",
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status, source_kind, source_session_id, source_entry_id) VALUES ('legacy-turn', 'legacy-storage', 'branch:legacy-storage:main', 1, 'user', 'committed', 'pi_jsonl', 'pi-split', 'entry-1')",
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_messages (message_id, turn_id, seq, kind, role, content) VALUES ('legacy-message', 'legacy-turn', 0, 'text', 'user', 'old copy')",
+    )
+    .execute(&mut *connection)
+    .await?;
+    drop(connection);
+    pool.close().await;
+    oqto_history::oqto_log::index::upsert_for_workspace_id(
+        temp.path(),
+        workspace,
+        "legacy-storage",
+        Some("legacy-platform"),
+        Some(external_id),
+    )
+    .await?;
+
+    let record = PiJsonlMessageRecord {
+        source_entry_id: "entry-1".to_string(),
+        parent_source_entry_id: None,
+        source_sequence: 1,
+        message: AgentMessage {
+            role: "user".to_string(),
+            content: Value::String("canonical truth".to_string()),
+            timestamp: None,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: HashMap::new(),
+        },
+    };
+    let stats = replace_session_with_pi_jsonl_records(
+        temp.path(),
+        "user-1",
+        workspace,
+        public_id,
+        public_id,
+        Some(external_id),
+        external_id,
+        &[record],
+    )
+    .await?;
+    assert_eq!(stats.session_id, public_id);
+
+    let pool = open_pool(&db_path).await?;
+    let sessions: Vec<String> = sqlx::query_scalar(
+        "SELECT session_id FROM oqto_log_sessions WHERE external_id = ? ORDER BY session_id",
+    )
+    .bind(external_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(sessions, vec![public_id.to_string()]);
+    assert!(
+        oqto_history::oqto_log::index::lookup_db_path(temp.path(), "legacy-storage")
+            .await
+            .is_none(),
+        "collapsed storage identity must be removed from the global index"
+    );
+    let messages: Vec<String> = sqlx::query_scalar(
+        "SELECT m.content FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ? ORDER BY t.turn_version, m.seq",
+    )
+    .bind(public_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(messages, vec!["canonical truth".to_string()]);
+    let search_hits: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM oqto_log_message_fts WHERE oqto_log_message_fts MATCH 'canonical' ORDER BY rowid",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(search_hits, vec!["canonical truth".to_string()]);
+    let stale_hits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM oqto_log_message_fts WHERE oqto_log_message_fts MATCH 'old'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        stale_hits, 0,
+        "collapsed timeline must leave no stale FTS row"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn exact_replace_rolls_back_instead_of_accepting_partial_snapshot() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let workspace = "/tmp/session-binding-partial-replace";
+    let public_id = "oqto-partial-target";
+    let old_message = AgentMessage {
+        role: "user".to_string(),
+        content: Value::String("must survive rollback".to_string()),
+        timestamp: None,
+        tool_call_id: None,
+        tool_name: None,
+        is_error: None,
+        api: None,
+        provider: None,
+        model: None,
+        usage: None,
+        stop_reason: None,
+        extra: HashMap::new(),
+    };
+    append_agent_end_snapshot(
+        temp.path(),
+        "user-1",
+        workspace,
+        public_id,
+        public_id,
+        None,
+        "old-source",
+        std::slice::from_ref(&old_message),
+    )
+    .await?;
+
+    let db_path = resolve_user_home_workspace_db_path(temp.path(), workspace)?;
+    let pool = open_pool(&db_path).await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_sessions (session_id, platform_id, user_id, workspace_id) VALUES ('oqto-conflict-owner', 'oqto-conflict-owner', 'user-1', ?)",
+    )
+    .bind(workspace)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_branches (branch_id, session_id) VALUES ('branch:conflict:main', 'oqto-conflict-owner')",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status, source_kind, source_session_id, source_entry_id) VALUES ('conflict-turn', 'oqto-conflict-owner', 'branch:conflict:main', 1, 'user', 'committed', 'pi_jsonl_bootstrap', 'shared-source', 'line:0')",
+    )
+    .execute(&pool)
+    .await?;
+    pool.close().await;
+
+    let error = replace_session_with_snapshot(
+        temp.path(),
+        "user-1",
+        workspace,
+        public_id,
+        public_id,
+        None,
+        "shared-source",
+        &[AgentMessage {
+            content: Value::String("would be partial".to_string()),
+            ..old_message
+        }],
+    )
+    .await
+    .expect_err("global source collision must fail exact replace");
+    assert!(
+        error
+            .to_string()
+            .contains("exact Session replace was partial")
+    );
+
+    let pool = open_pool(&db_path).await?;
+    let content: String = sqlx::query_scalar(
+        "SELECT m.content FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ?",
+    )
+    .bind(public_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(content, "must survive rollback");
     Ok(())
 }
 

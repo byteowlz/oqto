@@ -314,8 +314,8 @@ enum RunnerCommand {
 
 #[derive(Debug, Clone, Args)]
 struct RunnerMigrateOqtoLogCommand {
-    /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
-    /// | unsplit | unsplit-dry-run
+    /// Migration mode: bootstrap | rebuild-from-jsonl | validate | diagnostics
+    /// | reindex | sync-identities | unsplit | unsplit-dry-run
     #[arg(long, default_value = "bootstrap")]
     mode: String,
     /// Restrict Pi JSONL import/validation to this workspace root.
@@ -1576,6 +1576,30 @@ WantedBy=default.target
                     }
                     Ok(())
                 }
+                "rebuild-from-jsonl" => {
+                    let stats = rt.block_on(async {
+                        crate::oqto_log::importer::rebuild_from_pi_jsonl(Path::new(&home), &user)
+                            .await
+                    })?;
+
+                    println!(
+                        "oqto-log authoritative rebuild complete: scanned_files={}, rebuilt_sessions={}, rebuilt_messages={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.imported_messages,
+                        stats.skipped_files,
+                        stats.failed_files
+                    );
+                    for sample in stats.failure_samples.iter().take(25) {
+                        println!("rebuild-failure: {}", sample);
+                    }
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!(
+                            "oqto-log authoritative rebuild had failures (see rebuild-failure lines)"
+                        ));
+                    }
+                    Ok(())
+                }
                 "validate" => {
                     let report = rt.block_on(async {
                         crate::oqto_log::validator::validate_bootstrap_import(Path::new(&home))
@@ -1752,7 +1776,7 @@ WantedBy=default.target
                     Ok(())
                 }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|index-rebuild|sync-identities|unsplit|unsplit-dry-run",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|rebuild-from-jsonl|validate|validate-changed|diagnostics|reindex|index-rebuild|sync-identities|unsplit|unsplit-dry-run",
                     other
                 )),
             }

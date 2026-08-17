@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::pi::AgentMessage;
 
-use super::store::{append_agent_end_snapshot, platform_id_for_external_id};
+use super::store::platform_id_for_external_id;
 use oqto_history::oqto_log::store::PiJsonlMessageRecord;
 
 #[derive(Debug, Default, Clone)]
@@ -420,40 +420,6 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
     }
 }
 
-async fn collapse_duplicate_external_sessions(
-    user_home: &Path,
-    workspace_id: &str,
-    external_id: &str,
-    canonical_session_id: &str,
-) -> Result<usize> {
-    let session_ids = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
-        user_home,
-        workspace_id,
-        external_id,
-    )
-    .await
-    .unwrap_or_default();
-
-    let mut deleted = 0usize;
-    for session_id in session_ids {
-        if session_id == canonical_session_id {
-            continue;
-        }
-        if oqto_history::oqto_log::ops::delete_session_in_workspace(
-            user_home,
-            workspace_id,
-            &session_id,
-        )
-        .await
-        .unwrap_or(false)
-        {
-            deleted += 1;
-        }
-    }
-
-    Ok(deleted)
-}
-
 pub async fn fast_import_identities_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
@@ -549,6 +515,21 @@ pub async fn bootstrap_import_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
 ) -> Result<ImportStats> {
+    import_from_pi_jsonl(user_home, user_id, false).await
+}
+
+/// Re-project every Pi JSONL from authority, ignoring incremental fingerprints.
+/// This is the explicit repair path for historical split/over-populated rows;
+/// ordinary deploys continue to use incremental bootstrap.
+pub async fn rebuild_from_pi_jsonl(user_home: &Path, user_id: &str) -> Result<ImportStats> {
+    import_from_pi_jsonl(user_home, user_id, true).await
+}
+
+async fn import_from_pi_jsonl(
+    user_home: &Path,
+    user_id: &str,
+    force_rebuild: bool,
+) -> Result<ImportStats> {
     let mut stats = ImportStats::default();
     let mut importer_state = load_importer_state(user_home);
 
@@ -589,8 +570,9 @@ pub async fn bootstrap_import_from_pi_jsonl(
         stats.scanned_files += 1;
         let path_key = path.to_string_lossy().to_string();
         let current_fp = file_fingerprint(&path);
-        if let (Some(current), Some(previous)) =
-            (current_fp.as_ref(), importer_state.files.get(&path_key))
+        if !force_rebuild
+            && let (Some(current), Some(previous)) =
+                (current_fp.as_ref(), importer_state.files.get(&path_key))
             && current.mtime_secs == previous.mtime_secs
             && current.size == previous.size
         {
@@ -639,7 +621,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
         let mut last_err: Option<anyhow::Error> = None;
         let mut appended = None;
         for _attempt in 0..3 {
-            match append_agent_end_snapshot(
+            match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                 user_home,
                 user_id,
                 &workspace_id,
@@ -647,7 +629,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 &session_id,
                 Some(&pi_session_id),
                 &pi_session_id,
-                &messages,
+                &records,
             )
             .await
             {
@@ -662,84 +644,12 @@ pub async fn bootstrap_import_from_pi_jsonl(
             }
         }
 
-        if let Some(mut append_stats) = appended {
-            // The store resolves identity, so the session may have been written
-            // under an id other than the one proposed above. Everything from
-            // here on must address the id it actually wrote, or it reads back,
-            // checkpoints, and collapses against a session that does not exist.
+        if let Some(append_stats) = appended {
+            // Exact replace is the only bootstrap write mode. It converges
+            // under- and over-populated projections to JSONL truth and repairs
+            // same-store identity splits transactionally before source tuples
+            // are inserted. The reported id is the identity actually written.
             let session_id = append_stats.session_id.clone();
-
-            // Remove competing rows before an exact replace. Otherwise their
-            // source tuples satisfy the global uniqueness index, INSERT OR
-            // IGNORE skips those entries in the canonical row, and deleting
-            // duplicates afterward leaves canonical history permanently short.
-            let _ = collapse_duplicate_external_sessions(
-                user_home,
-                &workspace_id,
-                &pi_session_id,
-                &session_id,
-            )
-            .await;
-
-            if let Ok(sess_stats) = oqto_history::oqto_log::store::read_session_stats(
-                user_home,
-                &workspace_id,
-                &session_id,
-            )
-            .await
-                && sess_stats.messages < messages.len()
-            {
-                // Self-heal partial historical sessions by replacing with the
-                // exact JSONL snapshot deterministically.
-                let mut replaced_ok = None;
-                let mut replace_err: Option<anyhow::Error> = None;
-                for _attempt in 0..3 {
-                    match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
-                        user_home,
-                        user_id,
-                        &workspace_id,
-                        &session_id,
-                        &session_id,
-                        Some(&pi_session_id),
-                        &pi_session_id,
-                        &records,
-                    )
-                    .await
-                    {
-                        Ok(replaced) => {
-                            replaced_ok = Some(replaced);
-                            break;
-                        }
-                        Err(err) => {
-                            replace_err = Some(err);
-                            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
-                        }
-                    }
-                }
-
-                if let Some(replaced) = replaced_ok {
-                    append_stats = replaced;
-                } else {
-                    let err_text = replace_err
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "unknown replace error".to_string());
-                    stats.failed_files += 1;
-                    if stats.failure_samples.len() < 25 {
-                        stats.failure_samples.push(format!(
-                            "replace_failed workspace={} session={} error={}",
-                            workspace_id, session_id, err_text
-                        ));
-                    }
-                }
-            }
-
-            let _ = collapse_duplicate_external_sessions(
-                user_home,
-                &workspace_id,
-                &pi_session_id,
-                &session_id,
-            )
-            .await;
 
             let _ = oqto_history::oqto_log::store::upsert_import_checkpoint(
                 user_home,
@@ -808,8 +718,8 @@ pub async fn bootstrap_import_from_pi_jsonl(
             };
 
             // Validation keys by Pi external id. Select the canonical row
-            // deterministically within the reported workspace, then delete all
-            // competing bindings *before* rebuilding its exact snapshot.
+            // deterministically; exact replace removes same-store competitors
+            // in its own rollback-safe transaction.
             let target_external_id = mismatch_session_id.clone();
             let candidates = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
                 user_home,
@@ -821,14 +731,6 @@ pub async fn bootstrap_import_from_pi_jsonl(
             let target_session_id = candidates.first().cloned().unwrap_or_else(|| {
                 oqto_history::oqto_log::store::platform_id_for_external_id(&target_external_id)
             });
-            let _ = collapse_duplicate_external_sessions(
-                user_home,
-                &workspace_id,
-                &target_external_id,
-                &target_session_id,
-            )
-            .await;
-
             let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &target_external_id)
             else {
                 continue;
@@ -869,14 +771,6 @@ pub async fn bootstrap_import_from_pi_jsonl(
                     }
                 }
             }
-
-            let _ = collapse_duplicate_external_sessions(
-                user_home,
-                &workspace_id,
-                &target_external_id,
-                &target_session_id,
-            )
-            .await;
 
             if let Some(replaced) = replaced_ok {
                 stats.imported_messages += replaced.messages_written;
@@ -941,6 +835,137 @@ mod tests {
         assert_eq!(metadata.title.as_deref(), Some("Fix extension loader"));
         assert_eq!(metadata.created_at.as_deref(), Some("2026-01-16 12:06:53"));
         assert_eq!(metadata.updated_at.as_deref(), Some("2026-02-06 20:41:49"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_replaces_overpopulated_projection_with_exact_jsonl_truth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = "/tmp/oqto-importer-exact";
+        let pi_id = "019f5f22-3777-78b7-ab0e-539863fb8232";
+        let sessions_dir = temp
+            .path()
+            .join(".pi/agent/sessions/--tmp-oqto-importer-exact--");
+        std::fs::create_dir_all(&sessions_dir).expect("create Pi session dir");
+        let jsonl = sessions_dir.join(format!("2026-08-18T00-00-00-000Z_{pi_id}.jsonl"));
+        std::fs::write(
+            &jsonl,
+            format!(
+                "{{\"type\":\"session\",\"cwd\":\"{workspace}\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"one\"}}}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":\"two\"}}}}\n"
+            ),
+        )
+        .expect("write Pi JSONL");
+
+        bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
+            .await
+            .expect("initial exact import");
+        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+            temp.path(),
+            workspace,
+        )
+        .expect("db path");
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
+        )
+        .await
+        .expect("open oqto-log");
+        let session_id: String =
+            sqlx::query_scalar("SELECT session_id FROM oqto_log_sessions WHERE external_id = ?")
+                .bind(pi_id)
+                .fetch_one(&pool)
+                .await
+                .expect("session id");
+        let branch_id = format!("branch:{session_id}:main");
+        sqlx::query(
+            "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES ('extra-turn', ?, ?, 3, 'assistant', 'committed')",
+        )
+        .bind(&session_id)
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .expect("seed overpopulated turn");
+        sqlx::query(
+            "INSERT INTO oqto_log_messages (message_id, turn_id, seq, kind, role, content) VALUES ('extra-message', 'extra-turn', 0, 'text', 'assistant', 'duplicate')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed overpopulated message");
+        pool.close().await;
+
+        let filter = std::collections::HashSet::from([(workspace.to_string(), pi_id.to_string())]);
+        let report = crate::oqto_log::validator::validate_bootstrap_import_filtered(
+            temp.path(),
+            Some(&filter),
+        )
+        .await
+        .expect("validate overpopulation");
+        assert_eq!(
+            report.sessions_mismatch, 1,
+            "overpopulation must fail validation"
+        );
+
+        // Size changes even when the filesystem timestamp has one-second
+        // granularity, so the incremental importer must revisit this source.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, b"\n"))
+            .expect("touch JSONL fingerprint");
+        bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
+            .await
+            .expect("repair import");
+
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
+        )
+        .await
+        .expect("reopen oqto-log");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count repaired messages");
+        assert_eq!(count, 2, "bootstrap must converge to exact JSONL truth");
+
+        sqlx::query(
+            "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES ('extra-turn-2', ?, ?, 3, 'assistant', 'committed')",
+        )
+        .bind(&session_id)
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .expect("seed second overpopulation");
+        sqlx::query(
+            "INSERT INTO oqto_log_messages (message_id, turn_id, seq, kind, role, content) VALUES ('extra-message-2', 'extra-turn-2', 0, 'text', 'assistant', 'duplicate again')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed second duplicate");
+        pool.close().await;
+
+        let incremental = bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
+            .await
+            .expect("incremental bootstrap");
+        assert_eq!(incremental.imported_sessions, 0);
+        assert_eq!(incremental.skipped_files, 1);
+
+        rebuild_from_pi_jsonl(temp.path(), "user-1")
+            .await
+            .expect("forced authoritative rebuild");
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
+        )
+        .await
+        .expect("reopen rebuilt oqto-log");
+        let rebuilt_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ?",
+        )
+        .bind(&session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count authoritatively rebuilt messages");
+        assert_eq!(rebuilt_count, 2, "forced rebuild must ignore fingerprints");
     }
 
     #[test]

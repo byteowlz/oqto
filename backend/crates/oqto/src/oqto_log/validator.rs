@@ -430,27 +430,31 @@ async fn validate_bootstrap_import_filtered_inner(
         report.jsonl_messages_total += jsonl_count;
         report.oqto_log_messages_total += oqto_count;
 
-        if oqto_count >= jsonl_count {
+        if oqto_count == jsonl_count {
             report.sessions_ok += 1;
-        } else {
-            // Legacy Pi JSONL anomaly: initial user prompt present in JSONL but
-            // missing from older oqto-log imports that only captured assistant
-            // delta snapshots. Accept this exact off-by-one pattern to avoid
-            // blocking deploy while preserving strictness for all other cases.
-            if oqto_count + 1 == jsonl_count
-                && jsonl_has_single_initial_user(&path)
-                && count_oqto_log_user_messages(user_home, &workspace_id, &session_id).await == 0
-            {
-                report.sessions_ok += 1;
-                continue;
-            }
-
-            report.sessions_mismatch += 1;
-            report.mismatches.push(format!(
-                "workspace={} session={} jsonl_messages={} oqto_log_messages={}",
-                workspace_id, session_id, jsonl_count, oqto_count
-            ));
+            continue;
         }
+
+        // Legacy Pi JSONL anomaly: initial user prompt present in JSONL but
+        // missing from older oqto-log imports that only captured assistant
+        // delta snapshots. Accept this exact off-by-one pattern to avoid
+        // blocking deploy while preserving strictness for all other cases.
+        if oqto_count + 1 == jsonl_count
+            && jsonl_has_single_initial_user(&path)
+            && count_oqto_log_user_messages(user_home, &workspace_id, &session_id).await == 0
+        {
+            report.sessions_ok += 1;
+            continue;
+        }
+
+        // Over-population is also corruption: bootstrap historically appended
+        // a full Pi snapshot after a JSONL projection and silently doubled
+        // Sessions because the old validator accepted oqto_count >= truth.
+        report.sessions_mismatch += 1;
+        report.mismatches.push(format!(
+            "workspace={} session={} jsonl_messages={} oqto_log_messages={}",
+            workspace_id, session_id, jsonl_count, oqto_count
+        ));
     }
 
     Ok(report)
