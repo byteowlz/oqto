@@ -5,6 +5,12 @@
 Proposed (2026-07-29). Builds on ADR-0019 (deny-all network + granted endpoint
 sockets) and the EAVS trusted-endpoint work. Tracked by `oqto-whgd`.
 
+**Partially superseded by ADR-0035 (2026-08-06):** the enforcer decision
+(CONNECT proxy as canonical enforcement) is superseded — transparent capture
+at a placement-owned netns choke point is canonical authorization, and the
+CONNECT proxy is demoted to the optional credential channel. The policy-model
+and pluggable-enforcer decisions here are retained and extended by ADR-0035.
+
 ## Context
 
 Container placements ship with `--network=none` plus explicitly granted Unix
