@@ -7,6 +7,7 @@ use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use tokio::sync::Mutex;
 
+use crate::oqto_log::bindings::{append_pi_session_binding, resolve_pi_session_identity_for_write};
 use crate::oqto_log::ids::{MessageIdInput, TurnIdInput, derive_message_id, derive_turn_id};
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
 use oqto_pi::AgentMessage;
@@ -321,21 +322,11 @@ async fn canonicalize_session_identity(
         .filter(|v| !v.is_empty())
         .unwrap_or(platform_id);
 
-    if let Some(existing) = sqlx::query_as::<_, (String, String)>(
-        r#"
-        SELECT session_id, platform_id
-        FROM oqto_log_sessions
-        WHERE external_id = ? AND platform_id LIKE 'oqto-%'
-        ORDER BY created_at
-        LIMIT 1
-        "#,
-    )
-    .bind(binding)
-    .fetch_optional(&mut *tx)
-    .await
-    .context("resolve existing canonical session binding")?
+    if let Some(existing) = resolve_pi_session_identity_for_write(tx, binding)
+        .await
+        .context("resolve pi session identity for write")?
     {
-        return Ok(existing);
+        return Ok((existing.session_id, existing.platform_id));
     }
 
     if is_canonical_session_id(platform_id) {
@@ -398,6 +389,10 @@ pub async fn append_agent_end_snapshot(
     .execute(&mut *tx)
     .await
     .context("upsert oqto_log_sessions")?;
+
+    append_pi_session_binding(&mut tx, platform_id, external_id, "pi-agent-end")
+        .await
+        .context("append pi session binding")?;
 
     let branch_id = format!("branch:{}:main", session_id);
     sqlx::query(
@@ -867,6 +862,10 @@ async fn replace_session_with_snapshot_inner(
     .execute(&mut *tx)
     .await
     .context("upsert oqto_log_sessions (replace)")?;
+
+    append_pi_session_binding(&mut tx, platform_id, external_id, "pi-jsonl-replace")
+        .await
+        .context("append pi session binding (replace)")?;
 
     let branch_id = format!("branch:{}:main", session_id);
     sqlx::query(

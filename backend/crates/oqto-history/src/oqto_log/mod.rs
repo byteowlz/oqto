@@ -1,3 +1,4 @@
+pub mod bindings;
 pub mod event_assembler;
 pub mod ids;
 pub mod index;
