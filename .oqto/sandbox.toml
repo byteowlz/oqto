@@ -1,0 +1,14 @@
+# Workspace sandbox overrides. This file can only tighten the global config,
+# except for [ssh], which grants this work directory the use of specific keys.
+#
+# Keys stay in the user's ssh-agent on the host; the session only ever sees a
+# proxy socket, and only the granted keys are offered or signed with.
+
+[ssh]
+enabled = true
+# Agents working here read and write the shared wiki (forgejo). Add
+# "~/.ssh/github" as well if they should also push this repository's own
+# remote. Grants may name a key path, a SHA256 fingerprint, a comment
+# substring, `ca:<path|fingerprint>`, or `principal:<name>`.
+allowed_keys = ["~/.ssh/forgejo"]
+prompt_unknown = false
