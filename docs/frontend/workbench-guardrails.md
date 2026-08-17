@@ -1,10 +1,14 @@
-# Workbench architecture guardrails
+# Workbench prototype architecture guardrails
 
-These guardrails implement [ADR-0031](../adr/0031-session-centric-workbench-shell.md) and [ADR-0032](../adr/0032-frontend-state-ownership-and-workbench-stack.md). They combine mechanical build gates with named human-review gates; both are release requirements. The new shell does not accept functional code until the immediate mechanical checks below exist in CI/package gates.
+## Scope status
+
+These guardrails apply only to the parallel prototype under `frontend/src/workbench/` and its existing checker. [ADR-0037](../adr/0037-oqto-ui-portable-rearrangeable-views.md) retires the Workbench product/source architecture for new work. Functional `frontend/src/oqto-ui/` code is blocked until a separate zero-baseline OqtoUI guardrail document and checker encode ADR-0037's feature-oriented graph; the interaction/content quality bar for that successor is collected in [oqto-ui-interface-checklist.md](oqto-ui-interface-checklist.md). Do not rename, broaden, or weaken this checker as a shortcut; delete it with the prototype only after equivalent OqtoUI gates exist.
+
+These guardrails implement the still-applicable prototype portions of [ADR-0031](../adr/0031-session-centric-workbench-shell.md) and [ADR-0032](../adr/0032-frontend-state-ownership-and-workbench-stack.md). They combine mechanical build gates with named human-review gates.
 
 ## Authority and exceptions
 
-Only Tommy may approve an exception. An agent may propose one but must stop rather than add a suppression, weaken a rule, expand a baseline, or introduce an undocumented compatibility path.
+Only the project owner may approve an exception. An agent may propose one but must stop rather than add a suppression, weaken a rule, expand a baseline, or introduce an undocumented compatibility path.
 
 An approved exception records:
 
@@ -69,9 +73,11 @@ These are mechanically measured default hard limits:
 - hook/module implementation file: 400 non-comment source lines;
 - public module interface: at most 7 exported operations and no unstructured options bag;
 - named options/config/input bags: at most 8 fields;
-- React view props: at most 8 fields, including wrapped `memo`/`forwardRef` components.
+- React view props: at most 8 fields, including wrapped `memo`/`forwardRef` components;
+- no two-argument generic instantiated as `<string, unknown>` or `<string, any>` (`Record`, `Map`, or any other container — `types/record-unknown`), and no `unknown`/`any` index signatures: they erase key knowledge and spread `unknown` through callers. Model the expected keys explicitly, even at parse boundaries (a cast to `{ knownKey?: unknown }` keeps keys honest while values stay unproven);
+- no `unknown` in exported signatures outside `adapters/` (`types/exported-unknown`): adapters are the designated boundary that receives and resolves `unknown`; routes/surfaces/modules may narrow `unknown` inside function bodies but must never export the obligation. Explicit `any` is separately banned by Biome `noExplicitAny` and `strict` typechecking.
 
-Exceeding a limit requires Tommy's documented exception. Splitting files without reducing caller knowledge does not satisfy the rule. Prefer a deep module: small interface, substantial behavior, one test seam.
+Exceeding a limit requires the project owner's documented exception. Splitting files without reducing caller knowledge does not satisfy the rule. Prefer a deep module: small interface, substantial behavior, one test seam.
 
 Human architecture review separately verifies one state authority and one reason to change per module. The reviewer records the ownership table and interface assessment in the linked `trx` issue; these semantic judgments are not claimed as AST-enforced checks.
 
@@ -100,7 +106,7 @@ These checks must be implemented before functional Workbench code merges:
 
 1. **Import architecture:** AST/import graph check for layer direction, cycles, and forbidden legacy paths.
 2. **Forbidden browser/state APIs:** AST checks limiting effects, storage, sockets, fetch, timers, and globals to approved adapters.
-3. **Size budgets:** source-line and public-interface/prop budget check with a Tommy-owned exception manifest.
+3. **Size budgets:** source-line and public-interface/prop budget check with an owner-controlled exception manifest.
 4. **Design tokens and i18n:** reject hardcoded colors/effects and untranslated user-facing strings in Workbench paths.
 5. **Dead-code hygiene:** TypeScript, Biome, Oxlint, dead-export, and unused-direct-dependency gates; warnings fail.
 6. **Bundle budget:** record route/chunk sizes and fail unjustified regressions; Terminal, Browser, editors, Gallery, and Apps remain lazy chunks.
@@ -162,11 +168,11 @@ Before each module merges, its linked issue records:
 - adapters admitted at its seams and evidence that each seam has real variation;
 - any non-mechanical accessibility, language, or interaction judgment.
 
-Only Tommy may approve an exception; ordinary approval confirms the module satisfies the rule without exception.
+Only the project owner may approve an exception; ordinary approval confirms the module satisfies the rule without exception.
 
 ## Workbench Lab approval gates
 
-Before functional shell implementation, Tommy approves realistic desktop/mobile fixtures for:
+Before functional shell implementation, the project owner approves realistic desktop/mobile fixtures for:
 
 - navigation and work-directory/Session scope;
 - Chat/File/workbench tab behavior and overflow;

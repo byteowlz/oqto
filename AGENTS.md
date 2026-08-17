@@ -20,6 +20,7 @@ Single-context layout: project domain language lives in `CONTEXT.md`; architectu
 - Repeated failures must become mechanisms, not reminders: propose or add a lint, test, doctor, checklist, or skill when a mistake recurs.
 - No hacky fixes or legacy shims. Understand the root cause, respect the architecture, and delete dead compatibility paths when safe.
 - Architecture seams: actions go through runners; runner sessions use `oqto-log` as durable history authority; hstry is legacy/interop only; memory goes through mmry; do not bypass stores with ad-hoc DB/file writes.
+- Agent-facing capabilities must be host-neutral: define semantic contracts once, then support Workbench, native Pi TUI, Glimpse/sandboxed web UI where appropriate, and an explicit headless fallback; never make the web frontend the only usable agent surface.
 - Session identity is sacred: keep `platform_id` and `external_id` distinct; never persist `pending-*`/`tmp:*`; Pi owns JSONL session files and Oqto must not write them.
 - Chat/session changes require proof: name the durable authority, event source, ID mapping, reconnect/reload behavior, and regression test/trace. Never reconcile messages by text, index, array length, or visible order.
 - High-risk domains need their checklist before editing: chat persistence, sessions/forks/import, sandbox/security, setup/deploy, EAVS/user config, protocol/generated types, frontend event state.

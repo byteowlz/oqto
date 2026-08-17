@@ -79,6 +79,18 @@ _Avoid_: fork, child session
 The complete in-session tree of harness entries formed by stable entry ids and parent-entry links. Distinct from Fork lineage, which relates separate Sessions.
 _Avoid_: session hierarchy (that means Fork lineage in Session listings)
 
+**Session Changeset**:
+The durable set of file changes one Session made, with diffs anchored to the content that existed when that Session edited it. Projected from `oqto-log` tool-call parts and raw envelopes; never recomputed against current file content (see ADR-0033).
+_Avoid_: dirty files (that is transient File Activity), commit (a Changeset may span or contain none)
+
+**File Activity**:
+The transient live view of what just changed in a work directory, joining runner watch events (which prove a change but name no actor) with the tool calls that claim a path. Changes no tool call claims stay unattributed rather than being assigned to the focused Session. Safe to lose on reload because the durable answer lives in the Session Changeset.
+_Avoid_: changed flag (implies one shared mutable field across Sessions), session file events (the watcher cannot see which Session wrote)
+
+**Supersession**:
+The relation recording that a later Session changed what an earlier Session wrote. The earlier Changeset stays historically true and is additionally marked superseded; history is never rewritten (see ADR-0033).
+_Avoid_: stacked diff (implies a linear rebased stack; Sessions interleave), overwrite
+
 **Canonical Protocol**:
 The harness-agnostic message/event/command format spoken between frontend, backend, and runner. Messages are durable; events are ephemeral UI signals; commands flow from frontend toward runners.
 
@@ -86,13 +98,17 @@ The harness-agnostic message/event/command format spoken between frontend, backe
 A top-level section of the Oqto shell itself — routed, role-gated, build-time linked, and trusted. Surfaces have no capability boundary because they *are* the shell (see ADR-0027).
 _Avoid_: app (a Surface is not installable, shareable, or sandboxed)
 
-**Workbench**:
-The interactive area scoped to one work directory where an Account delegates and inspects work across Sessions, files, and optional tools. A Workbench may focus one Session without hiding the work directory's shared files or destroying other Session state.
-_Avoid_: app (an App may run inside a Workbench), workspace (that is the collaborative container), session (one Workbench can expose several Sessions)
+**OqtoUI**:
+The platform-neutral user-interface contract for Oqto, implemented by web/React today and potentially native desktop or mobile clients later. It hosts rearrangeable Views over the same canonical protocol and domain state; it is not the name of one framework implementation or one fixed screen composition.
+_Avoid_: Workbench (retired UI concept), frontend (too implementation-specific), app (an App may provide Views inside OqtoUI)
+
+**View**:
+One presentation instance hosted by OqtoUI, with stable identity and an explicit deployment, Account, Workspace, work-directory, Session, or resource owner. Docking, resizing, or focusing a View changes presentation only and never changes its owner, data binding, or authority.
+_Avoid_: panel (only one possible placement), Surface (trusted top-level shell section), App (an App may provide one or more Views)
 
 **App**:
-A UI unit that reaches everything outside itself through the Host capability contract. Installable, shareable, and promotable without rebuilding Oqto; runs standalone or embedded from the same artifact. Distinguish its three independent layers: the Artifact (versioned, content-addressed code + manifest), an Instance (one isolated running copy), and its Data binding (the mounts granted to it).
-_Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface
+An installable, shareable UI capability that reaches everything outside itself through the Host contract and may provide native-declarative and sandboxed-web presentations. Keep its facts independent: the Definition (versioned, content-addressed bundle + manifest), an Installation (availability and provenance under one owner), an Instance (one durable/logical use), its binding (explicit durable data owner/resource), and any local App Views.
+_Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface, global app (name deployment/Account/Workspace/work-directory availability and binding explicitly)
 
 **Host**:
 The implementation of the capability contract an App is handed — files, kv, theme, notifications, egress, agent. The only surface through which an App reaches the outside world; a standalone App is one backed by a local or mock Host.
@@ -102,7 +118,7 @@ _Avoid_: apphost (that names one transport, not the contract)
 A transport carrying the Host contract across an isolation boundary, typically `postMessage` to an iframe. Transport only — it never defines its own app-facing API (see ADR-0027).
 
 **Gate**:
-The single enforcement point, runner-side, deciding whether a given App may exercise a granted capability for a given principal. Enforced by uid separation inside the Pod, never by network reachability — a Workspace Pod's shared netns is not a boundary.
+The runner-side enforcement point deciding whether an App Instance may exercise a server-affecting granted capability for its binding and acting Account/Operator Identity; execution must additionally occur under the mapped target Principal. Host-local presentation capabilities are separately allowlisted by the client Host and cannot confer server authority. Enforced by authorization plus uid separation inside the Pod, never by network reachability — a Workspace Pod's shared netns is not a boundary.
 _Avoid_: permission check (the Gate is one place, not a scattered pattern)
 
 **App Sidecar**:

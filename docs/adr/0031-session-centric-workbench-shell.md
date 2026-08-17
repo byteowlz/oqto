@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-30). Tracked by `oqto-e0n1`. Builds on the Workspace, work directory, Session, Surface, and App language in `CONTEXT.md`. The App integration follows the proposed direction in [ADR-0027](0027-one-app-contract-oqtohost-surfaces-stay-bundled.md) but remains deferred until that ADR is accepted.
+Accepted (2026-07-30), partially superseded by [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md), which retires the Workbench name and fixed composition in favor of OqtoUI and rearrangeable Views. The Workspace → work directory → Session hierarchy, Chat/Files core-default status, scope ownership, parallel migration, and delete-after-cutover policy remain accepted. Tracked by `oqto-e0n1`. Builds on the Workspace, work directory, Session, Surface, and App language in `CONTEXT.md`. App integration follows [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md) and the Host/Gate direction in [ADR-0027](0027-one-app-contract-oqtohost-surfaces-stay-bundled.md).
 
 ## Context
 
@@ -53,9 +53,11 @@ Tab ownership is explicit:
 
 Closing a Chat tab closes only the view. It never stops or deletes the Session. Work-directory tabs persist across Session switches and page reloads on the current device; cross-device tab-layout synchronization is deferred.
 
-### 3. Chat and Files are fixed; tools are optional and pinnable
+### 3. Chat and Files are core defaults; ADR-0037 makes layout rearrangeable
 
-Chat and Files are the only fixed product areas inside a Workbench. Terminal, Browser, Gallery, Memories, image editing, and future tools open on demand and may be pinned by the user. Agent-authored Apps are a core capability but open as work-area tabs through ADR-0027; they are not shell navigation. The first file-backed App tabs are work-directory-owned through their Data binding; any future Session-owned App must declare and enforce that different binding explicitly.
+Chat and Files remain the two core default product areas. [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) supersedes their fixed placement: Sessions, Chat, Files, Editor, Image Editor, Terminal, and App Views may be tabbed, split, resized, and focused through OqtoUI. Presentation never changes scope ownership. App binding follows [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md).
+
+A Session's current agent task plan is a glanceable projection, not a third product area or durable planning authority. When a plan exists, desktop shows a compact connected progress rail at the bottom of Files: each main point represents one explicit agent todo, completed/active/pending states are distinct, hover or keyboard focus previews a point, and activation opens the complete plan transiently without reducing the persistent Files area. Mobile presents the same progress in the top workbench chrome and opens the plan as a bottom sheet because hover is unavailable. Raw tool calls and incidental events are not promoted to points; `trx` remains the authority for durable longer-term planning.
 
 This supersedes ADR-0027's proposed bundled-Surface/navigation-list direction without changing the Surface/App trust distinction: Surfaces remain trusted shell code, but `lib/app-registry.ts` and the dynamic `appRegistry` mechanism are deleted after cutover rather than retained in a secondary role. Typed routes are the authenticated navigation authority. The Sessions Surface is subsumed by the default authenticated shell, which hosts the selected work-directory Workbench; the Workbench is not itself a Surface. Admin remains a separate, role-gated Surface and is rebuilt after the core Workbench around accounts/invitations, model lifecycle, propagation, and usage audit. The previously named Dashboard is not present in the current registry and is not reintroduced.
 
@@ -63,9 +65,9 @@ The standalone Agents Surface is removed because the work directory carries the 
 
 ### 4. Rebuild alongside the old shell, then delete the old shell
 
-A new shell hosting the selected Workbench is built behind admin-only `/workbench` and an admin-only “Try new workbench” entry. An admin/dev-only `/workbench-lab` uses realistic fixtures for layout, state, accessibility, performance, and visual testing. The rebuild may reuse canonical protocol, authentication, history, file, and design-system interfaces, but may not import legacy shell contexts or preserve their state model.
+[ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) names the replacement OqtoUI and moves the pilot to deployment-gated `/oqto-ui`, with scripted scenarios compiled only in development at `/dev/oqto-ui`. The replacement may reuse canonical protocol, authentication, history, file, and design-system interfaces, but may not import legacy shell state authorities.
 
-The parallel route is temporary. Cutover requires the verification contract in `docs/frontend/workbench-guardrails.md`. Once it passes, the new shell replaces the current authenticated shell and the old shell, route switch, and superseded compatibility paths are deleted in the same migration program.
+The parallel route is temporary. Cutover requires ADR-0037's verification plus the still-applicable correctness/performance gates from ADR-0032 and the successor OqtoUI guardrails. Once they pass, OqtoUI becomes the authenticated root and the old shell, route switch, and superseded compatibility paths are deleted in the same migration program.
 
 ## Rejected alternatives
 

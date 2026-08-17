@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-30). Tracked by `oqto-e0n1`. Implements the shell decision in [ADR-0031](0031-session-centric-workbench-shell.md), preserves public Session identity from [ADR-0023](0023-one-public-oqto-session-id-harness-ids-adapter-local.md), and relies on the replay/drift contract in [ADR-0024](0024-transport-neutral-runner-wire-and-resumable-connections.md).
+Accepted (2026-07-30), partially superseded by [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md), which replaces the Workbench name, fixed composition, and layer-oriented source tree with OqtoUI, rearrangeable Views, and feature-oriented ownership. The exclusive state-ownership table, framework-independent `SessionTimeline`, public identities, watcher/editor correctness, and client-stack intent remain accepted. Tracked by `oqto-e0n1`. Implements [ADR-0031](0031-session-centric-workbench-shell.md) as refined by ADR-0037, preserves public Session identity from [ADR-0023](0023-one-public-oqto-session-id-harness-ids-adapter-local.md), and relies on the replay/drift contract in [ADR-0024](0024-transport-neutral-runner-wire-and-resumable-connections.md).
 
 ## Context
 
