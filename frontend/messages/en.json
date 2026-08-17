@@ -765,5 +765,59 @@
 		"session": "Session",
 		"autoDenyPrefix": "Auto-deny in",
 		"autoDenySuffix": "seconds"
+	},
+	"oqtoUi": {
+		"brand": "OqtoUI",
+		"loading": "Loading OqtoUI…",
+		"noSession": "No Session selected",
+		"noWorkspace": "No work directory",
+		"error": {
+			"title": "OqtoUI could not load",
+			"body": "The durable Session data is unavailable.",
+			"retry": "Retry"
+		},
+		"connection": {
+			"connected": "Connected",
+			"offline": "Offline",
+			"scripted": "Scripted trace"
+		},
+		"views": {
+			"sessions": "Sessions",
+			"chat": "Chat",
+			"gallery": "Gallery App"
+		},
+		"fidelity": {
+			"compact": "Compact",
+			"standard": "Standard",
+			"expanded": "Expanded"
+		},
+		"sessions": {
+			"label": "Session navigation",
+			"empty": "No Sessions are available."
+		},
+		"chat": {
+			"empty": "This Session has no timeline entries.",
+			"composerLabel": "Prompt",
+			"placeholder": "Ask the Agent…",
+			"readOnly": "Sending unlocks after Session identity deployment.",
+			"send": "Send",
+			"roles": {
+				"user": "You",
+				"assistant": "Agent",
+				"tool": "Tool",
+				"system": "System"
+			},
+			"status": {
+				"committed": "Committed",
+				"streaming": "Streaming…",
+				"failed": "Failed"
+			}
+		},
+		"gallery": {
+			"agentLocal": "Agent-local App candidate",
+			"empty": "No bound images are available.",
+			"label": "Bound Gallery resources",
+			"open": "Open {{name}} in Gallery"
+		}
 	}
 }

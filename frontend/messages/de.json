@@ -765,5 +765,59 @@
 		"session": "Sitzung",
 		"autoDenyPrefix": "Automatische Ablehnung in",
 		"autoDenySuffix": "Sekunden"
+	},
+	"oqtoUi": {
+		"brand": "OqtoUI",
+		"loading": "OqtoUI wird geladen…",
+		"noSession": "Keine Sitzung ausgewählt",
+		"noWorkspace": "Kein Arbeitsverzeichnis",
+		"error": {
+			"title": "OqtoUI konnte nicht geladen werden",
+			"body": "Die dauerhaften Sitzungsdaten sind nicht verfügbar.",
+			"retry": "Erneut versuchen"
+		},
+		"connection": {
+			"connected": "Verbunden",
+			"offline": "Offline",
+			"scripted": "Skript-Ablauf"
+		},
+		"views": {
+			"sessions": "Sitzungen",
+			"chat": "Chat",
+			"gallery": "Gallery-App"
+		},
+		"fidelity": {
+			"compact": "Kompakt",
+			"standard": "Standard",
+			"expanded": "Erweitert"
+		},
+		"sessions": {
+			"label": "Sitzungsnavigation",
+			"empty": "Keine Sitzungen verfügbar."
+		},
+		"chat": {
+			"empty": "Diese Sitzung enthält keine Zeitleisteneinträge.",
+			"composerLabel": "Prompt",
+			"placeholder": "Agenten fragen…",
+			"readOnly": "Senden wird nach der Bereitstellung der Sitzungsidentität freigeschaltet.",
+			"send": "Senden",
+			"roles": {
+				"user": "Sie",
+				"assistant": "Agent",
+				"tool": "Werkzeug",
+				"system": "System"
+			},
+			"status": {
+				"committed": "Gespeichert",
+				"streaming": "Streaming…",
+				"failed": "Fehlgeschlagen"
+			}
+		},
+		"gallery": {
+			"agentLocal": "Agent-lokaler App-Kandidat",
+			"empty": "Keine gebundenen Bilder verfügbar.",
+			"label": "Gebundene Gallery-Ressourcen",
+			"open": "{{name}} in Gallery öffnen"
+		}
 	}
 }

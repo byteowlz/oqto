@@ -79,6 +79,14 @@ const AppShellRoute = lazy(() =>
 const WorkbenchLabRoute = lazy(() =>
 	import("./workbench/routes/WorkbenchLabRoute").then(markChunkLoadSucceeded),
 );
+const OqtoUiRoute = lazy(() =>
+	import("./oqto-ui/app/OqtoUiRoute").then(markChunkLoadSucceeded),
+);
+const DevOqtoUiRoute = import.meta.env.DEV
+	? lazy(() =>
+			import("./oqto-ui/app/DevOqtoUiRoute").then(markChunkLoadSucceeded),
+		)
+	: null;
 
 export function App() {
 	return (
@@ -89,6 +97,32 @@ export function App() {
 			}}
 		>
 			<Routes>
+				<Route
+					path="/oqto-ui"
+					element={
+						<RequireAuth>
+							<LazyRouteBoundary>
+								<Suspense fallback={routeFallback}>
+									<OqtoUiRoute />
+								</Suspense>
+							</LazyRouteBoundary>
+						</RequireAuth>
+					}
+				/>
+				{DevOqtoUiRoute ? (
+					<Route
+						path="/dev/oqto-ui"
+						element={
+							<RequireAuth>
+								<LazyRouteBoundary>
+									<Suspense fallback={routeFallback}>
+										<DevOqtoUiRoute />
+									</Suspense>
+								</LazyRouteBoundary>
+							</RequireAuth>
+						}
+					/>
+				) : null}
 				{import.meta.env.DEV ? (
 					<Route
 						path="/workbench-lab"
