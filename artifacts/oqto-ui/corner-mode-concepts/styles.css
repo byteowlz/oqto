@@ -174,11 +174,31 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .strip-h .meta { color: var(--muted); font-size: 10px; display: grid; gap: 2px; justify-items: end; }
 .strip-h .meta b { color: var(--accent); font-weight: 600; }
 
-/* composer strip */
-.composer { position: absolute; z-index: 30; left: 0; right: 0; bottom: 58px; display: flex; gap: 6px; padding: 8px; background: var(--surface-raised); border-top: 1px solid var(--line-strong); }
-.composer input { flex: 1; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 10px 12px; font-size: 13px; }
-.composer button { flex: none; width: 44px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; }
-.composer button svg { width: 18px; height: 18px; }
+/* visible composer row above the bottom bar: the prompt is never hidden */
+.cm-composer { flex: none; display: flex; gap: 6px; padding: 8px 10px 2px; background: var(--surface); }
+.cm-composer input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 10px 12px; font-size: 13px; color: var(--text); }
+.cm-composer input:focus { border-color: var(--accent); outline: none; }
+
+/* status strip is a button now (expands agent state) */
+.cm-status { border: 1px solid transparent; background: transparent; padding: 6px 10px; align-self: center; }
+.cm-status:hover, .cm-status[data-open="true"] { border-color: var(--line-strong); }
+
+/* radial hold menu */
+.radial { position: absolute; inset: 0; z-index: 36; pointer-events: none; touch-action: none; }
+.radial-item {
+  position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+  display: grid; place-items: center; border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--muted);
+  transition: transform 90ms linear;
+}
+.radial-item svg { width: 21px; height: 21px; }
+.radial-item[data-sel="true"] { border-color: var(--accent); color: var(--text); background: var(--surface-soft); transform: scale(1.18); }
+.radial-label { position: absolute; padding: 5px 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); font-size: 12px; white-space: nowrap; transform: translate(-50%, -50%); }
+.radial-label small { display: block; color: var(--faint); font-size: 9.5px; letter-spacing: .14em; text-align: center; margin-top: 2px; }
+
+/* transient probe toast */
+.toast { position: absolute; z-index: 50; left: 50%; bottom: 126px; transform: translateX(-50%); background: var(--surface-raised); border: 1px solid var(--line-strong); padding: 8px 14px; font-size: 11.5px; color: var(--muted); }
+.toast b { color: var(--accent); font-weight: 600; }
 
 /* ---------- MGS carousel ---------- */
 .mgs {

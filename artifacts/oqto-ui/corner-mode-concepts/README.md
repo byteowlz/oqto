@@ -20,9 +20,14 @@ spatial memory.
 - **top-left — where:** sessions of the current workspace; hold →
   workspace switcher carousel (procedural icons for icon-less projects).
 - **top-right — with what:** workspace tools (files/editor/terminal/…).
-- **bottom-left — who/state:** agent state, task progress, context gauge.
-- **bottom-right — do:** composer/actions; hold → quick switch
-  (MRU session cards, release to open).
+- **bottom-left — quick switch:** tap → fuzzy MRU session list; hold →
+  session cards fan (release to open).
+- **bottom-right — send:** taps send the always-visible prompt (the
+  composer row never hides); hold → radial menu with attach / voice /
+  **model switcher** / fork (drag to highlight, release to select; the
+  model sheet updates the status bar).
+- **status strip (middle bottom):** tap to expand agent state, task
+  progress, context gauge.
 
 ## Variants (keys 1–4)
 
@@ -37,9 +42,10 @@ spatial memory.
 
 - **Vocabulary toggle** (panel, top right): `tap=open · hold=quick` vs
   inverted `press=carousel · release=equip`.
-- **Hold carousels:** press-and-hold a corner, drag to highlight, release
-  to equip (workspaces top-left, tools top-right, session quick-switch
-  bottom-right).
+- **Hold carousels:** press-and-hold, drag to highlight, release to equip
+  (workspaces top-left, tools top-right). Bottom-right hold opens a
+  **radial menu** (attach / voice / model / fork); bottom-left hold opens
+  the quick-switch fan.
 - **Fuzzy search** in every list surface; matched characters are
   highlighted.
 - **Procedural workspace icons:** deterministic flat geometry from the
