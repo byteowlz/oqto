@@ -18,6 +18,7 @@ import { ThemeCustomizer } from "../theme/ThemeCustomizer";
 import { ThemePicker } from "../theme/ThemePicker";
 import { useThemeRoot } from "../theme/useThemeRoot";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
+import { Splash } from "./Splash";
 import "./shell.css";
 
 type OqtoUiShellProps = {
@@ -41,7 +42,6 @@ export function OqtoUiShell({
 	workAreaTab,
 	onNavigate,
 }: OqtoUiShellProps) {
-	const { t } = useTranslation();
 	const [sessionsOpen, setSessionsOpen] = useState(false);
 	const [userTheme, setUserTheme] = useState<OqtoUiUserTheme>({});
 	const { schemeId, rootRef, rootEl } = useThemeRoot(
@@ -59,21 +59,11 @@ export function OqtoUiShell({
 	if (!snapshot) {
 		return (
 			<div className="wb-shell" data-state="loading" ref={rootRef}>
-				<div className="wb-shell-notice">
-					{snapshotQuery.isError ? (
-						<>
-							<p role="alert">{t("oqtoUi.loadFailed")}</p>
-							<button
-								type="button"
-								onClick={() => void snapshotQuery.refetch()}
-							>
-								{t("oqtoUi.retry")}
-							</button>
-						</>
-					) : (
-						<p>{t("oqtoUi.loading")}</p>
-					)}
-				</div>
+				<Splash
+					schemeId={schemeId}
+					error={snapshotQuery.isError}
+					onRetry={() => void snapshotQuery.refetch()}
+				/>
 			</div>
 		);
 	}

@@ -767,7 +767,6 @@
 				"custom": "Custom"
 			}
 		},
-		"loading": "Loading OqtoUI…",
 		"loadFailed": "OqtoUI could not load the durable Session data.",
 		"retry": "Retry",
 		"noSessions": "No Sessions are available.",

@@ -1,0 +1,57 @@
+/*
+ * Mirrors the #preload splash in index.html so OqtoUI's first data load
+ * looks identical to app boot. The pulse is progress feedback, not ambient
+ * decoration; it stops with prefers-reduced-motion and never appears after
+ * the shell has data (Session switches keep the shell mounted).
+ */
+.wb-splash {
+	min-height: 100dvh;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 16px;
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+}
+
+.wb-splash__logo {
+	height: 96px;
+	width: auto;
+	animation: wb-splash-pulse 2s ease-in-out infinite;
+}
+
+.wb-splash__logo[data-error="true"] {
+	animation: none;
+	opacity: 0.5;
+}
+
+.wb-splash p {
+	margin: 0;
+}
+
+.wb-splash button {
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	padding: 8px 16px;
+	min-height: 44px;
+	cursor: pointer;
+}
+
+@keyframes wb-splash-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wb-splash__logo {
+		animation: none;
+	}
+}

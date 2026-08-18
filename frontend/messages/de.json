@@ -767,7 +767,6 @@
 				"custom": "Benutzerdefiniert"
 			}
 		},
-		"loading": "OqtoUI wird geladen…",
 		"loadFailed": "OqtoUI konnte die dauerhaften Sitzungsdaten nicht laden.",
 		"retry": "Erneut versuchen",
 		"noSessions": "Keine Sitzungen verfügbar.",
