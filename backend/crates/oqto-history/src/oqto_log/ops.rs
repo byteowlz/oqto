@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use crate::oqto_log::bindings::{append_pi_session_binding, resolve_pi_session_identity_for_write};
+use crate::oqto_log::bindings::{
+    SessionBindingError, append_pi_session_binding, resolve_pi_session_identity_for_write,
+};
 
 static OQTO_LOG_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations_oqto_log");
 
@@ -335,14 +337,30 @@ pub async fn update_session_title_and_readable_id(
     Ok(false)
 }
 
+/// One external id whose identity could not be upserted because multiple
+/// pre-binding legacy rows claim it. The caller owns the authority-backed
+/// repair (exact JSONL replace); silently picking a winner here would violate
+/// fail-closed identity resolution.
+#[derive(Debug, Clone)]
+pub struct SessionIdentityConflict {
+    pub external_id: String,
+    pub session_ids: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct SessionIdentityBatchOutcome {
+    pub upserted: usize,
+    pub conflicts: Vec<SessionIdentityConflict>,
+}
+
 pub async fn batch_upsert_session_identities(
     user_home: &Path,
     user_id: &str,
     workspace_id: &str,
     identities: &[SessionIdentityInput],
-) -> Result<usize> {
+) -> Result<SessionIdentityBatchOutcome> {
     if identities.is_empty() {
-        return Ok(0);
+        return Ok(SessionIdentityBatchOutcome::default());
     }
 
     let db_path =
@@ -382,12 +400,30 @@ pub async fn batch_upsert_session_identities(
         .begin()
         .await
         .context("begin oqto-log identity batch tx")?;
-    let mut upserted = 0usize;
+    let mut outcome = SessionIdentityBatchOutcome::default();
     let mut index_entries: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     for identity in identities {
-        let existing = resolve_pi_session_identity_for_write(&mut tx, &identity.external_id)
-            .await
-            .context("resolve existing identity during batch upsert")?;
+        // A legacy identity conflict is a data fact about one session, not an
+        // infrastructure failure: skip that identity and keep the batch alive
+        // so one historical split cannot block every other session in the
+        // workspace. All other errors still fail (and roll back) the batch.
+        let existing =
+            match resolve_pi_session_identity_for_write(&mut tx, &identity.external_id).await {
+                Ok(existing) => existing,
+                Err(SessionBindingError::LegacyConflict {
+                    external_id,
+                    session_ids,
+                }) => {
+                    outcome.conflicts.push(SessionIdentityConflict {
+                        external_id,
+                        session_ids,
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).context("resolve existing identity during batch upsert");
+                }
+            };
         let (session_id, platform_id) = existing
             .map(|resolved| (resolved.session_id, resolved.platform_id))
             .unwrap_or_else(|| (identity.platform_id.clone(), identity.platform_id.clone()));
@@ -448,7 +484,7 @@ pub async fn batch_upsert_session_identities(
             Some(platform_id),
             Some(identity.external_id.clone()),
         ));
-        upserted += 1;
+        outcome.upserted += 1;
     }
 
     tx.commit()
@@ -464,7 +500,7 @@ pub async fn batch_upsert_session_identities(
     {
         tracing::debug!("oqto-log index batch upsert failed: {err:#}");
     }
-    Ok(upserted)
+    Ok(outcome)
 }
 
 fn path_is_inside_root(path: &str, root: &Path) -> bool {

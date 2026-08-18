@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::pi::AgentMessage;
 
@@ -420,6 +420,40 @@ fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
     }
 }
 
+/// Converge a documented pre-binding identity split (oqto-9np8) with the Pi
+/// JSONL as authority: exact-replace into the canonical public id, which
+/// removes the competing legacy rows in the same transaction. Without JSONL
+/// evidence the conflict stays fail-closed and is reported instead.
+async fn repair_legacy_identity_conflict(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    conflict: &oqto_history::oqto_log::ops::SessionIdentityConflict,
+    jsonl_path: Option<&Path>,
+) -> Result<()> {
+    let path = jsonl_path.context("no Pi JSONL found for conflicted external id")?;
+    let records = read_jsonl_message_records(path);
+    if records.is_empty() {
+        anyhow::bail!(
+            "conflicted session JSONL has no messages; refusing to repair without authority"
+        );
+    }
+    let target = platform_id_for_external_id(&conflict.external_id);
+    oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+        user_home,
+        user_id,
+        workspace_id,
+        &target,
+        &target,
+        Some(&conflict.external_id),
+        &conflict.external_id,
+        &records,
+    )
+    .await
+    .context("exact-replace repair for conflicted identity")?;
+    Ok(())
+}
+
 pub async fn fast_import_identities_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
@@ -435,6 +469,8 @@ pub async fn fast_import_identities_from_pi_jsonl(
         String,
         Vec<oqto_history::oqto_log::ops::SessionIdentityInput>,
     > = std::collections::BTreeMap::new();
+    let mut jsonl_by_external: std::collections::BTreeMap<String, std::path::PathBuf> =
+        std::collections::BTreeMap::new();
 
     for workspace in workspaces.flatten() {
         let workspace_dir_path = workspace.path();
@@ -471,6 +507,7 @@ pub async fn fast_import_identities_from_pi_jsonl(
                 stats.skipped_files += 1;
                 continue;
             }
+            jsonl_by_external.insert(external_id.clone(), path.clone());
             by_workspace.entry(workspace_id.clone()).or_default().push(
                 oqto_history::oqto_log::ops::SessionIdentityInput {
                     platform_id: platform_id_for_external_id(&external_id),
@@ -493,7 +530,33 @@ pub async fn fast_import_identities_from_pi_jsonl(
         )
         .await
         {
-            Ok(imported) => stats.imported_sessions += imported,
+            Ok(outcome) => {
+                stats.imported_sessions += outcome.upserted;
+                for conflict in outcome.conflicts {
+                    match repair_legacy_identity_conflict(
+                        user_home,
+                        user_id,
+                        &workspace_id,
+                        &conflict,
+                        jsonl_by_external
+                            .get(&conflict.external_id)
+                            .map(std::path::PathBuf::as_path),
+                    )
+                    .await
+                    {
+                        Ok(()) => stats.imported_sessions += 1,
+                        Err(err) => {
+                            stats.failed_files += 1;
+                            if stats.failure_samples.len() < 25 {
+                                stats.failure_samples.push(format!(
+                                    "identity_conflict_unrepaired workspace={} external_id={} sessions={:?} error={}",
+                                    workspace_id, conflict.external_id, conflict.session_ids, err
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             Err(err) => {
                 stats.failed_files += identities.len();
                 if stats.failure_samples.len() < 25 {
@@ -835,6 +898,93 @@ mod tests {
         assert_eq!(metadata.title.as_deref(), Some("Fix extension loader"));
         assert_eq!(metadata.created_at.as_deref(), Some("2026-01-16 12:06:53"));
         assert_eq!(metadata.updated_at.as_deref(), Some("2026-02-06 20:41:49"));
+    }
+
+    #[tokio::test]
+    async fn identity_sync_repairs_prebinding_split_from_jsonl_authority() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = "/tmp/oqto-importer-split";
+        let pi_id = "dc7f6065-f8e4-43f7-8b14-c44e7fa179b8";
+        let sessions_dir = temp
+            .path()
+            .join(".pi/agent/sessions/--tmp-oqto-importer-split--");
+        std::fs::create_dir_all(&sessions_dir).expect("create Pi session dir");
+        let jsonl = sessions_dir.join(format!("2026-08-18T00-00-00-000Z_{pi_id}.jsonl"));
+        std::fs::write(
+            &jsonl,
+            format!(
+                "{{\"type\":\"session\",\"cwd\":\"{workspace}\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"one\"}}}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":\"two\"}}}}\n"
+            ),
+        )
+        .expect("write Pi JSONL");
+
+        // Seed the archvm oqto-svwp shape: an empty canonical row and a raw
+        // self-identified row both claim the Pi id; no binding facts exist.
+        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+            temp.path(),
+            workspace,
+        )
+        .expect("db path");
+        oqto_history::oqto_log::store::migrate_db_path(&db_path)
+            .await
+            .expect("migrate");
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
+        )
+        .await
+        .expect("open oqto-log");
+        for (session_id, platform_id) in [
+            ("oqto-canonical-empty", "oqto-canonical-empty"),
+            (pi_id, pi_id),
+        ] {
+            sqlx::query(
+                "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES (?, ?, ?, 'user-1', ?)",
+            )
+            .bind(session_id)
+            .bind(platform_id)
+            .bind(pi_id)
+            .bind(workspace)
+            .execute(&pool)
+            .await
+            .expect("seed split row");
+        }
+
+        let stats = fast_import_identities_from_pi_jsonl(temp.path(), "user-1", None)
+            .await
+            .expect("identity sync");
+        assert_eq!(
+            stats.failed_files, 0,
+            "split must be repaired, not reported: {:?}",
+            stats.failure_samples
+        );
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT session_id, platform_id FROM oqto_log_sessions WHERE external_id = ? ORDER BY session_id",
+        )
+        .bind(pi_id)
+        .fetch_all(&pool)
+        .await
+        .expect("rows after repair");
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one identity row must remain: {rows:?}"
+        );
+        let (session_id, platform_id) = &rows[0];
+        assert!(
+            session_id.starts_with("oqto-"),
+            "public id must be canonical: {session_id}"
+        );
+        assert_eq!(session_id, platform_id);
+
+        let messages: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM oqto_log_messages m JOIN oqto_log_turns t ON t.turn_id = m.turn_id WHERE t.session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("messages after repair");
+        assert_eq!(messages, 2, "canonical session must carry the JSONL truth");
     }
 
     #[tokio::test]

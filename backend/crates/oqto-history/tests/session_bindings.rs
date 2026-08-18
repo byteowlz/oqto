@@ -756,3 +756,77 @@ async fn pi_snapshot_dual_writes_binding_and_rejects_provisional_identity() -> R
     ));
     Ok(())
 }
+
+#[tokio::test]
+async fn identity_batch_isolates_legacy_conflicts_per_session() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let workspace = "/tmp/session-binding-conflict-isolation";
+
+    // Seed the documented oqto-9np8 split shape directly: one canonical row
+    // and one raw self-identified row claim the same external id, with no
+    // binding facts (pre-binding data).
+    let db_path = resolve_user_home_workspace_db_path(temp.path(), workspace)?;
+    migrate_db_path(&db_path).await?;
+    let pool = open_pool(&db_path).await?;
+    let mut connection = pool.acquire().await?;
+    insert_session(
+        &mut connection,
+        "oqto-canonical-empty",
+        "oqto-canonical-empty",
+        Some("split-external"),
+    )
+    .await?;
+    insert_session(
+        &mut connection,
+        "split-external",
+        "split-external",
+        Some("split-external"),
+    )
+    .await?;
+    drop(connection);
+
+    let outcome = batch_upsert_session_identities(
+        temp.path(),
+        "user-1",
+        workspace,
+        &[
+            SessionIdentityInput {
+                external_id: "split-external".to_string(),
+                platform_id: "oqto-canonical-empty".to_string(),
+                title: None,
+                readable_id: None,
+                created_at: None,
+                updated_at: None,
+            },
+            SessionIdentityInput {
+                external_id: "pi-clean".to_string(),
+                platform_id: "oqto-clean".to_string(),
+                title: Some("Clean import".to_string()),
+                readable_id: None,
+                created_at: None,
+                updated_at: None,
+            },
+        ],
+    )
+    .await?;
+
+    // The conflicted identity is reported, the clean one still lands.
+    assert_eq!(outcome.upserted, 1);
+    assert_eq!(outcome.conflicts.len(), 1);
+    assert_eq!(outcome.conflicts[0].external_id, "split-external");
+    assert_eq!(
+        outcome.conflicts[0].session_ids,
+        vec![
+            "oqto-canonical-empty".to_string(),
+            "split-external".to_string()
+        ]
+    );
+
+    let clean: Option<String> = sqlx::query_scalar(
+        "SELECT session_id FROM oqto_log_sessions WHERE external_id = 'pi-clean'",
+    )
+    .fetch_optional(&pool)
+    .await?;
+    assert_eq!(clean.as_deref(), Some("oqto-clean"));
+    Ok(())
+}
