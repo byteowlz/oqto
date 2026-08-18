@@ -900,6 +900,105 @@ mod tests {
         assert_eq!(metadata.updated_at.as_deref(), Some("2026-02-06 20:41:49"));
     }
 
+    /// Validation treats recently flushed JSONLs as live runtime drift, so
+    /// fixtures must look quiescent before strict count assertions apply.
+    fn age_jsonl(path: &std::path::Path) {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("open jsonl for aging");
+        file.set_times(std::fs::FileTimes::new().set_modified(old))
+            .expect("age jsonl mtime");
+    }
+
+    #[tokio::test]
+    async fn validation_treats_freshly_flushed_sessions_as_live_not_corrupt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = "/tmp/oqto-importer-live";
+        let pi_id = "019fae41-0000-7000-a000-000000000001";
+        let sessions_dir = temp
+            .path()
+            .join(".pi/agent/sessions/--tmp-oqto-importer-live--");
+        std::fs::create_dir_all(&sessions_dir).expect("create Pi session dir");
+        let jsonl = sessions_dir.join(format!("2026-08-18T00-00-00-000Z_{pi_id}.jsonl"));
+        std::fs::write(
+            &jsonl,
+            format!(
+                "{{\"type\":\"session\",\"cwd\":\"{workspace}\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"one\"}}}}\n"
+            ),
+        )
+        .expect("write Pi JSONL");
+        age_jsonl(&jsonl);
+        bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
+            .await
+            .expect("initial import");
+
+        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+            temp.path(),
+            workspace,
+        )
+        .expect("db path");
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
+        )
+        .await
+        .expect("open oqto-log");
+        let session_id: String =
+            sqlx::query_scalar("SELECT session_id FROM oqto_log_sessions WHERE external_id = ?")
+                .bind(pi_id)
+                .fetch_one(&pool)
+                .await
+                .expect("session id");
+        let branch_id = format!("branch:{session_id}:main");
+        sqlx::query(
+            "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES ('live-turn', ?, ?, 3, 'assistant', 'committed')",
+        )
+        .bind(&session_id)
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .expect("seed runtime turn");
+        sqlx::query(
+            "INSERT INTO oqto_log_messages (message_id, turn_id, seq, kind, role, content) VALUES ('live-message', 'live-turn', 0, 'text', 'assistant', 'streamed ahead of flush')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed runtime message");
+        pool.close().await;
+
+        // A just-flushed JSONL marks the Session as live: divergence is
+        // runtime drift, not corruption.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&jsonl)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, b"\n"))
+            .expect("simulate fresh flush");
+        let filter = std::collections::HashSet::from([(workspace.to_string(), pi_id.to_string())]);
+        let live = crate::oqto_log::validator::validate_bootstrap_import_filtered(
+            temp.path(),
+            Some(&filter),
+        )
+        .await
+        .expect("validate live session");
+        assert_eq!(live.sessions_mismatch, 0, "live drift must not fail deploy");
+        assert_eq!(
+            live.sessions_unstable, 1,
+            "live session must be reported as unstable"
+        );
+
+        // The same divergence on a quiescent Session is corruption.
+        age_jsonl(&jsonl);
+        let quiescent = crate::oqto_log::validator::validate_bootstrap_import_filtered(
+            temp.path(),
+            Some(&filter),
+        )
+        .await
+        .expect("validate quiescent session");
+        assert_eq!(quiescent.sessions_mismatch, 1);
+        assert_eq!(quiescent.sessions_unstable, 0);
+    }
+
     #[tokio::test]
     async fn identity_sync_repairs_prebinding_split_from_jsonl_authority() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1004,6 +1103,7 @@ mod tests {
             ),
         )
         .expect("write Pi JSONL");
+        age_jsonl(&jsonl);
 
         bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
             .await
@@ -1060,6 +1160,7 @@ mod tests {
             .open(&jsonl)
             .and_then(|mut file| std::io::Write::write_all(&mut file, b"\n"))
             .expect("touch JSONL fingerprint");
+        age_jsonl(&jsonl);
         bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
             .await
             .expect("repair import");

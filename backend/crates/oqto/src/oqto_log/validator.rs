@@ -334,6 +334,16 @@ pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationRep
     validate_bootstrap_import_filtered(user_home, None).await
 }
 
+const LIVE_SESSION_GRACE_SECS: u64 = 600;
+
+fn jsonl_flushed_within_grace(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|mtime| std::time::SystemTime::now().duration_since(mtime).ok())
+        .is_some_and(|age| age.as_secs() < LIVE_SESSION_GRACE_SECS)
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct ImporterStateView {
     #[serde(default)]
@@ -444,6 +454,15 @@ async fn validate_bootstrap_import_filtered_inner(
             && count_oqto_log_user_messages(user_home, &workspace_id, &session_id).await == 0
         {
             report.sessions_ok += 1;
+            continue;
+        }
+
+        // A Session whose JSONL was flushed moments ago is being written by a
+        // live runtime: oqto-log receives streamed rows ahead of Pi's next
+        // JSONL flush, so count divergence is expected drift that the next
+        // exact replace converges. Only quiescent Sessions are corruption.
+        if jsonl_flushed_within_grace(&path) {
+            report.sessions_unstable += 1;
             continue;
         }
 
