@@ -22,6 +22,7 @@ type JsonRecord = {
 	text?: unknown;
 	content?: unknown;
 	tool_name?: unknown;
+	type?: unknown;
 };
 
 function record(value: unknown): JsonRecord | null {
@@ -113,6 +114,7 @@ function parseWorkDirectories(value: unknown): WorkDirectory[] {
 
 function partText(value: unknown): string {
 	return records(value)
+		.filter((part) => text(part.type) !== "thinking")
 		.map(
 			(part) => text(part.text) ?? text(part.content) ?? text(part.tool_name),
 		)
@@ -120,10 +122,10 @@ function partText(value: unknown): string {
 		.join("\n");
 }
 
-function parseMessages(value: unknown, sessionId: string): ChatMessage[] {
+function parseMessages(value: unknown): ChatMessage[] {
 	return records(value).flatMap((item) => {
 		const id = text(item.id);
-		if (!id || text(item.session_id) !== sessionId) return [];
+		if (!id) return [];
 		const role = text(item.role);
 		const author =
 			role === "user" ? "user" : role === "assistant" ? "agent" : "tool";
@@ -164,7 +166,6 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 					await readJson(
 						`/api/chat-history/${encodeURIComponent(activeSessionId)}/messages`,
 					),
-					activeSessionId,
 				)
 			: [];
 		return {

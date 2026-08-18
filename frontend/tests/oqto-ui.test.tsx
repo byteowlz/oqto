@@ -195,6 +195,58 @@ describe("OqtoUI shell", () => {
 	});
 });
 
+describe("OqtoUI live platform", () => {
+	it("parses session-scoped messages without a session_id field and hides thinking parts", async () => {
+		const payloads: Record<string, unknown> = {
+			"/api/chat-history?limit=80": [
+				{
+					id: "oqto-abc",
+					title: "Real session",
+					project_name: "ctx",
+					workspace_path: "/home/user/ctx",
+					updated_at: 1787006011000,
+				},
+			],
+			"/api/chat-history/oqto-abc/messages": [
+				{
+					id: "msg:1",
+					role: "user",
+					parts: [{ type: "text", text: "Hello" }],
+					created_at: 1787006011228,
+				},
+				{
+					id: "msg:2",
+					role: "assistant",
+					parts: [
+						{ type: "thinking", text: "private reasoning" },
+						{ type: "text", text: "Answer" },
+					],
+					created_at: 1787006012000,
+				},
+			],
+		};
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) =>
+			new Response(JSON.stringify(payloads[String(input)] ?? []), {
+				status: 200,
+			})) as typeof fetch;
+		try {
+			const { liveOqtoUiPlatform } = await import(
+				"../src/oqto-ui/platform/live-platform"
+			);
+			const snapshot = await liveOqtoUiPlatform.load("oqto-abc");
+			expect(snapshot.activeSessionId).toBe("oqto-abc");
+			expect(snapshot.workDirectories).toHaveLength(1);
+			expect(snapshot.messages.map((m) => [m.author, m.content])).toEqual([
+				["user", "Hello"],
+				["agent", "Answer"],
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+});
+
 describe("OqtoUI scripted platform", () => {
 	it("resolves unknown session requests to the first scripted session", async () => {
 		const { scriptedOqtoUiPlatform } = await import(
