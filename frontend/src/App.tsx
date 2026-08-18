@@ -63,7 +63,7 @@ function RouteFallback() {
 		typeof document === "undefined" ||
 		document.documentElement.classList.contains("dark");
 	return (
-		<div className="flex h-screen w-screen items-center justify-center bg-background">
+		<div className="flex h-screen w-screen items-center justify-center">
 			<img
 				alt="Oqto"
 				src={isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg"}
