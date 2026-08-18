@@ -46,6 +46,10 @@ spatial memory.
   (workspaces top-left, tools top-right). Bottom-right hold opens a
   **radial menu** (attach / voice / model / fork); bottom-left hold opens
   the quick-switch fan.
+- **Quick-scroll rail** on the right edge middle: one square dot per
+  message cluster (user dots accent-filled), hover for a truncated message
+  preview, click to jump. Only appears once the history earns it (8+
+  messages).
 - **Fuzzy search** in every list surface; matched characters are
   highlighted.
 - **Procedural workspace icons:** deterministic flat geometry from the

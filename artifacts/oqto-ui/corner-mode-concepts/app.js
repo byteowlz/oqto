@@ -154,6 +154,7 @@ const state = {
   chat: CHAT.map((row) => [...row]),
   toast: null,
   model: "opus-4.7",
+  preview: null,
 };
 
 function ws() { return WORKSPACES.find((w) => w.id === state.wsId); }
@@ -222,10 +223,52 @@ function composerRow() {
 
 function chat() {
   return `<div class="cm-content" id="chat-scroll">${state.chat.map(([author, text, tool], i) => `
-    <article class="msg" data-author="${author}">
+    <article class="msg" data-author="${author}" data-msg-index="${i}">
       <header><b>${author === "user" ? "You" : escapeHtml(ws().name)}</b><span>15:0${i}</span></header>
       <p>${escapeHtml(text)}</p>${tool ? `<div class="tool">${escapeHtml(tool)}</div>` : ""}
-    </article>`).join("")}</div>`;
+    </article>`).join("")}</div>
+    ${scrollRail()}`;
+}
+
+/* Quick-scroll rail: one square dot per message cluster, centered on the
+   right edge. Hover/press a dot to preview the truncated message, click to
+   jump. Hidden below a handful of messages where it earns nothing. */
+const RAIL_MIN_MESSAGES = 8;
+const RAIL_MAX_DOTS = 14;
+
+function railDots() {
+  const messages = state.chat;
+  if (messages.length < RAIL_MIN_MESSAGES) return [];
+  const perDot = Math.max(1, Math.ceil(messages.length / RAIL_MAX_DOTS));
+  const dots = [];
+  for (let i = 0; i < messages.length; i += perDot) {
+    dots.push({ index: i, author: messages[i][0], text: messages[i][1] });
+  }
+  return dots;
+}
+
+function scrollRail() {
+  const dots = railDots();
+  if (dots.length < 2) return "";
+  return `<nav class="scroll-rail" id="scroll-rail" aria-label="Quick scroll">${dots.map((dot, i) => `
+    <button class="rail-dot" data-rail-index="${dot.index}" data-dot="${i}" data-author="${dot.author}" aria-label="Jump to message ${dot.index + 1}"></button>`).join("")}
+  </nav>`;
+}
+
+function railPreview(index) {
+  const msg = state.chat[index];
+  if (!msg) return;
+  const el = document.getElementById(`msg-preview-${index}`) ?? null;
+  state.preview = { index, author: msg[0], text: msg[1] };
+  render();
+}
+
+function jumpToMessage(index) {
+  const chat = document.getElementById("chat-scroll");
+  const msg = chat?.querySelector(`[data-msg-index="${index}"]`);
+  if (msg) msg.scrollIntoView({ block: "center" });
+  state.preview = null;
+  render();
 }
 
 function sessionRows(list, query) {
@@ -397,10 +440,19 @@ function modelsSheet() {
   </section>`;
 }
 
+function railPreviewBubble() {
+  if (!state.preview) return "";
+  const { index, author, text } = state.preview;
+  return `<div class="rail-preview" data-author="${author}">
+    <small>${author === "user" ? "You" : escapeHtml(ws().name)} · msg ${index + 1}/${state.chat.length}</small>
+    <p>${escapeHtml(text.length > 110 ? `${text.slice(0, 110)}…` : text)}</p>
+  </div>`;
+}
+
 function renderPhone() {
   stage.classList.remove("desktop-mode");
   stage.innerHTML = `<div class="phone"><div class="notch"></div><div class="screen" id="screen">
-    ${topBar()}${chat()}${expansion()}${state.open === "models" ? modelsSheet() : ""}${holdMenu()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
+    ${topBar()}${chat()}${expansion()}${state.open === "models" ? modelsSheet() : ""}${holdMenu()}${railPreviewBubble()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
   </div></div>`;
 }
 
@@ -427,7 +479,7 @@ function renderDesktop() {
         </div>
       </div>
     </div>
-    ${holdMenu()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
+    ${holdMenu()}${railPreviewBubble()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
   </div>`;
 }
 
@@ -443,6 +495,12 @@ function render() {
   }
   const chatScroll = document.getElementById("chat-scroll");
   if (chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
+
+  for (const dot of document.querySelectorAll(".rail-dot")) {
+    dot.addEventListener("pointerenter", () => railPreview(Number(dot.dataset.railIndex)));
+  }
+  const rail = document.getElementById("scroll-rail");
+  if (rail) rail.addEventListener("pointerleave", () => { state.preview = null; render(); });
   const input = document.getElementById("fuzzy-input");
   if (input) {
     input.addEventListener("input", () => {
@@ -606,6 +664,8 @@ function bindShell() {
   }
 
   screen.addEventListener("click", (event) => {
+    const railDot = event.target.closest("[data-rail-index]");
+    if (railDot) { jumpToMessage(Number(railDot.dataset.railIndex)); return; }
     const target = event.target.closest("[data-close],[data-session],[data-workspace],[data-tool],[data-open-workspaces],[data-pin],[data-split],[data-open-status],[data-quick],[data-model]");
     if (!target) return;
     if (target.dataset.close !== undefined) { state.open = null; state.query = ""; }

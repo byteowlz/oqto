@@ -268,3 +268,29 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 @media (prefers-reduced-motion: reduce) {
   .mgs-item, .fan-card, .bp-edge { transition: none; }
 }
+
+/* ---------- quick-scroll rail (right edge, middle) ---------- */
+.scroll-rail {
+  position: absolute; z-index: 22; right: 5px; top: 50%; transform: translateY(-50%);
+  display: grid; gap: 6px; justify-items: center; padding: 7px 4px;
+  background: rgba(15,20,18,.82); border: 1px solid var(--line);
+  max-height: 72%; overflow: hidden;
+}
+.rail-dot {
+  width: 7px; height: 7px; padding: 0; flex: none;
+  border: 1px solid var(--faint); background: transparent;
+}
+.rail-dot[data-author="user"] { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 55%, transparent); }
+.rail-dot[data-author="agent"] { border-color: var(--faint); background: var(--faint); }
+.rail-dot:hover, .rail-dot:active { border-color: var(--accent-bright); transform: scale(1.5); }
+
+/* truncated message preview anchored to the rail */
+.rail-preview {
+  position: absolute; z-index: 24; right: 46px; top: 50%; transform: translateY(-50%);
+  width: min(240px, calc(100% - 90px));
+  background: var(--surface-raised); border: 1px solid var(--line-strong);
+  box-shadow: 0 14px 40px rgba(0,0,0,.5); padding: 9px 12px;
+}
+.rail-preview[data-author="user"] { border-color: var(--accent); }
+.rail-preview small { display: block; color: var(--faint); font-size: 9.5px; letter-spacing: .1em; margin-bottom: 5px; }
+.rail-preview p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text); max-height: 108px; overflow: hidden; }
