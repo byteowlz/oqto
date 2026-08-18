@@ -7,30 +7,32 @@ import {
 	TestTube2,
 	User,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-	LabMessage,
-	LabNavigation,
-	LabSession,
-	LabTask,
-	LabWorkArea,
-	LabWorkDirectory,
-} from "../../modules/lab/model";
+	ChatMessage,
+	SessionOverview,
+	SessionTask,
+	UiNavigation,
+	WorkArea,
+	WorkDirectory,
+} from "../platform/contracts";
 import { Composer } from "./Composer";
 import { TaskProgress } from "./TaskProgress";
 import { EditorPane, TerminalPane, WorkAreaTabs } from "./WorkAreaPanes";
 
 type ChatWorkspaceProps = {
-	directory: LabWorkDirectory;
-	session: LabSession;
-	messages: LabMessage[];
-	tasks: LabTask[];
-	workArea: LabWorkArea;
+	directory: WorkDirectory;
+	session: SessionOverview;
+	messages: ChatMessage[];
+	tasks: SessionTask[];
+	workArea: WorkArea;
 	workAreaTab: string;
-	onNavigate: (next: LabNavigation) => void;
+	galleryPane: ReactNode;
+	onNavigate: (next: UiNavigation) => void;
 };
 
-type ActivityKind = NonNullable<LabMessage["activity"]>["kind"];
+type ActivityKind = NonNullable<ChatMessage["activity"]>["kind"];
 
 type ToolIconProps = {
 	kind: ActivityKind;
@@ -43,26 +45,29 @@ function ToolIcon({ kind }: ToolIconProps) {
 }
 
 type MessageGroupProps = {
-	message: LabMessage;
+	message: ChatMessage;
 	agentName: string;
 };
 
 function MessageGroup({ message, agentName }: MessageGroupProps) {
 	const { t } = useTranslation();
 	const isUser = message.author === "user";
+	const name = isUser
+		? t("oqtoUi.person.name")
+		: message.author === "tool"
+			? t("oqtoUi.chat.tool")
+			: agentName;
 	return (
 		<article className="wb-msg" data-author={message.author}>
 			<header className="wb-msg__header">
 				{isUser ? <User aria-hidden="true" /> : <Bot aria-hidden="true" />}
-				<span className="wb-msg__name">
-					{isUser ? t("workbench.person.name") : agentName}
-				</span>
+				<span className="wb-msg__name">{name}</span>
 				<span className="wb-msg__spacer" />
 				{isUser ? (
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.chat.forkHere")}
+						aria-label={t("oqtoUi.chat.forkHere")}
 					>
 						<GitBranch aria-hidden="true" />
 					</button>
@@ -71,7 +76,7 @@ function MessageGroup({ message, agentName }: MessageGroupProps) {
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.chat.copy")}
+					aria-label={t("oqtoUi.chat.copy")}
 				>
 					<Copy aria-hidden="true" />
 				</button>
@@ -82,7 +87,7 @@ function MessageGroup({ message, agentName }: MessageGroupProps) {
 					<div className="wb-tool" data-kind={message.activity.kind}>
 						<ToolIcon kind={message.activity.kind} />
 						<span className="wb-tool__label">
-							{t(`workbench.activity.${message.activity.kind}`)}
+							{t(`oqtoUi.activity.${message.activity.kind}`)}
 						</span>
 						<span className="wb-tool__target">{message.activity.name}</span>
 					</div>
@@ -99,12 +104,13 @@ export function ChatWorkspace({
 	tasks,
 	workArea,
 	workAreaTab,
+	galleryPane,
 	onNavigate,
 }: ChatWorkspaceProps) {
 	const { t } = useTranslation();
 	const editorTab = workArea.tabs.find((tab) => tab.id === "editor");
 	return (
-		<main className="wb-main" aria-label={t("workbench.chat.label")}>
+		<main className="wb-main" aria-label={t("oqtoUi.chat.label")}>
 			<div className="wb-chat-card">
 				<WorkAreaTabs
 					tabs={workArea.tabs}
@@ -122,7 +128,10 @@ export function ChatWorkspace({
 				{workAreaTab === "terminal" ? (
 					<TerminalPane lines={workArea.terminalLines} />
 				) : null}
-				{workAreaTab !== "editor" && workAreaTab !== "terminal" ? (
+				{workAreaTab === "gallery" ? galleryPane : null}
+				{workAreaTab !== "editor" &&
+				workAreaTab !== "terminal" &&
+				workAreaTab !== "gallery" ? (
 					<ChatPane directory={directory} messages={messages} tasks={tasks} />
 				) : null}
 			</div>
@@ -131,19 +140,16 @@ export function ChatWorkspace({
 }
 
 type ChatPaneProps = {
-	directory: LabWorkDirectory;
-	messages: LabMessage[];
-	tasks: LabTask[];
+	directory: WorkDirectory;
+	messages: ChatMessage[];
+	tasks: SessionTask[];
 };
 
 function ChatPane({ directory, messages, tasks }: ChatPaneProps) {
 	const { t } = useTranslation();
 	return (
 		<>
-			<section
-				className="wb-chat-panel"
-				aria-label={t("workbench.chat.timeline")}
-			>
+			<section className="wb-chat-panel" aria-label={t("oqtoUi.chat.timeline")}>
 				{messages.map((message) => (
 					<MessageGroup
 						agentName={directory.name}

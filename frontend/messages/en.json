@@ -571,8 +571,47 @@
 		"provisioningHealth": "Verifying service health...",
 		"provisioningAlmost": "Almost there..."
 	},
-	"workbench": {
-		"brandLabel": "Oqto workbench",
+	"permissions": {
+		"title": "Permission Required",
+		"categoryShell": "Shell Command",
+		"categoryFile": "File Edit",
+		"categoryWeb": "Web Request",
+		"categoryTool": "Tool",
+		"allow": "Allow",
+		"deny": "Deny",
+		"always": "Always",
+		"never": "Never",
+		"pending_one": "{{count}} permission pending",
+		"pending_other": "{{count}} permissions pending",
+		"clickToReview": "Click to review",
+		"question": "Question",
+		"questions": "{{count}} Questions",
+		"agentNeedsInput": "The agent needs your input to continue",
+		"answerToProceed": "Answer the following questions to help the agent proceed",
+		"otherPlaceholder": "Other (type custom answer)...",
+		"skip": "Skip",
+		"submitAnswers": "Submit Answers",
+		"submitting": "Submitting...",
+		"questionsPending_one": "{{count}} question pending",
+		"questionsPending_other": "{{count}} questions pending",
+		"clickToAnswer": "Click to answer",
+		"accessRequestDescription": "An agent is requesting access to a protected resource",
+		"resource": "Resource",
+		"details": "Details",
+		"trustWarning": "Only allow access if you trust the agent and understand why it needs this resource.",
+		"allowOnce": "Allow Once",
+		"allowForSession": "Allow for Session",
+		"titleFileAccess": "File Access Request",
+		"titleSshAccess": "SSH Access Request",
+		"titleNetworkAccess": "Network Access Request",
+		"titleGenericAccess": "Access Request",
+		"once": "Once",
+		"session": "Session",
+		"autoDenyPrefix": "Auto-deny in",
+		"autoDenySuffix": "seconds"
+	},
+	"oqtoUi": {
+		"brandLabel": "OqtoUI",
 		"lab": "Preview",
 		"theme": {
 			"label": "Base24 color scheme",
@@ -615,7 +654,8 @@
 			"memories": "Memories",
 			"terminal": "Terminal",
 			"browser": "Browser",
-			"settings": "Settings"
+			"settings": "Settings",
+			"gallery": "Gallery"
 		},
 		"chat": {
 			"label": "Session conversation",
@@ -633,7 +673,8 @@
 			"model": "Model",
 			"contextModel": "Model",
 			"contextWindow": "Context window",
-			"contextUsed": "Used"
+			"contextUsed": "Used",
+			"tool": "Tool"
 		},
 		"activity": {
 			"label": "Agent activity",
@@ -654,7 +695,7 @@
 			},
 			"fixture": {
 				"inspect": "Inspect the existing shell",
-				"plan": "Define the Workbench boundaries",
+				"plan": "Define the OqtoUI boundaries",
 				"implement": "Build the responsive surfaces",
 				"verify": "Verify themes and accessibility",
 				"summarize": "Prepare approval evidence"
@@ -673,7 +714,7 @@
 			"tree": "Work directory files"
 		},
 		"mobile": {
-			"label": "Workbench destinations",
+			"label": "Destinations",
 			"chat": "Chat",
 			"files": "Files",
 			"activity": "Activity",
@@ -725,98 +766,14 @@
 				"serif": "Georgia (serif)",
 				"custom": "Custom"
 			}
-		}
-	},
-	"permissions": {
-		"title": "Permission Required",
-		"categoryShell": "Shell Command",
-		"categoryFile": "File Edit",
-		"categoryWeb": "Web Request",
-		"categoryTool": "Tool",
-		"allow": "Allow",
-		"deny": "Deny",
-		"always": "Always",
-		"never": "Never",
-		"pending_one": "{{count}} permission pending",
-		"pending_other": "{{count}} permissions pending",
-		"clickToReview": "Click to review",
-		"question": "Question",
-		"questions": "{{count}} Questions",
-		"agentNeedsInput": "The agent needs your input to continue",
-		"answerToProceed": "Answer the following questions to help the agent proceed",
-		"otherPlaceholder": "Other (type custom answer)...",
-		"skip": "Skip",
-		"submitAnswers": "Submit Answers",
-		"submitting": "Submitting...",
-		"questionsPending_one": "{{count}} question pending",
-		"questionsPending_other": "{{count}} questions pending",
-		"clickToAnswer": "Click to answer",
-		"accessRequestDescription": "An agent is requesting access to a protected resource",
-		"resource": "Resource",
-		"details": "Details",
-		"trustWarning": "Only allow access if you trust the agent and understand why it needs this resource.",
-		"allowOnce": "Allow Once",
-		"allowForSession": "Allow for Session",
-		"titleFileAccess": "File Access Request",
-		"titleSshAccess": "SSH Access Request",
-		"titleNetworkAccess": "Network Access Request",
-		"titleGenericAccess": "Access Request",
-		"once": "Once",
-		"session": "Session",
-		"autoDenyPrefix": "Auto-deny in",
-		"autoDenySuffix": "seconds"
-	},
-	"oqtoUi": {
-		"brand": "OqtoUI",
+		},
 		"loading": "Loading OqtoUI…",
-		"noSession": "No Session selected",
-		"noWorkspace": "No work directory",
-		"error": {
-			"title": "OqtoUI could not load",
-			"body": "The durable Session data is unavailable.",
-			"retry": "Retry"
-		},
-		"connection": {
-			"connected": "Connected",
-			"offline": "Offline",
-			"scripted": "Scripted trace"
-		},
-		"views": {
-			"sessions": "Sessions",
-			"chat": "Chat",
-			"gallery": "Gallery App"
-		},
-		"fidelity": {
-			"compact": "Compact",
-			"standard": "Standard",
-			"expanded": "Expanded"
-		},
-		"sessions": {
-			"label": "Session navigation",
-			"empty": "No Sessions are available."
-		},
-		"chat": {
-			"empty": "This Session has no timeline entries.",
-			"composerLabel": "Prompt",
-			"placeholder": "Ask the Agent…",
-			"readOnly": "Sending unlocks after Session identity deployment.",
-			"send": "Send",
-			"roles": {
-				"user": "You",
-				"assistant": "Agent",
-				"tool": "Tool",
-				"system": "System"
-			},
-			"status": {
-				"committed": "Committed",
-				"streaming": "Streaming…",
-				"failed": "Failed"
-			}
-		},
+		"loadFailed": "OqtoUI could not load the durable Session data.",
+		"retry": "Retry",
+		"noSessions": "No Sessions are available.",
 		"gallery": {
-			"agentLocal": "Agent-local App candidate",
-			"empty": "No bound images are available.",
-			"label": "Bound Gallery resources",
+			"label": "Gallery",
+			"empty": "No Gallery resources are bound to this work directory.",
 			"open": "Open {{name}} in Gallery"
 		}
 	}

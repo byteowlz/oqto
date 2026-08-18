@@ -5,20 +5,20 @@ import {
 	FONT_MONO_PRESETS,
 	FONT_SANS_PRESETS,
 	NEUTRAL_TOKEN_HEX,
+	type OqtoUiUserTheme,
 	SHADOW_PRESET_IDS,
 	type ShadowPresetId,
-	type WorkbenchUserTheme,
 	matchFontPreset,
 	matchShadowPreset,
 	parseUserThemeJson,
 	snapshotTokenHex,
 	withShadowPreset,
-} from "../../modules/theme/userTheme";
+} from "./userTheme";
 
 type ThemeCustomizerProps = {
-	userTheme: WorkbenchUserTheme;
+	userTheme: OqtoUiUserTheme;
 	themeRoot: HTMLElement | null;
-	onChange: (next: WorkbenchUserTheme) => void;
+	onChange: (next: OqtoUiUserTheme) => void;
 };
 
 const COLOR_TOKENS = [
@@ -58,7 +58,7 @@ export function ThemeCustomizer({
 		update(stack === undefined ? rest : { ...rest, [key]: stack });
 	};
 
-	const update = (next: WorkbenchUserTheme) => {
+	const update = (next: OqtoUiUserTheme) => {
 		setJsonDraft(null);
 		setJsonError(null);
 		onChange(next);
@@ -100,18 +100,18 @@ export function ThemeCustomizer({
 				onClick={toggleOpen}
 			>
 				<Palette aria-hidden="true" />
-				<span>{t("workbench.themeLab.label")}</span>
+				<span>{t("oqtoUi.themeLab.label")}</span>
 			</button>
 
 			{open ? (
 				<section
-					aria-label={t("workbench.themeLab.label")}
+					aria-label={t("oqtoUi.themeLab.label")}
 					className="wb-theme-lab__panel"
 				>
 					<header>
-						<strong>{t("workbench.themeLab.label")}</strong>
+						<strong>{t("oqtoUi.themeLab.label")}</strong>
 						<button
-							aria-label={t("workbench.themeLab.reset")}
+							aria-label={t("oqtoUi.themeLab.reset")}
 							type="button"
 							onClick={() => update({})}
 						>
@@ -123,7 +123,7 @@ export function ThemeCustomizer({
 						{COLOR_TOKENS.map((token) => (
 							<li key={token}>
 								<label htmlFor={`wb-theme-${tokenKey(token)}`}>
-									{t(`workbench.themeLab.tokens.${tokenKey(token)}`)}
+									{t(`oqtoUi.themeLab.tokens.${tokenKey(token)}`)}
 								</label>
 								<input
 									id={`wb-theme-${tokenKey(token)}`}
@@ -135,8 +135,8 @@ export function ThemeCustomizer({
 								/>
 								{overrides[token] ? (
 									<button
-										aria-label={t("workbench.themeLab.clear", {
-											token: t(`workbench.themeLab.tokens.${tokenKey(token)}`),
+										aria-label={t("oqtoUi.themeLab.clear", {
+											token: t(`oqtoUi.themeLab.tokens.${tokenKey(token)}`),
 										})}
 										type="button"
 										onClick={() => clearOverride(token)}
@@ -148,7 +148,7 @@ export function ThemeCustomizer({
 						))}
 						<li>
 							<label htmlFor="wb-theme-radius">
-								{t("workbench.themeLab.radius")}
+								{t("oqtoUi.themeLab.radius")}
 							</label>
 							<input
 								id="wb-theme-radius"
@@ -164,12 +164,12 @@ export function ThemeCustomizer({
 								}
 							/>
 							<span>
-								{t("workbench.themeLab.radiusValue", { value: radiusValue })}
+								{t("oqtoUi.themeLab.radiusValue", { value: radiusValue })}
 							</span>
 						</li>
 						<li>
 							<label htmlFor="wb-theme-shadows">
-								{t("workbench.themeLab.shadows")}
+								{t("oqtoUi.themeLab.shadows")}
 							</label>
 							<select
 								id="wb-theme-shadows"
@@ -185,15 +185,13 @@ export function ThemeCustomizer({
 							>
 								{SHADOW_PRESET_IDS.map((preset) => (
 									<option key={preset} value={preset}>
-										{t(`workbench.themeLab.shadowPresets.${preset}`)}
+										{t(`oqtoUi.themeLab.shadowPresets.${preset}`)}
 									</option>
 								))}
 							</select>
 						</li>
 						<li>
-							<label htmlFor="wb-theme-blur">
-								{t("workbench.themeLab.blur")}
-							</label>
+							<label htmlFor="wb-theme-blur">{t("oqtoUi.themeLab.blur")}</label>
 							<input
 								id="wb-theme-blur"
 								max={16}
@@ -205,12 +203,12 @@ export function ThemeCustomizer({
 								}
 							/>
 							<span>
-								{t("workbench.themeLab.radiusValue", { value: blurValue })}
+								{t("oqtoUi.themeLab.radiusValue", { value: blurValue })}
 							</span>
 						</li>
 						<li>
 							<label htmlFor="wb-theme-font-sans">
-								{t("workbench.themeLab.fontSans")}
+								{t("oqtoUi.themeLab.fontSans")}
 							</label>
 							<select
 								id="wb-theme-font-sans"
@@ -226,19 +224,19 @@ export function ThemeCustomizer({
 							>
 								{FONT_SANS_PRESETS.map((preset) => (
 									<option key={preset.id} value={preset.id}>
-										{t(`workbench.themeLab.fontPresets.${preset.id}`)}
+										{t(`oqtoUi.themeLab.fontPresets.${preset.id}`)}
 									</option>
 								))}
 								{fontSansPreset === "custom" ? (
 									<option value="custom">
-										{t("workbench.themeLab.fontPresets.custom")}
+										{t("oqtoUi.themeLab.fontPresets.custom")}
 									</option>
 								) : null}
 							</select>
 						</li>
 						<li>
 							<label htmlFor="wb-theme-font-mono">
-								{t("workbench.themeLab.fontMono")}
+								{t("oqtoUi.themeLab.fontMono")}
 							</label>
 							<select
 								id="wb-theme-font-mono"
@@ -254,12 +252,12 @@ export function ThemeCustomizer({
 							>
 								{FONT_MONO_PRESETS.map((preset) => (
 									<option key={preset.id} value={preset.id}>
-										{t(`workbench.themeLab.fontPresets.${preset.id}`)}
+										{t(`oqtoUi.themeLab.fontPresets.${preset.id}`)}
 									</option>
 								))}
 								{fontMonoPreset === "custom" ? (
 									<option value="custom">
-										{t("workbench.themeLab.fontPresets.custom")}
+										{t("oqtoUi.themeLab.fontPresets.custom")}
 									</option>
 								) : null}
 							</select>
@@ -267,7 +265,7 @@ export function ThemeCustomizer({
 					</ul>
 
 					<label className="wb-theme-lab__json-label" htmlFor="wb-theme-json">
-						{t("workbench.themeLab.jsonLabel")}
+						{t("oqtoUi.themeLab.jsonLabel")}
 					</label>
 					<textarea
 						id="wb-theme-json"
@@ -278,7 +276,7 @@ export function ThemeCustomizer({
 					/>
 					{jsonError ? (
 						<p className="wb-theme-lab__error" role="alert">
-							{t("workbench.themeLab.invalidJson", { message: jsonError })}
+							{t("oqtoUi.themeLab.invalidJson", { message: jsonError })}
 						</p>
 					) : null}
 					<button
@@ -286,7 +284,7 @@ export function ThemeCustomizer({
 						type="button"
 						onClick={applyJson}
 					>
-						{t("workbench.themeLab.applyJson")}
+						{t("oqtoUi.themeLab.applyJson")}
 					</button>
 				</section>
 			) : null}

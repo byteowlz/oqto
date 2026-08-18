@@ -13,17 +13,17 @@ import {
 	Shield,
 	Sun,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { LabNavigation, LabWorkDirectory } from "../../modules/lab/model";
-import { ThemePicker } from "./ThemePicker";
+import type { UiNavigation, WorkDirectory } from "../platform/contracts";
 
 type NavigationRailProps = {
-	workDirectories: LabWorkDirectory[];
+	workDirectories: WorkDirectory[];
 	workDirectoryId: string;
 	sessionId: string;
 	schemeId: string;
-	onNavigate: (next: LabNavigation) => void;
+	themePicker: ReactNode;
+	onNavigate: (next: UiNavigation) => void;
 };
 
 export function NavigationRail({
@@ -31,6 +31,7 @@ export function NavigationRail({
 	workDirectoryId,
 	sessionId,
 	schemeId,
+	themePicker,
 	onNavigate,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
@@ -48,7 +49,7 @@ export function NavigationRail({
 			return next;
 		});
 	};
-	const discloseAnd = (id: string, next: LabNavigation) => {
+	const discloseAnd = (id: string, next: UiNavigation) => {
 		setDisclosedIds((current) => new Set(current).add(id));
 		onNavigate(next);
 	};
@@ -60,13 +61,13 @@ export function NavigationRail({
 		? "/oqto_logo_black.svg"
 		: "/oqto_logo_white.svg";
 	return (
-		<aside className="wb-sidebar" aria-label={t("workbench.navigation.label")}>
+		<aside className="wb-sidebar" aria-label={t("oqtoUi.navigation.label")}>
 			<header className="wb-sidebar__logo">
-				<img src={logoSrc} alt={t("workbench.brandLabel")} />
+				<img src={logoSrc} alt={t("oqtoUi.brandLabel")} />
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.navigation.collapse")}
+					aria-label={t("oqtoUi.navigation.collapse")}
 				>
 					<PanelLeftClose aria-hidden="true" />
 				</button>
@@ -77,41 +78,41 @@ export function NavigationRail({
 				<button
 					className="wb-search-mode"
 					type="button"
-					aria-label={t("workbench.navigation.searchMode")}
+					aria-label={t("oqtoUi.navigation.searchMode")}
 				>
 					<Search aria-hidden="true" />
 					<ChevronDown aria-hidden="true" />
 				</button>
 				<input
-					placeholder={t("workbench.navigation.searchPlaceholder")}
+					placeholder={t("oqtoUi.navigation.searchPlaceholder")}
 					type="text"
 				/>
 			</div>
 
 			<div className="wb-sessions-header">
 				<span className="wb-sessions-header__title">
-					{t("workbench.navigation.sessions")}
+					{t("oqtoUi.navigation.sessions")}
 				</span>
 				<span className="wb-sessions-header__count">({sessionCount})</span>
 				<span className="wb-sessions-header__actions">
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.newSession")}
+						aria-label={t("oqtoUi.navigation.newSession")}
 					>
 						<Plus aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.newProject")}
+						aria-label={t("oqtoUi.navigation.newProject")}
 					>
 						<FolderPlus aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.sortSessions")}
+						aria-label={t("oqtoUi.navigation.sortSessions")}
 					>
 						<ArrowDown aria-hidden="true" />
 					</button>
@@ -120,7 +121,7 @@ export function NavigationRail({
 
 			<nav
 				className="wb-session-tree"
-				aria-label={t("workbench.navigation.workDirectories")}
+				aria-label={t("oqtoUi.navigation.workDirectories")}
 			>
 				{workDirectories.map((directory) => {
 					const selected = directory.id === workDirectoryId;
@@ -132,7 +133,7 @@ export function NavigationRail({
 									className="wb-project__disclosure"
 									type="button"
 									aria-expanded={disclosed}
-									aria-label={t("workbench.navigation.toggleSessions", {
+									aria-label={t("oqtoUi.navigation.toggleSessions", {
 										name: directory.name,
 									})}
 									onClick={() => toggleDisclosure(directory.id)}
@@ -195,8 +196,8 @@ export function NavigationRail({
 
 			<footer className="wb-sidebar__footer">
 				<div className="wb-sidebar__preview">
-					<span>{t("workbench.lab")}</span>
-					<ThemePicker schemeId={schemeId} onNavigate={onNavigate} />
+					<span>{t("oqtoUi.lab")}</span>
+					{themePicker}
 					<button
 						className="wb-language-button"
 						type="button"
@@ -208,33 +209,33 @@ export function NavigationRail({
 					</button>
 				</div>
 				<div className="wb-sidebar__rule wb-sidebar__rule--muted" />
-				<div className="wb-sidebar__user">{t("workbench.person.name")}</div>
+				<div className="wb-sidebar__user">{t("oqtoUi.person.name")}</div>
 				<div className="wb-sidebar__footer-icons">
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.settings")}
+						aria-label={t("oqtoUi.navigation.settings")}
 					>
 						<Settings aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.admin")}
+						aria-label={t("oqtoUi.navigation.admin")}
 					>
 						<Shield aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.toggleTheme")}
+						aria-label={t("oqtoUi.navigation.toggleTheme")}
 					>
 						<Sun aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
-						aria-label={t("workbench.navigation.logout")}
+						aria-label={t("oqtoUi.navigation.logout")}
 					>
 						<LogOut aria-hidden="true" />
 					</button>

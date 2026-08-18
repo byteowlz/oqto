@@ -1,9 +1,9 @@
 import { useTranslation } from "react-i18next";
-import type { LabNavigation } from "../../modules/lab/model";
+import type { UiNavigation } from "../platform/contracts";
 
 type ThemePickerProps = {
 	schemeId: string;
-	onNavigate: (next: LabNavigation) => void;
+	onNavigate: (next: UiNavigation) => void;
 };
 
 const schemeOptions = [
@@ -18,7 +18,7 @@ export function ThemePicker({ schemeId, onNavigate }: ThemePickerProps) {
 	return (
 		<div
 			className="wb-theme-picker"
-			aria-label={t("workbench.theme.label")}
+			aria-label={t("oqtoUi.theme.label")}
 			role="toolbar"
 		>
 			{schemeOptions.map((option) => (
@@ -30,7 +30,7 @@ export function ThemePicker({ schemeId, onNavigate }: ThemePickerProps) {
 					type="button"
 					onClick={() => onNavigate({ schemeId: option })}
 				>
-					{t(`workbench.theme.${option}`)}
+					{t(`oqtoUi.theme.${option}`)}
 				</button>
 			))}
 		</div>

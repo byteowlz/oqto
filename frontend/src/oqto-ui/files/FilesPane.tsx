@@ -13,14 +13,14 @@ import {
 	Upload,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { LabFile } from "../../modules/lab/model";
+import type { FileNode } from "../platform/contracts";
 
 type FilesPaneProps = {
-	files: LabFile[];
+	files: FileNode[];
 };
 
 type FileKindIconProps = {
-	kind: LabFile["kind"];
+	kind: FileNode["kind"];
 };
 
 function FileKindIcon({ kind }: FileKindIconProps) {
@@ -34,38 +34,38 @@ function FileKindIcon({ kind }: FileKindIconProps) {
 export function FilesPane({ files }: FilesPaneProps) {
 	const { t } = useTranslation();
 	return (
-		<aside className="wb-panel" aria-label={t("workbench.files.label")}>
+		<aside className="wb-panel" aria-label={t("oqtoUi.files.label")}>
 			<div className="wb-files-toolbar">
 				<button
 					className="wb-icon-button"
 					data-active="true"
 					type="button"
-					aria-label={t("workbench.files.home")}
+					aria-label={t("oqtoUi.files.home")}
 				>
 					<Home aria-hidden="true" />
 				</button>
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.files.parentFolder")}
+					aria-label={t("oqtoUi.files.parentFolder")}
 				>
 					<FolderUp aria-hidden="true" />
 				</button>
 				<span className="wb-files-toolbar__breadcrumb">
-					{t("workbench.files.rootLabel")}
+					{t("oqtoUi.files.rootLabel")}
 				</span>
 				<span className="wb-files-toolbar__spacer" />
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.files.upload")}
+					aria-label={t("oqtoUi.files.upload")}
 				>
 					<Upload aria-hidden="true" />
 				</button>
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.files.newFolder")}
+					aria-label={t("oqtoUi.files.newFolder")}
 				>
 					<FolderPlus aria-hidden="true" />
 				</button>
@@ -74,27 +74,27 @@ export function FilesPane({ files }: FilesPaneProps) {
 					className="wb-icon-button"
 					data-active="true"
 					type="button"
-					aria-label={t("workbench.files.viewTree")}
+					aria-label={t("oqtoUi.files.viewTree")}
 				>
 					<Folder aria-hidden="true" />
 				</button>
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.files.viewList")}
+					aria-label={t("oqtoUi.files.viewList")}
 				>
 					<List aria-hidden="true" />
 				</button>
 				<button
 					className="wb-icon-button"
 					type="button"
-					aria-label={t("workbench.files.viewGrid")}
+					aria-label={t("oqtoUi.files.viewGrid")}
 				>
 					<LayoutGrid aria-hidden="true" />
 				</button>
 			</div>
 
-			<ul className="wb-tree" aria-label={t("workbench.files.tree")}>
+			<ul className="wb-tree" aria-label={t("oqtoUi.files.tree")}>
 				{files.map((file) => (
 					<li key={file.id}>
 						<button

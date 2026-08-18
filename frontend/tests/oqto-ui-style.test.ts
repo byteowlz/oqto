@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const shellCss = readFileSync(
-	resolve(process.cwd(), "src/workbench/surfaces/shell/workbench-shell.css"),
+	resolve(process.cwd(), "src/oqto-ui/app/shell.css"),
 	"utf8",
 );
 const lightSchemes = ["oqto-light.json", "nord-light.json"].map((fileName) =>
@@ -15,7 +15,7 @@ const lightSchemes = ["oqto-light.json", "nord-light.json"].map((fileName) =>
 	),
 );
 
-describe("Workbench Lab visual stability", () => {
+describe("OqtoUI visual stability", () => {
 	it("has no ambient animation or transition declarations", () => {
 		expect(shellCss).not.toMatch(/@keyframes|\banimation\s*:|\btransition\s*:/);
 	});

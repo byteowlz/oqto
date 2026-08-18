@@ -1,27 +1,27 @@
 import { useCallback, useState } from "react";
 import {
-	type WorkbenchSchemeId,
-	type WorkbenchUserTheme,
-	applyWorkbenchScheme,
-	isWorkbenchSchemeId,
-} from "../../adapters/theme/base24-theme";
+	type OqtoUiSchemeId,
+	type OqtoUiUserTheme,
+	applyOqtoUiScheme,
+	isOqtoUiSchemeId,
+} from "../platform/base24-theme";
 
 type ThemeRootBinding = {
-	schemeId: WorkbenchSchemeId;
+	schemeId: OqtoUiSchemeId;
 	rootRef: (root: HTMLDivElement | null) => void;
 	rootEl: HTMLDivElement | null;
 };
 
 export function useThemeRoot(
 	value: string,
-	userTheme: WorkbenchUserTheme,
+	userTheme: OqtoUiUserTheme,
 ): ThemeRootBinding {
-	const schemeId = isWorkbenchSchemeId(value) ? value : "oqto-dark";
+	const schemeId = isOqtoUiSchemeId(value) ? value : "oqto-dark";
 	const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
 	const rootRef = useCallback(
 		(root: HTMLDivElement | null) => {
 			setRootEl(root);
-			if (root) applyWorkbenchScheme(root, schemeId, userTheme);
+			if (root) applyOqtoUiScheme(root, schemeId, userTheme);
 		},
 		[schemeId, userTheme],
 	);

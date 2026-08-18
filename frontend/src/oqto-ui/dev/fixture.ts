@@ -1,7 +1,8 @@
-import type { WorkbenchLabFixture } from "./model";
+import type { OqtoUiSnapshot } from "../platform/contracts";
 
-export const workbenchLabFixture: WorkbenchLabFixture = {
-	workspaceName: "byteowlz",
+export type ScriptedFixture = Omit<OqtoUiSnapshot, "activeSessionId">;
+
+export const scriptedFixture: ScriptedFixture = {
 	workDirectories: [
 		{
 			id: "oqto",
@@ -11,7 +12,7 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 			sessions: [
 				{
 					id: "frontend-rebuild",
-					name: "Frontend workbench rebuild",
+					name: "Frontend shell rebuild",
 					preview: "Guardrails are in. Building the approval lab now.",
 					updated: "2026/07/30 - 15:02",
 					status: "working",
@@ -20,27 +21,27 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 					tasks: [
 						{
 							id: "inspect",
-							titleKey: "workbench.taskProgress.fixture.inspect",
+							titleKey: "oqtoUi.taskProgress.fixture.inspect",
 							status: "completed",
 						},
 						{
 							id: "plan",
-							titleKey: "workbench.taskProgress.fixture.plan",
+							titleKey: "oqtoUi.taskProgress.fixture.plan",
 							status: "completed",
 						},
 						{
 							id: "implement",
-							titleKey: "workbench.taskProgress.fixture.implement",
+							titleKey: "oqtoUi.taskProgress.fixture.implement",
 							status: "active",
 						},
 						{
 							id: "verify",
-							titleKey: "workbench.taskProgress.fixture.verify",
+							titleKey: "oqtoUi.taskProgress.fixture.verify",
 							status: "pending",
 						},
 						{
 							id: "summarize",
-							titleKey: "workbench.taskProgress.fixture.summarize",
+							titleKey: "oqtoUi.taskProgress.fixture.summarize",
 							status: "pending",
 						},
 					],
@@ -101,10 +102,10 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 	],
 	files: [
 		{ id: "src", name: "src", kind: "folder", depth: 0, count: 14 },
-		{ id: "workbench", name: "workbench", kind: "folder", depth: 1, count: 4 },
+		{ id: "oqto-ui", name: "oqto-ui", kind: "folder", depth: 1, count: 4 },
 		{
 			id: "shell",
-			name: "WorkbenchShell.tsx",
+			name: "OqtoUiShell.tsx",
 			kind: "typescript",
 			depth: 2,
 			changed: true,
@@ -126,7 +127,7 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 		{ id: "shots", name: "screenshots", kind: "folder", depth: 0, count: 6 },
 		{
 			id: "desktop",
-			name: "workbench-desktop.png",
+			name: "oqto-ui-desktop.png",
 			kind: "image",
 			depth: 1,
 		},
@@ -138,7 +139,7 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 			id: "m1",
 			author: "user",
 			content:
-				"Update the workbench shell so files stay visible while I switch sessions.",
+				"Update the shell so files stay visible while I switch sessions.",
 			time: "14:59",
 		},
 		{
@@ -161,7 +162,7 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 			time: "15:02",
 			activity: {
 				kind: "edit",
-				name: "src/workbench/WorkbenchShell.tsx",
+				name: "src/oqto-ui/app/OqtoUiShell.tsx",
 				state: "active",
 			},
 		},
@@ -169,13 +170,14 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 	workArea: {
 		tabs: [
 			{ id: "chat", owner: "session" },
-			{ id: "editor", owner: "workDirectory", fileName: "WorkbenchShell.tsx" },
+			{ id: "editor", owner: "workDirectory", fileName: "OqtoUiShell.tsx" },
 			{ id: "terminal", owner: "workDirectory", pinned: true },
+			{ id: "gallery", owner: "workDirectory" },
 		],
 		editorLines: [
 			'import { SessionTimeline } from "./SessionTimeline";',
 			"",
-			"export function WorkbenchShell() {",
+			"export function OqtoUiShell() {",
 			"\tconst timeline = useSessionTimeline();",
 			"\treturn (",
 			"\t\t<WorkArea>",
@@ -193,15 +195,52 @@ export const workbenchLabFixture: WorkbenchLabFixture = {
 			"$",
 		],
 	},
-	models: [
-		{ id: "opus-4.7", name: "opus-4.7" },
-		{ id: "sonnet-4.6", name: "sonnet-4.6" },
-		{ id: "haiku-4.5", name: "haiku-4.5" },
+	gallery: [
+		{
+			id: "cover",
+			name: "cover.svg",
+			src: "/icons/IMAGE_white.svg",
+			width: 320,
+			height: 240,
+			revision: "sha256:7c42a1",
+		},
+		{
+			id: "detail",
+			name: "detail.svg",
+			src: "/icons/IMAGE_white.svg",
+			width: 320,
+			height: 240,
+			revision: "sha256:7c42a1",
+		},
+		{
+			id: "mobile",
+			name: "mobile.svg",
+			src: "/icons/IMAGE_white.svg",
+			width: 320,
+			height: 240,
+			revision: "sha256:7c42a1",
+		},
+		{
+			id: "contact-sheet",
+			name: "contact-sheet.svg",
+			src: "/icons/IMAGE_white.svg",
+			width: 320,
+			height: 240,
+			revision: "sha256:7c42a1",
+		},
 	],
-	statusBar: {
-		runningSessions: "1",
-		onlineUsers: "0/1",
-		runnerLoad: "0/26",
-		version: "v0.5.0",
+	environment: {
+		models: [
+			{ id: "opus-4.7", name: "opus-4.7" },
+			{ id: "sonnet-4.6", name: "sonnet-4.6" },
+			{ id: "haiku-4.5", name: "haiku-4.5" },
+		],
+		statusBar: {
+			runningSessions: "1",
+			onlineUsers: "0/1",
+			runnerLoad: "0/26",
+			version: "v0.5.0",
+		},
+		connection: "scripted",
 	},
 };

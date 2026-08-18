@@ -2,6 +2,7 @@ import {
 	Download,
 	FileCode2,
 	Folder,
+	Images,
 	MessageSquare,
 	PanelRightClose,
 	Pin,
@@ -10,19 +11,20 @@ import {
 	Terminal,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { LabNavigation, LabWorkAreaTab } from "../../modules/lab/model";
+import type { UiNavigation, WorkAreaTab } from "../platform/contracts";
 
 type WorkAreaTabsProps = {
-	tabs: LabWorkAreaTab[];
+	tabs: WorkAreaTab[];
 	activeTab: string;
 	chatLabel: string;
 	chatMeta: string;
-	onNavigate: (next: LabNavigation) => void;
+	onNavigate: (next: UiNavigation) => void;
 };
 
-function tabIcon(id: LabWorkAreaTab["id"]) {
+function tabIcon(id: WorkAreaTab["id"]) {
 	if (id === "editor") return <FileCode2 aria-hidden="true" />;
 	if (id === "terminal") return <Terminal aria-hidden="true" />;
+	if (id === "gallery") return <Images aria-hidden="true" />;
 	return <MessageSquare aria-hidden="true" />;
 }
 
@@ -38,17 +40,17 @@ export function WorkAreaTabs({
 		<div
 			className="wb-wa-tabs"
 			role="tablist"
-			aria-label={t("workbench.workArea.label")}
+			aria-label={t("oqtoUi.workArea.label")}
 		>
 			{tabs.map((tab) => {
 				const label =
 					tab.id === "chat"
 						? chatLabel
-						: (tab.fileName ?? t(`workbench.tools.${tab.id}`));
+						: (tab.fileName ?? t(`oqtoUi.tools.${tab.id}`));
 				const ownership = t(
 					tab.owner === "session"
-						? "workbench.workArea.sessionOwned"
-						: "workbench.workArea.workDirectoryOwned",
+						? "oqtoUi.workArea.sessionOwned"
+						: "oqtoUi.workArea.workDirectoryOwned",
 				);
 				return (
 					<button
@@ -70,7 +72,7 @@ export function WorkAreaTabs({
 						{tab.pinned ? (
 							<Pin
 								className="wb-wa-tab__pin"
-								aria-label={t("workbench.workArea.pinned")}
+								aria-label={t("oqtoUi.workArea.pinned")}
 							/>
 						) : null}
 					</button>
@@ -79,7 +81,7 @@ export function WorkAreaTabs({
 			<button
 				className="wb-wa-tab wb-wa-tab--new"
 				type="button"
-				aria-label={t("workbench.workArea.openTool")}
+				aria-label={t("oqtoUi.workArea.openTool")}
 			>
 				<Plus aria-hidden="true" />
 			</button>
@@ -87,21 +89,21 @@ export function WorkAreaTabs({
 			<button
 				className="wb-icon-button"
 				type="button"
-				aria-label={t("workbench.chat.download")}
+				aria-label={t("oqtoUi.chat.download")}
 			>
 				<Download aria-hidden="true" />
 			</button>
 			<button
 				className="wb-icon-button"
 				type="button"
-				aria-label={t("workbench.chat.search")}
+				aria-label={t("oqtoUi.chat.search")}
 			>
 				<Search aria-hidden="true" />
 			</button>
 			<button
 				className="wb-icon-button"
 				type="button"
-				aria-label={t("workbench.chat.togglePanel")}
+				aria-label={t("oqtoUi.chat.togglePanel")}
 			>
 				<PanelRightClose aria-hidden="true" />
 			</button>
@@ -122,7 +124,7 @@ export function EditorPane({ fileName, lines }: EditorPaneProps) {
 				<FileCode2 aria-hidden="true" />
 				<span>{fileName}</span>
 				<span className="wb-editor__scope">
-					{t("workbench.workArea.workDirectoryOwned")}
+					{t("oqtoUi.workArea.workDirectoryOwned")}
 				</span>
 			</header>
 			<div className="wb-editor__body">
@@ -144,7 +146,7 @@ type TerminalPaneProps = {
 export function TerminalPane({ lines }: TerminalPaneProps) {
 	const { t } = useTranslation();
 	return (
-		<section className="wb-terminal" aria-label={t("workbench.tools.terminal")}>
+		<section className="wb-terminal" aria-label={t("oqtoUi.tools.terminal")}>
 			{lines.map((line, index) => (
 				<div
 					className="wb-terminal__line"

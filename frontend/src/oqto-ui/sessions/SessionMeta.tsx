@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { LabModelOption, LabSession } from "../../modules/lab/model";
+import type { ModelOption, SessionOverview } from "../platform/contracts";
 
 type SessionMetaProps = {
-	session: LabSession;
-	models: LabModelOption[];
+	session: SessionOverview;
+	models: ModelOption[];
 };
 
 /**
@@ -24,7 +24,7 @@ export function SessionMeta({ session, models }: SessionMetaProps) {
 				<button
 					type="button"
 					aria-expanded={menuOpen}
-					aria-label={t("workbench.chat.model")}
+					aria-label={t("oqtoUi.chat.model")}
 					onClick={() => setMenuOpen((current) => !current)}
 				>
 					{activeModel}
@@ -49,21 +49,21 @@ export function SessionMeta({ session, models }: SessionMetaProps) {
 			</span>
 			{session.context ? (
 				<span className="wb-statusbar__meta">
-					<button type="button" aria-label={t("workbench.chat.contextUsage")}>
-						{t("workbench.chat.contextReadout", {
+					<button type="button" aria-label={t("oqtoUi.chat.contextUsage")}>
+						{t("oqtoUi.chat.contextReadout", {
 							tokens: session.context.tokens,
 							percent: session.context.percent,
 						})}
 					</button>
 					{!menuOpen ? (
 						<dl className="wb-composer__pop wb-composer__context-details">
-							<dt>{t("workbench.chat.contextModel")}</dt>
+							<dt>{t("oqtoUi.chat.contextModel")}</dt>
 							<dd>{activeModel}</dd>
-							<dt>{t("workbench.chat.contextWindow")}</dt>
+							<dt>{t("oqtoUi.chat.contextWindow")}</dt>
 							<dd>{session.context.window}</dd>
-							<dt>{t("workbench.chat.contextUsed")}</dt>
+							<dt>{t("oqtoUi.chat.contextUsed")}</dt>
 							<dd>
-								{t("workbench.chat.contextReadout", {
+								{t("oqtoUi.chat.contextReadout", {
 									tokens: session.context.tokens,
 									percent: session.context.percent,
 								})}

@@ -37,7 +37,7 @@ The two inputs to File Activity carry different authority and are never conflate
 - the **watcher** is authoritative that a path changed, and carries no actor;
 - a **tool call** is authoritative for the actor and the intended path, and covers only harness-mediated writes.
 
-A change is attributed to a Session only when that Session's own tool call names the path. Attribution is never inferred from timing proximity, event order, or "the Session the user is currently looking at" — the same reconstruction-by-order mistake already forbidden for chat history in `docs/frontend/workbench-guardrails.md`.
+A change is attributed to a Session only when that Session's own tool call names the path. Attribution is never inferred from timing proximity, event order, or "the Session the user is currently looking at" — the same reconstruction-by-order mistake already forbidden for chat history in `docs/frontend/oqto-ui-interface-checklist.md`.
 
 A watched change that no tool call claims is therefore **unattributed**, and is presented as a work-directory change rather than assigned to any Session. Unattributed changes are a first-class result, not a gap to paper over: a build artifact, a terminal edit, or a concurrent Session's write must never be shown as the focused Session's work.
 
@@ -60,7 +60,7 @@ Supersession ships per path. Region-level supersession is deliberately deferred;
 
 ### 4. Attribution is Session-scoped and filtered by selected scope
 
-Files are work-directory-scoped while Sessions are the actors, so every attribution record names the Session that produced it, and views filter by the selected scope. A Session must never present another Session's changes as its own, and concurrent Sessions in one work directory must not leak into each other's Files view. This is the cross-Session leak already listed as a release blocker in `docs/frontend/workbench-guardrails.md`.
+Files are work-directory-scoped while Sessions are the actors, so every attribution record names the Session that produced it, and views filter by the selected scope. A Session must never present another Session's changes as its own, and concurrent Sessions in one work directory must not leak into each other's Files view. This is the cross-Session leak already listed as a release blocker in `docs/frontend/oqto-ui-interface-checklist.md`.
 
 ## Rejected alternatives
 

@@ -9,6 +9,7 @@ sessions/  Session catalog and navigation
 chat/      canonical Session timeline and composer
 files/     file projection and Files View
 gallery/   Gallery App vertical slice
+theme/     Base24 scheme binding and user theme customization
 platform/  live HTTP/event/storage adapter and shared contracts
 dev/       development-only scripted adapter and traces
 ```

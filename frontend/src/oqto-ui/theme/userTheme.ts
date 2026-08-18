@@ -6,13 +6,13 @@ import {
 	readTokenHex,
 } from "@byteowlz/design-system";
 import {
+	type OqtoUiUserTheme,
 	type ParsedUserTheme,
-	type WorkbenchUserTheme,
 	parseUserThemeJson,
-} from "../../adapters/theme/base24-theme";
+} from "../platform/base24-theme";
 
 export { parseUserThemeJson, NEUTRAL_TOKEN_HEX, matchShadowPreset };
-export type { ParsedUserTheme, WorkbenchUserTheme, ShadowPresetId };
+export type { ParsedUserTheme, OqtoUiUserTheme, ShadowPresetId };
 
 export const SHADOW_PRESET_IDS = ["none", "soft", "strong"] as const;
 
@@ -58,10 +58,10 @@ export function matchFontPreset(
 }
 
 export function withShadowPreset(
-	theme: WorkbenchUserTheme,
+	theme: OqtoUiUserTheme,
 	preset: ShadowPresetId,
-): WorkbenchUserTheme {
-	const overrides = { ...(theme.overrides ?? {}) };
+): OqtoUiUserTheme {
+	const overrides = { ...theme.overrides };
 	for (const level of ["--shadow-sm", "--shadow-md", "--shadow-lg"]) {
 		delete overrides[level];
 	}

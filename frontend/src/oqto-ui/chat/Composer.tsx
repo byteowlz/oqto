@@ -8,19 +8,19 @@ export function Composer() {
 			<button
 				className="wb-icon-button"
 				type="button"
-				aria-label={t("workbench.chat.attach")}
+				aria-label={t("oqtoUi.chat.attach")}
 			>
 				<Paperclip aria-hidden="true" />
 			</button>
 			<textarea
 				rows={1}
-				placeholder={t("workbench.chat.placeholder")}
-				aria-label={t("workbench.chat.placeholder")}
+				placeholder={t("oqtoUi.chat.placeholder")}
+				aria-label={t("oqtoUi.chat.placeholder")}
 			/>
 			<button
 				className="wb-icon-button"
 				type="button"
-				aria-label={t("workbench.chat.send")}
+				aria-label={t("oqtoUi.chat.send")}
 			>
 				<Send aria-hidden="true" />
 			</button>

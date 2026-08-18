@@ -17,6 +17,7 @@ const LAYERS = [
 	"chat",
 	"files",
 	"gallery",
+	"theme",
 	"platform",
 	"dev",
 ];
@@ -27,6 +28,7 @@ const ALLOWED_DIRECT_IMPORTS = {
 	chat: new Set(["chat", "platform"]),
 	files: new Set(["files", "platform"]),
 	gallery: new Set(["gallery", "platform"]),
+	theme: new Set(["theme", "platform"]),
 	platform: new Set(["platform"]),
 	dev: new Set(["dev", "platform"]),
 };
@@ -38,6 +40,7 @@ const ALLOWED_PROJECT_ALIASES = {
 	chat: [],
 	files: [],
 	gallery: [],
+	theme: [],
 	platform: ["@/src/generated"],
 	dev: [],
 };

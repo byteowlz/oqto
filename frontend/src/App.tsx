@@ -76,9 +76,6 @@ const AppShellRoute = lazy(() =>
 		markChunkLoadSucceeded({ default: module.AppShellRoute }),
 	),
 );
-const WorkbenchLabRoute = lazy(() =>
-	import("./workbench/routes/WorkbenchLabRoute").then(markChunkLoadSucceeded),
-);
 const OqtoUiRoute = lazy(() =>
 	import("./oqto-ui/app/OqtoUiRoute").then(markChunkLoadSucceeded),
 );
@@ -117,20 +114,6 @@ export function App() {
 								<LazyRouteBoundary>
 									<Suspense fallback={routeFallback}>
 										<DevOqtoUiRoute />
-									</Suspense>
-								</LazyRouteBoundary>
-							</RequireAuth>
-						}
-					/>
-				) : null}
-				{import.meta.env.DEV ? (
-					<Route
-						path="/workbench-lab"
-						element={
-							<RequireAuth>
-								<LazyRouteBoundary>
-									<Suspense fallback={routeFallback}>
-										<WorkbenchLabRoute />
 									</Suspense>
 								</LazyRouteBoundary>
 							</RequireAuth>

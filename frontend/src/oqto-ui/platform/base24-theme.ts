@@ -7,31 +7,31 @@ import {
 	oqtoLight,
 } from "@byteowlz/design-system";
 
-export type WorkbenchSchemeId =
+export type OqtoUiSchemeId =
 	| "oqto-dark"
 	| "oqto-light"
 	| "nord-dark"
 	| "nord-light";
 
-export type WorkbenchUserTheme = {
+export type OqtoUiUserTheme = {
 	overrides?: Record<string, string>;
 	radius?: string;
 	fontSans?: string;
 	fontMono?: string;
 };
 
-const schemes: Readonly<Record<WorkbenchSchemeId, Scheme>> = {
+const schemes: Readonly<Record<OqtoUiSchemeId, Scheme>> = {
 	"oqto-dark": oqtoDark,
 	"oqto-light": oqtoLight,
 	"nord-dark": { ...nordBase16, id: "nord-dark", name: "Nord Dark" },
 	"nord-light": nordLight,
 };
 
-export function isWorkbenchSchemeId(value: string): value is WorkbenchSchemeId {
+export function isOqtoUiSchemeId(value: string): value is OqtoUiSchemeId {
 	return value in schemes;
 }
 
-function hasUserTheme(userTheme: WorkbenchUserTheme): boolean {
+function hasUserTheme(userTheme: OqtoUiUserTheme): boolean {
 	return (
 		Object.keys(userTheme.overrides ?? {}).length > 0 ||
 		userTheme.radius !== undefined ||
@@ -40,10 +40,10 @@ function hasUserTheme(userTheme: WorkbenchUserTheme): boolean {
 	);
 }
 
-export function applyWorkbenchScheme(
+export function applyOqtoUiScheme(
 	root: HTMLElement,
-	schemeId: WorkbenchSchemeId,
-	userTheme: WorkbenchUserTheme = {},
+	schemeId: OqtoUiSchemeId,
+	userTheme: OqtoUiUserTheme = {},
 ): void {
 	const base = schemes[schemeId];
 	const scheme: Scheme = hasUserTheme(userTheme)
@@ -62,7 +62,7 @@ export function applyWorkbenchScheme(
 }
 
 export type ParsedUserTheme =
-	| { ok: true; theme: WorkbenchUserTheme }
+	| { ok: true; theme: OqtoUiUserTheme }
 	| { ok: false; error: string };
 
 /** Fail-loud parse of the agent-authorable user-theme JSON. */
@@ -82,7 +82,7 @@ export function parseUserThemeJson(text: string): ParsedUserTheme {
 		fontSans?: unknown;
 		fontMono?: unknown;
 	};
-	const theme: WorkbenchUserTheme = {};
+	const theme: OqtoUiUserTheme = {};
 	if (record.radius !== undefined) {
 		if (typeof record.radius !== "string") {
 			return { ok: false, error: "radius must be a CSS length string" };

@@ -2,33 +2,35 @@ import {
 	ChevronDown,
 	FileCode2,
 	FileText,
+	Images,
 	MessageSquare,
 	PanelLeft,
 	Terminal,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-	LabNavigation,
-	LabSession,
-	LabWorkAreaTab,
-	LabWorkDirectory,
-} from "../../modules/lab/model";
-import { TaskProgress } from "./TaskProgress";
+	SessionOverview,
+	UiNavigation,
+	WorkAreaTab,
+	WorkDirectory,
+} from "../platform/contracts";
 
 type MobileTopBarProps = {
-	directory: LabWorkDirectory;
-	session: LabSession;
+	directory: WorkDirectory;
+	session: SessionOverview;
 	activeView: string;
 	activeTab: string;
-	tabs: LabWorkAreaTab[];
+	tabs: WorkAreaTab[];
+	taskProgress: ReactNode;
 	onOpenSessions: () => void;
-	onNavigate: (next: LabNavigation) => void;
+	onNavigate: (next: UiNavigation) => void;
 };
 
-function tabIcon(id: LabWorkAreaTab["id"]) {
+function tabIcon(id: WorkAreaTab["id"]) {
 	if (id === "editor") return <FileCode2 aria-hidden="true" />;
 	if (id === "terminal") return <Terminal aria-hidden="true" />;
+	if (id === "gallery") return <Images aria-hidden="true" />;
 	return <MessageSquare aria-hidden="true" />;
 }
 
@@ -38,6 +40,7 @@ export function MobileTopBar({
 	activeView,
 	activeTab,
 	tabs,
+	taskProgress,
 	onOpenSessions,
 	onNavigate,
 }: MobileTopBarProps) {
@@ -46,11 +49,11 @@ export function MobileTopBar({
 	const menuId = useId();
 	const activeLabel =
 		activeView === "files"
-			? t("workbench.mobile.files")
+			? t("oqtoUi.mobile.files")
 			: (tabs.find((tab) => tab.id === activeTab)?.fileName ??
-				t("workbench.mobile.chat"));
+				t("oqtoUi.mobile.chat"));
 
-	const select = (next: LabNavigation) => {
+	const select = (next: UiNavigation) => {
 		onNavigate(next);
 		setMenuOpen(false);
 	};
@@ -60,7 +63,7 @@ export function MobileTopBar({
 			<button
 				className="wb-mobile-chrome__sessions"
 				type="button"
-				aria-label={t("workbench.mobile.switchSession")}
+				aria-label={t("oqtoUi.mobile.switchSession")}
 				onClick={onOpenSessions}
 			>
 				<PanelLeft aria-hidden="true" />
@@ -73,20 +76,20 @@ export function MobileTopBar({
 				</small>
 			</span>
 
-			<TaskProgress tasks={session.tasks ?? []} placement="mobile" />
+			{taskProgress}
 
 			<button
 				className="wb-mobile-chrome__menu"
 				type="button"
 				aria-controls={menuId}
 				aria-expanded={menuOpen}
-				aria-label={`${t("workbench.mobile.label")}: ${activeLabel}`}
+				aria-label={`${t("oqtoUi.mobile.label")}: ${activeLabel}`}
 				onClick={() => setMenuOpen((current) => !current)}
 			>
 				{activeView === "files" ? (
 					<FileText aria-hidden="true" />
 				) : (
-					tabIcon(activeTab as LabWorkAreaTab["id"])
+					tabIcon(activeTab as WorkAreaTab["id"])
 				)}
 				<ChevronDown aria-hidden="true" />
 			</button>
@@ -95,7 +98,7 @@ export function MobileTopBar({
 				<nav
 					className="wb-mobile-tabs"
 					id={menuId}
-					aria-label={t("workbench.mobile.label")}
+					aria-label={t("oqtoUi.mobile.label")}
 				>
 					<button
 						className="wb-mobile-tabs__item"
@@ -104,7 +107,7 @@ export function MobileTopBar({
 						onClick={() => select({ mobileView: "chat", workAreaTab: "chat" })}
 					>
 						<MessageSquare aria-hidden="true" />
-						<span>{t("workbench.mobile.chat")}</span>
+						<span>{t("oqtoUi.mobile.chat")}</span>
 					</button>
 					<button
 						className="wb-mobile-tabs__item"
@@ -113,7 +116,7 @@ export function MobileTopBar({
 						onClick={() => select({ mobileView: "files" })}
 					>
 						<FileText aria-hidden="true" />
-						<span>{t("workbench.mobile.files")}</span>
+						<span>{t("oqtoUi.mobile.files")}</span>
 					</button>
 					{tabs
 						.filter((tab) => tab.id !== "chat")
@@ -128,7 +131,7 @@ export function MobileTopBar({
 								}
 							>
 								{tabIcon(tab.id)}
-								<span>{tab.fileName ?? t(`workbench.tools.${tab.id}`)}</span>
+								<span>{tab.fileName ?? t(`oqtoUi.tools.${tab.id}`)}</span>
 							</button>
 						))}
 				</nav>

@@ -571,8 +571,47 @@
 		"provisioningHealth": "Dienststatus wird überprüft...",
 		"provisioningAlmost": "Fast geschafft..."
 	},
-	"workbench": {
-		"brandLabel": "Oqto-Workbench",
+	"permissions": {
+		"title": "Berechtigung erforderlich",
+		"categoryShell": "Shell-Befehl",
+		"categoryFile": "Dateibearbeitung",
+		"categoryWeb": "Web-Anfrage",
+		"categoryTool": "Werkzeug",
+		"allow": "Erlauben",
+		"deny": "Ablehnen",
+		"always": "Immer",
+		"never": "Nie",
+		"pending_one": "{{count}} Berechtigung ausstehend",
+		"pending_other": "{{count}} Berechtigungen ausstehend",
+		"clickToReview": "Zum Prüfen klicken",
+		"question": "Frage",
+		"questions": "{{count}} Fragen",
+		"agentNeedsInput": "Der Agent benötigt Ihre Eingabe, um fortzufahren",
+		"answerToProceed": "Beantworten Sie die folgenden Fragen, damit der Agent fortfahren kann",
+		"otherPlaceholder": "Andere (eigene Antwort eingeben)...",
+		"skip": "Überspringen",
+		"submitAnswers": "Antworten senden",
+		"submitting": "Wird gesendet...",
+		"questionsPending_one": "{{count}} Frage ausstehend",
+		"questionsPending_other": "{{count}} Fragen ausstehend",
+		"clickToAnswer": "Zum Antworten klicken",
+		"accessRequestDescription": "Ein Agent fordert Zugriff auf eine geschützte Ressource an",
+		"resource": "Ressource",
+		"details": "Details",
+		"trustWarning": "Erlauben Sie den Zugriff nur, wenn Sie dem Agenten vertrauen und nachvollziehen, warum er diese Ressource benötigt.",
+		"allowOnce": "Einmal erlauben",
+		"allowForSession": "Für diese Sitzung erlauben",
+		"titleFileAccess": "Anfrage für Dateizugriff",
+		"titleSshAccess": "Anfrage für SSH-Zugriff",
+		"titleNetworkAccess": "Anfrage für Netzwerkzugriff",
+		"titleGenericAccess": "Zugriffsanfrage",
+		"once": "Einmal",
+		"session": "Sitzung",
+		"autoDenyPrefix": "Automatische Ablehnung in",
+		"autoDenySuffix": "Sekunden"
+	},
+	"oqtoUi": {
+		"brandLabel": "OqtoUI",
 		"lab": "Vorschau",
 		"theme": {
 			"label": "Base24-Farbschema",
@@ -615,7 +654,8 @@
 			"memories": "Erinnerungen",
 			"terminal": "Terminal",
 			"browser": "Browser",
-			"settings": "Einstellungen"
+			"settings": "Einstellungen",
+			"gallery": "Galerie"
 		},
 		"chat": {
 			"label": "Sitzungsunterhaltung",
@@ -633,7 +673,8 @@
 			"model": "Modell",
 			"contextModel": "Modell",
 			"contextWindow": "Kontextfenster",
-			"contextUsed": "Belegt"
+			"contextUsed": "Belegt",
+			"tool": "Tool"
 		},
 		"activity": {
 			"label": "Agentenaktivität",
@@ -654,7 +695,7 @@
 			},
 			"fixture": {
 				"inspect": "Bestehende Shell untersuchen",
-				"plan": "Workbench-Grenzen definieren",
+				"plan": "OqtoUI-Grenzen definieren",
 				"implement": "Responsive Oberflächen erstellen",
 				"verify": "Themes und Barrierefreiheit prüfen",
 				"summarize": "Freigabenachweise vorbereiten"
@@ -673,7 +714,7 @@
 			"tree": "Dateien des Arbeitsverzeichnisses"
 		},
 		"mobile": {
-			"label": "Workbench-Ziele",
+			"label": "Ziele",
 			"chat": "Chat",
 			"files": "Dateien",
 			"activity": "Aktivität",
@@ -725,99 +766,15 @@
 				"serif": "Georgia (Serif)",
 				"custom": "Benutzerdefiniert"
 			}
-		}
-	},
-	"permissions": {
-		"title": "Berechtigung erforderlich",
-		"categoryShell": "Shell-Befehl",
-		"categoryFile": "Dateibearbeitung",
-		"categoryWeb": "Web-Anfrage",
-		"categoryTool": "Werkzeug",
-		"allow": "Erlauben",
-		"deny": "Ablehnen",
-		"always": "Immer",
-		"never": "Nie",
-		"pending_one": "{{count}} Berechtigung ausstehend",
-		"pending_other": "{{count}} Berechtigungen ausstehend",
-		"clickToReview": "Zum Prüfen klicken",
-		"question": "Frage",
-		"questions": "{{count}} Fragen",
-		"agentNeedsInput": "Der Agent benötigt Ihre Eingabe, um fortzufahren",
-		"answerToProceed": "Beantworten Sie die folgenden Fragen, damit der Agent fortfahren kann",
-		"otherPlaceholder": "Andere (eigene Antwort eingeben)...",
-		"skip": "Überspringen",
-		"submitAnswers": "Antworten senden",
-		"submitting": "Wird gesendet...",
-		"questionsPending_one": "{{count}} Frage ausstehend",
-		"questionsPending_other": "{{count}} Fragen ausstehend",
-		"clickToAnswer": "Zum Antworten klicken",
-		"accessRequestDescription": "Ein Agent fordert Zugriff auf eine geschützte Ressource an",
-		"resource": "Ressource",
-		"details": "Details",
-		"trustWarning": "Erlauben Sie den Zugriff nur, wenn Sie dem Agenten vertrauen und nachvollziehen, warum er diese Ressource benötigt.",
-		"allowOnce": "Einmal erlauben",
-		"allowForSession": "Für diese Sitzung erlauben",
-		"titleFileAccess": "Anfrage für Dateizugriff",
-		"titleSshAccess": "Anfrage für SSH-Zugriff",
-		"titleNetworkAccess": "Anfrage für Netzwerkzugriff",
-		"titleGenericAccess": "Zugriffsanfrage",
-		"once": "Einmal",
-		"session": "Sitzung",
-		"autoDenyPrefix": "Automatische Ablehnung in",
-		"autoDenySuffix": "Sekunden"
-	},
-	"oqtoUi": {
-		"brand": "OqtoUI",
+		},
 		"loading": "OqtoUI wird geladen…",
-		"noSession": "Keine Sitzung ausgewählt",
-		"noWorkspace": "Kein Arbeitsverzeichnis",
-		"error": {
-			"title": "OqtoUI konnte nicht geladen werden",
-			"body": "Die dauerhaften Sitzungsdaten sind nicht verfügbar.",
-			"retry": "Erneut versuchen"
-		},
-		"connection": {
-			"connected": "Verbunden",
-			"offline": "Offline",
-			"scripted": "Skript-Ablauf"
-		},
-		"views": {
-			"sessions": "Sitzungen",
-			"chat": "Chat",
-			"gallery": "Gallery-App"
-		},
-		"fidelity": {
-			"compact": "Kompakt",
-			"standard": "Standard",
-			"expanded": "Erweitert"
-		},
-		"sessions": {
-			"label": "Sitzungsnavigation",
-			"empty": "Keine Sitzungen verfügbar."
-		},
-		"chat": {
-			"empty": "Diese Sitzung enthält keine Zeitleisteneinträge.",
-			"composerLabel": "Prompt",
-			"placeholder": "Agenten fragen…",
-			"readOnly": "Senden wird nach der Bereitstellung der Sitzungsidentität freigeschaltet.",
-			"send": "Senden",
-			"roles": {
-				"user": "Sie",
-				"assistant": "Agent",
-				"tool": "Werkzeug",
-				"system": "System"
-			},
-			"status": {
-				"committed": "Gespeichert",
-				"streaming": "Streaming…",
-				"failed": "Fehlgeschlagen"
-			}
-		},
+		"loadFailed": "OqtoUI konnte die dauerhaften Sitzungsdaten nicht laden.",
+		"retry": "Erneut versuchen",
+		"noSessions": "Keine Sitzungen verfügbar.",
 		"gallery": {
-			"agentLocal": "Agent-lokaler App-Kandidat",
-			"empty": "Keine gebundenen Bilder verfügbar.",
-			"label": "Gebundene Gallery-Ressourcen",
-			"open": "{{name}} in Gallery öffnen"
+			"label": "Galerie",
+			"empty": "Diesem Arbeitsverzeichnis sind keine Galerie-Ressourcen zugeordnet.",
+			"open": "{{name}} in der Galerie öffnen"
 		}
 	}
 }

@@ -1,10 +1,10 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Fragment, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { LabTask } from "../../modules/lab/model";
+import type { SessionTask } from "../platform/contracts";
 
 type TaskProgressProps = {
-	tasks: LabTask[];
+	tasks: SessionTask[];
 	placement: "desktop" | "mobile";
 };
 
@@ -16,7 +16,7 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 
 	const completed = tasks.filter((task) => task.status === "completed").length;
 	const active = tasks.find((task) => task.status === "active");
-	const summary = t("workbench.taskProgress.summary", {
+	const summary = t("oqtoUi.taskProgress.summary", {
 		completed,
 		total: tasks.length,
 	});
@@ -30,7 +30,7 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 		>
 			<div className="wb-task-progress__rail">
 				<span className="wb-task-progress__label">
-					{t("workbench.taskProgress.label")}
+					{t("oqtoUi.taskProgress.label")}
 				</span>
 				{active ? (
 					<span className="wb-task-progress__active">{t(active.titleKey)}</span>
@@ -48,14 +48,14 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 								className="wb-task-progress__point"
 								data-status={task.status}
 								type="button"
-								aria-label={`${t(task.titleKey)}: ${t(`workbench.taskProgress.status.${task.status}`)}`}
+								aria-label={`${t(task.titleKey)}: ${t(`oqtoUi.taskProgress.status.${task.status}`)}`}
 								onClick={() => setExpanded(true)}
 							>
 								<span className="wb-task-progress__dot" aria-hidden="true" />
 								<span className="wb-task-progress__tooltip" role="tooltip">
 									<strong>{t(task.titleKey)}</strong>
 									<small>
-										{t(`workbench.taskProgress.status.${task.status}`)}
+										{t(`oqtoUi.taskProgress.status.${task.status}`)}
 									</small>
 								</span>
 							</button>
@@ -72,8 +72,8 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 					aria-expanded={expanded}
 					aria-label={t(
 						expanded
-							? "workbench.taskProgress.closePlan"
-							: "workbench.taskProgress.openPlan",
+							? "oqtoUi.taskProgress.closePlan"
+							: "oqtoUi.taskProgress.openPlan",
 					)}
 					onClick={() => setExpanded((current) => !current)}
 				>
@@ -89,14 +89,14 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 				<section
 					className="wb-task-progress__details"
 					id={detailsId}
-					aria-label={t("workbench.taskProgress.label")}
+					aria-label={t("oqtoUi.taskProgress.label")}
 				>
 					<header>
-						<strong>{t("workbench.taskProgress.label")}</strong>
+						<strong>{t("oqtoUi.taskProgress.label")}</strong>
 						<span>{summary}</span>
 						<button
 							type="button"
-							aria-label={t("workbench.taskProgress.closePlan")}
+							aria-label={t("oqtoUi.taskProgress.closePlan")}
 							onClick={() => setExpanded(false)}
 						>
 							<ChevronDown aria-hidden="true" />
@@ -107,9 +107,7 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 							<li data-status={task.status} key={task.id}>
 								<span aria-hidden="true" />
 								<strong>{t(task.titleKey)}</strong>
-								<small>
-									{t(`workbench.taskProgress.status.${task.status}`)}
-								</small>
+								<small>{t(`oqtoUi.taskProgress.status.${task.status}`)}</small>
 							</li>
 						))}
 					</ol>
