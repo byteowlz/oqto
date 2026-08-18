@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Activity, Users } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -51,6 +51,8 @@ export function OqtoUiShell({
 	const snapshotQuery = useQuery({
 		queryKey: ["oqto-ui", platformId, sessionId],
 		queryFn: () => platform.load(sessionId),
+		placeholderData: keepPreviousData,
+		staleTime: 30_000,
 	});
 	const snapshot = snapshotQuery.data;
 
