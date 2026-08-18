@@ -195,6 +195,51 @@ describe("OqtoUI shell", () => {
 	});
 });
 
+describe("OqtoUI splash", () => {
+	it("shows the logo splash while loading and a retryable error splash on failure", async () => {
+		const { OqtoUiShell } = await import("../src/oqto-ui/app/OqtoUiShell");
+		let failures = 0;
+		const flakyPlatform = {
+			load: async () => {
+				failures += 1;
+				if (failures === 1) throw new Error("HTTP 500");
+				return (
+					await import("../src/oqto-ui/dev/scripted-platform")
+				).scriptedOqtoUiPlatform.load(null);
+			},
+		};
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<MemoryRouter
+					initialEntries={["/dev/oqto-ui"]}
+					future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+				>
+					<OqtoUiShell
+						platform={flakyPlatform}
+						platformId="flaky"
+						workDirectoryId={null}
+						sessionId={null}
+						mobileView="chat"
+						schemeId="oqto-dark"
+						workAreaTab="chat"
+						onNavigate={() => {}}
+					/>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		expect(document.querySelector(".wb-splash__logo")).not.toBeNull();
+		await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+		expect(
+			document.querySelector('.wb-splash__logo[data-error="true"]'),
+		).not.toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await screen.findByRole("main", { name: "Session conversation" });
+	});
+});
+
 describe("OqtoUI live platform", () => {
 	it("parses session-scoped messages without a session_id field and hides thinking parts", async () => {
 		const payloads: Record<string, unknown> = {

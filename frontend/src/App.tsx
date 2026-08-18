@@ -56,20 +56,33 @@ function markChunkLoadSucceeded<T>(module: T): T {
 }
 
 // Delayed via CSS so fast chunk loads never flash a splash; only slow
-// loads (cold cache, stale deploy) ever show it
-const routeFallback = (
-	<div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
-		<span
-			style={{
-				opacity: 0,
-				animation: "oqto-route-fallback-in 200ms ease-out 400ms forwards",
-			}}
-		>
-			Loading…
-		</span>
-		<style>{"@keyframes oqto-route-fallback-in { to { opacity: 1; } }"}</style>
-	</div>
-);
+// loads (cold cache, stale deploy) ever show it. Mirrors the index.html
+// boot preload so boot -> auth -> route chunk reads as one splash.
+function RouteFallback() {
+	const isDark =
+		typeof document === "undefined" ||
+		document.documentElement.classList.contains("dark");
+	return (
+		<div className="flex h-screen w-screen items-center justify-center bg-background">
+			<img
+				alt="Oqto"
+				src={isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg"}
+				style={{
+					height: 96,
+					opacity: 0,
+					animation: "oqto-route-fallback-pulse 2s ease-in-out 400ms infinite",
+				}}
+			/>
+			<style>
+				{
+					"@keyframes oqto-route-fallback-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } } @media (prefers-reduced-motion: reduce) { @keyframes oqto-route-fallback-pulse { 0%, 100% { opacity: 1; } } }"
+				}
+			</style>
+		</div>
+	);
+}
+
+const routeFallback = <RouteFallback />;
 
 const AppShellRoute = lazy(() =>
 	import("./routes/AppShellRoute").then((module) =>

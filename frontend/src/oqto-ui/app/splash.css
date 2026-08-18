@@ -4,16 +4,25 @@
  * decoration; it stops with prefers-reduced-motion and never appears after
  * the shell has data (Session switches keep the shell mounted).
  */
+/* The shell root is a flex row; the splash must claim the full viewport and
+ * keep the page background (black in dark mode) so it reads as the same
+ * splash the index.html boot preload shows. */
 .wb-splash {
+	flex: 1;
+	width: 100%;
 	min-height: 100dvh;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
 	gap: 16px;
-	background: var(--background);
 	color: var(--foreground);
 	font-family: var(--font-sans);
+}
+
+.wb-shell[data-state="loading"],
+.wb-shell[data-state="empty"] {
+	background: transparent;
 }
 
 .wb-splash__logo {
