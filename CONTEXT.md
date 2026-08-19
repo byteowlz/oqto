@@ -106,6 +106,17 @@ _Avoid_: Workbench (retired UI concept), frontend (too implementation-specific),
 One presentation instance hosted by OqtoUI, with stable identity and an explicit deployment, Account, Workspace, work-directory, Session, or resource owner. Docking, resizing, or focusing a View changes presentation only and never changes its owner, data binding, or authority.
 _Avoid_: panel (only one possible placement), Surface (trusted top-level shell section), App (an App may provide one or more Views)
 
+**Customization**:
+User- or Agent-authored configuration that arranges and binds the cockpit — layouts, Slots, Menus, Bindings, Pickers, theme roles — expressed as declarative data, optionally produced by sandboxed Lua, and applied in precedence layers (dist Preset, deployment, user, grant-gated workspace, ephemeral). A Customization arranges and binds; it never confers authority, computes content, or touches stores (ADR-0040).
+_Avoid_: plugin (that is the Apps or Runtime Add-on plane), settings (too narrow), script (the contract is the data, not the code)
+
+**Preset**:
+A shipped, immutable Customization that defines a complete cockpit arrangement (classic split, corner mode, big picture). The first-party UI is itself a Preset on the public primitives; Presets are readable and forkable, never privileged code paths.
+
+**Provider**:
+A streaming, capability-gated list source (Sessions, work directories, file listings, message search, App-contributed, sandbox-tool-backed) declared with its version in a queryable catalog. Configuration binds semantic Provider IDs; the catalog resolves availability; absence degrades along declared fallbacks and is reported, never discovered by failure.
+_Avoid_: binary/tool (an implementation detail behind the catalog), source (ambiguous)
+
 **App**:
 An installable, shareable UI capability that reaches everything outside itself through the Host contract and may provide native-declarative and sandboxed-web presentations. Keep its facts independent: the Definition (versioned, content-addressed bundle + manifest), an Installation (availability and provenance under one owner), an Instance (one durable/logical use), its binding (explicit durable data owner/resource), and any local App Views.
 _Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface, global app (name deployment/Account/Workspace/work-directory availability and binding explicitly)
