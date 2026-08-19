@@ -59,6 +59,13 @@ spatial memory.
 - **Desktop composability:** variant D pins edges independently and
   toggles to the classic split.
 
+## Evidence
+
+Interaction decisions are grounded in the UX research review in
+`docs/frontend/oqto-ui-corner-mode-ux-research.md` (Fitts's law,
+pie-menu and marking-menu studies, thumb-zone research, weapon-wheel
+practice, spatial memory, game-HUD cognitive load).
+
 ## Status
 
 Design probes for test-driving; nothing here is production direction.
