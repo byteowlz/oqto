@@ -72,6 +72,23 @@ Accessibility and deployment policy resolve after user appearance: forced-colors
 
 Apps may style content inside their own sandboxed presentation. They cannot inject selectors or effects into OqtoUI surfaces. If a visual concept cannot be represented by the typed vocabulary, its author proposes a cross-host Appearance primitive and fallback; raw CSS is not the escape hatch.
 
+### External theme ecosystems are data sources; Omarchy is the first compatibility fixture
+
+Oqto may acquire palettes and Appearance presets from external theme ecosystems through explicit, versioned **input adapters**. Imported themes are inert Customization/Appearance packages, never Apps: importing one grants no filesystem, network, Session, Agent, or execution capability. Importers parse and validate declared data; they never execute a theme's scripts, Lua, CSS, templates, installer, or renderer-specific configuration.
+
+[Omarchy 4/Quattro](https://github.com/basecamp/omarchy/tree/quattro) is the first required adapter and compatibility fixture. Its canonical semantic palette maps deterministically to Base24: four background/selection/muted slots and four foreground slots map to `base00..base07`; red/orange/yellow/green/cyan/blue/magenta/brown map to `base08..base0F`; dark/darker backgrounds plus six bright accents map to `base10..base17`. Omarchy's independent `accent` and `mode` remain explicit semantic metadata instead of being guessed from a fixed slot. Legacy Omarchy themes using `color0..color15` are accepted through a separately versioned ANSI compatibility resolver; ANSI numbering must never be mislabeled as Base16/Base24.
+
+Supported acquisition paths are:
+
+1. **Local discovery:** read installed and active Omarchy themes without modifying Omarchy-owned or user-owned files.
+2. **Pinned Git import:** fetch a theme repository, pin the resolved commit/content digest, and import only allowlisted data files.
+3. **Gallery catalog:** present generated OqtoUI previews, source/author/license, compatibility diagnostics, accessibility checks, imported fields/fallbacks, and an explicit “install as user Appearance” action.
+4. **Optional active-theme synchronization:** follow the locally active Omarchy theme only after opt-in; every update creates a resolved, versioned Appearance with source provenance and remains independently revertible.
+
+The importer preserves source URL/path, author/license metadata, source format/version, content digest, original palette, translated Base24 slots, semantic role bindings, diagnostics, and applied fallbacks. It may safely translate a documented subset of Omarchy shell data (semantic surface colors, opacity, border treatment, spacing, typography) into typed Appearance recipes. Hyprland Lua, arbitrary templates/CSS, wallpapers, icons, fonts, keyboard RGB, and application-specific files are not portable appearance data and are not executed or installed by this adapter. Asset acquisition requires separate explicit licensing and installation decisions.
+
+This establishes an adapter pattern, not an Omarchy dependency and not a second palette system. Other ecosystems must translate into the same Layer-1 Appearance schema and meet the same provenance, security, and fallback requirements.
+
 ### Configuration layering and loading
 
 Layers, lowest to highest precedence:
@@ -119,6 +136,7 @@ Native tools backing Providers (ripgrep-class search, indexers) run inside workd
 - New mandatory infrastructure: schema versioning + migrations, wasmoon/mlua conformance suite, hook budgets, config doctor, provider catalog endpoint. These are acceptance criteria for the first shipped customization, not later hardening.
 - Multi-Chat grids force timeline virtualization and per-View subscriptions before the grid preset ships.
 - The config plane adds a supported surface with real maintenance cost; the compensation is deleting bespoke one-off UI options (each becomes data on a primitive) and gaining preset-based UX experimentation without frontend releases.
+- Omarchy immediately supplies a broad, curated palette ecosystem and a real compatibility corpus, while Oqto owns translation, previews, accessibility validation, provenance, and deterministic host fallbacks.
 - Risks accepted: Lua's dynamic typing (mitigated by LuaCATS + load-time schema validation), the temptation to grow hooks into an app platform (mitigated by the hard rule and budgets), and deferred compiled-component support (revisited when a second producer exists).
 
 ## Verification
@@ -127,5 +145,7 @@ Native tools backing Providers (ripgrep-class search, indexers) run inside workd
 - Inspection: `config eval` of each source layer and `config resolve` of a pinned context reproduce normalized golden artifacts; `config explain` attributes an overridden and a host-fallback value to exact source digests.
 - Proof obligation: corner-mode, classic, and big-picture presets expressed purely as configuration, driving the same shell.
 - Appearance: Paint/Effect golden scenes render gradients, shadows, opacity, blur, radius, and focus states in the web reference host; a baseline-only host applies the specified fallbacks; forced-colors and reduced-transparency preserve readable contrast and operation.
+- Omarchy compatibility: every bundled Quattro semantic palette imports with all 24 mapped colors plus explicit accent/mode and round-trips through the normalized Oqto artifact without loss; representative legacy ANSI themes resolve deterministically; malicious values and executable/theme-specific files are rejected or ignored with diagnostics.
+- Acquisition: local, pinned-Git, and Gallery imports produce identical normalized artifacts for the same source digest; active-theme synchronization is opt-in, versioned, and revertible; license/provenance remain visible through installation and export.
 - Fail-closed: corrupted layer at every level boots the shell on remaining layers with doctor findings; kernel surfaces unaffected.
 - Drift: removing a non-baseline provider degrades the bound picker along its declared fallback and emits the named finding; baseline-only presets show zero behavioral diff across two deployments of the same release.
