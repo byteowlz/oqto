@@ -435,6 +435,11 @@ function holdMenu() {
 }
 
 /* quarter-arc radial anchored at a corner, sweeping the interior quadrant */
+function phoneZoom() {
+  if (state.variant === "D") return 1;
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phone-scale")) || 1;
+}
+
 function quarterRadial() {
   const { corner, items, sel } = state.hold;
   const btn = document.querySelector(`.corner-btn[data-corner="${corner}"]`);
@@ -442,10 +447,11 @@ function quarterRadial() {
   if (!btn || !screen) return "";
   const rect = btn.getBoundingClientRect();
   const root = screen.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2 - root.left;
-  const cy = rect.top + rect.height / 2 - root.top;
+  const zoom = phoneZoom();
+  const cx = (rect.left + rect.width / 2 - root.left) / zoom;
+  const cy = (rect.top + rect.height / 2 - root.top) / zoom;
   /* interior quadrant direction per corner */
-  const base = { br: 180, bl: 90, tr: 180, tl: 90 }[corner] - 45; /* diagonal into interior */
+  const base = { br: 225, bl: 315, tr: 135, tl: 45 }[corner]; /* diagonal into the interior quadrant (screen y is down) */
   const spread = 90; /* quarter arc */
   const step = items.length > 1 ? spread / (items.length - 1) : 0;
   const radius = 88;
@@ -562,8 +568,8 @@ function moveSelection(event) {
     const dx = event.clientX - cx;
     const dy = event.clientY - cy;
     const dist = Math.hypot(dx, dy);
-    if (dist < 30) { return; } /* dead zone: stay */
-    const base = { br: 180, bl: 90, tr: 180, tl: 90 }[state.hold.corner] - 45;
+    if (dist < 30 * phoneZoom()) { return; } /* dead zone: stay */
+    const base = { br: 225, bl: 315, tr: 135, tl: 45 }[state.hold.corner];
     const spread = 90;
     const step = state.hold.items.length > 1 ? spread / (state.hold.items.length - 1) : 0;
     let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
@@ -775,6 +781,15 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") { state.open = null; state.hold = null; render(); }
 });
 
+/* Fit the whole phone (incl. bottom corners) into the viewport. */
+function fitPhone() {
+  const scale = Math.max(0.5, Math.min(1, (window.innerHeight - 48) / 864));
+  document.documentElement.style.setProperty("--phone-scale", String(scale));
+}
+window.addEventListener("resize", fitPhone);
+fitPhone();
+
 render();
+showToast("Hold the <b>send</b> button for the radial: attach · voice · model · fork.");
 
 window.__cmState = state;

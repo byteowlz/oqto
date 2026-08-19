@@ -265,9 +265,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .bp.classic .bp-edge { width: 300px !important; }
 .bp.classic .corner-btn { opacity: .35; pointer-events: none; }
 
-@media (max-height: 900px) {
-  .phone { transform: scale(.92); }
-}
+.phone { zoom: var(--phone-scale, 1); }
 @media (prefers-reduced-motion: reduce) {
   .mgs-item, .fan-card, .bp-edge { transition: none; }
 }
