@@ -84,7 +84,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
   padding: 6px 8px; position: relative; z-index: 20; min-height: 54px;
 }
 .cm-top { padding-top: 26px; }
-.cm-bottom { border-bottom: 0; border-top: 1px solid var(--line); padding-bottom: 16px; min-height: 58px; }
+.cm-bottom { border-bottom: 0; border-top: 0; padding: 0 0 16px; min-height: 0; }
 .cm-title { flex: 1; min-width: 0; text-align: center; }
 .cm-title strong { display: block; font-size: 13px; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cm-title small { color: var(--faint); font-size: 10px; }
@@ -124,7 +124,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 }
 .sheet.from-left  { left: 0; top: 78px; bottom: 90px; width: 84%; background: var(--sidebar); border-left: 0; }
 .sheet.from-right { right: 0; top: 78px; bottom: 90px; width: 84%; background: var(--pane); border-right: 0; }
-.sheet.from-bottom { left: 0; right: 0; bottom: 58px; max-height: 46%; background: var(--surface-raised); border-left: 0; border-right: 0; }
+.sheet.from-bottom { left: 0; right: 0; bottom: 96px; max-height: 46%; background: var(--surface-raised); border-left: 0; border-right: 0; }
 .sheet.quad-tl { left: 0; top: 78px; width: 88%; height: 55%; bottom: auto; background: var(--sidebar); border-left: 0; }
 .sheet.quad-tr { right: 0; top: 78px; width: 88%; height: 55%; bottom: auto; background: var(--pane); border-right: 0; }
 
@@ -165,7 +165,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 
 /* horizontal strip above bottom bar */
 .strip-h {
-  position: absolute; z-index: 30; left: 0; right: 0; bottom: 58px; padding: 5px 8px;
+  position: absolute; z-index: 30; left: 0; right: 0; bottom: 96px; padding: 5px 8px;
   display: flex; gap: 4px; align-items: center;
   background: var(--surface-raised); border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong);
 }
@@ -174,13 +174,16 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .strip-h .meta { color: var(--muted); font-size: 10px; display: grid; gap: 2px; justify-items: end; }
 .strip-h .meta b { color: var(--accent); font-weight: 600; }
 
-/* visible composer row above the bottom bar: the prompt is never hidden */
-.cm-composer { flex: none; display: flex; gap: 6px; padding: 8px 10px 2px; background: var(--surface); }
-.cm-composer input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 10px 12px; font-size: 13px; color: var(--text); }
+/* composer row: prompt input sits BETWEEN the quick-switch and send
+   buttons; the status strip is its own slim line below */
+.cm-composer { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 8px 4px; background: var(--surface); }
+.cm-composer input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 11px 12px; font-size: 13px; color: var(--text); height: 44px; }
 .cm-composer input:focus { border-color: var(--accent); outline: none; }
+.cm-composer .corner-btn { flex: none; }
 
-/* status strip is a button now (expands agent state) */
-.cm-status { border: 1px solid transparent; background: transparent; padding: 6px 10px; align-self: center; }
+.cm-statusbar { flex: none; display: flex; justify-content: center; padding: 0 8px 6px; background: var(--surface); border-top: 1px solid var(--line); }
+.cm-status { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 10px; white-space: nowrap; background: transparent; border: 1px solid transparent; padding: 4px 10px; }
+.cm-status b { color: var(--accent); font-weight: 600; }
 .cm-status:hover, .cm-status[data-open="true"] { border-color: var(--line-strong); }
 
 /* radial hold menu */
@@ -208,7 +211,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
   touch-action: none;
 }
 .mgs.at-top { top: 78px; }
-.mgs.at-bottom { bottom: 58px; }
+.mgs.at-bottom { bottom: 96px; }
 .mgs-row { display: flex; gap: 10px; align-items: center; }
 .mgs-item {
   width: 46px; height: 46px; display: grid; place-items: center;
@@ -223,7 +226,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 
 /* session cards fan (quick switch) */
 .fan {
-  position: absolute; z-index: 35; left: 0; right: 0; bottom: 58px;
+  position: absolute; z-index: 35; left: 0; right: 0; bottom: 96px;
   display: grid; gap: 6px; justify-items: end; touch-action: none;
   background: rgba(5,8,7,.92); border-top: 1px solid var(--line-strong);
   padding: 12px 10px;

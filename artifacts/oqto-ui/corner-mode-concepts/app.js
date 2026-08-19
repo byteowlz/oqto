@@ -210,15 +210,21 @@ function topBar() {
 }
 
 function bottomBar() {
-  return `<div class="cm-bottom">
-    ${cornerButton("bl", "left", glyph("swap"), "Session quick switch")}
-    <button class="cm-status" data-open-status aria-label="Agent state" data-open="${state.open === "status"}"><span><b>●</b> working</span><span>${state.model}</span><span>24.1k · 12%</span><span>v0.5.0</span></button>
-    ${cornerButton("br", "right", glyph("send"), "Send (hold: attach, voice, more)")}
-  </div>`;
+  return `<div class="cm-bottom">${statusBar()}</div>`;
 }
 
 function composerRow() {
-  return `<div class="cm-composer"><input id="prompt-input" placeholder="Ask ${escapeHtml(ws().name)}…" value="${escapeHtml(state.input)}" autocomplete="off" /></div>`;
+  return `<div class="cm-composer">
+    ${cornerButton("bl", "left", glyph("swap"), "Session quick switch")}
+    <input id="prompt-input" placeholder="Ask ${escapeHtml(ws().name)}…" value="${escapeHtml(state.input)}" autocomplete="off" />
+    ${cornerButton("br", "right", glyph("send"), "Send (hold: attach, voice, model, fork)")}
+  </div>`;
+}
+
+function statusBar() {
+  return `<div class="cm-statusbar">
+    <button class="cm-status" data-open-status aria-label="Agent state" data-open="${state.open === "status"}"><span><b>●</b> working</span><span>${state.model}</span><span>24.1k · 12%</span><span>v0.5.0</span></button>
+  </div>`;
 }
 
 function chat() {
@@ -452,7 +458,7 @@ function railPreviewBubble() {
 function renderPhone() {
   stage.classList.remove("desktop-mode");
   stage.innerHTML = `<div class="phone"><div class="notch"></div><div class="screen" id="screen">
-    ${topBar()}${chat()}${expansion()}${state.open === "models" ? modelsSheet() : ""}${holdMenu()}${railPreviewBubble()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
+    ${topBar()}${chat()}${expansion()}${state.open === "models" ? modelsSheet() : ""}${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
   </div></div>`;
 }
 
@@ -479,7 +485,7 @@ function renderDesktop() {
         </div>
       </div>
     </div>
-    ${holdMenu()}${railPreviewBubble()}${composerRow()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}${bottomBar()}
+    ${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
   </div>`;
 }
 

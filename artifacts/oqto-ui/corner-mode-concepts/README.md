@@ -20,14 +20,15 @@ spatial memory.
 - **top-left — where:** sessions of the current workspace; hold →
   workspace switcher carousel (procedural icons for icon-less projects).
 - **top-right — with what:** workspace tools (files/editor/terminal/…).
+- **composer row (bottom):** the prompt input sits **between** the two
+  bottom corner buttons — quick switch on the left, send on the right.
 - **bottom-left — quick switch:** tap → fuzzy MRU session list; hold →
   session cards fan (release to open).
-- **bottom-right — send:** taps send the always-visible prompt (the
-  composer row never hides); hold → radial menu with attach / voice /
-  **model switcher** / fork (drag to highlight, release to select; the
-  model sheet updates the status bar).
-- **status strip (middle bottom):** tap to expand agent state, task
-  progress, context gauge.
+- **bottom-right — send:** taps send the prompt; hold → radial menu with
+  attach / voice / **model switcher** / fork (drag to highlight, release
+  to select; the model sheet updates the status bar).
+- **status bar (below composer):** slim strip with agent status, model,
+  context gauge, version; tap to expand agent state and task progress.
 
 ## Variants (keys 1–4)
 
