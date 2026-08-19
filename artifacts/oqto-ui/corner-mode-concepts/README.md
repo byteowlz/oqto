@@ -7,7 +7,33 @@ production code; open `index.html` directly in a browser.
 firefox artifacts/oqto-ui/corner-mode-concepts/index.html
 ```
 
-## The model
+## The model (v3)
+
+Hierarchy discovered in the backend and now explicit in the probe:
+**workspace (tenant) → workdir → session.**
+
+- **Navigator (tap top-left):** full-screen on mobile. A vertical
+  **workdir ribbon** (logos + micro-names, independently scrollable)
+  sits in **one vertical line with the top-left button**; the session
+  list scrolls beside it. Tenant header on top with accent underline and
+  a SWITCH button (tap parity for the hold carousel).
+- **Tenant switching is deliberate:** hold top-left → tenant carousel
+  (MGS style); workspaces are identity/authorization boundaries, not a
+  third rail. Accent hue tints the tenant header.
+- **Fuzzy searches the whole tenant:** empty query browses the selected
+  workdir; typing searches sessions across all workdirs (rows grow a
+  workdir chip).
+- **Corner grammar: tap = do, hold = choose.** Tap top-right = Files
+  (anchor tool); blank hold-release = previous tool. Tap bottom-left =
+  previous session (instant); hold = cross-tenant MRU fan. Tap
+  bottom-right = send; hold = **quarter-arc radial** (≤4 items, corner
+  dead zone = cancel, release on item = commit).
+- **Controller mapping (variant D, PAD overlay):** L1 navigator/tenant,
+  R1 files/tool wheel, L2 previous-session/fan, R2 send/radial;
+  stick-steer while holding, release-on-item commits, release-on-nothing
+  cancels. Immediate actions (send) are tap-only on all surfaces.
+
+## The original model
 
 The corner mode is the classic 3-way split collapsed into the edges. The
 top bar keeps title + `[session-id]`, the bottom bar keeps the status

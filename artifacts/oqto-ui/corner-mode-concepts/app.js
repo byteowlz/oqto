@@ -1,20 +1,40 @@
-/* OqtoUI corner-mode concept gallery (oqto-m5sp). Fixture-only design probe. */
+/* OqtoUI corner-mode concept gallery v3 (oqto-m5sp). Fixture-only design probe.
+   Model: workspace(tenant) -> workdir -> session. Tap = do. Hold = choose. */
 "use strict";
 
 /* ---------------- fixtures ---------------- */
 
 const OQTO_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="13" r="7" fill="#f2f5f3"/><path d="M9 13c-2 7-4 9-6 10 3 1 5 0 6-1 0 2-1 4-3 5 3 1 5-1 6-3 1 2 1 4 0 6 2-1 4-3 4-6 1 3 3 5 6 5-2-2-2-4-2-6 2 2 4 2 6 1-2-1-3-3-3-5 2 1 4 1 6-1-3-1-5-3-6-10z" fill="#f2f5f3"/><rect x="11" y="10" width="10" height="4" fill="#0f1412"/></svg>`;
 const SLDR_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="7" width="24" height="15" fill="none" stroke="#d4c275" stroke-width="2.4"/><path d="M9 25h14" stroke="#d4c275" stroke-width="2.4"/><path d="M8 17l5-5 4 3 6-6" fill="none" stroke="#d4c275" stroke-width="2.4"/></svg>`;
+const WIKI_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><rect x="18" y="5" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><rect x="5" y="18" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><path d="M18 22h9M22.5 18v9" stroke="#5b8fc9" stroke-width="2"/></svg>`;
 
-const WORKSPACES = [
-  { id: "oqto", name: "oqto_refactor", path: "~/byteowlz/oqto_refactor", logo: OQTO_LOGO },
-  { id: "sldr", name: "sldr", path: "~/byteowlz/sldr", logo: SLDR_LOGO },
-  { id: "ctx", name: "ctx", path: "~/byteowlz/ctx" },
-  { id: "mmry", name: "mmry", path: "~/byteowlz/mmry" },
-  { id: "tmpltr", name: "tmpltr", path: "~/byteowlz/tmpltr" },
-  { id: "skills", name: "skillissues", path: "~/byteowlz/skillissues" },
-  { id: "hypr", name: "hyprland-config", path: "~/dotfiles/hyprland" },
-  { id: "wiki", name: "wiki", path: "~/wiki" },
+const TENANTS = [
+  {
+    id: "byteowlz", name: "byteowlz", logo: OQTO_LOGO,
+    workdirs: [
+      { id: "oqto", name: "oqto_refactor", path: "~/byteowlz/oqto_refactor", logo: OQTO_LOGO },
+      { id: "sldr", name: "sldr", path: "~/byteowlz/sldr", logo: SLDR_LOGO },
+      { id: "ctx", name: "ctx", path: "~/byteowlz/ctx" },
+      { id: "mmry", name: "mmry", path: "~/byteowlz/mmry" },
+      { id: "tmpltr", name: "tmpltr", path: "~/byteowlz/tmpltr" },
+      { id: "skills", name: "skillissues", path: "~/byteowlz/skillissues" },
+      { id: "hypr", name: "hypr-config", path: "~/byteowlz/hypr" },
+    ],
+  },
+  {
+    id: "personal", name: "personal", logo: WIKI_LOGO,
+    workdirs: [
+      { id: "wiki", name: "wiki", path: "~/wiki", logo: WIKI_LOGO },
+      { id: "movies", name: "Movies", path: "~/Movies" },
+    ],
+  },
+  {
+    id: "iem", name: "iem-work",
+    workdirs: [
+      { id: "incubator", name: "genai-incubator", path: "~/work/incubator" },
+      { id: "demos", name: "demos", path: "~/work/demos" },
+    ],
+  },
 ];
 
 const SESSION_NAMES = [
@@ -27,12 +47,42 @@ const SESSION_NAMES = [
 
 const STATUS_COLOR = { working: "var(--accent)", blocked: "var(--red)", done: "var(--blue)", idle: "var(--faint)" };
 
-function seededSessions(ws) {
-  const n = 2 + (hash(ws.id) % 4);
+function hash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+const ICON_HUES = ["#3ba77c", "#3ba7a0", "#d4c275", "#5b8fc9", "#9b7fc9", "#d96b69", "#5bc79a"];
+
+function proceduralIcon(name) {
+  const h = hash(name);
+  const a = ICON_HUES[h % ICON_HUES.length];
+  const b = ICON_HUES[(h >> 3) % ICON_HUES.length];
+  const parts = [];
+  for (let cell = 0; cell < 16; cell += 1) {
+    if (!((h >> (cell % 27)) & 1)) continue;
+    const x = (cell % 4) * 8; const y = Math.floor(cell / 4) * 8;
+    const kind = (h >> ((cell * 2) % 24)) & 3;
+    const color = cell % 3 === 0 ? b : a;
+    if (kind === 0) parts.push(`<rect x="${x}" y="${y}" width="8" height="8" fill="${color}"/>`);
+    else if (kind === 1) parts.push(`<circle cx="${x + 4}" cy="${y + 4}" r="4" fill="${color}"/>`);
+    else if (kind === 2) parts.push(`<path d="M${x} ${y + 8} L${x + 4} ${y} L${x + 8} ${y + 8} Z" fill="${color}"/>`);
+    else parts.push(`<rect x="${x}" y="${y + 3}" width="8" height="2.6" fill="${color}"/>`);
+  }
+  if (parts.length < 4) parts.push(`<rect x="8" y="8" width="16" height="16" fill="${a}"/>`);
+  return `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" fill="rgba(255,255,255,.04)"/>${parts.join("")}</svg>`;
+}
+
+function dirIcon(dir) { return dir.logo ?? proceduralIcon(dir.name); }
+function tenantAccent(tenant) { return ICON_HUES[hash(tenant.id) % ICON_HUES.length]; }
+
+function seededSessions(tenantId, dirId) {
+  const n = 2 + (hash(tenantId + dirId) % 4);
   const out = [];
   for (let i = 0; i < n; i += 1) {
-    const [name, status] = SESSION_NAMES[(hash(ws.id) + i * 3) % SESSION_NAMES.length];
-    out.push({ id: `${ws.id}-s${i}`, name, status, updated: `2026/08/${10 + i} - ${9 + i}:2${i}` });
+    const [name, status] = SESSION_NAMES[(hash(tenantId + dirId) + i * 3) % SESSION_NAMES.length];
+    out.push({ id: `${dirId}-s${i}`, name, status, updated: `2026/08/${10 + i} - ${9 + i}:2${i}` });
   }
   return out;
 }
@@ -45,70 +95,27 @@ const CHAT = [
   ["agent", "Done. Left sheets inherit the sidebar surface, right strips the files-pane surface, so the desktop split and corner mode share one spatial memory.", null],
 ];
 
-const MODELS = [
-  ["opus-4.7", "deep · slow"], ["sonnet-4.6", "balanced"], ["haiku-4.5", "fast"], ["o4-mini", "cheap"],
-];
-
-const TOOLS = [
-  ["files", "Files"], ["editor", "Editor"], ["terminal", "Terminal"], ["gallery", "Gallery"], ["diff", "Changes"],
-];
+const TOOLS = [["files", "Files"], ["editor", "Editor"], ["terminal", "Terminal"], ["gallery", "Gallery"], ["diff", "Changes"]];
+const MODELS = [["opus-4.7", "deep · slow"], ["sonnet-4.6", "balanced"], ["haiku-4.5", "fast"], ["o4-mini", "cheap"]];
+const RADIAL_ACTIONS = [["clip", "Attach", "file · image · bundle"], ["mic", "Voice", "toggle voice mode"], ["cpu", "Model", "switch model"], ["branch", "Fork", "branch the session"]];
 
 /* ---------------- utilities ---------------- */
 
-function hash(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
+function escapeHtml(value) {
+  return value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
-const ICON_HUES = ["#3ba77c", "#3ba7a0", "#d4c275", "#5b8fc9", "#9b7fc9", "#d96b69", "#5bc79a"];
-
-/* Deterministic flat geometric identicon from the workspace name. */
-function proceduralIcon(name) {
-  const h = hash(name);
-  const a = ICON_HUES[h % ICON_HUES.length];
-  const b = ICON_HUES[(h >> 3) % ICON_HUES.length];
-  const parts = [];
-  const grid = 4;
-  for (let cell = 0; cell < grid * grid; cell += 1) {
-    const bit = (h >> (cell % 27)) & 1;
-    if (!bit) continue;
-    const x = (cell % grid) * 8; const y = Math.floor(cell / grid) * 8;
-    const kind = (h >> ((cell * 2) % 24)) & 3;
-    const color = cell % 3 === 0 ? b : a;
-    if (kind === 0) parts.push(`<rect x="${x}" y="${y}" width="8" height="8" fill="${color}"/>`);
-    else if (kind === 1) parts.push(`<circle cx="${x + 4}" cy="${y + 4}" r="4" fill="${color}"/>`);
-    else if (kind === 2) parts.push(`<path d="M${x} ${y + 8} L${x + 4} ${y} L${x + 8} ${y + 8} Z" fill="${color}"/>`);
-    else parts.push(`<rect x="${x}" y="${y + 3}" width="8" height="2.6" fill="${color}"/>`);
-  }
-  if (parts.length < 4) parts.push(`<rect x="8" y="8" width="16" height="16" fill="${a}"/>`);
-  return `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" fill="rgba(255,255,255,.04)"/>${parts.join("")}</svg>`;
-}
-
-function wsIcon(ws) { return ws.logo ?? proceduralIcon(ws.name); }
-
-/* fzf-style subsequence match; returns highlighted HTML or null. */
 function fuzzy(query, text) {
   if (!query) return { score: 0, html: escapeHtml(text) };
   const q = query.toLowerCase(); const t = text.toLowerCase();
   let qi = 0; let score = 0; let last = -2; const marks = new Set();
   for (let ti = 0; ti < t.length && qi < q.length; ti += 1) {
-    if (t[ti] === q[qi]) {
-      marks.add(ti);
-      score += last === ti - 1 ? 3 : 1;
-      last = ti; qi += 1;
-    }
+    if (t[ti] === q[qi]) { marks.add(ti); score += last === ti - 1 ? 3 : 1; last = ti; qi += 1; }
   }
   if (qi < q.length) return null;
   let html = "";
-  for (let i = 0; i < text.length; i += 1) {
-    html += marks.has(i) ? `<span class="match">${escapeHtml(text[i])}</span>` : escapeHtml(text[i]);
-  }
+  for (let i = 0; i < text.length; i += 1) html += marks.has(i) ? `<span class="match">${escapeHtml(text[i])}</span>` : escapeHtml(text[i]);
   return { score, html };
-}
-
-function escapeHtml(value) {
-  return value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
 const GLYPHS = {
@@ -119,20 +126,18 @@ const GLYPHS = {
   gallery: '<rect x="3" y="5" width="18" height="14"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-5 4 3 4-4 3 3"/>',
   diff: '<path d="M7 4v16"/><path d="M17 4v10"/><circle cx="17" cy="18" r="2"/><path d="M5 8l2-2 2 2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  palette: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="9" r="1.4"/><circle cx="15" cy="9" r="1.4"/><circle cx="9" cy="15" r="1.4"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6z"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="M15 15l5 5"/>',
   pin: '<path d="M9 4h6l-1 7 3 3H7l3-3z"/><path d="M12 14v6"/>',
   bolt: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  agent: '<rect x="5" y="7" width="14" height="11"/><circle cx="10" cy="12" r="1.4"/><circle cx="14" cy="12" r="1.4"/><path d="M12 4v3"/>',
+  grid: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
   mic: '<rect x="9" y="4" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><path d="M12 17v3"/>',
   clip: '<path d="M8 12l8-8 4 4-9 9-4-4 8-8"/>',
   branch: '<circle cx="7" cy="6" r="2.4"/><circle cx="7" cy="18" r="2.4"/><circle cx="17" cy="8" r="2.4"/><path d="M7 8.4v7.2"/><path d="M9.2 6.8c4 0 5.4 1.2 5.6 3.6"/>',
   cpu: '<rect x="7" y="7" width="10" height="10"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
   swap: '<path d="M7 4v12"/><path d="M4 13l3 3 3-3"/><path d="M17 20V8"/><path d="M14 11l3-3 3 3"/>',
-  agent: '<rect x="5" y="7" width="14" height="11"/><circle cx="10" cy="12" r="1.4"/><circle cx="14" cy="12" r="1.4"/><path d="M12 4v3"/>',
-  grid: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
 };
-
 function glyph(name) {
   return `<svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GLYPHS[name]}</svg>`;
 }
@@ -142,13 +147,17 @@ function glyph(name) {
 const state = {
   variant: "A",
   vocabInverted: false,
-  wsId: "oqto",
-  sessionByWs: {},
-  open: null,          // "tl" | "tr" | "bl" | "br" | null (mobile exclusive)
+  tenantId: "byteowlz",
+  dirId: "oqto",
+  sessionByDir: {},
   tool: "files",
-  hold: null,          // { corner, items, sel, kind }
+  toolHistory: ["files"],
+  mru: [],            // [{tenant,dir,session}] most-recent-first
+  open: null,          // "nav" | "tools" | "status" | "models" | "tenants"
+  hold: null,          // { corner, kind, items, sel, moved }
   pinned: { left: false, right: false },
   classic: false,
+  padOverlay: false,
   query: "",
   input: "",
   chat: CHAT.map((row) => [...row]),
@@ -157,42 +166,36 @@ const state = {
   preview: null,
 };
 
-function ws() { return WORKSPACES.find((w) => w.id === state.wsId); }
-function sessions() { return seededSessions(ws()); }
+function tenant() { return TENANTS.find((t) => t.id === state.tenantId); }
+function dir() { return tenant().workdirs.find((d) => d.id === state.dirId); }
+function sessionsOf(tenantId, dirId) { return seededSessions(tenantId, dirId); }
 function session() {
-  const list = sessions();
-  return list.find((s) => s.id === state.sessionByWs[state.wsId]) ?? list[0];
+  const list = sessionsOf(state.tenantId, state.dirId);
+  return list.find((s) => s.id === state.sessionByDir[state.dirId]) ?? list[0];
 }
-function recentSessions() {
-  const all = [];
-  for (const w of WORKSPACES.slice(0, 5)) {
-    for (const s of seededSessions(w).slice(0, 2)) all.push({ ...s, ws: w });
-  }
-  return all.slice(0, 5);
+function pushMru(tenantId, dirId, sessionId) {
+  state.mru = [{ tenant: tenantId, dir: dirId, session: sessionId }, ...state.mru.filter((m) => m.session !== sessionId)].slice(0, 8);
 }
+function gotoSession(tenantId, dirId, sessionId) {
+  state.tenantId = tenantId; state.dirId = dirId;
+  state.sessionByDir[dirId] = sessionId;
+  pushMru(tenantId, dirId, sessionId);
+}
+function previousTarget() { return state.mru[1] ?? null; }
+
+/* seed initial MRU */
+pushMru("byteowlz", "oqto", "oqto-s0");
 
 /* ---------------- variants ---------------- */
 
 const VARIANTS = {
-  A: {
-    label: "Edge strips + send corner",
-    note: "Prompt is always visible above the bottom bar. <b>Tap</b> corners for edge surfaces (left = dark rail, right = lighter pane). Bottom-<b>right = send on tap</b>; hold for the radial (attach / voice / model / fork). Bottom-<b>left = quick switch</b> (hold = MRU fan). Status strip in the middle expands agent state. Exclusive: one surface at a time.",
-  },
-  B: {
-    label: "Quadrant sheets",
-    note: "Same bars and vocabulary, but top corners open <b>quarter sheets</b> with full content and fuzzy search instead of narrow strips. Feel whether the extra surface is worth covering the chat.",
-  },
-  C: {
-    label: "MGS carousels",
-    note: "Everything frequent is a <b>hold-carousel</b>: top-left workspaces, top-right tools, bottom-right quick-switch. Drag while holding, release to equip. Tap still opens the full sheet. Pure item-menu feel.",
-  },
-  D: {
-    label: "Big picture (desktop)",
-    note: "Fullscreen content with the same corners. Expansions <b>pin</b> open (composable, non-exclusive) and morph into the classic 3-way split with the toggle at the top — one spatial model across both.",
-  },
+  A: { label: "Navigator (mobile)", note: "<b>Tap top-left → navigator:</b> workdir ribbon in one vertical line under the button, sessions beside it, both scroll independently. Empty search = current workdir; typing searches the whole tenant (other workdirs get a chip). <b>Hold top-left → tenant carousel</b> (or the header switch button — tap parity). Tap top-right = <b>Files</b>; blank hold-release = previous tool. Tap bottom-left = <b>previous session</b>; hold = cross-tenant MRU fan. Bottom-right = send; hold = quarter-arc radial (dead zone in the corner)." },
+  B: { label: "Right edge strips", note: "Same navigator left; top-right opens a narrow <b>edge strip</b> of tool icons instead of jumping to Files. Compare reachability vs one-tap-Files." },
+  C: { label: "Right quadrant sheet", note: "Same navigator left; top-right opens a <b>quarter sheet</b> with the tool list and fuzzy search. Richest, but covers the chat." },
+  D: { label: "Big picture + controller", note: "Fullscreen desktop. Navigator pins as the left rail (ribbon + list); files/tools pin right; corner grammar unchanged. Toggle <b>PAD overlay</b> in the panel to see the shoulder mapping (L1/R1/L2/R2, stick-steer, release-on-item commits, release-on-nothing cancels)." },
 };
 
-/* ---------------- rendering ---------------- */
+/* ---------------- shared shell ---------------- */
 
 const stage = document.getElementById("stage");
 
@@ -200,24 +203,30 @@ function cornerButton(corner, side, content, label) {
   return `<button class="corner-btn side-${side}" data-corner="${corner}" data-open="${state.open === corner}" aria-label="${label}">${content}<span class="hold-hint"></span></button>`;
 }
 
+function padChip(corner, key, extra) {
+  if (!state.padOverlay || state.variant !== "D") return "";
+  const pos = { tl: "left:6px;top:6px;", tr: "right:6px;top:6px;", bl: "left:6px;bottom:6px;", br: "right:6px;bottom:6px;" }[corner];
+  return `<span class="pad-chip" style="${pos}"><b>${key}</b> ${extra}</span>`;
+}
+
 function topBar() {
   const s = session();
   return `<div class="cm-top">
-    ${cornerButton("tl", "left", wsIcon(ws()), "Workspace and sessions")}
-    <div class="cm-title"><strong>${escapeHtml(s.name)}</strong><small>${escapeHtml(ws().name)} [${s.id}]</small></div>
-    ${cornerButton("tr", "right", glyph(state.tool), "Workspace tools")}
+    ${cornerButton("tl", "left", dirIcon(dir()), "Navigator: workdirs and sessions")}
+    ${padChip("tl", "L1", "tap list · hold tenant")}
+    <div class="cm-title"><strong>${escapeHtml(s.name)}</strong><small>${escapeHtml(dir().name)} [${s.id}] · ${escapeHtml(tenant().name)}</small></div>
+    ${cornerButton("tr", "right", glyph(state.tool), "Tools (tap: Files / previous tool on blank release)")}
+    ${padChip("tr", "R1", "tap files · hold wheel")}
   </div>`;
-}
-
-function bottomBar() {
-  return `<div class="cm-bottom">${statusBar()}</div>`;
 }
 
 function composerRow() {
   return `<div class="cm-composer">
-    ${cornerButton("bl", "left", glyph("swap"), "Session quick switch")}
-    <input id="prompt-input" placeholder="Ask ${escapeHtml(ws().name)}…" value="${escapeHtml(state.input)}" autocomplete="off" />
+    ${cornerButton("bl", "left", glyph("swap"), "Previous session (hold: quick switch)")}
+    ${padChip("bl", "L2", "tap prev · hold fan")}
+    <input id="prompt-input" placeholder="Ask ${escapeHtml(dir().name)}…" value="${escapeHtml(state.input)}" autocomplete="off" />
     ${cornerButton("br", "right", glyph("send"), "Send (hold: attach, voice, model, fork)")}
+    ${padChip("br", "R2", "tap send · hold radial")}
   </div>`;
 }
 
@@ -227,18 +236,129 @@ function statusBar() {
   </div>`;
 }
 
+function bottomBar() {
+  return `<div class="cm-bottom">${statusBar()}
+    ${state.padOverlay ? `<div class="pad-legend"><b>L1</b> navigator · <b>R1</b> files/wheel · <b>L2</b> prev session/fan · <b>R2</b> send/radial</div>` : ""}
+  </div>`;
+}
+
 function chat() {
   return `<div class="cm-content" id="chat-scroll">${state.chat.map(([author, text, tool], i) => `
     <article class="msg" data-author="${author}" data-msg-index="${i}">
-      <header><b>${author === "user" ? "You" : escapeHtml(ws().name)}</b><span>15:0${i}</span></header>
+      <header><b>${author === "user" ? "You" : escapeHtml(dir().name)}</b><span>15:0${i}</span></header>
       <p>${escapeHtml(text)}</p>${tool ? `<div class="tool">${escapeHtml(tool)}</div>` : ""}
     </article>`).join("")}</div>
     ${scrollRail()}`;
 }
 
-/* Quick-scroll rail: one square dot per message cluster, centered on the
-   right edge. Hover/press a dot to preview the truncated message, click to
-   jump. Hidden below a handful of messages where it earns nothing. */
+/* ---------------- navigator ---------------- */
+
+function navigatorPanel(fullscreen) {
+  const t = tenant();
+  const accent = tenantAccent(t);
+  const browsing = state.query ? "" : "";
+  const listHtml = state.query ? searchAllRows() : dirRows();
+  return `<section class="navigator" data-fullscreen="${fullscreen}">
+    <div class="nav-ribbon">
+      ${t.workdirs.map((d) => `<button class="wd-chip" data-dir="${d.id}" data-active="${d.id === state.dirId}">${dirIcon(d)}<small>${escapeHtml(d.name.slice(0, 8))}</small></button>`).join("")}
+    </div>
+    <div class="nav-main" style="--accent-border:${accent}">
+      <div class="nav-tenant" style="border-bottom-color:${accent}">
+        ${t.logo ?? proceduralIcon(t.name)}
+        <div class="grow"><b>${escapeHtml(t.name)}</b><br><small>WORKSPACE · TENANT</small></div>
+        <button class="nav-tenant-switch" data-open-tenants>SWITCH</button>
+      </div>
+      <div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="${browsing}Fuzzy — searches whole workspace…" value="${escapeHtml(state.query)}" autocomplete="off" /></div>
+      <div class="nav-list">${listHtml}</div>
+    </div>
+  </section>`;
+}
+
+function dirRows() {
+  const current = session();
+  return sessionsOf(state.tenantId, state.dirId).map((s) => `
+    <button class="row-item" data-session="${s.id}" data-current="${s.id === current.id}">
+      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
+      <span class="grow"><span>${escapeHtml(s.name)}</span><small>${s.updated} · ${s.status}</small></span>
+    </button>`).join("");
+}
+
+function searchAllRows() {
+  const rows = [];
+  for (const d of tenant().workdirs) {
+    for (const s of sessionsOf(state.tenantId, d.id)) {
+      const m = fuzzy(state.query, s.name);
+      if (m) rows.push({ d, s, html: m.html, score: m.score + fuzzy(state.query, d.name) ? m.score : 0 });
+    }
+  }
+  rows.sort((a, b) => b.score - a.score);
+  if (rows.length === 0) return `<div class="sheet-empty">No sessions match "${escapeHtml(state.query)}".</div>`;
+  return rows.map(({ d, s, html }) => `
+    <button class="row-item" data-dir="${d.id}" data-session="${s.id}">
+      <span class="nav-dir-chip">${escapeHtml(d.name.slice(0, 10))}</span>
+      <span class="grow"><span>${html}</span><small>${s.updated} · ${s.status}</small></span>
+      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
+    </button>`).join("");
+}
+
+/* ---------------- expansions ---------------- */
+
+function tenantsSheet() {
+  return `<button class="scrim" data-close aria-label="Close"></button><section class="sheet from-left">
+    <div class="sheet-head">${glyph("grid")}<h2>WORKSPACES (TENANTS)</h2></div>
+    ${TENANTS.map((t) => `
+      <button class="row-item" data-tenant="${t.id}" data-current="${t.id === state.tenantId}" style="padding:10px 12px">
+        ${t.logo ?? proceduralIcon(t.name)}<span class="grow">${escapeHtml(t.name)}<small>${t.workdirs.length} workdirs</small></span>
+      </button>`).join("")}
+  </section>`;
+}
+
+function toolStrip() {
+  return `<button class="scrim" data-close aria-label="Close"></button><nav class="strip-v" aria-label="Tools">${TOOLS.map(([id, label]) => `
+    <button data-tool="${id}" data-current="${id === state.tool}" aria-label="${label}">${glyph(id)}</button>`).join("")}
+  </nav>`;
+}
+
+function toolSheet() {
+  return `<button class="scrim" data-close aria-label="Close"></button><section class="sheet quad-tr">
+    <div class="sheet-head">${glyph(state.tool)}<h2>WORKSPACE TOOLS</h2></div>
+    ${fuzzyBox("Fuzzy search files…")}
+    <div class="sheet-list">${TOOLS.map(([id, label]) => `
+      <button class="row-item" data-tool="${id}" data-current="${id === state.tool}">${glyph(id)}<span class="grow">${label}</span></button>`).join("")}
+    </div>
+  </section>`;
+}
+
+function statusStrip() {
+  return `<button class="scrim" data-close aria-label="Close"></button><div class="strip-h left-id">
+    <button aria-label="Tasks">${glyph("agent")}</button>
+    <span class="grow" style="font-size:11px;color:var(--muted)">Task 3/5 · Build the responsive surfaces</span>
+    <span class="meta"><span><b>24.1k</b> / 200k</span><span>runner 0/26</span></span>
+  </div>`;
+}
+
+function modelsSheet() {
+  return `<button class="scrim" data-close aria-label="Close"></button><section class="sheet from-bottom">
+    <div class="sheet-head">${glyph("cpu")}<h2>MODEL</h2></div>
+    <div class="sheet-list">${MODELS.map(([id, hint]) => `
+      <button class="row-item" data-model="${id}" data-current="${id === state.model}">
+        ${glyph("cpu")}<span class="grow">${id}<small>${hint}</small></span>
+      </button>`).join("")}</div>
+  </section>`;
+}
+
+function fuzzyBox(placeholder) {
+  return `<div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="${placeholder}" value="${escapeHtml(state.query)}" autocomplete="off" /></div>`;
+}
+
+function expansion() {
+  if (state.open === "tools") return state.variant === "B" ? toolStrip() : state.variant === "C" ? toolSheet() : "";
+  if (state.open === "status") return statusStrip();
+  return "";
+}
+
+/* ---------------- scroll rail ---------------- */
+
 const RAIL_MIN_MESSAGES = 8;
 const RAIL_MAX_DOTS = 14;
 
@@ -247,277 +367,104 @@ function railDots() {
   if (messages.length < RAIL_MIN_MESSAGES) return [];
   const perDot = Math.max(1, Math.ceil(messages.length / RAIL_MAX_DOTS));
   const dots = [];
-  for (let i = 0; i < messages.length; i += perDot) {
-    dots.push({ index: i, author: messages[i][0], text: messages[i][1] });
-  }
+  for (let i = 0; i < messages.length; i += perDot) dots.push({ index: i, author: messages[i][0] });
   return dots;
 }
 
 function scrollRail() {
   const dots = railDots();
   if (dots.length < 2) return "";
-  return `<nav class="scroll-rail" id="scroll-rail" aria-label="Quick scroll">${dots.map((dot, i) => `
-    <button class="rail-dot" data-rail-index="${dot.index}" data-dot="${i}" data-author="${dot.author}" aria-label="Jump to message ${dot.index + 1}"></button>`).join("")}
+  return `<nav class="scroll-rail" id="scroll-rail" aria-label="Quick scroll">${dots.map((dot) => `
+    <button class="rail-dot" data-rail-index="${dot.index}" data-author="${dot.author}" aria-label="Jump to message ${dot.index + 1}"></button>`).join("")}
   </nav>`;
 }
 
 function railPreview(index) {
   const msg = state.chat[index];
   if (!msg) return;
-  const el = document.getElementById(`msg-preview-${index}`) ?? null;
   state.preview = { index, author: msg[0], text: msg[1] };
   render();
-}
-
-function jumpToMessage(index) {
-  const chat = document.getElementById("chat-scroll");
-  const msg = chat?.querySelector(`[data-msg-index="${index}"]`);
-  if (msg) msg.scrollIntoView({ block: "center" });
-  state.preview = null;
-  render();
-}
-
-function sessionRows(list, query) {
-  const rows = [];
-  for (const s of list) {
-    const m = fuzzy(query, s.name);
-    if (!m) continue;
-    rows.push({ ...s, html: m.html, score: m.score });
-  }
-  rows.sort((a, b) => b.score - a.score);
-  if (rows.length === 0) return `<div class="sheet-empty">No sessions match "${escapeHtml(query)}".</div>`;
-  return rows.map((s) => `
-    <button class="row-item" data-session="${s.id}" data-current="${s.id === session().id}">
-      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
-      <span class="grow"><span>${s.html}</span><small>${s.updated} · ${s.status}</small></span>
-    </button>`).join("");
-}
-
-function quickSwitchRows(query) {
-  const rows = [];
-  for (const s of recentSessions()) {
-    const m = fuzzy(query, s.name);
-    if (!m) continue;
-    rows.push({ ...s, html: m.html, score: m.score });
-  }
-  rows.sort((a, b) => b.score - a.score);
-  if (rows.length === 0) return `<div class="sheet-empty">No sessions match "${escapeHtml(query)}".</div>`;
-  return rows.map((s) => `
-    <button class="row-item" data-quick="${s.id}" data-quick-ws="${s.ws.id}">
-      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
-      <span class="grow"><span>${s.html}</span><small>${escapeHtml(s.ws.name)} · ${s.updated}</small></span>
-      ${glyph("swap")}
-    </button>`).join("");
-}
-
-function modelRows() {
-  return MODELS.map(([id, hint]) => `
-    <button class="row-item" data-model="${id}" data-current="${id === state.model}">
-      ${glyph("cpu")}<span class="grow">${id}<small>${hint}</small></span>
-    </button>`).join("");
-}
-
-function workspaceRows(query) {
-  const rows = [];
-  for (const w of WORKSPACES) {
-    const m = fuzzy(query, w.name);
-    if (!m) continue;
-    rows.push({ w, html: m.html, score: m.score });
-  }
-  rows.sort((a, b) => b.score - a.score);
-  if (rows.length === 0) return `<div class="sheet-empty">No workspaces match "${escapeHtml(query)}".</div>`;
-  return rows.map(({ w, html }) => `
-    <button class="row-item" data-workspace="${w.id}" data-current="${w.id === state.wsId}">
-      ${wsIcon(w)}<span class="grow"><span>${html}</span><small>${escapeHtml(w.path)}</small></span>
-    </button>`).join("");
-}
-
-function fuzzyBox(placeholder) {
-  return `<div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="${placeholder}" value="${escapeHtml(state.query)}" autocomplete="off" /></div>`;
-}
-
-function expansion() {
-  if (!state.open) return "";
-  const quad = state.variant === "B";
-  const scrim = `<button class="scrim" data-close aria-label="Close"></button>`;
-  if (state.open === "tl") {
-    const cls = quad ? "quad-tl" : "from-left";
-    return `${scrim}<section class="sheet ${cls}">
-      <div class="sheet-head">${wsIcon(ws())}<h2>SESSIONS · ${escapeHtml(ws().name.toUpperCase())}</h2>
-        <button class="row-item" data-open-workspaces style="padding:4px 8px">${glyph("grid")}</button></div>
-      ${fuzzyBox("Fuzzy search sessions…")}
-      <div class="sheet-list">${sessionRows(sessions(), state.query)}</div>
-    </section>`;
-  }
-  if (state.open === "tl-ws") {
-    const cls = quad ? "quad-tl" : "from-left";
-    return `${scrim}<section class="sheet ${cls}">
-      <div class="sheet-head">${glyph("grid")}<h2>WORKSPACES</h2></div>
-      ${fuzzyBox("Fuzzy search workspaces…")}
-      <div class="sheet-list">${workspaceRows(state.query)}</div>
-    </section>`;
-  }
-  if (state.open === "tr") {
-    if (quad) {
-      return `${scrim}<section class="sheet quad-tr">
-        <div class="sheet-head">${glyph(state.tool)}<h2>WORKSPACE TOOLS</h2></div>
-        ${fuzzyBox("Fuzzy search files…")}
-        <div class="sheet-list">${TOOLS.map(([id, label]) => `
-          <button class="row-item" data-tool="${id}" data-current="${id === state.tool}">${glyph(id)}<span class="grow">${label}</span></button>`).join("")}
-        </div>
-      </section>`;
-    }
-    return `${scrim}<nav class="strip-v" aria-label="Tools">${TOOLS.map(([id, label]) => `
-      <button data-tool="${id}" data-current="${id === state.tool}" aria-label="${label}">${glyph(id)}</button>`).join("")}
-    </nav>`;
-  }
-  if (state.open === "status") {
-    return `${scrim}<div class="strip-h left-id">
-      <button aria-label="Tasks">${glyph("agent")}</button>
-      <span class="grow" style="font-size:11px;color:var(--muted)">Task 3/5 · Build the responsive surfaces</span>
-      <span class="meta"><span><b>24.1k</b> / 200k</span><span>runner 0/26</span></span>
-    </div>`;
-  }
-  if (state.open === "bl") {
-    const cls = quad ? "quad-tl" : "from-left";
-    return `${scrim}<section class="sheet ${cls}">
-      <div class="sheet-head">${glyph("swap")}<h2>QUICK SWITCH · RECENT</h2></div>
-      ${fuzzyBox("Fuzzy search sessions…")}
-      <div class="sheet-list">${quickSwitchRows(state.query)}</div>
-    </section>`;
-  }
-  return "";
-}
-
-const RADIAL_ACTIONS = [
-  ["clip", "Attach", "file · image · bundle"],
-  ["mic", "Voice", "hold to talk"],
-  ["cpu", "Model", "switch model"],
-  ["branch", "Fork", "branch the session"],
-];
-
-function radialMenu() {
-  if (!state.hold || state.hold.kind !== "radial") return "";
-  const btn = document.querySelector(`.corner-btn[data-corner="${state.hold.corner}"]`);
-  if (!btn) return "";
-  const rect = btn.getBoundingClientRect();
-  const root = document.getElementById("screen").getBoundingClientRect();
-  const cx = rect.left + rect.width / 2 - root.left;
-  const cy = rect.top + rect.height / 2 - root.top;
-  const { items, sel } = state.hold;
-  const start = -90; const spread = 100; const radius = 96;
-  const step = items.length > 1 ? spread / (items.length - 1) : 0;
-  const tiles = items.map((item, i) => {
-    const angle = ((start + i * step) * Math.PI) / 180;
-    const x = cx + Math.cos(angle) * radius;
-    const y = cy + Math.sin(angle) * radius;
-    return `<div class="radial-item" data-sel="${i === sel}" style="left:${Math.round(x)}px;top:${Math.round(y)}px">${glyph(item.glyph)}</div>`;
-  }).join("");
-  const current = items[sel];
-  const lx = cx + Math.cos(((start + sel * step) * Math.PI) / 180) * (radius + 46);
-  const ly = cy + Math.sin(((start + sel * step) * Math.PI) / 180) * (radius + 46);
-  return `<div class="radial" id="hold-menu">${tiles}
-    <div class="radial-label" style="left:${Math.round(lx)}px;top:${Math.round(ly)}px">${current.label}<small>RELEASE TO ${current.sub ?? "SELECT"}</small></div>
-  </div>`;
-}
-
-function holdMenu() {
-  if (!state.hold) return "";
-  const { kind, items, sel } = state.hold;
-  if (kind === "radial") return radialMenu();
-  if (kind === "fan") {
-    return `<div class="fan" id="hold-menu">
-      <div class="fan-hint">QUICK SWITCH · RELEASE TO OPEN</div>
-      ${items.map((s, i) => `<div class="fan-card" data-sel="${i === sel}"><b>${escapeHtml(s.name)}</b><small>${escapeHtml(s.ws.name)} · ${s.updated}</small></div>`).join("")}
-    </div>`;
-  }
-  const at = kind === "tools" ? "at-top" : state.hold.corner === "tl" ? "at-top" : "at-bottom";
-  const current = items[sel];
-  return `<div class="mgs ${at}" id="hold-menu">
-    <div class="mgs-row">${items.map((item, i) => `<div class="mgs-item" data-sel="${i === sel}">${item.face}</div>`).join("")}</div>
-    <div class="mgs-label">${escapeHtml(current.label)}<small>${escapeHtml(current.sub ?? "RELEASE TO EQUIP")}</small></div>
-  </div>`;
-}
-
-function modelsSheet() {
-  return `<button class="scrim" data-close aria-label="Close"></button><section class="sheet from-bottom">
-    <div class="sheet-head">${glyph("cpu")}<h2>MODEL</h2></div>
-    <div class="sheet-list">${modelRows()}</div>
-  </section>`;
 }
 
 function railPreviewBubble() {
   if (!state.preview) return "";
   const { index, author, text } = state.preview;
   return `<div class="rail-preview" data-author="${author}">
-    <small>${author === "user" ? "You" : escapeHtml(ws().name)} · msg ${index + 1}/${state.chat.length}</small>
+    <small>${author === "user" ? "You" : escapeHtml(dir().name)} · msg ${index + 1}/${state.chat.length}</small>
     <p>${escapeHtml(text.length > 110 ? `${text.slice(0, 110)}…` : text)}</p>
   </div>`;
 }
 
-function renderPhone() {
-  stage.classList.remove("desktop-mode");
-  stage.innerHTML = `<div class="phone"><div class="notch"></div><div class="screen" id="screen">
-    ${topBar()}${chat()}${expansion()}${state.open === "models" ? modelsSheet() : ""}${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
-  </div></div>`;
+/* ---------------- hold menus ---------------- */
+
+function tenantCarouselItems() {
+  return TENANTS.map((t) => ({ face: t.logo ?? proceduralIcon(t.name), label: t.name, sub: `${t.workdirs.length} WORKDIRS`, id: t.id }));
 }
 
-function renderDesktop() {
-  stage.classList.add("desktop-mode");
-  const left = state.pinned.left || state.open === "tl";
-  const right = state.pinned.right || state.open === "tr";
-  stage.innerHTML = `<div class="bp ${state.classic ? "classic" : ""}" id="screen">
-    ${topBar()}
-    <button class="split-toggle" data-split>${state.classic ? "◧ CORNER MODE" : "◫ 3-WAY SPLIT"}</button>
-    <div class="bp-main">
-      <div class="bp-edge left" data-open="${left || state.classic}">
-        <div class="sheet-head">${wsIcon(ws())}<h2>SESSIONS</h2>
-          <button class="pin-btn" data-pin="left" aria-pressed="${state.pinned.left}" aria-label="Pin">${glyph("pin")}</button></div>
-        ${fuzzyBox("Fuzzy search sessions…")}
-        <div class="sheet-list">${sessionRows(sessions(), state.query)}</div>
-      </div>
-      <div class="bp-center">${chat()}</div>
-      <div class="bp-edge right" data-open="${right || state.classic}">
-        <div class="sheet-head">${glyph("files")}<h2>FILES</h2>
-          <button class="pin-btn" data-pin="right" aria-pressed="${state.pinned.right}" aria-label="Pin">${glyph("pin")}</button></div>
-        <div class="sheet-list">${TOOLS.map(([id, label]) => `
-          <button class="row-item" data-tool="${id}" data-current="${id === state.tool}">${glyph(id)}<span class="grow">${label}</span></button>`).join("")}
-        </div>
-      </div>
-    </div>
-    ${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
+function toolCarouselItems() {
+  return TOOLS.map(([id, label]) => ({ face: glyph(id), label, id }));
+}
+
+function fanItems() {
+  const out = [];
+  for (const m of state.mru) {
+    const tn = TENANTS.find((t) => t.id === m.tenant);
+    const dd = tn.workdirs.find((d) => d.id === m.dir);
+    const ss = sessionsOf(m.tenant, m.dir).find((s) => s.id === m.session);
+    if (tn && dd && ss) out.push({ tenant: tn, dir: dd, session: ss });
+  }
+  return out.slice(0, 5);
+}
+
+function holdMenu() {
+  if (!state.hold) return "";
+  const { kind, items, sel } = state.hold;
+  if (kind === "qradial") return quarterRadial();
+  if (kind === "fan") {
+    return `<div class="fan" id="hold-menu">
+      <div class="fan-hint">QUICK SWITCH · RELEASE TO OPEN</div>
+      ${items.map((item, i) => `<div class="fan-card" data-sel="${i === sel}"><b>${escapeHtml(item.session.name)}</b><small>${escapeHtml(item.tenant.name)} · ${escapeHtml(item.dir.name)}</small></div>`).join("")}
+    </div>`;
+  }
+  const at = state.hold.corner === "tl" ? "at-top" : "at-top";
+  const current = items[sel];
+  return `<div class="mgs ${at}" id="hold-menu">
+    <div class="mgs-row">${items.map((item, i) => `<div class="mgs-item" data-sel="${i === sel}">${item.face}</div>`).join("")}</div>
+    <div class="mgs-label">${escapeHtml(current.label)}<small>${escapeHtml(current.sub ?? "RELEASE TO EQUIP · CENTER TO CANCEL")}</small></div>
   </div>`;
 }
 
-function render() {
-  if (state.variant === "D") renderDesktop(); else renderPhone();
-  bindShell();
-  const prompt = document.getElementById("prompt-input");
-  if (prompt) {
-    prompt.addEventListener("input", () => { state.input = prompt.value; });
-    prompt.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") sendMessage();
-    });
-  }
-  const chatScroll = document.getElementById("chat-scroll");
-  if (chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
-
-  for (const dot of document.querySelectorAll(".rail-dot")) {
-    dot.addEventListener("pointerenter", () => railPreview(Number(dot.dataset.railIndex)));
-  }
-  const rail = document.getElementById("scroll-rail");
-  if (rail) rail.addEventListener("pointerleave", () => { state.preview = null; render(); });
-  const input = document.getElementById("fuzzy-input");
-  if (input) {
-    input.addEventListener("input", () => {
-      state.query = input.value;
-      const keep = input.selectionStart;
-      render();
-      const again = document.getElementById("fuzzy-input");
-      if (again) { again.focus(); again.setSelectionRange(keep, keep); }
-    });
-  }
-  renderControls();
+/* quarter-arc radial anchored at a corner, sweeping the interior quadrant */
+function quarterRadial() {
+  const { corner, items, sel } = state.hold;
+  const btn = document.querySelector(`.corner-btn[data-corner="${corner}"]`);
+  const screen = document.getElementById("screen");
+  if (!btn || !screen) return "";
+  const rect = btn.getBoundingClientRect();
+  const root = screen.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2 - root.left;
+  const cy = rect.top + rect.height / 2 - root.top;
+  /* interior quadrant direction per corner */
+  const base = { br: 180, bl: 90, tr: 180, tl: 90 }[corner] - 45; /* diagonal into interior */
+  const spread = 90; /* quarter arc */
+  const step = items.length > 1 ? spread / (items.length - 1) : 0;
+  const radius = 88;
+  const angleFor = (i) => ((base - spread / 2 + i * step) * Math.PI) / 180;
+  const tiles = items.map((item, i) => {
+    const a = angleFor(i);
+    const x = cx + Math.cos(a) * radius * (corner[0] === "b" ? 1 : 1);
+    const y = cy + Math.sin(a) * radius;
+    return `<div class="qradial-item" data-sel="${i === sel}" style="left:${Math.round(x)}px;top:${Math.round(y)}px">${glyph(item.glyph)}</div>`;
+  }).join("");
+  const current = items[sel];
+  const la = angleFor(sel);
+  const lx = cx + Math.cos(la) * (radius + 52);
+  const ly = cy + Math.sin(la) * (radius + 52);
+  return `<div class="qradial" id="hold-menu">
+    <div class="qradial-deadzone" style="left:${Math.round(cx)}px;top:${Math.round(cy)}px"></div>
+    ${tiles}
+    <div class="qradial-label" style="left:${Math.round(lx)}px;top:${Math.round(ly)}px">${current.label}<small>RELEASE TO ${current.sub ?? "SELECT"} · CORNER = CANCEL</small></div>
+  </div>`;
 }
 
 /* ---------------- gestures ---------------- */
@@ -527,35 +474,33 @@ let holdTimer = null;
 let pressedCorner = null;
 
 function holdItemsFor(corner) {
-  if (corner === "tl") {
-    return {
-      kind: "ws",
-      items: WORKSPACES.map((w) => ({ face: wsIcon(w), label: w.name, id: w.id })),
-      sel: WORKSPACES.findIndex((w) => w.id === state.wsId),
-    };
-  }
-  if (corner === "tr") {
-    return {
-      kind: "tools",
-      items: TOOLS.map(([id, label]) => ({ face: glyph(id), label, id })),
-      sel: TOOLS.findIndex(([id]) => id === state.tool),
-    };
-  }
-  if (corner === "br") {
-    return {
-      kind: "radial",
-      items: RADIAL_ACTIONS.map(([g, label, sub]) => ({ glyph: g, label, sub, id: g })),
-      sel: 0,
-    };
-  }
-  return { kind: "fan", items: recentSessions(), sel: 0 };
+  if (corner === "tl") return { kind: "mgs", items: tenantCarouselItems(), sel: TENANTS.findIndex((t) => t.id === state.tenantId) };
+  if (corner === "tr") return { kind: "mgs", items: toolCarouselItems(), sel: TOOLS.findIndex(([id]) => id === state.tool) };
+  if (corner === "br") return { kind: "qradial", items: RADIAL_ACTIONS.map(([g, label, sub]) => ({ glyph: g, label, sub, id: g })), sel: 0 };
+  return { kind: "fan", items: fanItems(), sel: 0 };
 }
 
+function openNavigator() { state.query = ""; state.open = "nav"; render(); }
+
 function tapAction(corner) {
-  if (corner === "br") { sendMessage(); return; }
-  state.query = "";
-  state.open = state.open === corner ? null : corner;
+  if (corner === "tl") { state.open = state.open === "nav" ? null : "nav"; state.query = ""; }
+  else if (corner === "tr") { setTool("files"); state.open = null; }
+  else if (corner === "bl") { switchToPrevious(); }
+  else if (corner === "br") { sendMessage(); }
   render();
+}
+
+function setTool(id) {
+  if (state.tool === id) return;
+  state.toolHistory = [id, ...state.toolHistory.filter((t) => t !== id)].slice(0, 4);
+  state.tool = id;
+}
+
+function switchToPrevious() {
+  const prev = previousTarget();
+  if (!prev) { showToast("No previous session yet."); return; }
+  gotoSession(prev.tenant, prev.dir, prev.session);
+  state.open = null;
 }
 
 function showToast(text) {
@@ -575,20 +520,27 @@ function sendMessage() {
 }
 
 function commitHold() {
-  const { kind, items, sel, corner } = state.hold;
+  const { kind, items, sel, corner, moved } = state.hold;
   state.hold = null;
-  if (kind === "radial") {
+  /* blank release (no drag): recency actions per corner, cancel on act corners */
+  if (!moved) {
+    if (corner === "tr") { const prevTool = state.toolHistory.find((t) => t !== state.tool); if (prevTool) setTool(prevTool); showToast(`Tool: <b>${prevTool ?? state.tool}</b>`); }
+    else if (corner === "bl") { switchToPrevious(); }
+    render();
+    return;
+  }
+  if (kind === "qradial") {
     const action = items[sel];
     if (action.id === "cpu") { state.open = "models"; state.query = ""; }
     else if (action.id === "clip") showToast("<b>Attach</b> — probe: file/context picker would open.");
-    else if (action.id === "mic") showToast("<b>Voice</b> — probe: hold-to-talk would engage.");
+    else if (action.id === "mic") showToast("<b>Voice</b> — probe: voice mode toggled on.");
     else if (action.id === "branch") showToast("<b>Fork</b> — probe: fork confirmation would open.");
-  } else if (kind === "ws") { state.wsId = items[sel].id; state.open = null; }
-  else if (kind === "tools") { state.tool = items[sel].id; state.open = null; }
-  else if (kind === "fan") {
-    const target = items[sel];
-    state.wsId = target.ws.id;
-    state.sessionByWs[target.ws.id] = target.id;
+  } else if (kind === "mgs") {
+    if (corner === "tl") { state.tenantId = items[sel].id; state.dirId = tenant().workdirs[0].id; state.open = null; }
+    else if (corner === "tr") { setTool(items[sel].id); state.open = null; }
+  } else if (kind === "fan") {
+    const item = items[sel];
+    gotoSession(item.tenant.id, item.dir.id, item.session.id);
     state.open = null;
   }
   render();
@@ -598,37 +550,47 @@ function moveSelection(event) {
   if (!state.hold) return;
   const menu = document.getElementById("hold-menu");
   if (!menu) return;
-  if (state.hold.kind === "radial") {
-    const tiles = [...menu.querySelectorAll(".radial-item")];
+  const before = state.hold.sel;
+  if (state.hold.kind === "qradial") {
+    const btn = document.querySelector(`.corner-btn[data-corner="${state.hold.corner}"]`);
+    const screen = document.getElementById("screen");
+    if (!btn || !screen) return;
+    const rect = btn.getBoundingClientRect();
+    const root = screen.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = event.clientX - cx;
+    const dy = event.clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 30) { return; } /* dead zone: stay */
+    const base = { br: 180, bl: 90, tr: 180, tl: 90 }[state.hold.corner] - 45;
+    const spread = 90;
+    const step = state.hold.items.length > 1 ? spread / (state.hold.items.length - 1) : 0;
+    let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    /* pick nearest item angle */
     let best = state.hold.sel; let bestDist = Number.POSITIVE_INFINITY;
-    tiles.forEach((tile, i) => {
-      const rect = tile.getBoundingClientRect();
-      const dx = event.clientX - (rect.left + rect.width / 2);
-      const dy = event.clientY - (rect.top + rect.height / 2);
-      const dist = Math.hypot(dx, dy);
-      if (dist < bestDist) { bestDist = dist; best = i; }
-    });
-    if (best !== state.hold.sel) { state.hold.sel = best; render(); }
+    for (let i = 0; i < state.hold.items.length; i += 1) {
+      const itemAngle = base - spread / 2 + i * step;
+      const d = Math.abs(((angle - itemAngle + 540) % 360) - 180);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    state.hold.sel = best;
+    state.hold.moved = state.hold.moved || best !== before || true;
+    if (state.hold.sel !== before) render();
     return;
   }
-  if (state.hold.kind === "fan") {
-    const cards = [...menu.querySelectorAll(".fan-card")];
-    let best = state.hold.sel;
-    cards.forEach((card, i) => {
-      const rect = card.getBoundingClientRect();
-      if (event.clientY >= rect.top - 4 && event.clientY <= rect.bottom + 4) best = i;
-    });
-    if (best !== state.hold.sel) { state.hold.sel = best; render(); }
-    return;
-  }
-  const tiles = [...menu.querySelectorAll(".mgs-item")];
+  const selector = state.hold.kind === "fan" ? ".fan-card" : ".mgs-item";
+  const tiles = [...menu.querySelectorAll(selector)];
   let best = state.hold.sel; let bestDist = Number.POSITIVE_INFINITY;
   tiles.forEach((tile, i) => {
-    const rect = tile.getBoundingClientRect();
-    const dist = Math.abs(event.clientX - (rect.left + rect.width / 2));
+    const r = tile.getBoundingClientRect();
+    const dx = event.clientX - (r.left + r.width / 2);
+    const dy = event.clientY - (r.top + r.height / 2);
+    const dist = state.hold.kind === "fan" ? Math.abs(dy) : Math.abs(dx);
     if (dist < bestDist) { bestDist = dist; best = i; }
   });
-  if (best !== state.hold.sel) { state.hold.sel = best; render(); }
+  if (best !== state.hold.sel) { state.hold.sel = best; state.hold.moved = true; render(); }
+  else state.hold.moved = true;
 }
 
 function bindShell() {
@@ -640,28 +602,20 @@ function bindShell() {
       event.preventDefault();
       const corner = btn.dataset.corner;
       pressedCorner = corner;
-      const holdOpens = !state.vocabInverted;
-      const startHold = () => {
-        state.hold = { corner, ...holdItemsFor(corner) };
-        render();
-      };
-      if (holdOpens) holdTimer = setTimeout(startHold, HOLD_MS);
-      else startHold(), holdTimer = null; /* inverted: press opens carousel immediately, tap commits below */
+      state.hold = null;
+      const startHold = () => { state.hold = { corner, moved: false, ...holdItemsFor(corner) }; render(); };
+      if (!state.vocabInverted) holdTimer = setTimeout(startHold, HOLD_MS);
+      else { startHold(); holdTimer = null; }
     });
   }
 
-  /* drag tracking lives on window: re-renders during a drag replace the
-     pressed button (implicit pointer capture) but never the window. */
   if (!window.__cmDragBound) {
     window.__cmDragBound = true;
     window.addEventListener("pointermove", moveSelection);
     window.addEventListener("pointerup", () => {
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
       if (state.hold) { commitHold(); pressedCorner = null; return; }
-      if (pressedCorner) {
-        const corner = pressedCorner; pressedCorner = null;
-        tapAction(corner);
-      }
+      if (pressedCorner) { const corner = pressedCorner; pressedCorner = null; tapAction(corner); }
     });
     window.addEventListener("pointercancel", () => {
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
@@ -671,25 +625,104 @@ function bindShell() {
 
   screen.addEventListener("click", (event) => {
     const railDot = event.target.closest("[data-rail-index]");
-    if (railDot) { jumpToMessage(Number(railDot.dataset.railIndex)); return; }
-    const target = event.target.closest("[data-close],[data-session],[data-workspace],[data-tool],[data-open-workspaces],[data-pin],[data-split],[data-open-status],[data-quick],[data-model]");
+    if (railDot) {
+      const index = Number(railDot.dataset.railIndex);
+      const msg = document.querySelector(`[data-msg-index="${index}"]`);
+      if (msg) msg.scrollIntoView({ block: "center" });
+      state.preview = null;
+      render();
+      return;
+    }
+    const target = event.target.closest("[data-close],[data-dir],[data-session],[data-tenant],[data-tool],[data-open-tenants],[data-open-status],[data-quick],[data-model],[data-pin],[data-split]");
     if (!target) return;
     if (target.dataset.close !== undefined) { state.open = null; state.query = ""; }
+    else if (target.dataset.tenant) {
+      state.tenantId = target.dataset.tenant;
+      state.dirId = tenant().workdirs[0].id;
+      state.open = "nav"; state.query = "";
+    }
+    else if (target.dataset.openTenants !== undefined) { state.open = "tenants"; state.query = ""; }
     else if (target.dataset.openStatus !== undefined) { state.query = ""; state.open = state.open === "status" ? null : "status"; }
-    else if (target.dataset.quick) {
-      state.wsId = target.dataset.quickWs;
-      state.sessionByWs[state.wsId] = target.dataset.quick;
+    else if (target.dataset.model) { state.model = target.dataset.model; state.open = null; }
+    else if (target.dataset.tool) { setTool(target.dataset.tool); if (state.variant === "A") state.open = null; else state.open = "tools"; }
+    else if (target.dataset.session) {
+      state.sessionByDir[state.dirId] = target.dataset.session;
+      pushMru(state.tenantId, state.dirId, target.dataset.session);
       state.open = null; state.query = "";
     }
-    else if (target.dataset.model) { state.model = target.dataset.model; state.open = null; }
-    else if (target.dataset.session) { state.sessionByWs[state.wsId] = target.dataset.session; state.open = null; state.query = ""; }
-    else if (target.dataset.workspace) { state.wsId = target.dataset.workspace; state.open = "tl"; state.query = ""; }
-    else if (target.dataset.tool) { state.tool = target.dataset.tool; if (state.variant !== "D") state.open = null; }
-    else if (target.dataset.openWorkspaces !== undefined) { state.open = "tl-ws"; state.query = ""; }
-    else if (target.dataset.pin) { const side = target.dataset.pin; state.pinned[side] = !state.pinned[side]; }
     else if (target.dataset.split !== undefined) { state.classic = !state.classic; }
     render();
   });
+}
+
+/* ---------------- rendering ---------------- */
+
+function renderPhone() {
+  stage.classList.remove("desktop-mode");
+  const navOpen = state.open === "nav";
+  stage.innerHTML = `<div class="phone"><div class="notch"></div><div class="screen" id="screen">
+    ${topBar()}
+    ${navOpen ? navigatorPanel(true) : chat()}
+    ${state.open === "tenants" ? tenantsSheet() : ""}
+    ${expansion()}
+    ${state.open === "models" ? modelsSheet() : ""}
+    ${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
+  </div></div>`;
+}
+
+function renderDesktop() {
+  stage.classList.add("desktop-mode");
+  const navOpen = state.pinned.left || state.open === "nav" || state.classic;
+  const toolsOpen = state.pinned.right || state.open === "tools" || state.classic;
+  stage.innerHTML = `<div class="bp ${state.classic ? "classic" : ""}" id="screen">
+    ${topBar()}
+    <button class="split-toggle" data-split>${state.classic ? "◧ CORNER MODE" : "◫ 3-WAY SPLIT"}</button>
+    <div class="bp-main">
+      <div class="bp-edge left" data-open="${navOpen}" style="${navOpen ? "width:min(340px,26vw)" : ""}">
+        ${navigatorPanel(false)}
+      </div>
+      <div class="bp-center">${chat()}</div>
+      <div class="bp-edge right" data-open="${toolsOpen}">
+        <div class="sheet-head">${glyph("files")}<h2>FILES</h2>
+          <button class="pin-btn" data-pin="right" aria-pressed="${state.pinned.right}" aria-label="Pin">${glyph("pin")}</button></div>
+        <div class="sheet-list">${TOOLS.map(([id, label]) => `
+          <button class="row-item" data-tool="${id}" data-current="${id === state.tool}">${glyph(id)}<span class="grow">${label}</span></button>`).join("")}
+        </div>
+      </div>
+    </div>
+    ${holdMenu()}${railPreviewBubble()}${composerRow()}${bottomBar()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
+  </div>`;
+  /* navigator inside an edge: constrain to the edge box */
+  const nav = document.querySelector(".bp-edge.left .navigator");
+  if (nav) { nav.style.position = "relative"; nav.style.top = "0"; nav.style.left = "0"; nav.style.right = "0"; nav.style.bottom = "0"; }
+}
+
+function render() {
+  if (state.variant === "D") renderDesktop(); else renderPhone();
+  bindShell();
+  const prompt = document.getElementById("prompt-input");
+  if (prompt) {
+    prompt.addEventListener("input", () => { state.input = prompt.value; });
+    prompt.addEventListener("keydown", (event) => { if (event.key === "Enter") sendMessage(); });
+  }
+  const chatScroll = document.getElementById("chat-scroll");
+  if (chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
+  for (const dot of document.querySelectorAll(".rail-dot")) {
+    dot.addEventListener("pointerenter", () => railPreview(Number(dot.dataset.railIndex)));
+  }
+  const rail = document.getElementById("scroll-rail");
+  if (rail) rail.addEventListener("pointerleave", () => { state.preview = null; render(); });
+  const input = document.getElementById("fuzzy-input");
+  if (input) {
+    input.addEventListener("input", () => {
+      state.query = input.value;
+      const keep = input.selectionStart;
+      render();
+      const again = document.getElementById("fuzzy-input");
+      if (again) { again.focus(); again.setSelectionRange(keep, keep); }
+    });
+  }
+  renderControls();
 }
 
 /* ---------------- controls ---------------- */
@@ -707,15 +740,28 @@ function renderControls() {
   }
   const vocab = document.getElementById("vocab-toggle");
   vocab.setAttribute("aria-pressed", String(state.vocabInverted));
-  vocab.textContent = state.vocabInverted ? "press=carousel · release=equip" : "tap=open · hold=carousel";
+  vocab.textContent = state.vocabInverted ? "press=carousel · release=equip" : "tap=do · hold=choose";
+  const pad = document.getElementById("pad-toggle");
+  pad.style.display = state.variant === "D" ? "" : "none";
+  pad.setAttribute("aria-pressed", String(state.padOverlay));
   document.getElementById("variant-note").innerHTML = VARIANTS[state.variant].note;
 }
 
 document.getElementById("vocab-toggle").addEventListener("click", () => {
-  state.vocabInverted = !state.vocabInverted;
-  state.open = null; state.hold = null;
-  render();
+  state.vocabInverted = !state.vocabInverted; state.open = null; state.hold = null; render();
 });
+const padRow = document.createElement("div");
+padRow.className = "ctl-row";
+const padLabel = document.createElement("span");
+padLabel.textContent = "Controller";
+const padBtn = document.createElement("button");
+padBtn.id = "pad-toggle";
+padBtn.type = "button";
+padBtn.className = "switch";
+padBtn.textContent = "PAD overlay";
+padBtn.addEventListener("click", () => { state.padOverlay = !state.padOverlay; render(); });
+padRow.append(padLabel, padBtn);
+document.getElementById("vocab-toggle").closest(".ctl-row").after(padRow);
 document.getElementById("ctl-collapse").addEventListener("click", () => {
   document.getElementById("controls").classList.toggle("collapsed");
 });

@@ -297,3 +297,67 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .rail-preview[data-author="user"] { border-color: var(--accent); }
 .rail-preview small { display: block; color: var(--faint); font-size: 9.5px; letter-spacing: .1em; margin-bottom: 5px; }
 .rail-preview p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text); max-height: 108px; overflow: hidden; }
+
+
+/* ---------- v3: tenant/workdir/session navigator ---------- */
+.navigator {
+  position: absolute; z-index: 32; left: 0; right: 0; top: 78px; bottom: 0;
+  display: flex; background: var(--sidebar);
+}
+/* ribbon: one vertical line with the top-left button (same x-center) */
+.nav-ribbon {
+  position: absolute; z-index: 33; left: 8px; top: 8px; bottom: 8px; width: 44px;
+  display: grid; gap: 4px; justify-items: center; align-content: start;
+  overflow-y: auto; scrollbar-width: none; padding-bottom: 20px;
+}
+.nav-ribbon::-webkit-scrollbar { display: none; }
+.wd-chip {
+  width: 44px; display: grid; gap: 2px; justify-items: center;
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  padding: 4px 0 3px; position: relative;
+}
+.wd-chip svg, .wd-chip .ws-face { width: 26px; height: 26px; }
+.wd-chip small { font-size: 7.5px; max-width: 42px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0; }
+.wd-chip:hover { border-color: var(--line-strong); }
+.wd-chip[data-active="true"] { border-color: var(--accent); color: var(--text); background: rgba(255,255,255,.04); }
+
+.nav-main { position: absolute; z-index: 32; left: 60px; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+.nav-tenant { flex: none; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--accent-border, var(--line)); border-bottom-width: 2px; }
+.nav-tenant .ws-face { width: 22px; height: 22px; }
+.nav-tenant b { font-size: 12.5px; }
+.nav-tenant small { color: var(--faint); font-size: 9px; letter-spacing: .1em; }
+.nav-tenant .grow { flex: 1; }
+.nav-tenant-switch { border: 1px solid var(--line-strong); background: transparent; color: var(--muted); font-size: 9.5px; padding: 5px 8px; letter-spacing: .08em; }
+.nav-tenant-switch:hover { color: var(--text); border-color: var(--accent); }
+.nav-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 12px; display: grid; gap: 2px; align-content: start; }
+.nav-dir-chip { font-size: 8.5px; color: var(--faint); border: 1px solid var(--line-strong); padding: 1px 5px; flex: none; }
+
+/* quarter-arc radial (corner-anchored, interior sweep) */
+.qradial { position: absolute; inset: 0; z-index: 36; pointer-events: none; touch-action: none; }
+.qradial-item {
+  position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  display: grid; place-items: center; border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--muted); transition: transform 90ms linear;
+}
+.qradial-item svg { width: 20px; height: 20px; }
+.qradial-item[data-sel="true"] { border-color: var(--accent); color: var(--text); background: var(--surface-soft); transform: scale(1.16); }
+.qradial-deadzone {
+  position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border: 1px dashed var(--line-strong); border-radius: 50%; opacity: .6;
+}
+.qradial-label { position: absolute; padding: 5px 10px; background: var(--surface-raised); border: 1px solid var(--line-strong); font-size: 12px; white-space: nowrap; transform: translate(-50%, -50%); }
+.qradial-label small { display: block; color: var(--faint); font-size: 9.5px; letter-spacing: .12em; text-align: center; margin-top: 2px; }
+
+/* controller overlay */
+.pad-chip {
+  position: absolute; z-index: 37; font-size: 8.5px; letter-spacing: .06em;
+  background: rgba(5,8,7,.85); border: 1px solid var(--line-strong); color: var(--muted);
+  padding: 2px 5px; pointer-events: none;
+}
+.pad-chip b { color: var(--accent-bright); font-weight: 700; }
+.pad-legend {
+  position: absolute; z-index: 37; left: 50%; bottom: 110px; transform: translateX(-50%);
+  background: rgba(5,8,7,.92); border: 1px solid var(--line-strong); padding: 10px 14px;
+  font-size: 10.5px; color: var(--muted); display: grid; gap: 3px; pointer-events: none;
+}
+.pad-legend b { color: var(--accent-bright); }
