@@ -113,6 +113,10 @@ _Avoid_: plugin (that is the Apps or Runtime Add-on plane), settings (too narrow
 **Preset**:
 A shipped, immutable Customization that defines a complete cockpit arrangement (classic split, corner mode, big picture). The first-party UI is itself a Preset on the public primitives; Presets are readable and forkable, never privileged code paths.
 
+**Appearance**:
+The target-neutral styling vocabulary for named semantic OqtoUI surfaces: Base24 roles, geometry, Paint (solid/gradient/opacity), Effects (elevation/shadow/blur), typography, and interaction states. Hosts publish capabilities and apply declared fallbacks; accessibility policy remains authoritative. Appearance never means raw CSS or renderer-specific selectors (ADR-0040).
+_Avoid_: CSS/theme CSS (web-specific), skin (understates semantic and accessibility requirements)
+
 **Provider**:
 A streaming, capability-gated list source (Sessions, work directories, file listings, message search, App-contributed, sandbox-tool-backed) declared with its version in a queryable catalog. Configuration binds semantic Provider IDs; the catalog resolves availability; absence degrades along declared fallbacks and is reported, never discovered by failure.
 _Avoid_: binary/tool (an implementation detail behind the catalog), source (ambiguous)

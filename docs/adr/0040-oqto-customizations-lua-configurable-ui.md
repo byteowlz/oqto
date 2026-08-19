@@ -55,7 +55,22 @@ Hooks are event-driven with explicit fuel/time/memory budgets. A hook that excee
 | **Binding** | Input chords: keys, tap/hold/blank-release gestures (320 ms dwell, constant), controller mappings. Bindings reference Actions or Menus. |
 | **Provider** | Streaming, capability-gated list source (sessions, workdirs, files, message FTS, App-contributed, sandbox-tool-backed). Declared in a queryable catalog with versions. |
 | **Matcher** | Built-in fuzzy engines (subsequence, fzf-style, frecency-weighted) selected and parameterized as data; large corpora match provider-side; conformance-tested across hosts. |
-| **Theme** | Existing Base24 role mapping; palettes remain immutable, roles are configurable data. |
+| **Theme/Appearance** | Base24 semantic roles plus typed geometry, Paint, and Effect recipes. Configuration targets named semantic surfaces, never CSS selectors or renderer internals. |
+
+### Appearance is typed and capability-adaptive, not restricted to flat color
+
+Customizations may substantially change OqtoUI's appearance without injecting CSS. The schema addresses **semantic targets** (for example `surface.chrome`, `surface.content`, `view.chat.user-message`, `menu.radial`, `focus.indicator`) and assigns target-neutral recipes:
+
+- **Geometry:** the single proportional radius dial from [ADR-0015](0015-radius-proportional-scale-single-dial.md), density/spacing scale, border width and emphasis, and typography roles.
+- **Paint:** a semantic solid color or linear/radial gradient with semantic color-role stops, direction/origin, and bounded opacity. Stops reference palette roles or validated theme colors rather than CSS strings.
+- **Effects:** named elevation levels or a bounded shadow recipe, surface/content opacity, backdrop or content blur, and bounded saturation/contrast where supported. Effect stacks have schema limits; they cannot contain arbitrary renderer expressions.
+- **States:** recipes for focus, selection, hover/press, disabled, warning, and destructive states. No function may exist only on hover.
+
+This is feasible in the web host (CSS gradients, shadows, opacity, `filter`, and `backdrop-filter`) and in modern native GPU renderers. It is not uniformly representable in every host, especially a terminal. Therefore each host publishes **appearance capabilities**, and every rich recipe has a deterministic fallback encoded in the schema: gradient → designated solid role; multiple/custom shadow → nearest elevation level or border emphasis; backdrop blur → opaque/translucent surface paint; unsupported filters → identity. A preset may require only the portable baseline or declare richer optional effects. Unsupported optional effects do not break the UI; preview and doctor report the fallback.
+
+Accessibility and deployment policy resolve after user appearance: forced-colors/high-contrast may replace Paint recipes, contrast floors override unsafe text/background combinations, reduced-transparency disables blur/translucency, and reduced-motion remains authoritative. This is an intentional kernel guardrail, not config precedence.
+
+Apps may style content inside their own sandboxed presentation. They cannot inject selectors or effects into OqtoUI surfaces. If a visual concept cannot be represented by the typed vocabulary, its author proposes a cross-host Appearance primitive and fallback; raw CSS is not the escape hatch.
 
 ### Configuration layering and loading
 
@@ -68,6 +83,17 @@ Layers, lowest to highest precedence:
 5. **Ephemeral** — URL/session state.
 
 The browser never reads config files. The backend config service evaluates layers, serves merged Layer-1 data, and keeps every layer versioned, diffable, and revertible. A failing layer drops out with a doctor finding; the shell always boots from at least the dist defaults.
+
+### Evaluation, resolution, and provenance are distinct
+
+There is no context-free “the Oqto config.” A value may come from one source layer and resolve differently by Account, Workspace/work directory, host capabilities, accessibility policy, or ephemeral state. Tooling therefore distinguishes:
+
+- **`oqto config eval <file>`** evaluates one explicit Lua file in isolation and prints normalized Layer-1 data plus diagnostics. `--layer dist|deployment|user|workspace|ephemeral` selects one named source from an explicit context. It does not merge other layers.
+- **`oqto config resolve`** prints the effective merged config for an explicit target context. It accepts deployment, Account, Workspace/work-directory, preset, host, and accessibility/capability inputs. Interactive use may infer Account and work directory from authenticated CLI/cwd context, but output always records those resolved IDs; automation must pass them explicitly.
+- **`oqto config explain <json-pointer>`** reports the winning value, every overridden candidate, source path/content digest, schema migration, host fallback, and policy/accessibility override for one effective field.
+- **`oqto config diff`** compares source layers or two resolved contexts without executing actions.
+
+All commands default to structured JSON on non-TTY output and have a human-readable TTY rendering. Secret values are never embedded in configuration output. Evaluation is side-effect-free: hooks are compiled/validated but not fired, and Actions are represented symbolically. The resolved artifact carries its schema version, source digests, target IDs, host capability profile, diagnostics, and per-field provenance, making it a reproducible verification surface for humans and Agents.
 
 ### Provider catalog and the drift invariant
 
@@ -98,6 +124,8 @@ Native tools backing Providers (ripgrep-class search, indexers) run inside workd
 ## Verification
 
 - Conformance: identical config in wasmoon and mlua yields identical Layer-1 data and hook outcomes (golden tests).
+- Inspection: `config eval` of each source layer and `config resolve` of a pinned context reproduce normalized golden artifacts; `config explain` attributes an overridden and a host-fallback value to exact source digests.
 - Proof obligation: corner-mode, classic, and big-picture presets expressed purely as configuration, driving the same shell.
+- Appearance: Paint/Effect golden scenes render gradients, shadows, opacity, blur, radius, and focus states in the web reference host; a baseline-only host applies the specified fallbacks; forced-colors and reduced-transparency preserve readable contrast and operation.
 - Fail-closed: corrupted layer at every level boots the shell on remaining layers with doctor findings; kernel surfaces unaffected.
 - Drift: removing a non-baseline provider degrades the bound picker along its declared fallback and emits the named finding; baseline-only presets show zero behavioral diff across two deployments of the same release.
