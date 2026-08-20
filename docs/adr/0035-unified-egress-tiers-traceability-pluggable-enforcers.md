@@ -207,8 +207,82 @@ enforcer inside it at full tier. Native macOS enforcement via a Network
 Extension (`NETransparentProxyProvider`) is a possible future `EgressEnforcer`
 behind the same trait, explicitly out of scope.
 
+
+## Amendment (2026-08-20): bought enforcer, no privileged daemon, protocol-aware policy
+
+Three findings from spiking [iron-proxy](https://github.com/paradigmxyz/iron-proxy)
+(Apache-2.0, discovered via paradigmxyz/centaur, which deploys it as its credential boundary)
+and from testing unprivileged network namespaces. Decisions 1–6 stand unchanged; decision 7 and
+the policy model change.
+
+### A. The reference implementation shrinks to policy compilation plus attachment
+
+iron-proxy already implements, and was measured doing, most of what `oqto-egress`/`oqto-egressd`
+was specified to build: default-deny domain/CIDR allowlist, placeholder credentials swapped for
+real secrets at egress and bound per destination, per-request structured audit naming the swapped
+secret and its location, MITM with a supplied CA, and native WebSocket/SSE/HTTP2 streaming. It
+runs unprivileged once its listeners are moved off :80/:443, and enforced correctly from inside
+the real workspace image.
+
+Oqto therefore does not build a relay, a resolver, or a flow-event pipeline. It keeps what the
+`EgressEnforcer` contract already assigns it: the canonical policy, compilation to an enforcer's
+native config, per-workspace lifecycle, capability advertisement, and audit correlation.
+
+### B. No privileged daemon: enforcement by absence of network
+
+The premise that a `CAP_NET_ADMIN` daemon must own netns/veth/nftables does not survive contact
+with rootless placements. An unprivileged user can create a network namespace and install an
+nftables default-drop policy inside it (verified), but cannot pin that namespace where rootless
+Podman could join it without a host-visible bind mount, which needs root.
+
+The better mechanism is the one this codebase already ships. A workspace runs with
+`--network=none` and receives granted service endpoints as bind-mounted Unix sockets, bridged to
+loopback TCP inside the placement (`endpoint_bridge`). Bridging the enforcer's tunnel listener in
+this way makes it **the only route out — by absence of any network, not by filtering it**. There
+is nothing to bypass, no capability to hold, and no daemon to run.
+
+Open-ended access is preserved: the single bridged endpoint carries arbitrary HTTP destinations,
+and the enforcer decides which are permitted. Agents keep broad internet access without Oqto
+enumerating hosts.
+
+`oqto-egressd` is therefore **not built**. A privileged component returns only if a placement
+needs a filtered *network* rather than enumerated endpoints — the microVM TAP case — and is then
+scoped to that tier alone.
+
+### C. Policy is protocol-aware, because one enforcer does not see everything
+
+iron-proxy handles HTTP, HTTPS, WebSocket, SSE, HTTP/2 and (separately) PostgreSQL. Anything
+else it **closes**: its own integration test opens a tunnel to port 22, sends non-TLS bytes, and
+asserts the connection is dropped without forwarding.
+
+So a policy modelled only as destinations is wrong. `WorkspaceEgressPolicy` carries
+**protocol/port**, and destinations are routed to the mechanism that can mediate them:
+
+| Traffic | Mediated by |
+|---|---|
+| HTTP-shaped | the egress enforcer (allowlist, credential injection, audit) |
+| SSH | the SSH agent proxy for credentials (ADR-0039), plus its own granted endpoint for reachability |
+| other TCP | an explicit per-destination granted endpoint, or denied |
+
+This also removes an implicit assumption in decision 4: an allowlisted *name* is not sufficient
+authorisation, because the mechanism that enforces it differs by protocol. Making the enforcer
+the only route out would otherwise have silently broken git-over-SSH.
+
+### D. Deny resolved addresses, not just names
+
+Adopt an upstream IP deny list into the policy model regardless of which enforcer is used: even
+when a host is allowlisted, refuse to dial it when its *resolved* address falls in a denied CIDR.
+This closes SSRF and DNS-rebinding, and cloud metadata (169.254.169.254, fd00:ec2::254,
+fd20:ce::254) plus loopback must be denied by default. The spike hit this protection unprompted
+when a test upstream resolved to `::1`. ADR-0035 as written named neither.
+
 ## Consequences
 
+- `oqto-egressd` is not built (Amendment B). The privileged-daemon consequence below applies
+  only to a future microVM TAP tier.
+- `WorkspaceEgressPolicy` carries protocol/port and an upstream deny-CIDR list (Amendments C, D).
+- The reference enforcer is bought rather than built; `oqto-egress` shrinks to the policy model,
+  its compiler, and the probe harness (Amendment A).
 - `NetworkMode::Proxy` (config-only, never implemented) is deleted rather than
   implemented; policy + tier supersede it (`oqto-pgwp`).
 - `oqto-bydk` (strict profile makes agents unusable) is resolved by design:
