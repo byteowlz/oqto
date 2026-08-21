@@ -69,6 +69,31 @@ Tier legend: **S** = propose `stable` for the MVP freeze · **E** = `experimenta
 | `chat.setReasoning` | `viewId, level` | E | reasoning level selector |
 | `chat.setVerbosity` | `viewId, level` | E | chat verbosity setting |
 
+### branch (in-Session tree navigation; harness-capability-gated)
+
+Oqto's domain model separates **Branch** (a path within one Session's entry tree) from **Fork**
+(an independent hard-copied Session with new public identity). The legacy UI already *visualizes*
+branches (`BranchGraphDialog` over oqto-log projections), but live tree navigation — Pi's `/tree`
+— is TUI-only today; Pi RPC does not expose it. Pi's dev harness (immutable entry tree, named
+lanes as cursors, Transcript service; see wiki `pi-new-harness-impact-on-oqto`) turns this into a
+protocol operation, with lanes mapping to Oqto Branches. These verbs are therefore defined now in
+domain language and marked **capability-gated**: the registry lists them, the harness adapter
+reports whether they are executable, and hosts show the affordance only when the capability is
+present — the same bind-semantics/resolve-availability invariant used for Providers.
+
+| Action | Params | Tier | Evidence |
+| --- | --- | --- | --- |
+| `branch.switch` | `sessionId, entryId \| branchId` | E (gated) | Pi `/tree` checkout; branch graph “select to switch” |
+| `branch.create` | `sessionId, fromEntryId, name?` | E (gated) | Pi lanes; “continue from here” without forking |
+| `branch.rename` | `sessionId, branchId, name` | I (gated) | lane naming |
+| `branch.openGraph` | `sessionId` | E | `command.openBranchGraph`, `sessions.branchGraph` — works today from durable history |
+
+`session.fork` stays in `session.*`: it creates new public identity and is executable today.
+A binding or preset referencing a gated verb on a harness without the capability is a doctor
+finding plus disabled affordance, never a broken menu. The branch *structure* itself is a Provider
+(`session.tree`), fed from oqto-log projections today and reconciled with the harness tree by
+stable entry IDs when the new protocol lands — never by text, index, or visible order.
+
 ### agent (harness process control)
 
 | Action | Params | Tier | Evidence |
@@ -189,6 +214,11 @@ file listings, workdir/workspace lists, memories, agents, gallery resources, adm
 7. **Voice is a mode of the composer**, parameterized per View, not a global toggle.
 8. **No `ui.*` namespace.** Everything tempted to live there fit `view.*`, `shell.*`, or
    `appearance.*`; if a future verb doesn't, that is a smell worth a design pass, not a bucket.
+9. **Harness-dependent verbs are registered, not omitted.** `branch.*` exists in the registry with
+   a capability requirement even though Pi RPC cannot execute it yet. Registering the semantic
+   contract early keeps presets and keymaps forward-compatible; execution arrives when the runner
+   adapter reports the capability. The alternative — inventing the verbs at integration time —
+   would couple the config plane to harness release timing.
 
 ## Open questions for the registry design
 
