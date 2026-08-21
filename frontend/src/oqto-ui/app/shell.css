@@ -1757,3 +1757,36 @@
 .wb-gallery__grid small {
 	color: var(--muted-foreground);
 }
+
+/* ------------------------------------------------------- virtual timeline */
+
+.wb-timeline {
+	position: relative;
+	width: 100%;
+	height: var(--timeline-size, auto);
+}
+
+.wb-timeline-row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	padding-bottom: 12px;
+	transform: translateY(var(--row-offset, 0));
+}
+
+.wb-load-earlier {
+	display: block;
+	margin: 0 auto 12px;
+	padding: 6px 14px;
+	font-size: 12px;
+	color: var(--muted-foreground);
+	background: color-mix(in srgb, var(--muted) 40%, transparent);
+	border: 1px solid var(--border);
+	cursor: pointer;
+}
+
+.wb-load-earlier:hover:not(:disabled),
+.wb-load-earlier:focus-visible {
+	color: var(--foreground);
+}

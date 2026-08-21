@@ -674,7 +674,9 @@
 			"contextModel": "Model",
 			"contextWindow": "Context window",
 			"contextUsed": "Used",
-			"tool": "Tool"
+			"tool": "Tool",
+			"loadEarlier": "Load earlier messages",
+			"loadingEarlier": "Loading earlier messages…"
 		},
 		"activity": {
 			"label": "Agent activity",

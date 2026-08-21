@@ -1,5 +1,6 @@
 import type {
 	ChatMessage,
+	MessagePage,
 	ModelOption,
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
@@ -18,6 +19,9 @@ type JsonRecord = {
 	model?: unknown;
 	session_id?: unknown;
 	role?: unknown;
+	messages?: unknown;
+	has_more?: unknown;
+	next_before?: unknown;
 	parts?: unknown;
 	text?: unknown;
 	content?: unknown;
@@ -141,6 +145,22 @@ function parseMessages(value: unknown): ChatMessage[] {
 	});
 }
 
+const DEFAULT_PAGE_SIZE = 200;
+const MAX_PAGE_SIZE = 1_000;
+
+function parseMessagePage(value: unknown, sessionId: string): MessagePage {
+	const page = record(value);
+	if (!page) {
+		return { sessionId, messages: [], hasMore: false, nextBefore: null };
+	}
+	return {
+		sessionId: text(page.session_id) ?? sessionId,
+		messages: parseMessages(page.messages),
+		hasMore: page.has_more === true,
+		nextBefore: text(page.next_before),
+	};
+}
+
 function modelOptions(directories: WorkDirectory[]): ModelOption[] {
 	const ids = new Set<string>();
 	for (const directory of directories) {
@@ -152,6 +172,7 @@ function modelOptions(directories: WorkDirectory[]): ModelOption[] {
 }
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
+	id: "live",
 	async load(requestedSessionId): Promise<OqtoUiSnapshot> {
 		const workDirectories = parseWorkDirectories(
 			await readJson("/api/chat-history?limit=80"),
@@ -161,17 +182,9 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 			sessions.find((session) => session.id === requestedSessionId)?.id ??
 			sessions[0]?.id ??
 			null;
-		const messages = activeSessionId
-			? parseMessages(
-					await readJson(
-						`/api/chat-history/${encodeURIComponent(activeSessionId)}/messages`,
-					),
-				)
-			: [];
 		return {
 			workDirectories,
 			activeSessionId,
-			messages,
 			files: [],
 			workArea: {
 				tabs: [{ id: "chat", owner: "session" }],
@@ -185,5 +198,18 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 				connection: "connected",
 			},
 		};
+	},
+
+	async loadMessages(sessionId, before, limit): Promise<MessagePage> {
+		const params = new URLSearchParams();
+		const size = Math.min(limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+		params.set("limit", String(size));
+		if (before) params.set("before", before);
+		return parseMessagePage(
+			await readJson(
+				`/api/chat-history/${encodeURIComponent(sessionId)}/messages/page?${params.toString()}`,
+			),
+			sessionId,
+		);
 	},
 };

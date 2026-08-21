@@ -185,6 +185,36 @@ function violation(rule, file, node, sourceFile, message) {
 	};
 }
 
+/**
+ * True when every property of the style object literal is a CSS custom
+ * property (name starts with "--") with a computed value. Such styles carry
+ * measured layout data into the stylesheet; visual declarations stay in CSS.
+ */
+function jsxStyleUsesOnlyCustomProperties(styleAttribute) {
+	let initializer = styleAttribute.initializer;
+	// Unwrap JSX expression containers, `as ...` assertions, and parentheses.
+	while (
+		initializer &&
+		(ts.isJsxExpression(initializer) ||
+			ts.isAsExpression(initializer) ||
+			ts.isParenthesizedExpression(initializer))
+	) {
+		initializer = initializer.expression;
+	}
+	if (!initializer || !ts.isObjectLiteralExpression(initializer)) {
+		return false;
+	}
+	return initializer.properties.every((property) => {
+		if (!ts.isPropertyAssignment(property)) return false;
+		const name = property.name;
+		return (
+			(ts.isStringLiteral(name) || ts.isIdentifier(name)) &&
+			name.text.startsWith("--") &&
+			!ts.isStringLiteral(property.initializer)
+		);
+	});
+}
+
 function resolveInternalImport(
 	sourceRoot,
 	sourceFilePath,
@@ -1021,15 +1051,19 @@ function inspectFile(
 		}
 
 		if (ts.isJsxAttribute(node) && node.name.text === "style") {
-			violations.push(
-				violation(
-					"design/inline-style",
-					relative,
-					node,
-					sourceFile,
-					"Inline styles are forbidden in OqtoUI views",
-				),
-			);
+			// Custom properties only (e.g. measured layout values consumed by
+			// stylesheet rules) are acceptable; visual declarations stay in CSS.
+			if (!jsxStyleUsesOnlyCustomProperties(node)) {
+				violations.push(
+					violation(
+						"design/inline-style",
+						relative,
+						node,
+						sourceFile,
+						"Inline styles are forbidden in OqtoUI views (custom properties like --var are allowed)",
+					),
+				);
+			}
 		}
 
 		const value = literalText(node);

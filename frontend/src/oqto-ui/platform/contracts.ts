@@ -92,15 +92,35 @@ export type EnvironmentInfo = {
 export type OqtoUiSnapshot = {
 	workDirectories: WorkDirectory[];
 	activeSessionId: string | null;
-	messages: ChatMessage[];
 	files: FileNode[];
 	workArea: WorkArea;
 	gallery: GalleryResource[];
 	environment: EnvironmentInfo;
 };
 
+/** One page of timeline messages, oldest-first, ending at `nextBefore`. */
+export type MessagePage = {
+	sessionId: string;
+	messages: ChatMessage[];
+	hasMore: boolean;
+	/** Opaque cursor selecting messages strictly older than this page. */
+	nextBefore: string | null;
+};
+
 export type OqtoUiPlatform = {
+	/** Stable adapter identity, part of every query key. */
+	readonly id: string;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;
+	/**
+	 * Load one page of a Session's timeline, oldest-first. `before` is an
+	 * opaque cursor from a previous page's `nextBefore`; omitted returns the
+	 * newest page.
+	 */
+	loadMessages: (
+		sessionId: string,
+		before?: string,
+		limit?: number,
+	) => Promise<MessagePage>;
 };
 
 export type UiNavigation = {

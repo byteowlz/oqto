@@ -199,14 +199,16 @@ describe("OqtoUI splash", () => {
 	it("shows the logo splash while loading and a retryable error splash on failure", async () => {
 		const { OqtoUiShell } = await import("../src/oqto-ui/app/OqtoUiShell");
 		let failures = 0;
+		const scripted = (await import("../src/oqto-ui/dev/scripted-platform"))
+			.scriptedOqtoUiPlatform;
 		const flakyPlatform = {
+			id: "flaky",
 			load: async () => {
 				failures += 1;
 				if (failures === 1) throw new Error("HTTP 500");
-				return (
-					await import("../src/oqto-ui/dev/scripted-platform")
-				).scriptedOqtoUiPlatform.load(null);
+				return scripted.load(null);
 			},
+			loadMessages: scripted.loadMessages.bind(scripted),
 		};
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
@@ -219,7 +221,6 @@ describe("OqtoUI splash", () => {
 				>
 					<OqtoUiShell
 						platform={flakyPlatform}
-						platformId="flaky"
 						workDirectoryId={null}
 						sessionId={null}
 						mobileView="chat"
@@ -241,7 +242,7 @@ describe("OqtoUI splash", () => {
 });
 
 describe("OqtoUI live platform", () => {
-	it("parses session-scoped messages without a session_id field and hides thinking parts", async () => {
+	it("pages session messages through the paged endpoint, hiding thinking parts", async () => {
 		const payloads: Record<string, unknown> = {
 			"/api/chat-history?limit=80": [
 				{
@@ -252,29 +253,43 @@ describe("OqtoUI live platform", () => {
 					updated_at: 1787006011000,
 				},
 			],
-			"/api/chat-history/oqto-abc/messages": [
-				{
-					id: "msg:1",
-					role: "user",
-					parts: [{ type: "text", text: "Hello" }],
-					created_at: 1787006011228,
-				},
-				{
-					id: "msg:2",
-					role: "assistant",
-					parts: [
-						{ type: "thinking", text: "private reasoning" },
-						{ type: "text", text: "Answer" },
-					],
-					created_at: 1787006012000,
-				},
-			],
 		};
+		const pagePayload = (before: string | null) => ({
+			session_id: "oqto-abc",
+			messages: before
+				? [
+						{
+							id: "msg:0",
+							role: "user",
+							parts: [{ type: "text", text: "Hello" }],
+							created_at: 1787006011228,
+						},
+					]
+				: [
+						{
+							id: "msg:2",
+							role: "assistant",
+							parts: [
+								{ type: "thinking", text: "private reasoning" },
+								{ type: "text", text: "Answer" },
+							],
+							created_at: 1787006012000,
+						},
+					],
+			has_more: !before,
+			next_before: before ? null : "v3.1",
+		});
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = (async (input: RequestInfo | URL) =>
-			new Response(JSON.stringify(payloads[String(input)] ?? []), {
-				status: 200,
-			})) as typeof fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes("/messages/page")) {
+				const before = new URL(url, "http://x").searchParams.get("before");
+				return new Response(JSON.stringify(pagePayload(before)), {
+					status: 200,
+				});
+			}
+			return new Response(JSON.stringify(payloads[url] ?? []), { status: 200 });
+		}) as typeof fetch;
 		try {
 			const { liveOqtoUiPlatform } = await import(
 				"../src/oqto-ui/platform/live-platform"
@@ -282,10 +297,20 @@ describe("OqtoUI live platform", () => {
 			const snapshot = await liveOqtoUiPlatform.load("oqto-abc");
 			expect(snapshot.activeSessionId).toBe("oqto-abc");
 			expect(snapshot.workDirectories).toHaveLength(1);
-			expect(snapshot.messages.map((m) => [m.author, m.content])).toEqual([
-				["user", "Hello"],
+			const newest = await liveOqtoUiPlatform.loadMessages("oqto-abc");
+			expect(newest.messages.map((m) => [m.author, m.content])).toEqual([
 				["agent", "Answer"],
 			]);
+			expect(newest.hasMore).toBe(true);
+			expect(newest.nextBefore).toBe("v3.1");
+			const older = await liveOqtoUiPlatform.loadMessages(
+				"oqto-abc",
+				newest.nextBefore ?? undefined,
+			);
+			expect(older.messages.map((m) => [m.author, m.content])).toEqual([
+				["user", "Hello"],
+			]);
+			expect(older.hasMore).toBe(false);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -301,5 +326,27 @@ describe("OqtoUI scripted platform", () => {
 		expect(fallback.activeSessionId).toBe("frontend-rebuild");
 		const explicit = await scriptedOqtoUiPlatform.load("skill-audit");
 		expect(explicit.activeSessionId).toBe("skill-audit");
+	});
+
+	it("pages the scripted timeline without overlap or gaps", async () => {
+		const { scriptedOqtoUiPlatform } = await import(
+			"../src/oqto-ui/dev/scripted-platform"
+		);
+		const seen: string[] = [];
+		let before: string | undefined;
+		for (;;) {
+			const page = await scriptedOqtoUiPlatform.loadMessages(
+				"frontend-rebuild",
+				before,
+				7,
+			);
+			expect(page.sessionId).toBe("frontend-rebuild");
+			seen.push(...page.messages.map((m) => m.id));
+			if (!page.hasMore) break;
+			before = page.nextBefore ?? undefined;
+		}
+		expect(new Set(seen).size).toBe(seen.length);
+		// Newest message must be in the very first page fetched.
+		expect(seen.length).toBeGreaterThan(100);
 	});
 });

@@ -806,6 +806,10 @@ pub struct GetWorkspaceChatSessionMessagesRequest {
     /// Optional limit on number of messages.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Opaque pagination cursor: return only messages strictly older than
+    /// this position. Obtained from `next_before` of a previous response.
+    #[serde(default)]
+    pub before: Option<String>,
     /// Source selector. Authoritative is the default for backwards compatibility.
     #[serde(default)]
     pub source: WorkspaceChatMessagesSource,
@@ -1775,6 +1779,12 @@ pub struct WorkspaceChatSessionMessagesResponse {
     pub source: WorkspaceChatMessagesSource,
     /// Messages in chronological order.
     pub messages: Vec<ChatMessageProto>,
+    /// True when older messages exist before this window (paged requests only).
+    #[serde(default)]
+    pub has_more: bool,
+    /// Cursor for fetching the next-older page (paged requests only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<String>,
 }
 
 /// Response when a workspace chat session is updated.

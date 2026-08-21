@@ -1782,7 +1782,51 @@ impl Runner {
     ) -> RunnerResponse {
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
 
-        let (messages, source_label, source_mode) = match req.source {
+        let paged = req.before.is_some()
+            && matches!(req.source, WorkspaceChatMessagesSource::Authoritative);
+
+        let (messages, source_label, source_mode, has_more, next_before) = match req.source {
+            WorkspaceChatMessagesSource::Authoritative if paged => {
+                let page = if let Ok(home) = std::env::var("HOME") {
+                    let home_path = std::path::Path::new(&home);
+                    match oqto_history::oqto_log::projector::project_session_messages_page_auto(
+                        home_path,
+                        &req.session_id,
+                        req.limit.unwrap_or(200),
+                        req.before.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(page) => page,
+                        Err(err) => {
+                            debug!(
+                                "get_workspace_chat_session_messages session={} source=oqto-log paged error={}",
+                                req.session_id, err
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                match page {
+                    Some(page) => (
+                        page.messages,
+                        "oqto-log",
+                        WorkspaceChatMessagesSource::Authoritative,
+                        page.has_more,
+                        page.next_before,
+                    ),
+                    None => (
+                        Vec::new(),
+                        "empty",
+                        WorkspaceChatMessagesSource::Authoritative,
+                        false,
+                        None,
+                    ),
+                }
+            }
             WorkspaceChatMessagesSource::Authoritative => {
                 let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
                     let home_path = std::path::Path::new(&home);
@@ -1819,7 +1863,13 @@ impl Runner {
 
                 let (messages, source) =
                     select_authoritative_workspace_chat_messages(authoritative_messages);
-                (messages, source, WorkspaceChatMessagesSource::Authoritative)
+                (
+                    messages,
+                    source,
+                    WorkspaceChatMessagesSource::Authoritative,
+                    false,
+                    None,
+                )
             }
             WorkspaceChatMessagesSource::Live => {
                 let live_messages = if session_is_active {
@@ -1828,7 +1878,13 @@ impl Runner {
                     None
                 };
                 let (messages, source) = select_live_workspace_chat_messages(live_messages);
-                (messages, source, WorkspaceChatMessagesSource::Live)
+                (
+                    messages,
+                    source,
+                    WorkspaceChatMessagesSource::Live,
+                    false,
+                    None,
+                )
             }
         };
 
@@ -1845,6 +1901,8 @@ impl Runner {
             session_id: req.session_id,
             source: source_mode,
             messages,
+            has_more,
+            next_before,
         })
     }
 

@@ -787,11 +787,26 @@ impl RunnerClient {
         limit: Option<usize>,
         source: WorkspaceChatMessagesSource,
     ) -> Result<WorkspaceChatSessionMessagesResponse> {
+        self.get_workspace_chat_session_messages_paged(session_id, render, limit, None, source)
+            .await
+    }
+
+    /// Get one page of messages, oldest-first. `before` is an opaque cursor
+    /// from a previous response's `next_before`; `None` returns the newest page.
+    pub async fn get_workspace_chat_session_messages_paged(
+        &self,
+        session_id: impl Into<String>,
+        render: bool,
+        limit: Option<usize>,
+        before: Option<String>,
+        source: WorkspaceChatMessagesSource,
+    ) -> Result<WorkspaceChatSessionMessagesResponse> {
         let req = RunnerRequest::GetWorkspaceChatSessionMessages(
             GetWorkspaceChatSessionMessagesRequest {
                 session_id: session_id.into(),
                 render,
                 limit,
+                before,
                 source,
             },
         );

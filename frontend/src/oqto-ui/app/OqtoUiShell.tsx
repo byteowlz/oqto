@@ -23,7 +23,6 @@ import "./shell.css";
 
 type OqtoUiShellProps = {
 	platform: OqtoUiPlatform;
-	platformId: string;
 	workDirectoryId: string | null;
 	sessionId: string | null;
 	mobileView: string;
@@ -34,7 +33,6 @@ type OqtoUiShellProps = {
 
 export function OqtoUiShell({
 	platform,
-	platformId,
 	workDirectoryId,
 	sessionId,
 	mobileView,
@@ -49,7 +47,7 @@ export function OqtoUiShell({
 		userTheme,
 	);
 	const snapshotQuery = useQuery({
-		queryKey: ["oqto-ui", platformId, sessionId],
+		queryKey: ["oqto-ui", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
 		placeholderData: keepPreviousData,
 		staleTime: 30_000,
@@ -71,10 +69,9 @@ export function OqtoUiShell({
 	return (
 		<LoadedShell
 			snapshot={snapshot}
+			platform={platform}
 			navigation={{ workDirectoryId, sessionId, mobileView, workAreaTab }}
-			schemeId={schemeId}
-			rootRef={rootRef}
-			rootEl={rootEl}
+			theme={{ schemeId, rootRef, rootEl }}
 			userTheme={userTheme}
 			onUserTheme={setUserTheme}
 			shellState={{ sessionsOpen, setSessionsOpen, onNavigate }}
@@ -95,12 +92,17 @@ type ShellState = {
 	onNavigate: (next: UiNavigation) => void;
 };
 
-type LoadedShellProps = {
-	snapshot: OqtoUiSnapshot;
-	navigation: NavigationState;
+type ThemeState = {
 	schemeId: string;
 	rootRef: (root: HTMLDivElement | null) => void;
 	rootEl: HTMLDivElement | null;
+};
+
+type LoadedShellProps = {
+	snapshot: OqtoUiSnapshot;
+	platform: OqtoUiPlatform;
+	navigation: NavigationState;
+	theme: ThemeState;
 	userTheme: OqtoUiUserTheme;
 	onUserTheme: (next: OqtoUiUserTheme) => void;
 	shellState: ShellState;
@@ -108,14 +110,14 @@ type LoadedShellProps = {
 
 function LoadedShell({
 	snapshot,
+	platform,
 	navigation,
-	schemeId,
-	rootRef,
-	rootEl,
+	theme,
 	userTheme,
 	onUserTheme,
 	shellState,
 }: LoadedShellProps) {
+	const { schemeId, rootRef, rootEl } = theme;
 	const { t } = useTranslation();
 	const { sessionsOpen, setSessionsOpen, onNavigate } = shellState;
 	const directories = snapshot.workDirectories;
@@ -138,8 +140,6 @@ function LoadedShell({
 			</div>
 		);
 	}
-	const messages =
-		session.id === snapshot.activeSessionId ? snapshot.messages : [];
 	const status = snapshot.environment.statusBar;
 
 	return (
@@ -179,9 +179,9 @@ function LoadedShell({
 				/>
 				<div className="wb-workarea" data-view={navigation.mobileView}>
 					<ChatWorkspace
+						platform={platform}
 						directory={directory}
 						session={session}
-						messages={messages}
 						tasks={session.tasks ?? []}
 						workArea={snapshot.workArea}
 						workAreaTab={navigation.workAreaTab}

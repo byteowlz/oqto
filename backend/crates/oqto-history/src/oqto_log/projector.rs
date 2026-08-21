@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use oqto_protocol::events::MessageVersion;
 use oqto_protocol::projection::{
-    ProjectedChatMessage, ProjectedChatMessagePart, ProjectedTurnTreeNode,
+    ProjectedChatMessage, ProjectedChatMessagePage, ProjectedChatMessagePart, ProjectedTurnTreeNode,
 };
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -166,6 +166,156 @@ async fn project_session_messages_in_db(
         .collect();
 
     Some(mapped)
+}
+
+/// Encode a stable pagination cursor for a projected message position.
+///
+/// The cursor orders by `(turn_version, seq)`, the same total order the full
+/// projection uses, so pages reconcile by position in the durable log — never
+/// by text, index, or visible order.
+pub fn encode_message_page_cursor(turn_version: i64, seq: i64) -> String {
+    format!("v{turn_version}.{seq}")
+}
+
+/// Decode a pagination cursor produced by [`encode_message_page_cursor`].
+pub fn decode_message_page_cursor(cursor: &str) -> Option<(i64, i64)> {
+    let rest = cursor.strip_prefix('v')?;
+    let (version, seq) = rest.split_once('.')?;
+    Some((version.parse().ok()?, seq.parse().ok()?))
+}
+
+async fn project_session_messages_page_in_db(
+    db_path: &Path,
+    session_id: &str,
+    limit: usize,
+    before: Option<(i64, i64)>,
+) -> Option<ProjectedChatMessagePage> {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .ok()?;
+
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+
+    if exists <= 0 {
+        return None;
+    }
+
+    let cursor_filter = if before.is_some() {
+        "AND (t.turn_version < ? OR (t.turn_version = ? AND m.seq < ?))"
+    } else {
+        ""
+    };
+    let query = format!(
+        r#"
+            SELECT
+              m.message_id AS message_id,
+              t.parent_turn_id AS parent_turn_id,
+              t.role AS role,
+              m.content AS content,
+              m.json_payload AS json_payload,
+              {} AS created_at_ms,
+              t.turn_version AS turn_version,
+              m.seq AS seq
+            FROM oqto_log_turns t
+            JOIN oqto_log_messages m ON m.turn_id = t.turn_id
+            WHERE t.session_id = ?
+            {}
+            ORDER BY t.turn_version DESC, m.seq DESC
+            LIMIT ?
+            "#,
+        projected_created_at_ms_sql(),
+        cursor_filter,
+    );
+
+    let mut q = sqlx::query(&query).bind(session_id);
+    if let Some((version, seq)) = before {
+        q = q.bind(version).bind(version).bind(seq);
+    }
+    // Fetch one extra row to learn whether an older page exists.
+    let mut rows = q
+        .bind((limit + 1) as i64)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+    let has_more = rows.len() > limit;
+    rows.truncate(limit);
+
+    let next_before = if has_more {
+        rows.last().map(|row| {
+            let version: i64 = row.try_get("turn_version").unwrap_or(0);
+            let seq: i64 = row.try_get("seq").unwrap_or(0);
+            encode_message_page_cursor(version, seq)
+        })
+    } else {
+        None
+    };
+
+    // Rows were fetched newest-first; present the page oldest-first.
+    rows.reverse();
+    let messages = rows
+        .into_iter()
+        .enumerate()
+        .map(|(idx, row)| row_to_projected_message(idx, session_id, row))
+        .collect();
+
+    Some(ProjectedChatMessagePage {
+        messages,
+        has_more,
+        next_before,
+    })
+}
+
+/// Project one page of session messages ending at `before` (exclusive), or the
+/// newest page when `before` is `None`. Returns `Ok(None)` when the session is
+/// not present in any oqto-log store.
+pub async fn project_session_messages_page_auto(
+    user_home: &Path,
+    session_id: &str,
+    limit: usize,
+    before: Option<&str>,
+) -> Result<Option<ProjectedChatMessagePage>> {
+    let cursor = match before {
+        Some(raw) => Some(
+            decode_message_page_cursor(raw)
+                .with_context(|| format!("invalid message page cursor: {raw}"))?,
+        ),
+        None => None,
+    };
+
+    if let Some(db_path) = crate::oqto_log::index::lookup_db_path(user_home, session_id).await
+        && let Some(page) =
+            project_session_messages_page_in_db(&db_path, session_id, limit, cursor).await
+    {
+        return Ok(Some(page));
+    }
+
+    let dirs = list_workspace_hash_dirs(user_home).await;
+    for dir in dirs {
+        let db_path = dir.join("oqto-log.sqlite");
+        if !db_path.exists() {
+            continue;
+        }
+        if let Some(page) =
+            project_session_messages_page_in_db(&db_path, session_id, limit, cursor).await
+        {
+            crate::oqto_log::index::record_scan_hit(user_home, &db_path, session_id, None, None)
+                .await;
+            return Ok(Some(page));
+        }
+    }
+
+    Ok(None)
 }
 
 pub async fn project_session_messages_auto(
@@ -325,6 +475,30 @@ pub async fn read_message_version_auto(
     }
 
     Ok(None)
+}
+
+/// Project one page of session messages for a known workspace, oldest-first.
+/// Mirrors [`project_session_messages_page_auto`] for a resolved workspace id.
+#[allow(dead_code)]
+pub async fn project_session_messages_page_for_workspace(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+    limit: usize,
+    before: Option<&str>,
+) -> Result<Option<ProjectedChatMessagePage>> {
+    let cursor = match before {
+        Some(raw) => Some(
+            decode_message_page_cursor(raw)
+                .with_context(|| format!("invalid message page cursor: {raw}"))?,
+        ),
+        None => None,
+    };
+    let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    Ok(project_session_messages_page_in_db(&db_path, session_id, limit, cursor).await)
 }
 
 #[allow(dead_code)]
@@ -546,6 +720,8 @@ mod tests {
     use oqto_pi::AgentMessage;
     use serde_json::Value;
 
+    use oqto_protocol::projection::ProjectedChatMessagePage;
+
     use super::{extract_client_id_from_payload_json, project_session_messages_for_workspace};
     use crate::oqto_log::store::{PiJsonlMessageRecord, replace_session_with_pi_jsonl_records};
 
@@ -630,5 +806,103 @@ mod tests {
         assert_eq!(projected[0].created_at, 1_779_363_330_601);
         assert_eq!(projected[1].created_at, 1_779_363_330_656);
         assert!(projected[0].created_at < projected[1].created_at);
+    }
+
+    #[tokio::test]
+    async fn message_pages_reconcile_by_cursor_without_overlap() {
+        let temp = tempfile::tempdir().expect("create temp home");
+        let user_home = temp.path();
+        let workspace_id = "/tmp/oqto-page-test";
+        let session_id = "session-paging";
+        let records: Vec<PiJsonlMessageRecord> = (0..5)
+            .map(|i| PiJsonlMessageRecord {
+                source_entry_id: format!("entry-{i}"),
+                parent_source_entry_id: if i == 0 {
+                    None
+                } else {
+                    Some(format!("entry-{}", i - 1))
+                },
+                source_sequence: i,
+                message: test_message("user", &format!("msg-{i}"), Some(1_000 + i as u64)),
+            })
+            .collect();
+
+        replace_session_with_pi_jsonl_records(
+            user_home,
+            "user-1",
+            workspace_id,
+            session_id,
+            "oqto-platform-1",
+            Some("external-1"),
+            "external-1",
+            &records,
+        )
+        .await
+        .expect("replace session from Pi JSONL records");
+
+        // Newest page first: messages 3 and 4.
+        let first = super::project_session_messages_page_for_workspace(
+            user_home,
+            workspace_id,
+            session_id,
+            2,
+            None,
+        )
+        .await
+        .expect("first page")
+        .expect("session exists");
+        let stamp = |page: &ProjectedChatMessagePage, idx: usize| page.messages[idx].created_at;
+        assert_eq!(first.messages.len(), 2);
+        assert_eq!(stamp(&first, 0), 1_003_000);
+        assert_eq!(stamp(&first, 1), 1_004_000);
+        assert!(first.has_more);
+        let cursor = first.next_before.clone().expect("cursor for older page");
+
+        // Cursor pages reconcile by durable position, never by text or count:
+        // the same content re-projected must yield the same cursor semantics.
+        let second = super::project_session_messages_page_for_workspace(
+            user_home,
+            workspace_id,
+            session_id,
+            2,
+            Some(&cursor),
+        )
+        .await
+        .expect("second page")
+        .expect("session exists");
+        assert_eq!(second.messages.len(), 2);
+        assert_eq!(stamp(&second, 0), 1_001_000);
+        assert_eq!(stamp(&second, 1), 1_002_000);
+        assert!(second.has_more);
+
+        let cursor2 = second.next_before.clone().expect("cursor for last page");
+        let third = super::project_session_messages_page_for_workspace(
+            user_home,
+            workspace_id,
+            session_id,
+            2,
+            Some(&cursor2),
+        )
+        .await
+        .expect("third page")
+        .expect("session exists");
+        assert_eq!(third.messages.len(), 1);
+        assert_eq!(stamp(&third, 0), 1_000_000);
+        assert!(!third.has_more);
+        assert!(third.next_before.is_none());
+
+        // Pages tile the timeline without overlap or gaps.
+        let mut stamps: Vec<_> = first
+            .messages
+            .iter()
+            .chain(&second.messages)
+            .chain(&third.messages)
+            .map(|m| m.created_at)
+            .collect();
+        stamps.sort();
+        assert_eq!(
+            stamps,
+            vec![1_000_000, 1_001_000, 1_002_000, 1_003_000, 1_004_000]
+        );
     }
 }

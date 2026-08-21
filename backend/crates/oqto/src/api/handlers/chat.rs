@@ -811,6 +811,12 @@ pub struct ChatMessagesQuery {
     pub render: bool,
     /// If set, route the request to the shared workspace's runner instead of the personal runner.
     pub shared_workspace_id: Option<String>,
+    /// Page size for the paged endpoint.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Opaque cursor from a previous paged response's `next_before`.
+    #[serde(default)]
+    pub before: Option<String>,
 }
 
 /// Convert a runner chat messages response to canonical format.
@@ -935,6 +941,104 @@ pub async fn get_chat_messages(
         "Listed chat messages via runner"
     );
     Ok(Json(canonical))
+}
+
+/// Response envelope for the paged messages endpoint.
+#[derive(serde::Serialize)]
+pub struct ChatMessagesPageResponse {
+    pub session_id: String,
+    pub messages: Vec<oqto_protocol::messages::Message>,
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<String>,
+}
+
+const DEFAULT_MESSAGE_PAGE_SIZE: usize = 200;
+const MAX_MESSAGE_PAGE_SIZE: usize = 1_000;
+
+/// Get one page of chat messages, oldest-first.
+///
+/// Query params:
+/// - `limit`: page size (default 200, max 1000)
+/// - `before`: opaque cursor from a previous response's `next_before`;
+///   omitted returns the newest page
+/// - `render`, `shared_workspace_id`: as on `/messages`
+pub async fn get_chat_messages_page(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<ChatMessagesQuery>,
+) -> ApiResult<Json<ChatMessagesPageResponse>> {
+    let mut resolved_session_id = session_id;
+    if !is_oqto_session_id(&resolved_session_id) {
+        let effective_user = state.effective_linux_username(user.id());
+        let user_home = if state.user_isolation_enabled() {
+            std::path::PathBuf::from(format!("/home/{effective_user}"))
+        } else {
+            dirs::home_dir().ok_or_else(|| {
+                ApiError::internal("could not resolve user home for session lookup")
+            })?
+        };
+
+        if let Some(platform_id) =
+            oqto_history::oqto_log::ops::find_platform_by_external(&user_home, &resolved_session_id)
+                .await
+        {
+            tracing::debug!(
+                session_id = %resolved_session_id,
+                platform_id = %platform_id,
+                "resolved legacy external session id to platform id"
+            );
+            resolved_session_id = platform_id;
+        }
+    }
+
+    let target = resolve_session_target(
+        &state,
+        user.id(),
+        &resolved_session_id,
+        query.shared_workspace_id.as_deref(),
+        is_multi_user_mode(&state),
+    )
+    .await?;
+
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
+
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_MESSAGE_PAGE_SIZE)
+        .clamp(1, MAX_MESSAGE_PAGE_SIZE);
+
+    let response = runner
+        .get_workspace_chat_session_messages_paged(
+            &resolved_session_id,
+            query.render,
+            Some(limit),
+            query.before.clone(),
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
+
+    let page = ChatMessagesPageResponse {
+        session_id: resolved_session_id.clone(),
+        has_more: response.has_more,
+        next_before: response.next_before.clone(),
+        messages: convert_runner_response(response),
+    };
+
+    info!(
+        user_id = %user.id(),
+        session_id = %resolved_session_id,
+        shared_workspace_id = ?query.shared_workspace_id,
+        count = page.messages.len(),
+        has_more = page.has_more,
+        "Listed paged chat messages via runner"
+    );
+    Ok(Json(page))
 }
 
 #[cfg(test)]

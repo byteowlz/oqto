@@ -8,7 +8,6 @@ export default function DevOqtoUiRoute() {
 	return (
 		<OqtoUiShell
 			platform={scriptedOqtoUiPlatform}
-			platformId="scripted"
 			workDirectoryId={searchParams.get("workDirectory")}
 			sessionId={searchParams.get("session")}
 			mobileView={searchParams.get("view") === "files" ? "files" : "chat"}

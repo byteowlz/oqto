@@ -1,3 +1,4 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
 	Bot,
 	Copy,
@@ -7,10 +8,11 @@ import {
 	TestTube2,
 	User,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type {
 	ChatMessage,
+	OqtoUiPlatform,
 	SessionOverview,
 	SessionTask,
 	UiNavigation,
@@ -20,11 +22,12 @@ import type {
 import { Composer } from "./Composer";
 import { TaskProgress } from "./TaskProgress";
 import { EditorPane, TerminalPane, WorkAreaTabs } from "./WorkAreaPanes";
+import { useTimeline } from "./useTimeline";
 
 type ChatWorkspaceProps = {
+	platform: Pick<OqtoUiPlatform, "id" | "loadMessages">;
 	directory: WorkDirectory;
 	session: SessionOverview;
-	messages: ChatMessage[];
 	tasks: SessionTask[];
 	workArea: WorkArea;
 	workAreaTab: string;
@@ -98,9 +101,9 @@ function MessageGroup({ message, agentName }: MessageGroupProps) {
 }
 
 export function ChatWorkspace({
+	platform,
 	directory,
 	session,
-	messages,
 	tasks,
 	workArea,
 	workAreaTab,
@@ -132,7 +135,12 @@ export function ChatWorkspace({
 				{workAreaTab !== "editor" &&
 				workAreaTab !== "terminal" &&
 				workAreaTab !== "gallery" ? (
-					<ChatPane directory={directory} messages={messages} tasks={tasks} />
+					<ChatPane
+						platform={platform}
+						directory={directory}
+						sessionId={session.id}
+						tasks={tasks}
+					/>
 				) : null}
 			</div>
 		</main>
@@ -140,23 +148,128 @@ export function ChatWorkspace({
 }
 
 type ChatPaneProps = {
+	platform: Pick<OqtoUiPlatform, "id" | "loadMessages">;
 	directory: WorkDirectory;
-	messages: ChatMessage[];
+	sessionId: string;
 	tasks: SessionTask[];
 };
 
-function ChatPane({ directory, messages, tasks }: ChatPaneProps) {
+function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 	const { t } = useTranslation();
+	const timeline = useTimeline(platform, sessionId);
+	const scrollRef = useRef<HTMLElement | null>(null);
+	// Viewport anchoring: keep the visible content stable when an earlier page
+	// prepends, and follow the tail until the user scrolls away from it.
+	const anchorRef = useRef({ totalSize: 0, sessionId });
+	const followTailRef = useRef(true);
+
+	// Stable identity matters: the virtualizer memoizes on getItemKey, and a
+	// fresh closure per render would notify-and-rerender forever.
+	const getItemKey = useCallback(
+		(index: number) => timeline.messages[index]?.id ?? index,
+		[timeline.messages],
+	);
+
+	const virtualizer = useVirtualizer({
+		count: timeline.messages.length,
+		getScrollElement: () => scrollRef.current,
+		estimateSize: () => 96,
+		overscan: 8,
+		getItemKey,
+		isScrollingResetDelay: 150,
+	});
+
+	const firstMessageId = timeline.messages[0]?.id ?? null;
+	useLayoutEffect(() => {
+		const element = scrollRef.current;
+		if (!element) return;
+		const anchor = anchorRef.current;
+		if (anchor.sessionId !== sessionId) {
+			anchorRef.current = { totalSize: 0, sessionId };
+			followTailRef.current = true;
+			return;
+		}
+		const totalSize = virtualizer.getTotalSize();
+		const grew = totalSize - anchor.totalSize;
+		if (followTailRef.current) {
+			// Follow the newest content until the user scrolls up.
+			element.scrollTop = element.scrollHeight;
+		} else if (grew > 0 && firstMessageId !== null) {
+			// An earlier page prepended: shift the viewport by the growth so
+			// the messages the user was reading stay in place.
+			element.scrollTop += grew;
+		}
+		anchorRef.current = { totalSize, sessionId };
+	});
+
+	const visibleItems = virtualizer.getVirtualItems();
+	const autoLoadRef = useRef({ hasMore: false, loading: false });
+	autoLoadRef.current = {
+		hasMore: timeline.hasMore,
+		loading: timeline.loadingEarlier,
+	};
+
 	return (
 		<>
-			<section className="wb-chat-panel" aria-label={t("oqtoUi.chat.timeline")}>
-				{messages.map((message) => (
-					<MessageGroup
-						agentName={directory.name}
-						key={message.id}
-						message={message}
-					/>
-				))}
+			<section
+				className="wb-chat-panel"
+				aria-label={t("oqtoUi.chat.timeline")}
+				ref={scrollRef}
+				onScroll={(event) => {
+					const element = event.currentTarget;
+					const distanceToBottom =
+						element.scrollHeight - element.scrollTop - element.clientHeight;
+					followTailRef.current = distanceToBottom < 48;
+					// Reaching the top loads the next-older page.
+					if (
+						element.scrollTop < 64 &&
+						autoLoadRef.current.hasMore &&
+						!autoLoadRef.current.loading
+					) {
+						timeline.loadEarlier();
+					}
+				}}
+			>
+				{timeline.hasMore || timeline.loadingEarlier ? (
+					<button
+						className="wb-load-earlier"
+						type="button"
+						onClick={timeline.loadEarlier}
+						disabled={timeline.loadingEarlier}
+					>
+						{timeline.loadingEarlier
+							? t("oqtoUi.chat.loadingEarlier")
+							: t("oqtoUi.chat.loadEarlier")}
+					</button>
+				) : null}
+				<div
+					className="wb-timeline"
+					style={
+						{
+							"--timeline-size": `${virtualizer.getTotalSize()}px`,
+						} as React.CSSProperties
+					}
+				>
+					{visibleItems.map((row) => {
+						const message = timeline.messages[row.index];
+						if (!message) return null;
+						return (
+							<div
+								className="wb-timeline-row"
+								key={row.key}
+								data-index={row.index}
+								ref={virtualizer.measureElement}
+								style={
+									{
+										"--row-offset": `${row.start}px`,
+									} as React.CSSProperties
+								}
+							>
+								<MessageGroup agentName={directory.name} message={message} />
+							</div>
+						);
+					})}
+				</div>
 			</section>
 
 			<TaskProgress tasks={tasks} placement="desktop" />

@@ -6,6 +6,21 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One page of projected chat messages, oldest-first, ending at the newest
+/// message not excluded by the request cursor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectedChatMessagePage {
+    /// Messages in chronological order.
+    pub messages: Vec<ProjectedChatMessage>,
+    /// True when older messages exist before this page.
+    #[serde(default)]
+    pub has_more: bool,
+    /// Opaque cursor selecting messages strictly older than this page.
+    /// Pass back as `before` to fetch the previous page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectedChatMessage {
     pub id: String,
