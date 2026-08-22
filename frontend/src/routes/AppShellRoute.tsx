@@ -464,6 +464,9 @@ const AppShell = memo(function AppShell() {
 		(hit: SearchHit) => {
 			try {
 				setSessionSearch("");
+				// Return the sidebar to the session list; leaving messages mode
+				// active with a cleared query desyncs the search controls.
+				setSearchMode("sessions");
 				const targetMessageId =
 					typeof hit.message_id === "string"
 						? hit.message_id
@@ -477,8 +480,13 @@ const AppShell = memo(function AppShell() {
 						typeof hit.session_id === "string" ? hit.session_id : "";
 					if (sessionId) {
 						const existingSession = chatHistory.find((s) => s.id === sessionId);
+						// Only trust hit.workspace when it is an actual filesystem
+						// path. oqto-log hits carry opaque store ids in older
+						// payloads; using one as a path corrupts project grouping.
 						const hitWorkspace =
-							typeof hit.workspace === "string" ? hit.workspace : null;
+							typeof hit.workspace === "string" && hit.workspace.startsWith("/")
+								? hit.workspace
+								: null;
 						const workspacePath =
 							hitWorkspace ?? existingSession?.workspace_path ?? null;
 						const normalizedWorkspacePath =
@@ -545,6 +553,7 @@ const AppShell = memo(function AppShell() {
 			createOptimisticChatSession,
 			sharedWs.sharedWorkspaces,
 			setActiveAppId,
+			setSearchMode,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
 			setSelectedProjectKey,
