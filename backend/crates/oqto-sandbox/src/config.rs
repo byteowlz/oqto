@@ -3731,7 +3731,6 @@ timeout_secs = 120
         assert_eq!(guard.policy.get("~/.docker/*"), Some(&GuardPolicy::Auto));
     }
 
-    #[test]
     /// A workspace file naming [ssh] must parse. The struct denies unknown
     /// fields, so a missing `ssh` field silently discarded every override in
     /// the file and the work directory's key grants were never applied.

@@ -296,6 +296,15 @@ fn parse_agent_message(value: serde_json::Value) -> Option<AgentMessage> {
     })
 }
 
+/// Number of JSONL message rows the importer would store durably.
+///
+/// The validator must count with the exact same semantics as the importer
+/// (this function), never with its own skip rules: divergent counting shows
+/// up as phantom session mismatches on deploy.
+pub(crate) fn count_importable_jsonl_messages(path: &Path) -> usize {
+    read_jsonl_message_records(path).len()
+}
+
 fn read_jsonl_message_records(path: &Path) -> Vec<PiJsonlMessageRecord> {
     use std::io::BufRead;
 
