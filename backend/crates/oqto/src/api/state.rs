@@ -309,7 +309,6 @@ pub struct AppState {
     /// Shared workspace service for multi-user collaborative workspaces.
     pub shared_workspaces: Option<Arc<SharedWorkspaceService>>,
     /// Event bus engine for scoped pub/sub.
-    pub bus: Arc<crate::bus::BusEngine>,
     /// User-plane request/error counters by path and operation.
     pub user_plane_metrics: Arc<crate::user_plane::UserPlaneMetrics>,
     /// Path to a reference models.json to copy to new users when eavs is not configured.
@@ -380,11 +379,6 @@ impl AppState {
             pi_default_model: None,
             pi_models_template_path: None,
             shared_workspaces: None,
-            bus: {
-                let bus = Arc::new(crate::bus::BusEngine::new(None));
-                bus.start_background_flusher();
-                bus
-            },
             user_plane_metrics: Arc::new(crate::user_plane::UserPlaneMetrics::default()),
         }
     }
@@ -502,10 +496,6 @@ impl AppState {
     pub fn with_shared_workspaces(mut self, service: SharedWorkspaceService) -> Self {
         let sw = Arc::new(service);
         self.shared_workspaces = Some(sw.clone());
-        // Rebuild bus engine with shared workspace access for membership checks
-        let bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
-        bus.start_background_flusher();
-        self.bus = bus;
         self
     }
 

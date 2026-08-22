@@ -41,8 +41,8 @@ pub use sessions::{
 
 // Chat history handlers and types
 pub use chat::{
-    backfill_chat_history, delete_chat_session, get_chat_messages, get_chat_session,
-    list_chat_history, list_chat_history_grouped, update_chat_session,
+    backfill_chat_history, delete_chat_session, get_chat_messages, get_chat_messages_page,
+    get_chat_session, list_chat_history, list_chat_history_grouped, update_chat_session,
 };
 pub use feedback::create_feedback;
 
@@ -57,7 +57,7 @@ pub use projects::{
 // Admin handlers and types
 pub use admin::{
     admin_cleanup_local_sessions, admin_force_stop_session, admin_list_sessions,
-    admin_metrics_stream, get_admin_stats, get_bus_stats, publish_bus_event,
+    admin_metrics_stream, get_admin_stats,
 };
 
 // User management (admin)
