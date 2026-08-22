@@ -31,6 +31,13 @@ enabled = true
 # Or use a custom profile defined below
 profile = "development"
 
+# Top-level overrides union with the selected profile. The per-user runtime
+# directory holds privileged endpoints: the runner control socket and other
+# per-session credentials. Workspaces must never see it -- the runner refuses
+# to start when its control socket is visible under the loaded policy
+# (reachability is not an authorization boundary).
+deny_read = ["/run/user"]
+
 # ==============================================================================
 # Built-in Profile Presets
 # ==============================================================================

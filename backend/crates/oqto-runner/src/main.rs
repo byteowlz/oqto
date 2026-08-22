@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oqto_runner::daemon::bootstrap::{
-    get_default_socket_path, inherited_unix_listener, load_env_file, load_sandbox_config,
-    log_sandbox_state,
+    ensure_control_socket_isolated, get_default_socket_path, inherited_unix_listener,
+    load_env_file, load_sandbox_config, log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
 use oqto_runner::daemon::server::{Runner, SessionBinaries};
@@ -115,6 +115,11 @@ async fn main() -> Result<()> {
     )?;
     log_sandbox_state(&sandbox_config);
 
+    // The control socket is an unauthenticated-capability boundary into the
+    // runner. If the loaded sandbox policy leaves it visible to workspaces,
+    // refuse to start rather than shipping a reachable control plane.
+    ensure_control_socket_isolated(&socket_path, sandbox_config.as_ref())?;
+
     #[cfg(not(target_os = "linux"))]
     if sandbox_config.is_some() {
         warn!(
@@ -153,6 +158,16 @@ async fn main() -> Result<()> {
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
+        extra_deny_read: {
+            let mut denied = vec![socket_path.clone()];
+            if let Some(key) = args.tls_key.as_ref() {
+                denied.push(key.clone());
+            }
+            if let Some(ca) = args.tls_client_ca.as_ref() {
+                denied.push(ca.clone());
+            }
+            denied
+        },
     };
     let pi_manager = PiSessionManager::new(pi_config);
 

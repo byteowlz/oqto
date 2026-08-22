@@ -56,6 +56,10 @@ pub struct PiManagerConfig {
     /// Directory for persisting the model cache across restarts.
     /// Each workdir gets its own JSON file: `<cache_dir>/models/<hash>.json`
     pub model_cache_dir: Option<PathBuf>,
+    /// Host paths that must never be visible inside a sandboxed workspace
+    /// (runner control socket, TLS key material). Unioned into the effective
+    /// sandbox deny_read at spawn time.
+    pub extra_deny_read: Vec<PathBuf>,
 }
 
 impl Default for PiManagerConfig {
@@ -91,6 +95,7 @@ impl Default for PiManagerConfig {
             sandbox_config: None,
             runner_id: "local".to_string(),
             model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
+            extra_deny_read: Vec::new(),
         }
     }
 }
@@ -861,6 +866,15 @@ impl PiSessionManager {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
                 let mut effective_config = sandbox_config.with_workspace_config(&config.cwd);
+                // Host secrets are never workspace-visible, regardless of
+                // profile grants: the runner control socket and TLS key
+                // material are denied explicitly.
+                for denied in &self.config.extra_deny_read {
+                    let denied_str = denied.to_string_lossy().to_string();
+                    if !effective_config.deny_read.contains(&denied_str) {
+                        effective_config.deny_read.push(denied_str);
+                    }
+                }
                 if !effective_config
                     .extra_rw_bind
                     .contains(&session_socket_dir_str)

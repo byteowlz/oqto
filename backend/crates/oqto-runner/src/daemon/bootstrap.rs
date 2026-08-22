@@ -110,6 +110,79 @@ pub fn log_sandbox_state(sandbox_config: &Option<SandboxConfig>) {
     }
 }
 
+/// True when `path` or one of its ancestors is denied by the policy's
+/// deny_read list, so sandboxed workspaces cannot see it.
+fn path_denied_by_policy(deny_read: &[String], path: &Path) -> bool {
+    deny_read.iter().any(|denied| {
+        let denied_path = Path::new(denied);
+        path.starts_with(denied_path)
+    })
+}
+
+/// Refuse to start when the runner control socket is visible under the loaded
+/// sandbox policy. Reachability is not an authorization boundary: a workspace
+/// that can see the socket must not exist.
+pub fn ensure_control_socket_isolated(
+    socket_path: &Path,
+    sandbox_config: Option<&SandboxConfig>,
+) -> Result<()> {
+    let Some(config) = sandbox_config else {
+        return Ok(());
+    };
+    if !config.enabled {
+        return Ok(());
+    }
+    if path_denied_by_policy(&config.deny_read, socket_path) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Runner control socket {} is visible to sandboxed workspaces under the \
+         '{}' sandbox policy. Move the socket outside workspace view (set \
+         XDG_RUNTIME_DIR to a sandbox-denied directory) or add its directory \
+         to the policy's deny_read list.",
+        socket_path.display(),
+        config.profile
+    );
+}
+
+#[cfg(test)]
+mod control_socket_isolation_tests {
+    use super::*;
+
+    fn config(enabled: bool, deny_read: Vec<String>) -> SandboxConfig {
+        let mut config = SandboxConfig::minimal();
+        config.enabled = enabled;
+        config.deny_read = deny_read;
+        config
+    }
+
+    #[test]
+    fn refuses_socket_visible_under_enabled_policy() {
+        let cfg = config(true, vec!["/home/alice/.ssh".to_string()]);
+        let result = ensure_control_socket_isolated(Path::new("/tmp/oqto-runner.sock"), Some(&cfg));
+        assert!(result.is_err(), "socket in /tmp must be refused");
+    }
+
+    #[test]
+    fn allows_socket_under_deny_read_directory() {
+        let cfg = config(true, vec!["/run/oqto".to_string()]);
+        let result = ensure_control_socket_isolated(Path::new("/run/oqto/runner.sock"), Some(&cfg));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn skips_check_when_sandbox_disabled_or_absent() {
+        assert!(
+            ensure_control_socket_isolated(
+                Path::new("/tmp/oqto-runner.sock"),
+                Some(&config(false, vec![]))
+            )
+            .is_ok()
+        );
+        assert!(ensure_control_socket_isolated(Path::new("/tmp/oqto-runner.sock"), None).is_ok());
+    }
+}
+
 pub fn load_env_file() {
     let env_path = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());

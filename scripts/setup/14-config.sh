@@ -58,6 +58,11 @@ write_skdlr_agent_config() {
     sudo chmod 644 "$sandbox_config"
   fi
 
+  # Ensure the per-user runtime directory is denied to workspaces. The runner
+  # control socket lives under XDG_RUNTIME_DIR; if a workspace can see it, the
+  # runner refuses to start (reachability is not an authorization boundary).
+  ensure_sandbox_runtime_dir_deny "$sandbox_config"
+
   sudo tee "$skdlr_config" >/dev/null <<'EOF'
 # skdlr config for Oqto sandboxed agents
 # Forces all scheduled commands through oqto-sandbox
@@ -68,6 +73,38 @@ wrapper_args = ["--config", "/etc/oqto/sandbox.toml", "--workspace", "{workdir}"
 EOF
 
   sudo chmod 644 "$skdlr_config"
+}
+
+# Idempotently merge deny_read = ["/run/user"] as a top-level override into an
+# existing operator-owned sandbox.toml. Preserve-first: backs up before any
+# change and never touches profile sections or unknown entries.
+ensure_sandbox_runtime_dir_deny() {
+  local cfg="$1"
+  [[ -f "$cfg" ]] || return 0
+
+  # Marker-based idempotency: only the top-level override carries it.
+  if sudo grep -q "oqto-setup: deny per-user runtime dir" "$cfg"; then
+    return 0
+  fi
+
+  # Top-level keys must appear before the first [table] header.
+  local backup="${cfg}.backup.$(date +%Y%m%d%H%M%S)"
+  sudo cp "$cfg" "$backup"
+  sudo awk '
+    !inserted && /^[[:space:]]*\[/ {
+      print "# oqto-setup: deny per-user runtime dir (runner control socket)."
+      print "deny_read = [\"/run/user\"]"
+      print ""
+      inserted = 1
+    }
+    { print }
+    END { if (!inserted) {
+      print "# oqto-setup: deny per-user runtime dir (runner control socket)."
+      print "deny_read = [\"/run/user\"]"
+    } }
+  ' "$cfg" | sudo tee "${cfg}.tmp" > /dev/null
+  sudo mv "${cfg}.tmp" "$cfg"
+  log_info "Added /run/user deny_read to $sandbox_config (backup: $backup)"
 }
 
 generate_config() {
