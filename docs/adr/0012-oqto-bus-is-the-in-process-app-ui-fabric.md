@@ -1,5 +1,16 @@
 # oqto-bus is the in-process app/UI event fabric, distinct from gvnr
 
+> **Status update (2026-08-21): Superseded — the bus was removed.** The bus's
+> own survival condition (no consumer beyond an admin debug panel; App and
+> Customization consumers, ADR-0038/0040, never shipped against it) triggered.
+> A cross-account authorization hole in `BusEngine::authorize_scope`
+> (`oqto-07q8`) forced the decision: fix or remove before exposing consumers.
+> Removal proof: `backend/crates/oqto/src/bus/` deleted along with the WS `bus`
+> channel, `/admin/bus/*` routes, frontend `bus-client`/`use-bus`, and the
+> admin Event Bus panel; no production consumer existed. If a future app/UI
+> fabric is needed, design it against ADR-0039 capability endpoints and this
+> ADR's original separation rationale rather than reviving the bus.
+
 oqto-bus (`backend/.../bus/`, scoped pub/sub over the WS mux's `system` channel; session/workspace/global scopes; server-enforced authz; design 20260314) is kept, and is a different layer from the gvnr event log (ADR-0004). They are not redundant:
 
 - **oqto-bus**: in-process (one backend), ephemeral/in-memory, real-time. Job: live app/UI/agent pub/sub within a session or workspace — inline HTML apps publishing events the agent or another browser tab reacts to, multi-tab coordination, UI intents. The canonical channels carry the agent *conversation*; the bus carries everything app/UI around it.

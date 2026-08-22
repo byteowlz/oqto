@@ -17,8 +17,7 @@ export type Channel =
 	| "hstry"
 	| "session"
 	| "trx"
-	| "system"
-	| "bus";
+	| "system";
 
 // ============================================================================
 // Commands (Frontend -> Backend)
@@ -287,101 +286,13 @@ export type SessionWsCommand =
 			limit?: number;
 	  } & WsCommandBase);
 
-// ============================================================================
-// Bus Channel Types
-// ============================================================================
-
-/** Bus event scope */
-export type BusScope = "session" | "workspace" | "global";
-
-/** Bus event source (server-stamped, never client-provided) */
-export type BusEventSource =
-	| { type: "app"; app_id: string; user_id: string; session_id: string }
-	| { type: "agent"; user_id: string; session_id: string; runner_id: string }
-	| { type: "runner"; user_id: string; runner_id: string }
-	| { type: "frontend"; user_id: string; session_id?: string }
-	| { type: "service"; service: string; user_id?: string }
-	| { type: "admin"; user_id: string }
-	| { type: "backend" };
-
-/** Canonical bus event envelope */
-export type BusEvent = {
-	event_id: string;
-	scope: BusScope;
-	scope_id: string;
-	topic: string;
-	payload: unknown;
-	source: BusEventSource;
-	ts: number;
-	v: number;
-	priority?: string;
-	ttl_ms?: number;
-	idempotency_key?: string;
-	correlation_id?: string;
-	ack?: { reply_to: string; timeout_ms: number };
-};
-
-/** Bus channel commands */
-export type BusWsCommand =
-	| ({
-			channel: "bus";
-			type: "publish";
-			scope: BusScope;
-			scope_id: string;
-			topic: string;
-			payload: unknown;
-			v?: number;
-			priority?: string;
-			ttl_ms?: number;
-			idempotency_key?: string;
-			correlation_id?: string;
-			ack?: { reply_to: string; timeout_ms: number };
-	  } & WsCommandBase)
-	| ({
-			channel: "bus";
-			type: "subscribe";
-			topics: string[];
-			scope: BusScope;
-			scope_id: string;
-			filter?: Record<string, unknown>;
-	  } & WsCommandBase)
-	| ({
-			channel: "bus";
-			type: "unsubscribe";
-			topics: string[];
-			scope: BusScope;
-			scope_id: string;
-	  } & WsCommandBase)
-	| ({
-			channel: "bus";
-			type: "pull";
-			topics: string[];
-			scope: BusScope;
-			scope_id: string;
-			since_ts?: number;
-			limit?: number;
-	  } & WsCommandBase);
-
-/** Bus channel events */
-export type BusWsEvent =
-	| ({ channel: "bus"; type: "event" } & BusEvent)
-	| ({
-			channel: "bus";
-			type: "response";
-			success: boolean;
-			error?: string;
-			data?: unknown;
-	  } & WsEventBase);
-
-/** All possible WebSocket commands */
 export type WsCommand =
 	| AgentWsCommand
 	| FilesWsCommand
 	| TerminalWsCommand
 	| HstryWsCommand
 	| TrxWsCommand
-	| SessionWsCommand
-	| BusWsCommand;
+	| SessionWsCommand;
 
 export type WsSessionCommand = SessionWsCommand;
 
@@ -621,8 +532,7 @@ export type WsEvent =
 	| TerminalWsEvent
 	| HstryWsEvent
 	| TrxWsEvent
-	| SystemWsEvent
-	| BusWsEvent;
+	| SystemWsEvent;
 
 // ============================================================================
 // Handler Types

@@ -66,7 +66,6 @@ static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, ClientIdEntry
 mod agent;
 mod files;
 mod history;
-mod system;
 mod terminal;
 
 fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {
@@ -197,7 +196,6 @@ pub enum Channel {
     Trx,
     Session,
     System,
-    Bus,
 }
 
 // ============================================================================
@@ -213,7 +211,6 @@ pub enum WsCommand {
     Terminal(TerminalWsCommand),
     Trx(TrxWsCommand),
     Session(SessionWsCommand),
-    Bus(crate::bus::BusCommand),
 }
 
 /// Files channel commands.
@@ -468,7 +465,6 @@ pub enum WsEvent {
     Terminal(TerminalWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
-    Bus(crate::bus::BusWsEvent),
 }
 
 /// Files channel events (placeholder).
@@ -898,8 +894,6 @@ struct WsConnectionState {
     /// for that workspace's Linux user is stored here so subsequent commands
     /// (prompt, get_state, etc.) route to the correct runner.
     session_runner_overrides: HashMap<String, RunnerClient>,
-    /// Bus subscriber ID for this connection.
-    bus_subscriber_id: crate::bus::SubscriberId,
     /// Whether the authenticated principal may open interactive terminals.
     /// Decided once at connect from the JWT role; terminals bypass the agent
     /// seam, so ordinary users never get one.
@@ -960,7 +954,6 @@ async fn handle_multiplexed_ws(
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
         session_runner_overrides: HashMap::new(),
-        bus_subscriber_id: 0, // Set after bus registration
         terminal_allowed,
     }));
 
@@ -1054,22 +1047,6 @@ async fn handle_multiplexed_ws(
         }
     });
 
-    // Register bus subscriber for this WS connection.
-    let (bus_sub_id, mut bus_rx) = state.bus.register(&user_id);
-    {
-        let mut cs = conn_state.lock().await;
-        cs.bus_subscriber_id = bus_sub_id;
-    }
-    let event_tx_for_bus = event_tx.clone();
-    let bus_forwarder = tokio::spawn(async move {
-        while let Some(bus_event) = bus_rx.recv().await {
-            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(Box::new(bus_event)));
-            if event_tx_for_bus.send(ws_event).is_err() {
-                break;
-            }
-        }
-    });
-
     // Per-channel workers avoid head-of-line blocking.
     // A slow files.tree must never block agent prompt/abort/session commands.
     let (agent_cmd_tx, agent_cmd_rx) = mpsc::channel::<WsCommand>(256);
@@ -1120,7 +1097,6 @@ async fn handle_multiplexed_ws(
                                 let target_tx = match &cmd {
                                     WsCommand::Agent(_) => &agent_cmd_tx,
                                     WsCommand::Files(_) => &files_cmd_tx,
-                                    WsCommand::Bus(_) => &misc_cmd_tx,
                                     _ => &misc_cmd_tx,
                                 };
 
@@ -1168,8 +1144,6 @@ async fn handle_multiplexed_ws(
     // Cleanup
     event_writer.abort();
     hub_forwarder.abort();
-    bus_forwarder.abort();
-    state.bus.unregister(bus_sub_id);
     agent_worker.abort();
     files_worker.abort();
     misc_worker.abort();
@@ -1418,7 +1392,7 @@ async fn validate_workspace_path_for_user(
 async fn handle_ws_command(
     cmd: WsCommand,
     user_id: &str,
-    is_admin: bool,
+    _is_admin: bool,
     state: &AppState,
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -1458,9 +1432,6 @@ async fn handle_ws_command(
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await
-        }
-        WsCommand::Bus(bus_cmd) => {
-            system::handle_bus_command(bus_cmd, user_id, is_admin, state, conn_state).await
         }
     }
 }
@@ -1523,12 +1494,6 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | TrxWsCommand::Sync { id, .. } => id.clone(),
         },
         WsCommand::Session(_) => None,
-        WsCommand::Bus(bus_cmd) => match bus_cmd {
-            crate::bus::BusCommand::Publish { id, .. }
-            | crate::bus::BusCommand::Subscribe { id, .. }
-            | crate::bus::BusCommand::Unsubscribe { id, .. }
-            | crate::bus::BusCommand::Pull { id, .. } => id.clone(),
-        },
     }
 }
 
@@ -1662,15 +1627,6 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
         WsCommand::Session(session_cmd) => {
             let session_id = history::extract_legacy_session_id(&session_cmd.cmd);
             ("session.legacy".to_string(), session_id, None)
-        }
-        WsCommand::Bus(bus_cmd) => {
-            let label = match &bus_cmd {
-                crate::bus::BusCommand::Publish { topic, .. } => format!("bus.publish.{}", topic),
-                crate::bus::BusCommand::Subscribe { .. } => "bus.subscribe".to_string(),
-                crate::bus::BusCommand::Unsubscribe { .. } => "bus.unsubscribe".to_string(),
-                crate::bus::BusCommand::Pull { .. } => "bus.pull".to_string(),
-            };
-            (label, None, None)
         }
     }
 }
@@ -2161,39 +2117,6 @@ async fn forward_pi_events(
 // NOTE: The old pi_event_to_ws_event() function has been removed.
 // Streaming events now flow as canonical events through the PiTranslator
 // in pi_manager.rs and are forwarded directly via WsEvent::Agent.
-
-/// Emit a workspace/files.* bus event (fire-and-forget).
-fn emit_file_bus_event(
-    bus: &Arc<crate::bus::BusEngine>,
-    user_id: &str,
-    workspace_path: Option<&str>,
-    topic: &str,
-    payload: serde_json::Value,
-) {
-    use crate::bus::{BusEvent, BusScope, EventSource};
-
-    let scope_id = workspace_path.unwrap_or("local").to_string();
-    // Use Service source: file ops are already authorized by the file handler,
-    // so the bus event is a system notification, not a user-initiated publish.
-    let event = BusEvent::new(
-        BusScope::Workspace,
-        scope_id,
-        format!("files.{}", topic),
-        payload,
-        EventSource::Service {
-            service: "files".to_string(),
-            user_id: Some(user_id.to_string()),
-        },
-    );
-    let topic_log = format!("files.{}", topic);
-    let bus = bus.clone();
-    tokio::spawn(async move {
-        match bus.publish_internal(event).await {
-            Ok(()) => log::debug!("Bus: emitted file event {}", topic_log),
-            Err(e) => log::warn!("Bus: failed to emit file event {}: {}", topic_log, e),
-        }
-    });
-}
 
 /// Handle Files channel commands.
 async fn handle_copy_to_workspace(
@@ -2893,7 +2816,6 @@ mod tests {
             terminal_sessions: HashMap::new(),
             file_watchers: HashMap::new(),
             session_runner_overrides: HashMap::new(),
-            bus_subscriber_id: 0,
             terminal_allowed: true,
         }));
 

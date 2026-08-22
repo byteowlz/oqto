@@ -480,20 +480,11 @@ pub(super) async fn handle_files_command(
                 .write_file(&resolved, &decoded, create_parents)
                 .await
             {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "written",
-                        serde_json::json!({ "path": &path }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::WriteResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::WriteResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -556,20 +547,11 @@ pub(super) async fn handle_files_command(
                 }
             };
             match user_plane.delete_path(&resolved, recursive).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "deleted",
-                        serde_json::json!({ "path": &path }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::DeleteResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::DeleteResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -589,20 +571,11 @@ pub(super) async fn handle_files_command(
                 }
             };
             match user_plane.create_directory(&resolved, create_parents).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "created",
-                        serde_json::json!({ "path": &path, "is_dir": true }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -631,21 +604,12 @@ pub(super) async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "renamed",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::RenameResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::RenameResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -669,21 +633,12 @@ pub(super) async fn handle_files_command(
                 }
             };
             match copy_recursive(&user_plane, &from_resolved, &to_resolved, overwrite).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "copied",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::CopyResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CopyResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -716,21 +671,12 @@ pub(super) async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "moved",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::MoveResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::MoveResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
