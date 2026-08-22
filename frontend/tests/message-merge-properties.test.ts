@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	mergeServerMessages,
+	messageFingerprint,
 	normalizeMessages,
 	shouldPreserveLocalMessage,
 } from "@/features/chat/hooks/message-utils";
@@ -17,6 +18,10 @@ import { describe, expect, it } from "vitest";
  * 3) If server provides a persisted message for a clientId, merged output keeps
  *    one logical message for that clientId (tmp/local duplicates are superseded).
  * 4) Partial snapshots must not drop unsuperseded local tmp/legacy messages.
+ *    A local row counts as superseded when the server provides its clientId
+ *    OR an identical content fingerprint (role+parts) -- the deliberate
+ *    echo-collapse that prevents duplicate tail rows across switch/reconnect
+ *    races. Streaming rows always survive.
  * 5) Authoritative merge is idempotent for the same server snapshot.
  */
 
@@ -84,10 +89,13 @@ function assertNoUnexpectedDropOnPartial(
 
 	for (const prev of previous) {
 		if (!shouldPreserveLocalMessage(prev)) continue;
-		const shouldSurvive =
-			Boolean(prev.isStreaming) ||
-			!prev.clientId ||
-			!serverClientIds.has(prev.clientId);
+		const fingerprintSuperseded = server.some(
+			(m) => messageFingerprint(m) === messageFingerprint(prev),
+		);
+		const superseded =
+			Boolean(prev.clientId && serverClientIds.has(prev.clientId)) ||
+			fingerprintSuperseded;
+		const shouldSurvive = Boolean(prev.isStreaming) || !superseded;
 		if (!shouldSurvive) continue;
 		const survives =
 			mergedPartial.some((m) => m.id === prev.id) ||
