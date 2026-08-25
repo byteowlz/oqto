@@ -276,11 +276,39 @@ This closes SSRF and DNS-rebinding, and cloud metadata (169.254.169.254, fd00:ec
 fd20:ce::254) plus loopback must be denied by default. The spike hit this protection unprompted
 when a test upstream resolved to `::1`. ADR-0035 as written named neither.
 
+
+### E. Delegated fetch: an allowed destination's capabilities are part of the policy
+
+Discovered after the main text: Prime Intellect documented a universal escape from "offline"
+agent sandboxes. An agent with no egress except the inference API used the OpenAI Responses
+API's `input_file.file_url` parameter to make the *provider* fetch arbitrary URLs and return the
+content into context, and drove further model instances as sub-agents over the same channel.
+The egress enforcer sees a legitimate request to an allowlisted destination; the second hop is
+invisible at the network layer.
+
+Oqto's topology has exactly this leg: workspace -> EAVS -> provider, with the agent controlling
+request content and EAVS passing bodies through unmodified today.
+
+Two rules follow:
+
+1. **A destination's grant includes its delegated-fetch capabilities.** "May call
+   api.openai.com" is not one permission; server-side tools (`web_search`, `web_fetch`) and
+   remote-content parameters (`input_file`) are separate grants, default-denied, enforced by the
+   inference gateway on request bodies -- network-layer enforcers cannot see them.
+2. **An escape probe joins the conformance matrix**: send a request containing a remote-fetch
+   parameter through the full stack (session -> gateway -> provider) and assert it is stripped or
+   refused. Demonstrated denial applies to delegated fetch exactly as to egress.
+
+The enforcement point is EAVS: stripping or policy-gating these parameters is model-domain
+semantics per the division of responsibility in this ADR's companion work (capability endpoints,
+ADR-0039). Tracked as `oqto-gyqr.8`.
+
 ## Consequences
 
 - `oqto-egressd` is not built (Amendment B). The privileged-daemon consequence below applies
   only to a future microVM TAP tier.
 - `WorkspaceEgressPolicy` carries protocol/port and an upstream deny-CIDR list (Amendments C, D).
+- `WorkspaceEgressPolicy` also gates delegated fetch — an allowlisted service's server-side tools and remote-content parameters are separate grants, default-denied and enforced by the inference gateway (Amendment E).
 - The reference enforcer is bought rather than built; `oqto-egress` shrinks to the policy model,
   its compiler, and the probe harness (Amendment A).
 - `NetworkMode::Proxy` (config-only, never implemented) is deleted rather than
