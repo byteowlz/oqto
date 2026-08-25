@@ -10,7 +10,7 @@ pub mod policy_seatbelt;
 pub mod policy_translate;
 pub mod seatbelt;
 mod spawn;
-mod workspace_config;
+pub mod workspace_config;
 
 pub use cli::run_cli;
 pub use config::{

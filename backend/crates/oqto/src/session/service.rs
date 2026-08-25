@@ -1289,7 +1289,7 @@ impl SessionService {
         let agent_base_port = Some(base_port + 3);
 
         let (eavs_key_id, eavs_key_hash, eavs_virtual_key) = if self.eavs.is_some() {
-            match self.create_eavs_key(&session_id).await {
+            match self.create_eavs_key(&session_id, user_home_path).await {
                 Ok((key_id, key_hash, key_value)) => {
                     info!("Created EAVS key {} for session {}", key_id, session_id);
                     (Some(key_id), Some(key_hash), Some(key_value))
@@ -1371,9 +1371,38 @@ impl SessionService {
         Ok(self.repo.get(&session.id).await?.unwrap_or(session))
     }
 
+    /// Metadata attached to every session EAVS key. EAVS's delegated-fetch
+    /// sanitizer reads this at request time (eavs-w6wg.9), so the policy rides
+    /// the key rather than requiring Oqto in the data path.
+    fn build_session_key_metadata(session_id: &str, delegated_fetch: bool) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": session_id,
+            "created_by": "oqto",
+            "delegated_fetch": { "remote_content": delegated_fetch },
+        })
+    }
+
     /// Create an EAVS virtual key for a session.
-    async fn create_eavs_key(&self, session_id: &str) -> Result<(String, String, String)> {
+    async fn create_eavs_key(
+        &self,
+        session_id: &str,
+        workspace_path: &str,
+    ) -> Result<(String, String, String)> {
         let eavs = self.eavs.as_ref().context("EAVS client not configured")?;
+
+        // Delegated fetch (provider-side URL fetching via input_file /
+        // server-side tools) is denied unless this work directory opted in.
+        let delegated_fetch =
+            oqto_sandbox::workspace_config::WorkspaceConfig::delegated_fetch_enabled(
+                std::path::Path::new(workspace_path),
+            );
+        if delegated_fetch {
+            info!(
+                "Delegated fetch ENABLED for session {} (workspace {}): providers may fetch \
+                 remote content on this workspace's behalf",
+                session_id, workspace_path
+            );
+        }
 
         // Build permissions based on config
         let mut permissions = KeyPermissions::default();
@@ -1386,10 +1415,10 @@ impl SessionService {
 
         let request = CreateKeyRequest::new(format!("session-{}", &session_id[..8]))
             .permissions(permissions)
-            .metadata(serde_json::json!({
-                "session_id": session_id,
-                "created_by": "oqto"
-            }));
+            .metadata(Self::build_session_key_metadata(
+                session_id,
+                delegated_fetch,
+            ));
 
         let response = eavs.create_key(request).await?;
 
@@ -1991,7 +2020,10 @@ impl SessionService {
                         );
                     }
 
-                    match self.create_eavs_key(session_id).await {
+                    match self
+                        .create_eavs_key(session_id, &session.workspace_path)
+                        .await
+                    {
                         Ok((key_id, key_hash, key_value)) => {
                             info!(
                                 "Created new EAVS key {} for resumed local session {}",
@@ -3190,6 +3222,40 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_key_metadata_records_delegated_fetch() {
+        let denied = SessionService::build_session_key_metadata("ses-1", false);
+        assert_eq!(
+            denied["delegated_fetch"]["remote_content"],
+            serde_json::json!(false)
+        );
+
+        let allowed = SessionService::build_session_key_metadata("ses-1", true);
+        assert_eq!(
+            allowed["delegated_fetch"]["remote_content"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn created_session_keys_carry_the_workspace_delegated_fetch_flag() {
+        // The workspace opts in via .oqto/config.toml; the key metadata must
+        // carry that decision, because EAVS's sanitizer reads it at request
+        // time and Oqto is not in the data path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".oqto")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".oqto").join("config.toml"),
+            "[egress]
+delegated_fetch = true
+",
+        )
+        .expect("write");
+
+        assert!(
+            oqto_sandbox::workspace_config::WorkspaceConfig::delegated_fetch_enabled(dir.path())
+        );
+    }
     /// A credentialed ttyd answers 401 to an unauthenticated probe. Treating
     /// that as not-ready made every terminal hang until the websocket timed
     /// out, leaking a ttyd per retry.
