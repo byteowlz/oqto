@@ -34,7 +34,7 @@ const ALLOWED_DIRECT_IMPORTS = {
 };
 
 const ALLOWED_PROJECT_ALIASES = {
-	app: [],
+	app: ["@/hooks/use-document-event"],
 	layout: [],
 	sessions: [],
 	chat: [],

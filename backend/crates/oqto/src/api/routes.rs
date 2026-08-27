@@ -96,6 +96,7 @@ fn create_router_with_config_and_auth(
                 .patch(proxy::proxy_sldr),
         )
         // Project management
+        .route("/oqto-ui/config", get(handlers::get_oqto_ui_config))
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
         .route(

@@ -60,6 +60,23 @@ describe("OqtoUI shell", () => {
 		).toBeInTheDocument();
 	});
 
+	it("applies the scripted ui.lua preset as layout, appearance, and semantic bindings", async () => {
+		await renderShell();
+		const shell = document.querySelector<HTMLElement>(".wb-shell");
+		expect(shell).toHaveAttribute("data-config-source", "user-lua");
+		expect(shell).toHaveAttribute("data-files-placement", "left");
+		expect(shell).toHaveAttribute("data-density", "compact");
+		expect(shell?.dataset.scheme).toBe("nord-dark");
+		expect(shell?.style.getPropertyValue("--radius")).toBe("10px");
+		expect(screen.getByText("instrument-panel")).toBeInTheDocument();
+		expect(screen.getByText("2 bindings")).toBeInTheDocument();
+
+		fireEvent.keyDown(document, { key: "f", ctrlKey: true, shiftKey: true });
+		await waitFor(() => {
+			expect(screen.getByTestId("location-search")).toHaveTextContent("view=files");
+		});
+	});
+
 	it("collapses mobile chrome into one bar with identity, session switch, and a tab menu", async () => {
 		await renderShell();
 		const bar = document.querySelector<HTMLElement>(".wb-mobile-chrome");

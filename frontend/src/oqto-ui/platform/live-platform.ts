@@ -2,11 +2,13 @@ import type {
 	ChatMessage,
 	MessagePage,
 	ModelOption,
+	OqtoUiConfigResolution,
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
 	SessionOverview,
 	WorkDirectory,
 } from "./contracts";
+import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 
 type JsonRecord = {
 	id?: unknown;
@@ -27,6 +29,21 @@ type JsonRecord = {
 	content?: unknown;
 	tool_name?: unknown;
 	type?: unknown;
+	config?: unknown;
+	appearance?: unknown;
+	layout?: unknown;
+	status_line?: unknown;
+	version?: unknown;
+	preset?: unknown;
+	scheme?: unknown;
+	radius?: unknown;
+	density?: unknown;
+	files?: unknown;
+	navigator?: unknown;
+	bindings?: unknown;
+	segments?: unknown;
+	source?: unknown;
+	diagnostics?: unknown;
 };
 
 function record(value: unknown): JsonRecord | null {
@@ -161,6 +178,38 @@ function parseMessagePage(value: unknown, sessionId: string): MessagePage {
 	};
 }
 
+const invalidConfigResponse = "Invalid config service response";
+
+function parseUiConfig(value: unknown): OqtoUiConfigResolution {
+	const root = record(value);
+	const config = record(root?.config);
+	const appearance = record(config?.appearance);
+	const layout = record(config?.layout);
+	const statusLine = record(config?.status_line);
+	if (
+		config?.version !== 1 ||
+		typeof config.preset !== "string" ||
+		typeof appearance?.scheme !== "string" ||
+		typeof appearance.radius !== "string" ||
+		typeof appearance.density !== "string" ||
+		typeof layout?.files !== "string" ||
+		typeof layout.navigator !== "string" ||
+		!Array.isArray(config.bindings) ||
+		!Array.isArray(statusLine?.segments) ||
+		typeof root?.source !== "string" ||
+		!Array.isArray(root.diagnostics)
+	) {
+		return {
+			...DEFAULT_OQTO_UI_CONFIG,
+			source: "user-lua-fallback",
+			diagnostics: [
+				{ code: "customization.response.invalid", message: invalidConfigResponse },
+			],
+		};
+	}
+	return value as OqtoUiConfigResolution;
+}
+
 function modelOptions(directories: WorkDirectory[]): ModelOption[] {
 	const ids = new Set<string>();
 	for (const directory of directories) {
@@ -173,6 +222,9 @@ function modelOptions(directories: WorkDirectory[]): ModelOption[] {
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
+	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
+		return parseUiConfig(await readJson("/api/oqto-ui/config"));
+	},
 	async load(requestedSessionId): Promise<OqtoUiSnapshot> {
 		const workDirectories = parseWorkDirectories(
 			await readJson("/api/chat-history?limit=80"),

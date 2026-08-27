@@ -434,6 +434,51 @@
 	padding: 24px;
 }
 
+.wb-shell[data-files-placement="left"] .wb-workarea {
+	flex-direction: row-reverse;
+}
+
+.wb-shell[data-files-placement="hidden"] .wb-workarea > .wb-panel {
+	display: none;
+}
+
+.wb-shell[data-navigator-placement="hidden"] > .wb-sidebar {
+	display: none;
+}
+
+.wb-shell[data-density="compact"] .wb-workarea {
+	gap: 8px;
+	padding: 12px;
+}
+
+.wb-shell[data-density="comfortable"] .wb-workarea {
+	gap: 24px;
+	padding: 32px;
+}
+
+.wb-config-lens {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 25px;
+	padding: 3px 10px;
+	color: var(--muted-foreground);
+	background: color-mix(in srgb, var(--primary) 8%, var(--background));
+	border-top: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-config-lens strong {
+	color: var(--primary);
+	font-weight: 600;
+}
+
+.wb-config-lens[data-invalid="true"] {
+	color: var(--destructive);
+	background: color-mix(in srgb, var(--destructive) 10%, var(--background));
+}
+
 /* ------------------------------------------------------------- chat card */
 
 .wb-main {

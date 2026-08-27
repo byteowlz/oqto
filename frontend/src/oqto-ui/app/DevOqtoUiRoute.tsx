@@ -11,7 +11,7 @@ export default function DevOqtoUiRoute() {
 			workDirectoryId={searchParams.get("workDirectory")}
 			sessionId={searchParams.get("session")}
 			mobileView={searchParams.get("view") === "files" ? "files" : "chat"}
-			schemeId={searchParams.get("scheme") ?? "oqto-dark"}
+			schemeId={searchParams.get("scheme")}
 			workAreaTab={searchParams.get("tab") ?? "chat"}
 			onNavigate={(next) => {
 				setSearchParams((current) => applyNavigation(current, next));

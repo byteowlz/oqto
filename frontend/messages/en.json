@@ -772,6 +772,11 @@
 		"loadFailed": "OqtoUI could not load the durable Session data.",
 		"retry": "Retry",
 		"noSessions": "No Sessions are available.",
+		"customization": {
+			"file": "ui.lua",
+			"bindings_one": "{{count}} binding",
+			"bindings_other": "{{count}} bindings"
+		},
 		"gallery": {
 			"label": "Gallery",
 			"empty": "No Gallery resources are bound to this work directory.",

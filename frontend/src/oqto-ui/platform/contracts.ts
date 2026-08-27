@@ -89,6 +89,59 @@ export type EnvironmentInfo = {
 	connection: "connected" | "offline" | "scripted";
 };
 
+export type OqtoUiConfig = {
+	version: 1;
+	preset: string;
+	appearance: {
+		scheme: "oqto-dark" | "oqto-light" | "nord-dark" | "nord-light";
+		radius: "square" | "compact" | "soft";
+		density: "compact" | "standard" | "comfortable";
+	};
+	layout: {
+		files: "left" | "right" | "hidden";
+		navigator: "left" | "hidden";
+	};
+	bindings: Array<{ keys: string; action: string }>;
+	status_line: {
+		segments: Array<
+			| "session"
+			| "model"
+			| "context"
+			| "connection"
+			| "runnerload"
+			| "version"
+		>;
+	};
+};
+
+export type OqtoUiConfigResolution = {
+	config: OqtoUiConfig;
+	source: "dist-default" | "user-lua" | "user-lua-fallback";
+	diagnostics: Array<{ code: string; message: string }>;
+};
+
+export const DEFAULT_OQTO_UI_CONFIG: OqtoUiConfigResolution = {
+	config: {
+		version: 1,
+		preset: "classic",
+		appearance: {
+			scheme: "oqto-dark",
+			radius: "square",
+			density: "standard",
+		},
+		layout: { files: "right", navigator: "left" },
+		bindings: [
+			{ keys: "ctrl+shift+p", action: "shell.openCommandPalette" },
+			{ keys: "ctrl+shift+f", action: "view.openFiles" },
+		],
+		status_line: {
+			segments: ["session", "model", "context", "connection"],
+		},
+	},
+	source: "dist-default",
+	diagnostics: [],
+};
+
 export type OqtoUiSnapshot = {
 	workDirectories: WorkDirectory[];
 	activeSessionId: string | null;
@@ -111,6 +164,7 @@ export type OqtoUiPlatform = {
 	/** Stable adapter identity, part of every query key. */
 	readonly id: string;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;
+	loadUiConfig: () => Promise<OqtoUiConfigResolution>;
 	/**
 	 * Load one page of a Session's timeline, oldest-first. `before` is an
 	 * opaque cursor from a previous page's `nextBefore`; omitted returns the

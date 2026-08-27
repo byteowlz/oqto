@@ -129,6 +129,7 @@ oqto-host = { path = "../oqto-host" }
 oqto-history = { path = "../oqto-history" }
 oqto-pi = { path = "../oqto-pi" }
 oqto-placement = { path = "../oqto-placement" }
+oqto-uiconfig = { path = "../oqto-uiconfig" }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

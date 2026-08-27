@@ -26,6 +26,7 @@ mod sessions;
 mod settings;
 mod shared_workspaces;
 pub mod trx;
+mod ui_config;
 
 // Re-export all public types and handlers
 
@@ -92,6 +93,7 @@ pub use misc::{
     codexbar_usage, features, fetch_feed, health, scheduler_delete, scheduler_overview,
     search_in_session, search_sessions, ws_debug,
 };
+pub use ui_config::get_oqto_ui_config;
 
 // Shared workspace handlers
 pub use shared_workspaces::{

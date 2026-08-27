@@ -772,6 +772,11 @@
 		"loadFailed": "OqtoUI konnte die dauerhaften Sitzungsdaten nicht laden.",
 		"retry": "Erneut versuchen",
 		"noSessions": "Keine Sitzungen verfügbar.",
+		"customization": {
+			"file": "ui.lua",
+			"bindings_one": "{{count}} Belegung",
+			"bindings_other": "{{count}} Belegungen"
+		},
 		"gallery": {
 			"label": "Galerie",
 			"empty": "Diesem Arbeitsverzeichnis sind keine Galerie-Ressourcen zugeordnet.",

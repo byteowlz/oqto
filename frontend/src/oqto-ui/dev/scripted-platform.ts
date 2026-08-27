@@ -1,11 +1,40 @@
 import type { MessagePage } from "../platform/contracts";
-import type { OqtoUiPlatform, OqtoUiSnapshot } from "../platform/contracts";
+import type {
+	OqtoUiConfigResolution,
+	OqtoUiPlatform,
+	OqtoUiSnapshot,
+} from "../platform/contracts";
 import { scriptedFixture, scriptedTimeline } from "./fixture";
 
 const SCRIPTED_PAGE_SIZE = 40;
 
+const scriptedConfig: OqtoUiConfigResolution = {
+	source: "user-lua",
+	diagnostics: [],
+	config: {
+		version: 1,
+		preset: "instrument-panel",
+		appearance: {
+			scheme: "nord-dark",
+			radius: "soft",
+			density: "compact",
+		},
+		layout: { files: "left", navigator: "left" },
+		bindings: [
+			{ keys: "ctrl+shift+f", action: "view.openFiles" },
+			{ keys: "ctrl+shift+c", action: "view.openChat" },
+		],
+		status_line: {
+			segments: ["session", "model", "context", "connection", "runnerload"],
+		},
+	},
+};
+
 export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
+	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
+		return scriptedConfig;
+	},
 	async load(sessionId): Promise<OqtoUiSnapshot> {
 		const known = scriptedFixture.workDirectories.some((directory) =>
 			directory.sessions.some((session) => session.id === sessionId),

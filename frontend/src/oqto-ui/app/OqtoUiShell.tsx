@@ -8,10 +8,12 @@ import { FilesPane } from "../files/FilesPane";
 import { GalleryPane } from "../gallery/GalleryPane";
 import { MobileTopBar } from "../layout/MobileTopBar";
 import type {
+	OqtoUiConfigResolution,
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
 	UiNavigation,
 } from "../platform/contracts";
+import { DEFAULT_OQTO_UI_CONFIG } from "../platform/contracts";
 import { NavigationRail } from "../sessions/NavigationRail";
 import { SessionMeta } from "../sessions/SessionMeta";
 import { ThemeCustomizer } from "../theme/ThemeCustomizer";
@@ -19,6 +21,7 @@ import { ThemePicker } from "../theme/ThemePicker";
 import { useThemeRoot } from "../theme/useThemeRoot";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
 import { Splash } from "./Splash";
+import { useConfiguredBindings } from "./useConfiguredBindings";
 import "./shell.css";
 
 type OqtoUiShellProps = {
@@ -26,7 +29,7 @@ type OqtoUiShellProps = {
 	workDirectoryId: string | null;
 	sessionId: string | null;
 	mobileView: string;
-	schemeId: string;
+	schemeId: string | null;
 	workAreaTab: string;
 	onNavigate: (next: UiNavigation) => void;
 };
@@ -42,10 +45,28 @@ export function OqtoUiShell({
 }: OqtoUiShellProps) {
 	const [sessionsOpen, setSessionsOpen] = useState(false);
 	const [userTheme, setUserTheme] = useState<OqtoUiUserTheme>({});
+	const configQuery = useQuery({
+		queryKey: ["oqto-ui-config", platform.id],
+		queryFn: () => platform.loadUiConfig(),
+		staleTime: 30_000,
+		retry: false,
+	});
+	const resolvedConfig = configQuery.data ?? DEFAULT_OQTO_UI_CONFIG;
+	const config = resolvedConfig.config;
+	const configuredRadius = {
+		square: "0px",
+		compact: "4px",
+		soft: "10px",
+	}[config.appearance.radius];
+	const configuredTheme: OqtoUiUserTheme = {
+		...userTheme,
+		radius: userTheme.radius ?? configuredRadius,
+	};
 	const { schemeId, rootRef, rootEl } = useThemeRoot(
-		requestedSchemeId,
-		userTheme,
+		requestedSchemeId ?? config.appearance.scheme,
+		configuredTheme,
 	);
+	useConfiguredBindings(config.bindings, onNavigate);
 	const snapshotQuery = useQuery({
 		queryKey: ["oqto-ui", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
@@ -74,6 +95,7 @@ export function OqtoUiShell({
 			theme={{ schemeId, rootRef, rootEl }}
 			userTheme={userTheme}
 			onUserTheme={setUserTheme}
+			resolvedConfig={resolvedConfig}
 			shellState={{ sessionsOpen, setSessionsOpen, onNavigate }}
 		/>
 	);
@@ -105,6 +127,7 @@ type LoadedShellProps = {
 	theme: ThemeState;
 	userTheme: OqtoUiUserTheme;
 	onUserTheme: (next: OqtoUiUserTheme) => void;
+	resolvedConfig: OqtoUiConfigResolution;
 	shellState: ShellState;
 };
 
@@ -115,6 +138,7 @@ function LoadedShell({
 	theme,
 	userTheme,
 	onUserTheme,
+	resolvedConfig,
 	shellState,
 }: LoadedShellProps) {
 	const { schemeId, rootRef, rootEl } = theme;
@@ -141,9 +165,18 @@ function LoadedShell({
 		);
 	}
 	const status = snapshot.environment.statusBar;
+	const config = resolvedConfig.config;
 
 	return (
-		<div className="wb-shell" data-sessions-open={sessionsOpen} ref={rootRef}>
+		<div
+			className="wb-shell"
+			data-sessions-open={sessionsOpen}
+			data-files-placement={config.layout.files}
+			data-navigator-placement={config.layout.navigator}
+			data-density={config.appearance.density}
+			data-config-source={resolvedConfig.source}
+			ref={rootRef}
+		>
 			<NavigationRail
 				workDirectories={directories}
 				workDirectoryId={directory.id}
@@ -195,6 +228,23 @@ function LoadedShell({
 					userTheme={userTheme}
 					onChange={onUserTheme}
 				/>
+				<div
+					className="wb-config-lens"
+					data-invalid={resolvedConfig.diagnostics.length > 0}
+				>
+					<span>{t("oqtoUi.customization.file")}</span>
+					<strong>{config.preset}</strong>
+					<span>
+						{t("oqtoUi.customization.bindings", {
+							count: config.bindings.length,
+						})}
+					</span>
+					{resolvedConfig.diagnostics[0] ? (
+						<span title={resolvedConfig.diagnostics[0].message}>
+							{resolvedConfig.diagnostics[0].code}
+						</span>
+					) : null}
+				</div>
 				{status ? (
 					<footer className="wb-statusbar">
 						<div className="wb-statusbar__group">
