@@ -4083,6 +4083,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oqto-egress"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
 name = "oqto-files"
 version = "0.5.0"
 dependencies = [
@@ -4248,6 +4262,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "oqto-egress",
  "schemars",
  "serde",
  "serde_json",

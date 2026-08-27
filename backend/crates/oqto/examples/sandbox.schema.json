@@ -180,6 +180,17 @@
           "type": "null"
         }
       ]
+    },
+    "ssh": {
+      "description": "Grant this work directory the use of specific SSH keys.\n\nWithout this the file fails to parse (unknown field), which silently discards every override in it.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SshProxyConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -497,6 +508,7 @@
           "description": "Paths to deny read access (always applied).",
           "default": [
             "~/.ssh",
+            "/etc/ssh/ssh_config.d",
             "~/.gnupg",
             "~/.aws",
             "/etc/oqto",

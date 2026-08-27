@@ -18,23 +18,10 @@ pub struct ModelsConfig {
     pub mode: ModelMode,
 }
 
-/// Workspace egress policy (ADR-0035).
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct EgressConfig {
-    /// Let model providers fetch remote content on this workspace's behalf
-    /// (Responses API `input_file.file_url`, server-side web tools). Deny by
-    /// default: an allowlisted inference endpoint that can fetch is a second
-    /// hop no egress enforcer can see.
-    #[serde(default)]
-    pub delegated_fetch: bool,
-}
-
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct WorkspaceConfig {
     #[serde(default)]
     pub models: ModelsConfig,
-    #[serde(default)]
-    pub egress: Option<EgressConfig>,
 }
 
 impl WorkspaceConfig {
@@ -43,13 +30,10 @@ impl WorkspaceConfig {
     }
 
     /// Whether this work directory delegated provider-side fetching to model
-    /// providers. Deny by default; also deny when the file cannot be read or
-    /// parsed, so a broken config narrows rather than widens access.
+    /// providers. The egress crate owns the `[egress]` table; this stays as the
+    /// call site sandbox consumers already use.
     pub fn delegated_fetch_enabled(workspace: &Path) -> bool {
-        Self::load(workspace)
-            .egress
-            .map(|e| e.delegated_fetch)
-            .unwrap_or(false)
+        oqto_egress::load_policy(workspace, String::new()).delegated_fetch
     }
 
     pub fn models_json_path(workspace: &Path) -> PathBuf {

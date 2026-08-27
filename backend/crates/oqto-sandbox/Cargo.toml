@@ -11,6 +11,7 @@ name = "oqto_sandbox"
 path = "src/lib.rs"
 
 [dependencies]
+oqto-egress = { path = "../oqto-egress" }
 schemars = { workspace = true }
 anyhow.workspace = true
 clap.workspace = true
