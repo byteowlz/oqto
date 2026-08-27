@@ -229,7 +229,7 @@ pushMru("byteowlz", "oqto", "oqto-s0");
 /* ---------------- variants ---------------- */
 
 const VARIANTS = {
-  A: { label: "Navigator (mobile)", note: "<b>v4.</b> <b>Tap top-left → navigator</b> (mockup-06 anatomy): + new project heads the ribbon, session rows carry <i>[readable-id]</i> and date | messages | tokens, search sits at the <b>bottom</b> (thumb reach), and the tenant status line shows visibility + isolation. <b>Hold top-left → quick project switch</b> (mockup-04, release to select); tenant switching stays on the header SWITCH button. Status dots use <b>herdr attention semantics</b>: blue = finished while unseen; opening a session clears it to idle. The bottom status line is <b>context-aware</b> — its segments swap when the navigator or a tool has focus (config-bound in the real product). Other corners unchanged: tap top-right Files / hold wheel; bottom-left previous session / MRU fan; bottom-right send / quarter radial." },
+  A: { label: "Navigator (mobile)", note: "<b>v4.</b> <b>Tap top-left → navigator</b> (mockup-06 anatomy): + new project heads the ribbon, session rows carry <i>[readable-id]</i> and date | messages | tokens, search sits at the <b>top</b> under the header, and the tenant status line shows visibility + isolation. <b>Hold top-left → quick project switch</b> (mockup-04, release to select); tenant switching stays on the header SWITCH button. Status dots use <b>herdr attention semantics</b>: blue = finished while unseen; opening a session clears it to idle. The bottom status line is <b>context-aware</b> — its segments swap when the navigator or a tool has focus (config-bound in the real product). Other corners unchanged: tap top-right Files / hold wheel; bottom-left previous session / MRU fan; bottom-right send / quarter radial." },
   B: { label: "Right edge strips", note: "Same navigator left; top-right opens a narrow <b>edge strip</b> of tool icons instead of jumping to Files. Compare reachability vs one-tap-Files." },
   C: { label: "Right quadrant sheet", note: "Same navigator left; top-right opens a <b>quarter sheet</b> with the tool list and fuzzy search. Richest, but covers the chat." },
   D: { label: "Big picture + controller", note: "Fullscreen desktop. Navigator pins as the left rail (ribbon + list); files/tools pin right; corner grammar unchanged. Toggle <b>PAD overlay</b> in the panel to see the shoulder mapping (L1/R1/L2/R2, stick-steer, release-on-item commits, release-on-nothing cancels)." },
@@ -330,11 +330,11 @@ function navigatorPanel(fullscreen) {
         <div class="grow"><b>Projects (${t.workdirs.length}) &amp; Sessions</b><br><small>${escapeHtml(t.name)} · WORKSPACE</small></div>
         <button class="nav-tenant-switch" data-open-tenants>SWITCH</button>
       </div>
+      <div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="Fuzzy — searches whole workspace…" value="${escapeHtml(state.query)}" autocomplete="off" /></div>
       <div class="nav-list">
         <button class="row-item row-new" data-new-session>${glyph("plus")}<span class="grow">start new Session<small>in ${escapeHtml(d.name)}</small></span></button>
         ${listHtml}
       </div>
-      <div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="Fuzzy — searches whole workspace…" value="${escapeHtml(state.query)}" autocomplete="off" /></div>
       <div class="nav-status">${escapeHtml(d.name)} | ${sessionCount} sessions | private | isolation: developer</div>
     </div>
   </section>`;

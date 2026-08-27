@@ -104,9 +104,9 @@ Integrates the ribbon/list navigator mockups (03/04/06):
 - Navigator (tap top-left) uses the mockup-06 anatomy: `+ new project` heads
   the workdir ribbon (attention dots aggregate session status), the list
   starts with `+ start new Session`, rows carry `title [readable-id]` plus
-  `date | messages | tokens`, fuzzy search sits at the bottom (thumb reach —
-  kept from mockup 04, overriding 06's top placement), and a tenant status
-  line (`workdir | N sessions | private | isolation: developer`) closes the
+  `date | messages | tokens`, fuzzy search sits at the top under the header
+  (user decision, superseding the earlier bottom-placement experiment), and a
+  tenant status line (`workdir | N sessions | private | isolation: developer`) closes the
   panel.
 - Hold top-left is now the mockup-04 quick **project** switcher (carousel with
   per-project active/blocked/session stats, release to select). Tenant
@@ -119,3 +119,11 @@ Integrates the ribbon/list navigator mockups (03/04/06):
   context, tool views show path/watcher segments. In the real product each
   segment is a config-bound (provider, template) pair per ADR-0040.
 
+## Production skin pass
+
+Re-tuned the palette to sampled production values: page/canvas base00
+`#222624`, cards/panels base01 `#2d312f`, hover raise `#353a3b`,
+hairlines on base02 `#3a3f41`, session rows as bordered cards (dashed for
+the new-session row), composer/search wells on the page background, and the
+dark rail identity kept at base11-class surfaces. User decision recorded:
+search belongs at the TOP of the navigator.

@@ -6,10 +6,14 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0f1412;
-  --surface: #161c1a;
-  --surface-raised: #222624;
-  --surface-soft: #2d312f;
+  /* production oqto-dark mapping: page = base00 #222624, panels/cards =
+     base01 #2d312f, raised/hover ≈ #353a3b, hairlines on base02,
+     rail/backdrop = the dark sidebar surface */
+  --bg: #222624;
+  --surface: #222624;
+  --surface-raised: #2d312f;
+  --surface-soft: #343937;
+  --pane-hover: #353a3b;
   --line: #2d312f;
   --line-strong: #3a3f41;
   --text: #f2f5f3;
@@ -23,8 +27,8 @@
   --red: #d96b69;
   --blue: #5b8fc9;
   --violet: #9b7fc9;
-  --sidebar: #121816;
-  --pane: #1b211f;
+  --sidebar: #1a201e;
+  --pane: #262b29;
   --font: "Oqto Mono", "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
 }
 
@@ -80,7 +84,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 /* ---------- shared shell ---------- */
 .cm-top, .cm-bottom {
   flex: none; display: flex; align-items: center; gap: 6px;
-  background: var(--surface); border-bottom: 1px solid var(--line);
+  background: var(--surface); border-bottom: 1px solid var(--line-strong);
   padding: 6px 8px; position: relative; z-index: 20; min-height: 54px;
 }
 .cm-top { padding-top: 26px; }
@@ -108,12 +112,12 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 
 /* chat content */
 .cm-content { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 12px; display: grid; gap: 10px; align-content: start; position: relative; }
-.msg { border: 1px solid var(--line); background: var(--surface); padding: 9px 11px; max-width: 86%; font-size: 12.5px; line-height: 1.5; }
+.msg { border: 1px solid var(--line-strong); background: var(--surface-raised); padding: 9px 11px; max-width: 86%; font-size: 12.5px; line-height: 1.5; }
 .msg header { display: flex; gap: 8px; font-size: 10px; color: var(--faint); margin-bottom: 4px; }
 .msg header b { color: var(--accent); font-weight: 600; }
 .msg[data-author="user"] { justify-self: end; border-color: var(--accent); background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
 .msg[data-author="user"] header b { color: var(--text); }
-.msg .tool { margin-top: 6px; border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--muted); padding: 4px 8px; font-size: 10.5px; }
+.msg .tool { margin-top: 6px; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--surface-raised) 70%, black); color: var(--muted); padding: 4px 8px; font-size: 10.5px; }
 
 /* scrim + expansions */
 .scrim { position: absolute; inset: 0; z-index: 25; background: rgba(0,0,0,.45); border: 0; }
@@ -131,16 +135,19 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .sheet-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .sheet-head h2 { margin: 0; flex: 1; font-size: 11px; letter-spacing: .14em; color: var(--faint); font-weight: 700; }
 .sheet-head .ws-face { width: 22px; height: 22px; flex: none; }
-.fuzzy { flex: none; margin: 10px 12px 4px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 7px 10px; }
+.fuzzy { flex: none; margin: 10px 12px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); background: var(--bg); padding: 8px 10px; }
 .fuzzy input { flex: 1; border: 0; background: transparent; outline: none; font-size: 12px; color: var(--text); }
 .fuzzy svg { width: 14px; height: 14px; color: var(--faint); flex: none; }
 .sheet-list { flex: 1; overflow-y: auto; padding: 8px 6px 12px; display: grid; gap: 2px; align-content: start; }
 .row-item {
   display: flex; align-items: center; gap: 10px; text-align: left;
-  border: 1px solid transparent; background: transparent; color: var(--text); padding: 8px 10px; font-size: 12.5px;
+  border: 1px solid var(--line); background: var(--surface-raised);
+  color: var(--text); padding: 9px 11px; font-size: 12.5px;
 }
-.row-item:hover, .row-item[data-active="true"] { border-color: var(--line-strong); background: rgba(255,255,255,.03); }
+.row-item:hover, .row-item[data-active="true"] { border-color: var(--line-strong); background: var(--pane-hover); }
 .row-item[data-current="true"] { border-color: var(--accent); }
+.row-new { background: transparent; border-style: dashed; color: var(--muted); }
+.row-new:hover { background: rgba(59,167,124,.06); color: var(--text); }
 .row-item small { display: block; color: var(--faint); font-size: 10px; margin-top: 2px; }
 .row-item .ws-face, .row-item svg.gl { width: 24px; height: 24px; flex: none; }
 .row-item .grow { flex: 1; min-width: 0; }
@@ -176,8 +183,9 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 
 /* composer row: prompt input sits BETWEEN the quick-switch and send
    buttons; the status strip is its own slim line below */
-.cm-composer { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 8px 4px; background: var(--surface); }
-.cm-composer input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); background: rgba(0,0,0,.25); padding: 11px 12px; font-size: 13px; color: var(--text); height: 44px; }
+.cm-composer {
+	flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 8px 4px; background: var(--surface); }
+.cm-composer input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); background: var(--bg); padding: 11px 12px; font-size: 13px; color: var(--text); height: 44px; }
 .cm-composer input:focus { border-color: var(--accent); outline: none; }
 .cm-composer .corner-btn { flex: none; }
 
@@ -300,7 +308,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 /* ---------- v3: tenant/workdir/session navigator ---------- */
 .navigator {
   position: absolute; z-index: 32; left: 0; right: 0; top: 78px; bottom: 0;
-  display: flex; background: var(--sidebar);
+  display: flex; background: var(--bg);
 }
 /* ribbon: one vertical line with the top-left button (same x-center) */
 .nav-ribbon {
@@ -317,9 +325,9 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .wd-chip svg, .wd-chip .ws-face { width: 26px; height: 26px; }
 .wd-chip small { font-size: 7.5px; max-width: 42px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0; }
 .wd-chip:hover { border-color: var(--line-strong); }
-.wd-chip[data-active="true"] { border-color: var(--accent); color: var(--text); background: rgba(255,255,255,.04); }
+.wd-chip[data-active="true"] { border-color: var(--accent); color: var(--text); background: rgba(59,167,124,.10); }
 
-.nav-main { position: absolute; z-index: 32; left: 60px; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+.nav-main { position: absolute; z-index: 32; left: 60px; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line-strong); }
 .nav-tenant { flex: none; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--accent-border, var(--line)); border-bottom-width: 2px; }
 .nav-tenant .ws-face { width: 22px; height: 22px; }
 .nav-tenant b { font-size: 12.5px; }
@@ -327,7 +335,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .nav-tenant .grow { flex: 1; }
 .nav-tenant-switch { border: 1px solid var(--line-strong); background: transparent; color: var(--muted); font-size: 9.5px; padding: 5px 8px; letter-spacing: .08em; }
 .nav-tenant-switch:hover { color: var(--text); border-color: var(--accent); }
-.nav-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 12px; display: grid; gap: 2px; align-content: start; }
+.nav-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 12px 12px; display: grid; gap: 6px; align-content: start; }
 .nav-dir-chip { font-size: 8.5px; color: var(--faint); border: 1px solid var(--line-strong); padding: 1px 5px; flex: none; }
 
 /* quarter-arc radial (corner-anchored, interior sweep) */
@@ -378,7 +386,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
 .nav-main .fuzzy { margin-top: 4px; }
 .nav-status {
   flex: none;
-  padding: 6px 12px 8px;
+  padding: 7px 12px 8px;
   font-size: 10px;
   letter-spacing: .04em;
   color: var(--muted);
