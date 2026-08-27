@@ -1737,6 +1737,597 @@
 	}
 }
 
+/* -------------------------------------------------- corner-mode shell grid */
+
+.wb-corner-frame,
+.wb-corner-content {
+	display: contents;
+}
+
+.wb-corner-top,
+.wb-corner-composer,
+.wb-corner-status,
+.wb-corner-scrim,
+.wb-corner-navigator,
+.wb-corner-menu,
+.wb-corner-radial {
+	display: none;
+}
+
+@media (max-width: 1023px) {
+	.wb-shell[data-mobile-mode="corner"] .wb-mobile-chrome,
+	.wb-shell[data-mobile-mode="corner"] > .wb-content > .wb-config-lens,
+	.wb-shell[data-mobile-mode="corner"] > .wb-content > .wb-statusbar {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-frame {
+		position: relative;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+		background: var(--background);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-content {
+		display: flex;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
+		display: grid;
+		grid-template-columns: 44px minmax(0, 1fr) 44px;
+		align-items: center;
+		gap: 8px;
+		padding-inline: max(8px, env(safe-area-inset-left))
+			max(8px, env(safe-area-inset-right));
+		background: var(--background);
+		border-color: var(--border);
+		z-index: 22;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top {
+		min-height: calc(56px + env(safe-area-inset-top));
+		padding-top: env(safe-area-inset-top);
+		border-bottom: 1px solid var(--border);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
+		padding-block: 7px 4px;
+	}
+
+	.wb-corner-button {
+		position: relative;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		touch-action: none;
+		user-select: none;
+		color: var(--foreground);
+		background: var(--sidebar);
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-button:last-child {
+		background: var(--card);
+	}
+
+	.wb-corner-button[data-open="true"] {
+		color: var(--primary);
+		border-color: var(--primary);
+	}
+
+	.wb-corner-button:active {
+		transform: scale(0.95);
+	}
+
+	.wb-corner-button svg {
+		width: 21px;
+		height: 21px;
+	}
+
+	.wb-corner-button__hold {
+		position: absolute;
+		right: 3px;
+		bottom: 3px;
+		width: 5px;
+		height: 5px;
+		background: var(--muted-foreground);
+		border-radius: 50%;
+	}
+
+	.wb-corner-identity {
+		display: grid;
+		min-width: 0;
+		text-align: center;
+	}
+
+	.wb-corner-identity strong,
+	.wb-corner-identity small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-identity strong {
+		font-size: 12px;
+	}
+
+	.wb-corner-identity small {
+		color: var(--muted-foreground);
+		font-size: 9px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-workarea {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-card {
+		padding: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-card > .wb-composer {
+		display: none;
+	}
+
+	.wb-corner-composer textarea {
+		width: 100%;
+		min-width: 0;
+		height: 44px;
+		min-height: 44px;
+		max-height: 88px;
+		resize: none;
+		padding: 11px 12px;
+		font: inherit;
+		color: var(--foreground);
+		background: var(--background);
+		border: 1px solid var(--border);
+		outline: none;
+	}
+
+	.wb-corner-composer textarea:focus {
+		border-color: var(--ring);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-status {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		min-width: 0;
+		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
+		color: var(--muted-foreground);
+		background: var(--background);
+		border-top: 1px solid var(--border);
+		font-family: var(--font-mono);
+		font-size: 9px;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	.wb-corner-status span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.wb-corner-status span:first-child {
+		color: var(--primary);
+	}
+
+	.wb-corner-status span:first-child i {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		background: currentColor;
+		border-radius: 50%;
+	}
+
+	.wb-corner-status [data-status="blocked"] {
+		color: var(--destructive);
+	}
+
+	.wb-corner-status [data-status="done"] {
+		color: var(--info);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-scrim {
+		position: absolute;
+		display: block;
+		inset: 0;
+		z-index: 25;
+		background: color-mix(in srgb, black 48%, transparent);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-navigator {
+		position: absolute;
+		display: grid;
+		grid-template-columns: 58px minmax(0, 1fr);
+		inset: calc(56px + env(safe-area-inset-top)) 0 0;
+		z-index: 30;
+		min-height: 0;
+		background: var(--background);
+	}
+
+	.wb-corner-ribbon {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		min-height: 0;
+		padding: 7px;
+		overflow-y: auto;
+		background: var(--sidebar);
+		border-right: 1px solid var(--border);
+	}
+
+	.wb-corner-ribbon button {
+		position: relative;
+		display: grid;
+		justify-items: center;
+		gap: 1px;
+		width: 44px;
+		min-height: 44px;
+		padding: 4px 2px;
+		color: var(--muted-foreground);
+		border: 1px solid transparent;
+	}
+
+	.wb-corner-ribbon button[data-active="true"] {
+		color: var(--foreground);
+		background: color-mix(in srgb, var(--primary) 10%, transparent);
+		border-color: var(--primary);
+	}
+
+	.wb-corner-ribbon button > span {
+		display: grid;
+		place-items: center;
+		width: 24px;
+		height: 24px;
+		color: var(--foreground);
+		background: var(--muted);
+		font-size: 9px;
+		font-weight: 700;
+	}
+
+	.wb-corner-ribbon button svg {
+		width: 18px;
+		height: 18px;
+	}
+
+	.wb-corner-ribbon .wb-corner-attention {
+		position: absolute;
+		top: 3px;
+		right: 3px;
+		width: 6px;
+		height: 6px;
+		background: var(--muted-foreground);
+		border-radius: 50%;
+	}
+
+	.wb-corner-ribbon .wb-corner-attention[data-status="working"] {
+		background: var(--primary);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="blocked"] {
+		background: var(--destructive);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="done"] {
+		background: var(--info);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="idle"] {
+		display: none;
+	}
+
+	.wb-corner-ribbon small {
+		max-width: 40px;
+		overflow: hidden;
+		font-size: 7px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-nav-main {
+		display: grid;
+		grid-template-rows: auto auto minmax(0, 1fr) auto;
+		min-width: 0;
+		min-height: 0;
+		background: var(--background);
+	}
+
+	.wb-corner-nav-main > header {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 8px;
+		min-height: 50px;
+		padding: 7px 10px;
+		border-bottom: 2px solid var(--primary);
+	}
+
+	.wb-corner-nav-main > header > svg {
+		width: 20px;
+	}
+
+	.wb-corner-nav-main > header span {
+		display: grid;
+		min-width: 0;
+	}
+
+	.wb-corner-nav-main > header strong,
+	.wb-corner-nav-main > header small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-nav-main > header strong {
+		font-size: 11px;
+	}
+
+	.wb-corner-nav-main > header small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-corner-nav-main > header button {
+		min-height: 34px;
+		padding: 4px 7px;
+		color: var(--muted-foreground);
+		border: 1px solid var(--border);
+		font-size: 8px;
+		letter-spacing: 0.08em;
+	}
+
+	.wb-corner-search {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 7px;
+		margin: 6px 8px;
+		padding: 7px 9px;
+		background: var(--card);
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-search svg {
+		width: 15px;
+		color: var(--muted-foreground);
+	}
+
+	.wb-corner-search input {
+		min-width: 0;
+		background: transparent;
+		border: 0;
+		outline: 0;
+		font-size: 11px;
+	}
+
+	.wb-corner-session-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-height: 0;
+		padding: 0 8px 8px;
+		overflow-y: auto;
+	}
+
+	.wb-corner-session-list > button {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 8px;
+		min-height: 48px;
+		padding: 7px 9px;
+		text-align: left;
+		background: var(--card);
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-session-list > button[data-current="true"] {
+		border-color: var(--primary);
+	}
+
+	.wb-corner-session-list i,
+	.wb-corner-menu i {
+		width: 7px;
+		height: 7px;
+		background: var(--muted-foreground);
+		border-radius: 50%;
+	}
+
+	.wb-corner-session-list i[data-status="working"],
+	.wb-corner-menu i[data-status="working"] {
+		background: var(--primary);
+	}
+
+	.wb-corner-session-list i[data-status="blocked"],
+	.wb-corner-menu i[data-status="blocked"] {
+		background: var(--destructive);
+	}
+
+	.wb-corner-session-list i[data-status="done"],
+	.wb-corner-menu i[data-status="done"] {
+		background: var(--info);
+	}
+
+	.wb-corner-session-list span {
+		display: grid;
+		min-width: 0;
+	}
+
+	.wb-corner-session-list strong,
+	.wb-corner-session-list small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-session-list strong {
+		font-size: 10px;
+		font-weight: 500;
+	}
+
+	.wb-corner-session-list em {
+		color: var(--muted-foreground);
+		font-size: 8px;
+		font-style: normal;
+	}
+
+	.wb-corner-session-list small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-corner-session-list .wb-corner-new {
+		grid-template-columns: auto minmax(0, 1fr);
+		color: var(--muted-foreground);
+		background: transparent;
+		border-style: dashed;
+	}
+
+	.wb-corner-session-list .wb-corner-new svg {
+		width: 15px;
+	}
+
+	.wb-corner-nav-main > footer {
+		padding: 6px 9px;
+		color: var(--muted-foreground);
+		background: color-mix(in srgb, black 30%, transparent);
+		border-top: 1px solid var(--border);
+		font-size: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-menu {
+		position: absolute;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr);
+		left: 8px;
+		right: 8px;
+		bottom: calc(74px + env(safe-area-inset-bottom));
+		z-index: 31;
+		max-height: 48%;
+		background: var(--card);
+		border: 1px solid var(--border);
+		box-shadow: var(--shadow-lg, none);
+	}
+
+	.wb-corner-menu > header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		min-height: 44px;
+		padding: 6px 10px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.wb-corner-menu > header button {
+		display: grid;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+	}
+
+	.wb-corner-menu > header svg {
+		width: 17px;
+	}
+
+	.wb-corner-menu > div {
+		display: grid;
+		gap: 3px;
+		padding: 6px;
+		overflow-y: auto;
+	}
+
+	.wb-corner-menu > div > button {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 9px;
+		min-height: 44px;
+		padding: 7px 9px;
+		text-align: left;
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-menu > div > button[data-current="true"] {
+		border-color: var(--primary);
+	}
+
+	.wb-corner-menu > div svg {
+		width: 19px;
+	}
+
+	.wb-corner-menu > div strong {
+		font-size: 10px;
+	}
+
+	.wb-corner-menu > div small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-radial {
+		position: absolute;
+		display: block;
+		inset: 0;
+		z-index: 32;
+		pointer-events: none;
+	}
+
+	.wb-corner-radial > button {
+		position: absolute;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		color: var(--foreground);
+		background: var(--card);
+		border: 1px solid var(--border);
+		pointer-events: auto;
+	}
+
+	.wb-corner-radial > button:hover,
+	.wb-corner-radial > button:focus-visible {
+		color: var(--primary);
+		border-color: var(--primary);
+	}
+
+	.wb-corner-radial > button svg {
+		width: 19px;
+	}
+
+	.wb-corner-radial [data-action="attach"] {
+		right: 74px;
+		bottom: 68px;
+	}
+	.wb-corner-radial [data-action="voice"] {
+		right: 22px;
+		bottom: 116px;
+	}
+	.wb-corner-radial [data-action="model"] {
+		right: 84px;
+		bottom: 128px;
+	}
+	.wb-corner-radial [data-action="fork"] {
+		right: 136px;
+		bottom: 86px;
+	}
+	.wb-corner-radial .wb-corner-radial__cancel {
+		right: 8px;
+		bottom: calc(30px + env(safe-area-inset-bottom));
+		border-style: dashed;
+		border-radius: 50% !important;
+	}
+}
+
 /* Shell load states */
 .wb-shell-notice {
 	display: grid;

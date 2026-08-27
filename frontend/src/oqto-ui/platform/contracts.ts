@@ -104,13 +104,18 @@ export type OqtoUiConfig = {
 	bindings: Array<{ keys: string; action: string }>;
 	status_line: {
 		segments: Array<
-			| "session"
-			| "model"
-			| "context"
-			| "connection"
-			| "runnerload"
-			| "version"
+			"session" | "model" | "context" | "connection" | "runnerload" | "version"
 		>;
+	};
+	mobile: {
+		mode: "classic" | "corner";
+		hold_ms: number;
+		corners: {
+			top_left: { tap: string; hold: string };
+			top_right: { tap: string; hold: string };
+			bottom_left: { tap: string; hold: string };
+			bottom_right: { tap: string; hold: string };
+		};
 	};
 };
 
@@ -136,6 +141,19 @@ export const DEFAULT_OQTO_UI_CONFIG: OqtoUiConfigResolution = {
 		],
 		status_line: {
 			segments: ["session", "model", "context", "connection"],
+		},
+		mobile: {
+			mode: "classic",
+			hold_ms: 320,
+			corners: {
+				top_left: { tap: "navigator.open", hold: "menu.projects" },
+				top_right: { tap: "view.openFiles", hold: "menu.tools" },
+				bottom_left: {
+					tap: "session.openPrevious",
+					hold: "menu.sessionMru",
+				},
+				bottom_right: { tap: "chat.send", hold: "menu.chatActions" },
+			},
 		},
 	},
 	source: "dist-default",

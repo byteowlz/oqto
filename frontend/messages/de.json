@@ -777,6 +777,25 @@
 			"bindings_one": "{{count}} Belegung",
 			"bindings_other": "{{count}} Belegungen"
 		},
+		"corner": {
+			"navigator": "Navigator; halten für Projekte",
+			"tools": "Dateien; halten für Werkzeuge",
+			"previousSession": "Vorherige Sitzung; halten für zuletzt verwendet",
+			"sendActions": "Senden; halten für Aktionen",
+			"close": "Menü schließen",
+			"projects": "Projekte",
+			"newProject": "Neues Projekt",
+			"projectsAndSessions": "Projekte ({{count}}) und Sitzungen",
+			"switch": "WECHSELN",
+			"search": "Gesamten Arbeitsbereich durchsuchen…",
+			"newSession": "Neue Sitzung starten",
+			"sessionCount_one": "{{count}} Sitzung",
+			"sessionCount_other": "{{count}} Sitzungen",
+			"navigatorStatus": "{{name}} · {{count}} Sitzungen · privat",
+			"recentSessions": "Zuletzt verwendete Sitzungen",
+			"voice": "Sprache",
+			"model": "Modell"
+		},
 		"gallery": {
 			"label": "Galerie",
 			"empty": "Diesem Arbeitsverzeichnis sind keine Galerie-Ressourcen zugeordnet.",

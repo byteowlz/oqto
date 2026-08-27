@@ -777,6 +777,25 @@
 			"bindings_one": "{{count}} binding",
 			"bindings_other": "{{count}} bindings"
 		},
+		"corner": {
+			"navigator": "Navigator; hold for projects",
+			"tools": "Files; hold for tools",
+			"previousSession": "Previous session; hold for recent sessions",
+			"sendActions": "Send; hold for actions",
+			"close": "Close menu",
+			"projects": "Projects",
+			"newProject": "New project",
+			"projectsAndSessions": "Projects ({{count}}) and Sessions",
+			"switch": "SWITCH",
+			"search": "Search the whole workspace…",
+			"newSession": "Start new Session",
+			"sessionCount_one": "{{count}} Session",
+			"sessionCount_other": "{{count}} Sessions",
+			"navigatorStatus": "{{name}} · {{count}} Sessions · private",
+			"recentSessions": "Recent Sessions",
+			"voice": "Voice",
+			"model": "Model"
+		},
 		"gallery": {
 			"label": "Gallery",
 			"empty": "No Gallery resources are bound to this work directory.",

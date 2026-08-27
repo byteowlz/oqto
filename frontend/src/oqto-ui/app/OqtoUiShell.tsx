@@ -6,6 +6,7 @@ import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { TaskProgress } from "../chat/TaskProgress";
 import { FilesPane } from "../files/FilesPane";
 import { GalleryPane } from "../gallery/GalleryPane";
+import { CornerModeChrome } from "../layout/CornerModeChrome";
 import { MobileTopBar } from "../layout/MobileTopBar";
 import type {
 	OqtoUiConfigResolution,
@@ -20,6 +21,7 @@ import { ThemeCustomizer } from "../theme/ThemeCustomizer";
 import { ThemePicker } from "../theme/ThemePicker";
 import { useThemeRoot } from "../theme/useThemeRoot";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
+import { ConfigLens } from "./ConfigLens";
 import { Splash } from "./Splash";
 import { useConfiguredBindings } from "./useConfiguredBindings";
 import "./shell.css";
@@ -174,6 +176,7 @@ function LoadedShell({
 			data-files-placement={config.layout.files}
 			data-navigator-placement={config.layout.navigator}
 			data-density={config.appearance.density}
+			data-mobile-mode={config.mobile.mode}
 			data-config-source={resolvedConfig.source}
 			ref={rootRef}
 		>
@@ -210,41 +213,33 @@ function LoadedShell({
 					onOpenSessions={() => setSessionsOpen(true)}
 					onNavigate={onNavigate}
 				/>
-				<div className="wb-workarea" data-view={navigation.mobileView}>
-					<ChatWorkspace
-						platform={platform}
-						directory={directory}
-						session={session}
-						tasks={session.tasks ?? []}
-						workArea={snapshot.workArea}
-						workAreaTab={navigation.workAreaTab}
-						galleryPane={<GalleryPane resources={snapshot.gallery} />}
-						onNavigate={onNavigate}
-					/>
-					<FilesPane files={snapshot.files} />
-				</div>
+				<CornerModeChrome
+					config={config}
+					directories={directories}
+					directory={directory}
+					session={session}
+					onNavigate={onNavigate}
+				>
+					<div className="wb-workarea" data-view={navigation.mobileView}>
+						<ChatWorkspace
+							platform={platform}
+							directory={directory}
+							session={session}
+							tasks={session.tasks ?? []}
+							workArea={snapshot.workArea}
+							workAreaTab={navigation.workAreaTab}
+							galleryPane={<GalleryPane resources={snapshot.gallery} />}
+							onNavigate={onNavigate}
+						/>
+						<FilesPane files={snapshot.files} />
+					</div>
+				</CornerModeChrome>
 				<ThemeCustomizer
 					themeRoot={rootEl}
 					userTheme={userTheme}
 					onChange={onUserTheme}
 				/>
-				<div
-					className="wb-config-lens"
-					data-invalid={resolvedConfig.diagnostics.length > 0}
-				>
-					<span>{t("oqtoUi.customization.file")}</span>
-					<strong>{config.preset}</strong>
-					<span>
-						{t("oqtoUi.customization.bindings", {
-							count: config.bindings.length,
-						})}
-					</span>
-					{resolvedConfig.diagnostics[0] ? (
-						<span title={resolvedConfig.diagnostics[0].message}>
-							{resolvedConfig.diagnostics[0].code}
-						</span>
-					) : null}
-				</div>
+				<ConfigLens resolution={resolvedConfig} />
 				{status ? (
 					<footer className="wb-statusbar">
 						<div className="wb-statusbar__group">

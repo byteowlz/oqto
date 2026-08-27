@@ -42,6 +42,16 @@ type JsonRecord = {
 	navigator?: unknown;
 	bindings?: unknown;
 	segments?: unknown;
+	mobile?: unknown;
+	mode?: unknown;
+	hold_ms?: unknown;
+	corners?: unknown;
+	top_left?: unknown;
+	top_right?: unknown;
+	bottom_left?: unknown;
+	bottom_right?: unknown;
+	tap?: unknown;
+	hold?: unknown;
 	source?: unknown;
 	diagnostics?: unknown;
 };
@@ -186,6 +196,12 @@ function parseUiConfig(value: unknown): OqtoUiConfigResolution {
 	const appearance = record(config?.appearance);
 	const layout = record(config?.layout);
 	const statusLine = record(config?.status_line);
+	const mobile = record(config?.mobile);
+	const corners = record(mobile?.corners);
+	const topLeft = record(corners?.top_left);
+	const topRight = record(corners?.top_right);
+	const bottomLeft = record(corners?.bottom_left);
+	const bottomRight = record(corners?.bottom_right);
 	if (
 		config?.version !== 1 ||
 		typeof config.preset !== "string" ||
@@ -196,6 +212,12 @@ function parseUiConfig(value: unknown): OqtoUiConfigResolution {
 		typeof layout.navigator !== "string" ||
 		!Array.isArray(config.bindings) ||
 		!Array.isArray(statusLine?.segments) ||
+		typeof mobile?.mode !== "string" ||
+		typeof mobile.hold_ms !== "number" ||
+		!topLeft ||
+		!topRight ||
+		!bottomLeft ||
+		!bottomRight ||
 		typeof root?.source !== "string" ||
 		!Array.isArray(root.diagnostics)
 	) {
@@ -203,7 +225,10 @@ function parseUiConfig(value: unknown): OqtoUiConfigResolution {
 			...DEFAULT_OQTO_UI_CONFIG,
 			source: "user-lua-fallback",
 			diagnostics: [
-				{ code: "customization.response.invalid", message: invalidConfigResponse },
+				{
+					code: "customization.response.invalid",
+					message: invalidConfigResponse,
+				},
 			],
 		};
 	}

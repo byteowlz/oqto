@@ -28,6 +28,8 @@ pub struct OqtoUiConfigV1 {
     pub bindings: Vec<KeyBinding>,
     #[serde(default)]
     pub status_line: StatusLineConfig,
+    #[serde(default)]
+    pub mobile: MobileConfig,
 }
 
 impl Default for OqtoUiConfigV1 {
@@ -42,6 +44,7 @@ impl Default for OqtoUiConfigV1 {
                 KeyBinding::new("ctrl+shift+f", "view.openFiles"),
             ],
             status_line: StatusLineConfig::default(),
+            mobile: MobileConfig::default(),
         }
     }
 }
@@ -137,6 +140,75 @@ impl KeyBinding {
         Self {
             keys: keys.to_owned(),
             action: action.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MobileConfig {
+    #[serde(default)]
+    pub mode: MobileMode,
+    #[serde(default = "default_hold_ms")]
+    pub hold_ms: u16,
+    #[serde(default)]
+    pub corners: CornerSlots,
+}
+
+impl Default for MobileConfig {
+    fn default() -> Self {
+        Self {
+            mode: MobileMode::Classic,
+            hold_ms: default_hold_ms(),
+            corners: CornerSlots::default(),
+        }
+    }
+}
+
+const fn default_hold_ms() -> u16 {
+    320
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MobileMode {
+    #[default]
+    Classic,
+    Corner,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CornerSlots {
+    pub top_left: CornerBinding,
+    pub top_right: CornerBinding,
+    pub bottom_left: CornerBinding,
+    pub bottom_right: CornerBinding,
+}
+
+impl Default for CornerSlots {
+    fn default() -> Self {
+        Self {
+            top_left: CornerBinding::new("navigator.open", "menu.projects"),
+            top_right: CornerBinding::new("view.openFiles", "menu.tools"),
+            bottom_left: CornerBinding::new("session.openPrevious", "menu.sessionMru"),
+            bottom_right: CornerBinding::new("chat.send", "menu.chatActions"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CornerBinding {
+    pub tap: String,
+    pub hold: String,
+}
+
+impl CornerBinding {
+    fn new(tap: &str, hold: &str) -> Self {
+        Self {
+            tap: tap.to_owned(),
+            hold: hold.to_owned(),
         }
     }
 }
@@ -290,6 +362,23 @@ fn validate(config: &OqtoUiConfigV1) -> Result<(), EvalError> {
     if config.preset.trim().is_empty() {
         return Err(EvalError::Schema("preset must not be empty".to_owned()));
     }
+    if !(250..=500).contains(&config.mobile.hold_ms) {
+        return Err(EvalError::Schema(
+            "mobile hold_ms must be between 250 and 500".to_owned(),
+        ));
+    }
+    for corner in [
+        &config.mobile.corners.top_left,
+        &config.mobile.corners.top_right,
+        &config.mobile.corners.bottom_left,
+        &config.mobile.corners.bottom_right,
+    ] {
+        if !corner.tap.contains('.') || !corner.hold.starts_with("menu.") {
+            return Err(EvalError::Schema(
+                "corner tap must be a namespaced Action and hold must reference menu.*".to_owned(),
+            ));
+        }
+    }
     for binding in &config.bindings {
         if binding.keys.trim().is_empty() || binding.action.trim().is_empty() {
             return Err(EvalError::Schema(
@@ -347,6 +436,16 @@ mod tests {
             { keys = "ctrl+p", action = "shell.openCommandPalette" },
           },
           status_line = { segments = { "session", "context", "runnerload" } },
+          mobile = {
+            mode = "corner",
+            hold_ms = 320,
+            corners = {
+              top_left = { tap = "navigator.open", hold = "menu.projects" },
+              top_right = { tap = "view.openFiles", hold = "menu.tools" },
+              bottom_left = { tap = "session.openPrevious", hold = "menu.sessionMru" },
+              bottom_right = { tap = "chat.send", hold = "menu.chatActions" },
+            },
+          },
         })
     "#;
 
@@ -356,6 +455,8 @@ mod tests {
         assert_eq!(config.preset, "instrument-panel");
         assert_eq!(config.appearance.radius, Radius::Soft);
         assert_eq!(config.layout.files, FilesPlacement::Left);
+        assert_eq!(config.mobile.mode, MobileMode::Corner);
+        assert_eq!(config.mobile.hold_ms, 320);
         assert_eq!(
             config.status_line.segments,
             vec![

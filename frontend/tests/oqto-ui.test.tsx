@@ -64,17 +64,45 @@ describe("OqtoUI shell", () => {
 		await renderShell();
 		const shell = document.querySelector<HTMLElement>(".wb-shell");
 		expect(shell).toHaveAttribute("data-config-source", "user-lua");
-		expect(shell).toHaveAttribute("data-files-placement", "left");
+		expect(shell).toHaveAttribute("data-files-placement", "right");
 		expect(shell).toHaveAttribute("data-density", "compact");
-		expect(shell?.dataset.scheme).toBe("nord-dark");
-		expect(shell?.style.getPropertyValue("--radius")).toBe("10px");
-		expect(screen.getByText("instrument-panel")).toBeInTheDocument();
+		expect(shell?.dataset.scheme).toBe("oqto-dark");
+		expect(shell?.style.getPropertyValue("--radius")).toBe("0px");
+		expect(screen.getByText("corner-v4")).toBeInTheDocument();
 		expect(screen.getByText("2 bindings")).toBeInTheDocument();
 
 		fireEvent.keyDown(document, { key: "f", ctrlKey: true, shiftKey: true });
 		await waitFor(() => {
-			expect(screen.getByTestId("location-search")).toHaveTextContent("view=files");
+			expect(screen.getByTestId("location-search")).toHaveTextContent(
+				"view=files",
+			);
 		});
+	});
+
+	it("runs the corner-mode v4 navigator and send radial from the preset", async () => {
+		await renderShell();
+		const shell = document.querySelector<HTMLElement>(".wb-shell");
+		expect(shell).toHaveAttribute("data-mobile-mode", "corner");
+
+		fireEvent.pointerUp(
+			screen.getByRole("button", { name: "Navigator; hold for projects" }),
+		);
+		expect(
+			screen.getByRole("region", { name: "Navigator; hold for projects" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByPlaceholderText("Search the whole workspace…"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Start new Session")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
+		const send = screen.getByRole("button", { name: "Send; hold for actions" });
+		fireEvent.keyDown(send, { key: "ArrowDown" });
+		const radial = screen.getByRole("menu", { name: "Send; hold for actions" });
+		expect(within(radial).getAllByRole("menuitem")).toHaveLength(4);
+		expect(
+			document.querySelector(".wb-corner-composer textarea"),
+		).toBeInTheDocument();
 	});
 
 	it("collapses mobile chrome into one bar with identity, session switch, and a tab menu", async () => {
