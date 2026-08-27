@@ -359,3 +359,32 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
   font-size: 10.5px; color: var(--muted); display: grid; gap: 3px; pointer-events: none;
 }
 .pad-legend b { color: var(--accent-bright); }
+
+/* ------------------------------------------------ v4: navigator anatomy */
+
+.wd-chip { position: relative; }
+.wd-chip .att-dot {
+  position: absolute; top: 4px; right: 4px;
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.wd-new { color: var(--faint); border-style: dashed; }
+.wd-new:hover { color: var(--text); }
+
+.row-item .rid { font-style: normal; color: var(--faint); font-size: 10px; }
+.row-new { color: var(--muted); }
+.row-new svg.gl { width: 16px; height: 16px; }
+
+.nav-list { flex: 1; min-height: 0; overflow-y: auto; }
+.nav-main .fuzzy { margin-top: 4px; }
+.nav-status {
+  flex: none;
+  padding: 6px 12px 8px;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  background: rgba(0,0,0,.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

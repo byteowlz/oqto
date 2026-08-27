@@ -96,3 +96,26 @@ practice, spatial memory, game-HUD cognitive load).
 
 Design probes for test-driving; nothing here is production direction.
 Feedback lands in oqto-m5sp.
+
+## v4 (user mockup integration)
+
+Integrates the ribbon/list navigator mockups (03/04/06):
+
+- Navigator (tap top-left) uses the mockup-06 anatomy: `+ new project` heads
+  the workdir ribbon (attention dots aggregate session status), the list
+  starts with `+ start new Session`, rows carry `title [readable-id]` plus
+  `date | messages | tokens`, fuzzy search sits at the bottom (thumb reach —
+  kept from mockup 04, overriding 06's top placement), and a tenant status
+  line (`workdir | N sessions | private | isolation: developer`) closes the
+  panel.
+- Hold top-left is now the mockup-04 quick **project** switcher (carousel with
+  per-project active/blocked/session stats, release to select). Tenant
+  switching moved to the navigator header SWITCH button (tap parity).
+- Status dots use **herdr attention semantics**: `done` means completed while
+  unseen; opening the session marks it seen and the dot collapses to `idle`.
+  Fixture guarantees one unseen completion per larger workdir.
+- The bottom status line is **context-aware**: chat shows
+  `status | model | context | version`, the navigator shows the tenant
+  context, tool views show path/watcher segments. In the real product each
+  segment is a config-bound (provider, template) pair per ADR-0040.
+

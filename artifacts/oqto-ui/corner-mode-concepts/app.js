@@ -1,5 +1,7 @@
-/* OqtoUI corner-mode concept gallery v3 (oqto-m5sp). Fixture-only design probe.
-   Model: workspace(tenant) -> workdir -> session. Tap = do. Hold = choose. */
+/* OqtoUI corner-mode concept gallery v4 (oqto-m5sp). Fixture-only design probe.
+   Model: workspace(tenant) -> workdir -> session. Tap = do. Hold = choose.
+   v4: navigator anatomy from the ribbon/list mockups, herdr attention
+   semantics (done = unseen completion), context-aware status line. */
 "use strict";
 
 /* ---------------- fixtures ---------------- */
@@ -77,14 +79,49 @@ function proceduralIcon(name) {
 function dirIcon(dir) { return dir.logo ?? proceduralIcon(dir.name); }
 function tenantAccent(tenant) { return ICON_HUES[hash(tenant.id) % ICON_HUES.length]; }
 
+const READABLE_A = ["oral", "taut", "vile", "calm", "warm", "flat", "keen", "soft"];
+const READABLE_B = ["list", "lass", "ones", "moss", "dune", "reed", "fern", "kelp"];
+const READABLE_C = ["zero", "rand", "meat", "silk", "iron", "opal", "wolf", "moth"];
+
+function readableId(seed) {
+  return `${READABLE_A[seed % 8]}-${READABLE_B[(seed >> 2) % 8]}-${READABLE_C[(seed >> 4) % 8]}`;
+}
+
 function seededSessions(tenantId, dirId) {
   const n = 2 + (hash(tenantId + dirId) % 4);
   const out = [];
   for (let i = 0; i < n; i += 1) {
-    const [name, status] = SESSION_NAMES[(hash(tenantId + dirId) + i * 3) % SESSION_NAMES.length];
-    out.push({ id: `${dirId}-s${i}`, name, status, updated: `2026/08/${10 + i} - ${9 + i}:2${i}` });
+    const seed = hash(tenantId + dirId) + i * 3;
+    let [name, status] = SESSION_NAMES[seed % SESSION_NAMES.length];
+    /* guarantee one unseen completion per larger workdir so the herdr
+       attention semantics are visible in the probe */
+    if (i === 1 && n >= 3) status = "done";
+    out.push({
+      id: `${dirId}-s${i}`,
+      name,
+      status,
+      readable: readableId(seed),
+      msgs: 3 + (seed % 40),
+      tokens: `${(12 + (seed % 110)).toFixed(0)}.${seed % 9}k`,
+      updated: `2026/08/${10 + i} - ${9 + i}:2${i}`,
+    });
   }
   return out;
+}
+
+/* herdr attention semantics: done = completion while unseen; opening a
+   session marks it seen, so its done collapses to idle. */
+function seenKey(tenantId, dirId, sessionId) { return `${tenantId}/${dirId}/${sessionId}`; }
+function displayStatus(s, tenantId, dirId) {
+  if (s.status === "done" && state.seen.has(seenKey(tenantId, dirId, s.id))) return "idle";
+  return s.status;
+}
+function dirAttention(tenantId, d) {
+  const statuses = sessionsOf(tenantId, d.id).map((s) => displayStatus(s, tenantId, d.id));
+  if (statuses.includes("blocked")) return "blocked";
+  if (statuses.includes("done")) return "done";
+  if (statuses.includes("working")) return "working";
+  return null;
 }
 
 const CHAT = [
@@ -119,6 +156,7 @@ function fuzzy(query, text) {
 }
 
 const GLYPHS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
   sessions: '<path d="M4 5h16v11H8l-4 4z"/>',
   files: '<path d="M4 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
   editor: '<path d="M8 4l-6 8 6 8"/><path d="M16 4l6 8-6 8"/>',
@@ -164,6 +202,7 @@ const state = {
   toast: null,
   model: "opus-4.7",
   preview: null,
+  seen: new Set(),
 };
 
 function tenant() { return TENANTS.find((t) => t.id === state.tenantId); }
@@ -177,6 +216,7 @@ function pushMru(tenantId, dirId, sessionId) {
   state.mru = [{ tenant: tenantId, dir: dirId, session: sessionId }, ...state.mru.filter((m) => m.session !== sessionId)].slice(0, 8);
 }
 function gotoSession(tenantId, dirId, sessionId) {
+  state.seen.add(seenKey(tenantId, dirId, sessionId));
   state.tenantId = tenantId; state.dirId = dirId;
   state.sessionByDir[dirId] = sessionId;
   pushMru(tenantId, dirId, sessionId);
@@ -189,7 +229,7 @@ pushMru("byteowlz", "oqto", "oqto-s0");
 /* ---------------- variants ---------------- */
 
 const VARIANTS = {
-  A: { label: "Navigator (mobile)", note: "<b>Tap top-left → navigator:</b> workdir ribbon in one vertical line under the button, sessions beside it, both scroll independently. Empty search = current workdir; typing searches the whole tenant (other workdirs get a chip). <b>Hold top-left → tenant carousel</b> (or the header switch button — tap parity). Tap top-right = <b>Files</b>; blank hold-release = previous tool. Tap bottom-left = <b>previous session</b>; hold = cross-tenant MRU fan. Bottom-right = send; hold = quarter-arc radial (dead zone in the corner)." },
+  A: { label: "Navigator (mobile)", note: "<b>v4.</b> <b>Tap top-left → navigator</b> (mockup-06 anatomy): + new project heads the ribbon, session rows carry <i>[readable-id]</i> and date | messages | tokens, search sits at the <b>bottom</b> (thumb reach), and the tenant status line shows visibility + isolation. <b>Hold top-left → quick project switch</b> (mockup-04, release to select); tenant switching stays on the header SWITCH button. Status dots use <b>herdr attention semantics</b>: blue = finished while unseen; opening a session clears it to idle. The bottom status line is <b>context-aware</b> — its segments swap when the navigator or a tool has focus (config-bound in the real product). Other corners unchanged: tap top-right Files / hold wheel; bottom-left previous session / MRU fan; bottom-right send / quarter radial." },
   B: { label: "Right edge strips", note: "Same navigator left; top-right opens a narrow <b>edge strip</b> of tool icons instead of jumping to Files. Compare reachability vs one-tap-Files." },
   C: { label: "Right quadrant sheet", note: "Same navigator left; top-right opens a <b>quarter sheet</b> with the tool list and fuzzy search. Richest, but covers the chat." },
   D: { label: "Big picture + controller", note: "Fullscreen desktop. Navigator pins as the left rail (ribbon + list); files/tools pin right; corner grammar unchanged. Toggle <b>PAD overlay</b> in the panel to see the shoulder mapping (L1/R1/L2/R2, stick-steer, release-on-item commits, release-on-nothing cancels)." },
@@ -212,8 +252,8 @@ function padChip(corner, key, extra) {
 function topBar() {
   const s = session();
   return `<div class="cm-top">
-    ${cornerButton("tl", "left", dirIcon(dir()), "Navigator: workdirs and sessions")}
-    ${padChip("tl", "L1", "tap list · hold tenant")}
+    ${cornerButton("tl", "left", dirIcon(dir()), "Navigator (hold: quick project switch)")}
+    ${padChip("tl", "L1", "tap nav · hold projects")}
     <div class="cm-title"><strong>${escapeHtml(s.name)}</strong><small>${escapeHtml(dir().name)} [${s.id}] · ${escapeHtml(tenant().name)}</small></div>
     ${cornerButton("tr", "right", glyph(state.tool), "Tools (tap: Files / previous tool on blank release)")}
     ${padChip("tr", "R1", "tap files · hold wheel")}
@@ -230,9 +270,26 @@ function composerRow() {
   </div>`;
 }
 
+/* Context-aware status line: the segment set follows the focused surface.
+   In the real product each segment is a config-bound (provider, template)
+   pair; presets define the defaults, user config overrides them. */
+function statusSegments() {
+  const d = dir();
+  if (state.open === "nav" || state.open === "tenants") {
+    const n = sessionsOf(state.tenantId, state.dirId).length;
+    return [`<b>${escapeHtml(d.name)}</b>`, `${n} sessions`, "private", "isolation: developer"];
+  }
+  if (state.open === "tools") {
+    return [`<b>${escapeHtml(d.path)}</b>`, "3 changed", "watcher: live"];
+  }
+  const s = session();
+  const shown = displayStatus(s, state.tenantId, state.dirId);
+  return [`<b>●</b> ${shown}`, state.model, "24.1k · 12%", "v0.5.0"];
+}
+
 function statusBar() {
   return `<div class="cm-statusbar">
-    <button class="cm-status" data-open-status aria-label="Agent state" data-open="${state.open === "status"}"><span><b>●</b> working</span><span>${state.model}</span><span>24.1k · 12%</span><span>v0.5.0</span></button>
+    <button class="cm-status" data-open-status aria-label="Agent state" data-open="${state.open === "status"}">${statusSegments().map((seg) => `<span>${seg}</span>`).join("")}</button>
   </div>`;
 }
 
@@ -256,31 +313,47 @@ function chat() {
 function navigatorPanel(fullscreen) {
   const t = tenant();
   const accent = tenantAccent(t);
-  const browsing = state.query ? "" : "";
+  const d = dir();
   const listHtml = state.query ? searchAllRows() : dirRows();
+  const sessionCount = sessionsOf(state.tenantId, state.dirId).length;
   return `<section class="navigator" data-fullscreen="${fullscreen}">
     <div class="nav-ribbon">
-      ${t.workdirs.map((d) => `<button class="wd-chip" data-dir="${d.id}" data-active="${d.id === state.dirId}">${dirIcon(d)}<small>${escapeHtml(d.name.slice(0, 8))}</small></button>`).join("")}
+      <button class="wd-chip wd-new" data-new-project title="New project">${glyph("plus")}<small>new</small></button>
+      ${t.workdirs.map((w) => {
+        const att = dirAttention(state.tenantId, w);
+        return `<button class="wd-chip" data-dir="${w.id}" data-active="${w.id === state.dirId}">${dirIcon(w)}<small>${escapeHtml(w.name.slice(0, 8))}</small>${att ? `<span class="att-dot" style="background:${STATUS_COLOR[att]}"></span>` : ""}</button>`;
+      }).join("")}
     </div>
     <div class="nav-main" style="--accent-border:${accent}">
       <div class="nav-tenant" style="border-bottom-color:${accent}">
         ${t.logo ?? proceduralIcon(t.name)}
-        <div class="grow"><b>${escapeHtml(t.name)}</b><br><small>WORKSPACE · TENANT</small></div>
+        <div class="grow"><b>Projects (${t.workdirs.length}) &amp; Sessions</b><br><small>${escapeHtml(t.name)} · WORKSPACE</small></div>
         <button class="nav-tenant-switch" data-open-tenants>SWITCH</button>
       </div>
-      <div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="${browsing}Fuzzy — searches whole workspace…" value="${escapeHtml(state.query)}" autocomplete="off" /></div>
-      <div class="nav-list">${listHtml}</div>
+      <div class="nav-list">
+        <button class="row-item row-new" data-new-session>${glyph("plus")}<span class="grow">start new Session<small>in ${escapeHtml(d.name)}</small></span></button>
+        ${listHtml}
+      </div>
+      <div class="fuzzy">${glyph("search")}<input id="fuzzy-input" placeholder="Fuzzy — searches whole workspace…" value="${escapeHtml(state.query)}" autocomplete="off" /></div>
+      <div class="nav-status">${escapeHtml(d.name)} | ${sessionCount} sessions | private | isolation: developer</div>
     </div>
   </section>`;
 }
 
+function sessionRowMeta(s) {
+  return `${s.updated} | ${s.msgs} messages | ${s.tokens} tokens`;
+}
+
 function dirRows() {
   const current = session();
-  return sessionsOf(state.tenantId, state.dirId).map((s) => `
+  return sessionsOf(state.tenantId, state.dirId).map((s) => {
+    const shown = displayStatus(s, state.tenantId, state.dirId);
+    return `
     <button class="row-item" data-session="${s.id}" data-current="${s.id === current.id}">
-      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
-      <span class="grow"><span>${escapeHtml(s.name)}</span><small>${s.updated} · ${s.status}</small></span>
-    </button>`).join("");
+      <span class="status-dot" data-status="${shown}" style="background:${STATUS_COLOR[shown]}"></span>
+      <span class="grow"><span>${escapeHtml(s.name)} <i class="rid">[${s.readable}]</i></span><small>${sessionRowMeta(s)}</small></span>
+    </button>`;
+  }).join("");
 }
 
 function searchAllRows() {
@@ -293,12 +366,15 @@ function searchAllRows() {
   }
   rows.sort((a, b) => b.score - a.score);
   if (rows.length === 0) return `<div class="sheet-empty">No sessions match "${escapeHtml(state.query)}".</div>`;
-  return rows.map(({ d, s, html }) => `
+  return rows.map(({ d, s, html }) => {
+    const shown = displayStatus(s, state.tenantId, d.id);
+    return `
     <button class="row-item" data-dir="${d.id}" data-session="${s.id}">
       <span class="nav-dir-chip">${escapeHtml(d.name.slice(0, 10))}</span>
-      <span class="grow"><span>${html}</span><small>${s.updated} · ${s.status}</small></span>
-      <span class="status-dot" style="background:${STATUS_COLOR[s.status]}"></span>
-    </button>`).join("");
+      <span class="grow"><span>${html} <i class="rid">[${s.readable}]</i></span><small>${sessionRowMeta(s)}</small></span>
+      <span class="status-dot" data-status="${shown}" style="background:${STATUS_COLOR[shown]}"></span>
+    </button>`;
+  }).join("");
 }
 
 /* ---------------- expansions ---------------- */
@@ -397,6 +473,21 @@ function railPreviewBubble() {
 
 /* ---------------- hold menus ---------------- */
 
+function projectCarouselItems() {
+  return tenant().workdirs.map((d) => {
+    const sessions = sessionsOf(state.tenantId, d.id);
+    const statuses = sessions.map((x) => displayStatus(x, state.tenantId, d.id));
+    const active = statuses.filter((x) => x === "working").length;
+    const blocked = statuses.filter((x) => x === "blocked").length;
+    return {
+      id: d.id,
+      face: dirIcon(d),
+      label: d.name,
+      sub: `${active} active · ${blocked} blocked · ${sessions.length} sessions`,
+    };
+  });
+}
+
 function tenantCarouselItems() {
   return TENANTS.map((t) => ({ face: t.logo ?? proceduralIcon(t.name), label: t.name, sub: `${t.workdirs.length} WORKDIRS`, id: t.id }));
 }
@@ -480,7 +571,7 @@ let holdTimer = null;
 let pressedCorner = null;
 
 function holdItemsFor(corner) {
-  if (corner === "tl") return { kind: "mgs", items: tenantCarouselItems(), sel: TENANTS.findIndex((t) => t.id === state.tenantId) };
+  if (corner === "tl") return { kind: "mgs", items: projectCarouselItems(), sel: tenant().workdirs.findIndex((d) => d.id === state.dirId) };
   if (corner === "tr") return { kind: "mgs", items: toolCarouselItems(), sel: TOOLS.findIndex(([id]) => id === state.tool) };
   if (corner === "br") return { kind: "qradial", items: RADIAL_ACTIONS.map(([g, label, sub]) => ({ glyph: g, label, sub, id: g })), sel: 0 };
   return { kind: "fan", items: fanItems(), sel: 0 };
@@ -542,8 +633,12 @@ function commitHold() {
     else if (action.id === "mic") showToast("<b>Voice</b> — probe: voice mode toggled on.");
     else if (action.id === "branch") showToast("<b>Fork</b> — probe: fork confirmation would open.");
   } else if (kind === "mgs") {
-    if (corner === "tl") { state.tenantId = items[sel].id; state.dirId = tenant().workdirs[0].id; state.open = null; }
-    else if (corner === "tr") { setTool(items[sel].id); state.open = null; }
+    if (corner === "tl") {
+      state.dirId = items[sel].id;
+      const first = sessionsOf(state.tenantId, state.dirId)[0];
+      if (first) gotoSession(state.tenantId, state.dirId, first.id);
+      state.open = null;
+    } else if (corner === "tr") { setTool(items[sel].id); state.open = null; }
   } else if (kind === "fan") {
     const item = items[sel];
     gotoSession(item.tenant.id, item.dir.id, item.session.id);
@@ -639,7 +734,7 @@ function bindShell() {
       render();
       return;
     }
-    const target = event.target.closest("[data-close],[data-dir],[data-session],[data-tenant],[data-tool],[data-open-tenants],[data-open-status],[data-quick],[data-model],[data-pin],[data-split]");
+    const target = event.target.closest("[data-close],[data-dir],[data-session],[data-tenant],[data-tool],[data-open-tenants],[data-open-status],[data-quick],[data-model],[data-pin],[data-split],[data-new-project],[data-new-session]");
     if (!target) return;
     if (target.dataset.close !== undefined) { state.open = null; state.query = ""; }
     else if (target.dataset.tenant) {
@@ -648,10 +743,14 @@ function bindShell() {
       state.open = "nav"; state.query = "";
     }
     else if (target.dataset.openTenants !== undefined) { state.open = "tenants"; state.query = ""; }
+    else if (target.dataset.newProject !== undefined) { showToast("<b>New project</b> — probe: template picker would open."); return; }
+    else if (target.dataset.newSession !== undefined) { showToast("<b>New Session</b> — probe: would start in the current workdir."); return; }
     else if (target.dataset.openStatus !== undefined) { state.query = ""; state.open = state.open === "status" ? null : "status"; }
     else if (target.dataset.model) { state.model = target.dataset.model; state.open = null; }
     else if (target.dataset.tool) { setTool(target.dataset.tool); if (state.variant === "A") state.open = null; else state.open = "tools"; }
     else if (target.dataset.session) {
+      if (target.dataset.dir) state.dirId = target.dataset.dir;
+      state.seen.add(seenKey(state.tenantId, state.dirId, target.dataset.session));
       state.sessionByDir[state.dirId] = target.dataset.session;
       pushMru(state.tenantId, state.dirId, target.dataset.session);
       state.open = null; state.query = "";
