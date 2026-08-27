@@ -15,7 +15,7 @@ pub mod tier;
 
 pub use config::{EgressConfig, load_policy};
 pub use enforcer::{CompiledPolicy, EgressEnforcer};
-pub use iron_proxy::{IronProxyEnforcer, ProxyEndpoint};
+pub use iron_proxy::{IronProxyEnforcer, ProxyEndpoint, ProxyRuntime};
 pub use policy::{DestinationRule, MANDATORY_DENY_CIDRS, Protocol, Verdict, WorkspaceEgressPolicy};
 pub use probe::{ProbeAttempt, ProbeFinding, ProbeReport, evaluate};
 pub use tier::{Attestation, EgressTier, TierClaim};

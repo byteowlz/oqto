@@ -19,39 +19,76 @@ impl ProxyEndpoint {
     }
 }
 
+/// Host-side material the proxy process needs, distinct from the placement's
+/// view of the endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyRuntime {
+    /// Loopback port the proxy binds on the host. Never a privileged port:
+    /// the proxy runs unprivileged.
+    pub http_listen_port: u16,
+    pub https_listen_port: u16,
+    pub ca_cert_path: String,
+    pub ca_key_path: String,
+}
+
 #[derive(Debug, Serialize)]
 struct IronProxyConfig {
-    allowlist: Allowlist,
-    audit: Audit,
+    dns: Dns,
+    proxy: Proxy,
+    tls: Tls,
+    transforms: Vec<Transform>,
 }
 
 #[derive(Debug, Serialize)]
-struct Allowlist {
+struct Dns {
+    /// Clients reach the proxy through explicit proxy environment, so the
+    /// built-in DNS interceptor stays off and needs no privileged port.
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct Proxy {
+    http_listen: String,
+    https_listen: String,
+    upstream_deny_cidrs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Tls {
+    mode: &'static str,
+    ca_cert: String,
+    ca_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Transform {
+    name: &'static str,
+    config: AllowlistConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct AllowlistConfig {
     domains: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    ports: Vec<u16>,
-    deny_cidrs: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct Audit {
-    format: &'static str,
-    include_request_headers: bool,
 }
 
 /// Compiles [`WorkspaceEgressPolicy`] into iron-proxy YAML.
 #[derive(Debug, Clone)]
 pub struct IronProxyEnforcer {
     endpoint: ProxyEndpoint,
+    runtime: ProxyRuntime,
 }
 
 impl IronProxyEnforcer {
-    pub fn new(endpoint: ProxyEndpoint) -> Self {
-        Self { endpoint }
+    pub fn new(endpoint: ProxyEndpoint, runtime: ProxyRuntime) -> Self {
+        Self { endpoint, runtime }
     }
 
     pub fn endpoint(&self) -> &ProxyEndpoint {
         &self.endpoint
+    }
+
+    pub fn runtime(&self) -> &ProxyRuntime {
+        &self.runtime
     }
 
     fn domains(policy: &WorkspaceEgressPolicy) -> Vec<String> {
@@ -67,18 +104,24 @@ impl IronProxyEnforcer {
         }
     }
 
-    fn non_default_ports(policy: &WorkspaceEgressPolicy) -> Vec<u16> {
-        let mut ports: Vec<u16> = policy
-            .destinations
-            .iter()
-            .flat_map(|rule| rule.ports.iter().copied())
-            .filter(|port| {
-                *port != Protocol::Http.default_port() && *port != Protocol::Https.default_port()
-            })
-            .collect();
-        ports.sort_unstable();
-        ports.dedup();
-        ports
+    /// Hosts carrying a non-default port are emitted as `host:port` so the
+    /// allowlist does not silently widen to every port on that host.
+    fn domains_with_ports(policy: &WorkspaceEgressPolicy) -> Vec<String> {
+        let mut domains = Self::domains(policy);
+        if policy.verdict == Verdict::Allowlist {
+            for rule in &policy.destinations {
+                for port in &rule.ports {
+                    if *port != Protocol::Http.default_port()
+                        && *port != Protocol::Https.default_port()
+                    {
+                        domains.push(format!("{}:{}", rule.host, port));
+                    }
+                }
+            }
+        }
+        domains.sort();
+        domains.dedup();
+        domains
     }
 }
 
@@ -96,15 +139,23 @@ impl EgressEnforcer for IronProxyEnforcer {
 
     fn compile(&self, policy: &WorkspaceEgressPolicy) -> Result<CompiledPolicy> {
         let config = IronProxyConfig {
-            allowlist: Allowlist {
-                domains: Self::domains(policy),
-                ports: Self::non_default_ports(policy),
-                deny_cidrs: policy.deny_cidrs(),
+            dns: Dns { enabled: false },
+            proxy: Proxy {
+                http_listen: format!(":{}", self.runtime.http_listen_port),
+                https_listen: format!(":{}", self.runtime.https_listen_port),
+                upstream_deny_cidrs: policy.deny_cidrs(),
             },
-            audit: Audit {
-                format: "json",
-                include_request_headers: false,
+            tls: Tls {
+                mode: "mitm",
+                ca_cert: self.runtime.ca_cert_path.clone(),
+                ca_key: self.runtime.ca_key_path.clone(),
             },
+            transforms: vec![Transform {
+                name: "allowlist",
+                config: AllowlistConfig {
+                    domains: Self::domains_with_ports(policy),
+                },
+            }],
         };
 
         let yaml = serde_yaml::to_string(&config)
@@ -146,11 +197,19 @@ mod tests {
     use crate::policy::DestinationRule;
 
     fn enforcer() -> IronProxyEnforcer {
-        IronProxyEnforcer::new(ProxyEndpoint {
-            host: "127.0.0.1".to_string(),
-            port: 18080,
-            ca_bundle_path: Some("/etc/oqto/egress-ca.pem".to_string()),
-        })
+        IronProxyEnforcer::new(
+            ProxyEndpoint {
+                host: "127.0.0.1".to_string(),
+                port: 18080,
+                ca_bundle_path: Some("/etc/oqto/egress-ca.pem".to_string()),
+            },
+            ProxyRuntime {
+                http_listen_port: 18080,
+                https_listen_port: 18443,
+                ca_cert_path: "/var/lib/oqto/egress/ca.crt".to_string(),
+                ca_key_path: "/var/lib/oqto/egress/ca.key".to_string(),
+            },
+        )
     }
 
     #[test]
@@ -183,12 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn open_attributable_compiles_to_a_wildcard_that_still_audits() {
+    fn open_attributable_compiles_to_a_wildcard() {
         let mut policy = WorkspaceEgressPolicy::denied("ws-1");
         policy.verdict = Verdict::OpenAttributable;
         let compiled = enforcer().compile(&policy).expect("compile");
         assert!(compiled.config.contains('*'));
-        assert!(compiled.config.contains("format: json"));
     }
 
     #[test]
@@ -203,12 +261,23 @@ mod tests {
     }
 
     #[test]
-    fn extra_ports_are_declared_once_and_sorted() {
+    fn a_non_default_port_is_bound_to_its_host_not_opened_globally() {
         let mut rule = DestinationRule::https("registry.internal");
         rule.ports = vec![8443, 443, 8443];
         let policy = WorkspaceEgressPolicy::denied("ws-1").with_destinations(vec![rule]);
         let compiled = enforcer().compile(&policy).expect("compile");
-        assert_eq!(compiled.config.matches("8443").count(), 1);
+        assert!(compiled.config.contains("registry.internal:8443"));
+        assert_eq!(compiled.config.matches("registry.internal:8443").count(), 1);
+    }
+
+    #[test]
+    fn the_proxy_binds_unprivileged_ports_and_leaves_dns_off() {
+        let compiled = enforcer()
+            .compile(&WorkspaceEgressPolicy::denied("ws-1"))
+            .expect("compile");
+        assert!(compiled.config.contains("http_listen: :18080"));
+        assert!(compiled.config.contains("https_listen: :18443"));
+        assert!(compiled.config.contains("enabled: false"));
     }
 
     #[test]
