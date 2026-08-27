@@ -49,3 +49,12 @@ The fixture uses optimized transparent-white derivatives of real repository asse
 - “Enter workspace” buttons intentionally stop at the preview; the destination OqtoUI layout is not mocked here.
 - Session order, row ranking, preview summaries, and status are scripted research data.
 - No ADR direction should be selected from screenshots alone; exercise keyboard/touch navigation and compare multiple screen sizes.
+
+## Reference: HMI control-panel builder (sebcornelius)
+
+`references/hmi-control-panel-sebcornelius.jpeg` — the tweet's Demo
+Dashboard, kept as the visual north star for a widget-grid cockpit:
+signal-tree sidebar (grouped Providers with live values inline + type
+glyphs), a closed widget grammar (chart, 7-segment big number, toggle
+card, mode list, knob/gauge, state card), and the one-accent discipline
+(greyscale everything, accent only for live/active/armed states).
