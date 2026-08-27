@@ -2529,6 +2529,17 @@
 	height: var(--timeline-size, auto);
 }
 
+/* Touch devices render the page in plain flow so iOS keeps native
+   momentum; no absolute positioning, no transforms. */
+.wb-timeline--plain {
+	height: auto;
+}
+
+.wb-timeline--plain .wb-timeline-row {
+	position: static;
+	transform: none;
+}
+
 .wb-timeline-row {
 	position: absolute;
 	top: 0;

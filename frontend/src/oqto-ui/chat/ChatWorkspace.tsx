@@ -1,4 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	Bot,
 	Copy,
@@ -156,6 +157,10 @@ type ChatPaneProps = {
 
 function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 	const { t } = useTranslation();
+	// Touch devices scroll plain DOM with native momentum; windowing there
+	// mutates the DOM mid-fling, which aborts iOS deceleration. Virtualization
+	// stays on for desktop where timelines reach thousands of rows.
+	const compact = useIsMobile(1024);
 	const timeline = useTimeline(platform, sessionId);
 	const scrollRef = useRef<HTMLElement | null>(null);
 	// Viewport anchoring: keep the visible content stable when an earlier page
@@ -175,7 +180,7 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 	);
 
 	const virtualizer = useVirtualizer({
-		count: timeline.messages.length,
+		count: compact ? 0 : timeline.messages.length,
 		getScrollElement: () => scrollRef.current,
 		// Close to the real average row height; large misestimates make the
 		// scrollbar and viewport visibly jump when rows measure.
@@ -199,7 +204,9 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 			followTailRef.current = true;
 			return;
 		}
-		const totalSize = virtualizer.getTotalSize();
+		const totalSize = compact
+			? element.scrollHeight
+			: virtualizer.getTotalSize();
 		const grew = totalSize - anchor.totalSize;
 		// Only touch scrollTop when the content actually changed. Writing it
 		// on every commit (remeasures, unrelated queries) fights the user's
@@ -262,32 +269,44 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 					</button>
 				) : null}
 				<div
-					className="wb-timeline"
+					className={compact ? "wb-timeline wb-timeline--plain" : "wb-timeline"}
 					style={
 						{
-							"--timeline-size": `${virtualizer.getTotalSize()}px`,
+							// Empty invalidates `height` back to auto in plain flow.
+							"--timeline-size": compact
+								? ""
+								: `${virtualizer.getTotalSize()}px`,
 						} as React.CSSProperties
 					}
 				>
-					{visibleItems.map((row) => {
-						const message = timeline.messages[row.index];
-						if (!message) return null;
-						return (
-							<div
-								className="wb-timeline-row"
-								key={row.key}
-								data-index={row.index}
-								ref={virtualizer.measureElement}
-								style={
-									{
-										"--row-offset": `${row.start}px`,
-									} as React.CSSProperties
-								}
-							>
-								<MessageGroup agentName={directory.name} message={message} />
-							</div>
-						);
-					})}
+					{compact
+						? timeline.messages.map((message) => (
+								<div className="wb-timeline-row" key={message.id}>
+									<MessageGroup agentName={directory.name} message={message} />
+								</div>
+							))
+						: visibleItems.map((row) => {
+								const message = timeline.messages[row.index];
+								if (!message) return null;
+								return (
+									<div
+										className="wb-timeline-row"
+										key={row.key}
+										data-index={row.index}
+										ref={virtualizer.measureElement}
+										style={
+											{
+												"--row-offset": `${row.start}px`,
+											} as React.CSSProperties
+										}
+									>
+										<MessageGroup
+											agentName={directory.name}
+											message={message}
+										/>
+									</div>
+								);
+							})}
 				</div>
 			</section>
 

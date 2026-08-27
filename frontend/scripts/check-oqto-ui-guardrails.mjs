@@ -37,7 +37,7 @@ const ALLOWED_PROJECT_ALIASES = {
 	app: ["@/hooks/use-document-event"],
 	layout: [],
 	sessions: [],
-	chat: [],
+	chat: ["@/hooks/use-mobile"],
 	files: [],
 	gallery: [],
 	theme: [],
