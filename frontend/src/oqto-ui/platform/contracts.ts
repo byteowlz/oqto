@@ -28,6 +28,8 @@ export type WorkDirectory = {
 	name: string;
 	path: string;
 	accent: string;
+	/** Committed project logo served by the backend, when one exists. */
+	logoUrl?: string;
 	sessions: SessionOverview[];
 };
 

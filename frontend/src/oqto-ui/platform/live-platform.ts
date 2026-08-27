@@ -54,6 +54,8 @@ type JsonRecord = {
 	hold?: unknown;
 	source?: unknown;
 	diagnostics?: unknown;
+	logo?: unknown;
+	path?: unknown;
 };
 
 function record(value: unknown): JsonRecord | null {
@@ -245,14 +247,54 @@ function modelOptions(directories: WorkDirectory[]): ModelOption[] {
 	return [...ids].map((id) => ({ id, name: id }));
 }
 
+/**
+ * Attach committed project logos. `/api/projects` reports each directory's
+ * absolute path plus its discovered logo (relative to the project root); the
+ * logo endpoint serves it under the workspace-relative project path, which
+ * for root-level projects is the path's last segment.
+ */
+async function attachProjectLogos(
+	directories: WorkDirectory[],
+): Promise<WorkDirectory[]> {
+	try {
+		const projects = records(await readJson("/api/projects"));
+		const logosByPath = new Map<string, string>();
+		for (const project of projects) {
+			const absolutePath = text(project.path);
+			const logo = record(project.logo);
+			const logoPath = text(logo?.path);
+			if (!absolutePath || !logoPath) continue;
+			const relativeProjectPath = absolutePath
+				.split("/")
+				.filter(Boolean)
+				.at(-1);
+			if (!relativeProjectPath) continue;
+			logosByPath.set(
+				absolutePath,
+				`/api/projects/logo/${encodeURIComponent(relativeProjectPath)}/${logoPath
+					.split("/")
+					.map(encodeURIComponent)
+					.join("/")}`,
+			);
+		}
+		return directories.map((directory) => {
+			const logoUrl = logosByPath.get(directory.path);
+			return logoUrl ? { ...directory, logoUrl } : directory;
+		});
+	} catch {
+		// Logos are decoration; a failed lookup keeps the procedural fallback.
+		return directories;
+	}
+}
+
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return parseUiConfig(await readJson("/api/oqto-ui/config"));
 	},
 	async load(requestedSessionId): Promise<OqtoUiSnapshot> {
-		const workDirectories = parseWorkDirectories(
-			await readJson("/api/chat-history?limit=80"),
+		const workDirectories = await attachProjectLogos(
+			parseWorkDirectories(await readJson("/api/chat-history?limit=80")),
 		);
 		const sessions = workDirectories.flatMap((directory) => directory.sessions);
 		const activeSessionId =

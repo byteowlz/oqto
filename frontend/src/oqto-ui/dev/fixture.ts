@@ -9,6 +9,7 @@ export const scriptedFixture: ScriptedFixture = {
 			name: "oqto_refactor",
 			path: "~/byteowlz/oqto_refactor",
 			accent: "OQ",
+			logoUrl: "/oqto_logo_white.svg",
 			sessions: [
 				{
 					id: "frontend-rebuild",

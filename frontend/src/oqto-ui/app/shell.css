@@ -1949,6 +1949,10 @@
 		display: none;
 	}
 
+	.wb-shell[data-mobile-mode="corner"] .wb-theme-lab {
+		display: none;
+	}
+
 	.wb-corner-composer textarea {
 		width: 100%;
 		min-width: 0;
@@ -1998,7 +2002,9 @@
 		width: 6px;
 		height: 6px;
 		background: currentColor;
-		border-radius: 50%;
+		/* globals.css flattens every radius with !important; dots need the
+		   same specificity to stay circular. */
+		border-radius: 50% !important;
 	}
 
 	.wb-corner-status [data-status="blocked"] {
@@ -2068,6 +2074,17 @@
 		font-weight: 700;
 	}
 
+	.wb-corner-face {
+		width: 26px;
+		height: 26px;
+		object-fit: contain;
+	}
+
+	.wb-corner-menu .wb-corner-face {
+		width: 24px;
+		height: 24px;
+	}
+
 	.wb-corner-ribbon button svg {
 		width: 18px;
 		height: 18px;
@@ -2080,7 +2097,7 @@
 		width: 6px;
 		height: 6px;
 		background: var(--muted-foreground);
-		border-radius: 50%;
+		border-radius: 50% !important;
 	}
 
 	.wb-corner-ribbon .wb-corner-attention[data-status="working"] {
@@ -2210,7 +2227,7 @@
 		width: 7px;
 		height: 7px;
 		background: var(--muted-foreground);
-		border-radius: 50%;
+		border-radius: 50% !important;
 	}
 
 	.wb-corner-session-list i[data-status="working"],

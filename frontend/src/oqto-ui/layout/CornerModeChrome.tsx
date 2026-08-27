@@ -115,6 +115,28 @@ function firstSession(directory: WorkDirectory): SessionOverview | null {
 	return directory.sessions[0] ?? null;
 }
 
+/**
+ * Real committed logo when the platform found one; deterministic initials
+ * otherwise (house rule: real logos first, procedural fallback second).
+ */
+type DirectoryFaceProps = {
+	directory: WorkDirectory;
+};
+
+function DirectoryFace({ directory }: DirectoryFaceProps) {
+	if (directory.logoUrl) {
+		return (
+			<img
+				className="wb-corner-face"
+				src={directory.logoUrl}
+				alt=""
+				aria-hidden="true"
+			/>
+		);
+	}
+	return <span>{directory.accent}</span>;
+}
+
 function allSessions(directories: WorkDirectory[]): Array<{
 	directory: WorkDirectory;
 	session: SessionOverview;
@@ -311,7 +333,7 @@ export function CornerModeChrome({
 									if (next) navigateSession(item, next);
 								}}
 							>
-								<span>{item.accent}</span>
+								<DirectoryFace directory={item} />
 								<small>{item.name.slice(0, 7)}</small>
 								<i
 									className="wb-corner-attention"
@@ -391,7 +413,7 @@ export function CornerModeChrome({
 								if (next) navigateSession(item, next);
 							}}
 						>
-							<span>{item.accent}</span>
+							<DirectoryFace directory={item} />
 							<strong>{item.name}</strong>
 							<small>
 								{t("oqtoUi.corner.sessionCount", {
