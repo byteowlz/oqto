@@ -173,8 +173,10 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 	const virtualizer = useVirtualizer({
 		count: timeline.messages.length,
 		getScrollElement: () => scrollRef.current,
-		estimateSize: () => 96,
-		overscan: 8,
+		// Close to the real average row height; large misestimates make the
+		// scrollbar and viewport visibly jump when rows measure.
+		estimateSize: () => 76,
+		overscan: 5,
 		getItemKey,
 		isScrollingResetDelay: 150,
 	});
@@ -191,6 +193,10 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 		}
 		const totalSize = virtualizer.getTotalSize();
 		const grew = totalSize - anchor.totalSize;
+		// Only touch scrollTop when the content actually changed. Writing it
+		// on every commit (remeasures, unrelated queries) fights the user's
+		// momentum and reads as stutter while scrolling.
+		if (grew === 0) return;
 		if (followTailRef.current) {
 			// Follow the newest content until the user scrolls up.
 			element.scrollTop = element.scrollHeight;

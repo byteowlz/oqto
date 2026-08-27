@@ -1795,11 +1795,23 @@
 	.wb-shell[data-mobile-mode="corner"] .wb-corner-top {
 		min-height: calc(56px + env(safe-area-inset-top));
 		padding-top: env(safe-area-inset-top);
+		/* Chrome bars are the near-black rail surface, per the v4 gallery. */
+		background: var(--sidebar);
 		border-bottom: 1px solid var(--border);
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
 		padding-block: 7px 4px;
+		background: var(--sidebar);
+	}
+
+	/* Long-pressing the chrome must never start a mobile text selection. */
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-status {
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
 	}
 
 	.wb-corner-button {
@@ -1809,7 +1821,9 @@
 		width: 44px;
 		height: 44px;
 		touch-action: none;
+		-webkit-user-select: none;
 		user-select: none;
+		-webkit-touch-callout: none;
 		color: var(--muted-foreground);
 		background: transparent;
 		border: 0;
@@ -1980,7 +1994,7 @@
 		min-width: 0;
 		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
 		color: var(--muted-foreground);
-		background: var(--background);
+		background: var(--sidebar);
 		border-top: 1px solid var(--border);
 		font-family: var(--font-mono);
 		font-size: 9px;

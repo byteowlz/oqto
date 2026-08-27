@@ -218,11 +218,12 @@ export const scriptedFixture: ScriptedFixture = {
  * development route exercises real pagination and virtualization.
  */
 export const scriptedTimeline: ChatMessage[] = (() => {
+	// Varied lengths on purpose: the virtualizer must handle 1–3 line rows.
 	const notes = [
 		"Inspecting the existing shell composition.",
-		"Guardrails hold; extending the scripted adapter.",
+		"Guardrails hold; extending the scripted adapter with a second fixture surface, then re-running the checks.",
 		"Timeline pages tile by durable cursor position.",
-		"Virtualized rows keep long sessions responsive.",
+		"Virtualized rows keep long sessions responsive, even when row heights differ between one-line notes and longer explanations.",
 		"Load-earlier preserves the viewport anchor.",
 	];
 	return Array.from({ length: 120 }, (_, index) => {
@@ -231,7 +232,7 @@ export const scriptedTimeline: ChatMessage[] = (() => {
 		return {
 			id: `scripted-${index + 1}`,
 			author,
-			content: `[${index + 1}] ${notes[index % notes.length]}`,
+			content: notes[index % notes.length],
 			time: `${String(14 + Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`,
 		} satisfies ChatMessage;
 	});
