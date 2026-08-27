@@ -1810,21 +1810,25 @@
 		height: 44px;
 		touch-action: none;
 		user-select: none;
-		color: var(--foreground);
-		background: var(--sidebar);
-		border: 1px solid var(--border);
+		color: var(--muted-foreground);
+		background: transparent;
+		border: 0;
 	}
 
-	.wb-corner-button:last-child {
-		background: var(--card);
-	}
-
+	.wb-corner-button:hover,
 	.wb-corner-button[data-open="true"] {
 		color: var(--primary);
-		border-color: var(--primary);
+		background: color-mix(in srgb, var(--primary) 7%, transparent);
+	}
+
+	.wb-corner-button:focus-visible {
+		outline: 1px solid var(--ring);
+		outline-offset: -3px;
 	}
 
 	.wb-corner-button:active {
+		color: var(--foreground);
+		background: color-mix(in srgb, var(--primary) 11%, transparent);
 		transform: scale(0.95);
 	}
 
@@ -1835,12 +1839,13 @@
 
 	.wb-corner-button__hold {
 		position: absolute;
-		right: 3px;
-		bottom: 3px;
-		width: 5px;
-		height: 5px;
-		background: var(--muted-foreground);
+		right: 5px;
+		bottom: 5px;
+		width: 3px;
+		height: 3px;
+		background: currentColor;
 		border-radius: 50%;
+		opacity: 0.55;
 	}
 
 	.wb-corner-identity {
@@ -1872,7 +1877,72 @@
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-chat-card {
-		padding: 8px;
+		padding: 0;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-panel {
+		padding: 10px 8px;
+		background: transparent;
+		border: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg + .wb-msg {
+		margin-top: 10px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg {
+		box-shadow: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg[data-author="agent"] {
+		margin-right: 44px;
+		background: var(--card);
+		border-color: var(--border);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg[data-author="user"] {
+		margin-left: 44px;
+		background: color-mix(in srgb, var(--primary) 5%, var(--background));
+		border-color: var(--primary);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header {
+		gap: 6px;
+		padding: 7px 10px 0;
+		border-bottom: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header > svg,
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header .wb-icon-button {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__name {
+		color: var(--primary);
+		font-size: 10px;
+		font-weight: 600;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__time {
+		font-size: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__body {
+		padding: 8px 10px 10px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__body p {
+		font-size: 12px;
+		line-height: 1.55;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-tool {
+		margin-top: 7px;
+		padding: 5px 7px;
+		font-size: 9px;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-chat-card > .wb-composer {
