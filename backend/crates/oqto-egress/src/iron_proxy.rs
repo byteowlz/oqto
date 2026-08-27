@@ -8,6 +8,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyEndpoint {
     pub host: String,
+    /// The proxy port as seen from inside the placement, backed by an endpoint
+    /// bridge to [`ProxyRuntime::tunnel_listen_port`] on the host.
     pub port: u16,
     /// PEM path inside the placement for the enforcer's TLS-interception CA.
     pub ca_bundle_path: Option<String>,
@@ -27,6 +29,10 @@ pub struct ProxyRuntime {
     /// the proxy runs unprivileged.
     pub http_listen_port: u16,
     pub https_listen_port: u16,
+    /// The CONNECT/SOCKS5 listener. Clients using HTTP_PROXY/HTTPS_PROXY must
+    /// target this port: http_listen handles only direct forward-proxy HTTP,
+    /// and a CONNECT arriving there is misinterpreted as a plain request.
+    pub tunnel_listen_port: u16,
     pub ca_cert_path: String,
     pub ca_key_path: String,
 }
@@ -50,6 +56,7 @@ struct Dns {
 struct Proxy {
     http_listen: String,
     https_listen: String,
+    tunnel_listen: String,
     upstream_deny_cidrs: Vec<String>,
 }
 
@@ -143,6 +150,7 @@ impl EgressEnforcer for IronProxyEnforcer {
             proxy: Proxy {
                 http_listen: format!(":{}", self.runtime.http_listen_port),
                 https_listen: format!(":{}", self.runtime.https_listen_port),
+                tunnel_listen: format!(":{}", self.runtime.tunnel_listen_port),
                 upstream_deny_cidrs: policy.deny_cidrs(),
             },
             tls: Tls {
@@ -161,6 +169,9 @@ impl EgressEnforcer for IronProxyEnforcer {
         let yaml = serde_yaml::to_string(&config)
             .with_context(|| format!("compiling egress policy for {}", policy.workspace_id))?;
 
+        // Clients live inside the placement, where the only reachable proxy
+        // address is the bridged endpoint port; the supervisor forwards that
+        // to the proxy's tunnel listener on the host.
         let url = self.endpoint.url();
         let mut client_env = vec![
             ("HTTP_PROXY".to_string(), url.clone()),
@@ -206,6 +217,7 @@ mod tests {
             ProxyRuntime {
                 http_listen_port: 18080,
                 https_listen_port: 18443,
+                tunnel_listen_port: 18082,
                 ca_cert_path: "/var/lib/oqto/egress/ca.crt".to_string(),
                 ca_key_path: "/var/lib/oqto/egress/ca.key".to_string(),
             },
@@ -255,7 +267,10 @@ mod tests {
             .compile(&WorkspaceEgressPolicy::denied("ws-1"))
             .expect("compile");
         let env: std::collections::HashMap<_, _> = compiled.client_env.into_iter().collect();
-        assert_eq!(env["HTTPS_PROXY"], "http://127.0.0.1:18080");
+        assert_eq!(
+            env["HTTPS_PROXY"], "http://127.0.0.1:18080",
+            "clients target the bridged endpoint port inside the placement"
+        );
         assert_eq!(env["NODE_EXTRA_CA_CERTS"], "/etc/oqto/egress-ca.pem");
         assert_eq!(env["CARGO_HTTP_CAINFO"], "/etc/oqto/egress-ca.pem");
     }
@@ -277,6 +292,7 @@ mod tests {
             .expect("compile");
         assert!(compiled.config.contains("http_listen: :18080"));
         assert!(compiled.config.contains("https_listen: :18443"));
+        assert!(compiled.config.contains("tunnel_listen: :18082"));
         assert!(compiled.config.contains("enabled: false"));
     }
 
