@@ -6,8 +6,23 @@
 
 /* ---------------- fixtures ---------------- */
 
-const OQTO_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="13" r="7" fill="#f2f5f3"/><path d="M9 13c-2 7-4 9-6 10 3 1 5 0 6-1 0 2-1 4-3 5 3 1 5-1 6-3 1 2 1 4 0 6 2-1 4-3 4-6 1 3 3 5 6 5-2-2-2-4-2-6 2 2 4 2 6 1-2-1-3-3-3-5 2 1 4 1 6-1-3-1-5-3-6-10z" fill="#f2f5f3"/><rect x="11" y="10" width="10" height="4" fill="#0f1412"/></svg>`;
-const SLDR_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="7" width="24" height="15" fill="none" stroke="#d4c275" stroke-width="2.4"/><path d="M9 25h14" stroke="#d4c275" stroke-width="2.4"/><path d="M8 17l5-5 4 3 6-6" fill="none" stroke="#d4c275" stroke-width="2.4"/></svg>`;
+/* Real repo logos, copied from each repo's brand assets (logos/ dir).
+   Workdirs without an on-disk logo fall through to the procedural icon,
+   which is exactly the production rule: real logos first, deterministic
+   Base24 marks second. */
+const LOGOS = {
+  oqto: "logos/oqto.svg",
+  byteowlz: "logos/byteowlz.svg",
+  sldr: "logos/sldr.svg",
+  mmry: "logos/mmry.svg",
+  lst: "logos/lst.svg",
+};
+function logoFace(name) {
+  return `<img class="ws-face ws-face-img" src="${LOGOS[name]}" alt="">`;
+}
+const OQTO_LOGO = logoFace("oqto");
+const BYTEOWLZ_LOGO = logoFace("byteowlz");
+const SLDR_LOGO = logoFace("sldr");
 const WIKI_LOGO = `<svg class="ws-face" viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="5" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><rect x="18" y="5" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><rect x="5" y="18" width="9" height="9" fill="none" stroke="#5b8fc9" stroke-width="2"/><path d="M18 22h9M22.5 18v9" stroke="#5b8fc9" stroke-width="2"/></svg>`;
 
 const TENANTS = [
@@ -17,7 +32,8 @@ const TENANTS = [
       { id: "oqto", name: "oqto_refactor", path: "~/byteowlz/oqto_refactor", logo: OQTO_LOGO },
       { id: "sldr", name: "sldr", path: "~/byteowlz/sldr", logo: SLDR_LOGO },
       { id: "ctx", name: "ctx", path: "~/byteowlz/ctx" },
-      { id: "mmry", name: "mmry", path: "~/byteowlz/mmry" },
+      { id: "mmry", name: "mmry", path: "~/byteowlz/mmry", logo: logoFace("mmry") },
+      { id: "lst", name: "lst", path: "~/byteowlz/lst", logo: logoFace("lst") },
       { id: "tmpltr", name: "tmpltr", path: "~/byteowlz/tmpltr" },
       { id: "skills", name: "skillissues", path: "~/byteowlz/skillissues" },
       { id: "hypr", name: "hypr-config", path: "~/byteowlz/hypr" },

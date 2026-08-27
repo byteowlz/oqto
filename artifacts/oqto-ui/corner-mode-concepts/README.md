@@ -127,3 +127,12 @@ hairlines on base02 `#3a3f41`, session rows as bordered cards (dashed for
 the new-session row), composer/search wells on the page background, and the
 dark rail identity kept at base11-class surfaces. User decision recorded:
 search belongs at the TOP of the navigator.
+
+## Real repo logos
+
+The ribbon now uses the actual brand assets copied from each repo
+(`logo/`, `public/`) into `logos/`: oqto (octopus), byteowlz tenant mark,
+sldr, mmry, lst. Repos without an on-disk logo (ctx, tmpltr, skillissues,
+hypr-config) keep the deterministic procedural mark — demonstrating the
+production rule: real logos first, Base24-derived marks as fallback.
+

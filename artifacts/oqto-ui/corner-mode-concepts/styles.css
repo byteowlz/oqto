@@ -396,3 +396,7 @@ kbd { font: 600 9px var(--font); border: 1px solid currentColor; padding: 1px 4p
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+img.ws-face-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.wd-chip img.ws-face-img, .row-item img.ws-face-img { width: 26px; height: 26px; }
+.nav-tenant img.ws-face-img { width: 22px; height: 22px; }
