@@ -1977,13 +1977,15 @@
 		padding: 11px 12px;
 		font: inherit;
 		color: var(--foreground);
-		background: var(--background);
-		border: 1px solid var(--border);
+		/* One flat bar: the prompt shares the row surface, no box around it. */
+		background: transparent;
+		border: 0;
 		outline: none;
 	}
 
 	.wb-corner-composer textarea:focus {
-		border-color: var(--ring);
+		border: 0;
+		outline: none;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-corner-status {
