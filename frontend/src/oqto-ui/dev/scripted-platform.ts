@@ -18,6 +18,7 @@ const scriptedConfig: OqtoUiConfigResolution = {
 			scheme: "oqto-dark",
 			radius: "square",
 			density: "compact",
+			font: "mono",
 		},
 		layout: { files: "right", navigator: "left" },
 		bindings: [

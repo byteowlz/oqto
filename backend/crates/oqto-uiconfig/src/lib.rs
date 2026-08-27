@@ -53,6 +53,15 @@ fn default_preset() -> String {
     "classic".to_owned()
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FontChoice {
+    #[default]
+    System,
+    /// JetBrains Mono for interface and code roles.
+    Mono,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AppearanceConfig {
@@ -62,6 +71,8 @@ pub struct AppearanceConfig {
     pub radius: Radius,
     #[serde(default)]
     pub density: Density,
+    #[serde(default)]
+    pub font: FontChoice,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

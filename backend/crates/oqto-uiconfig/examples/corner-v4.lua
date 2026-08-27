@@ -7,6 +7,7 @@ oqto.setup({
     scheme = "oqto-dark",
     radius = "square",
     density = "compact",
+    font = "mono",
   },
 
   layout = {

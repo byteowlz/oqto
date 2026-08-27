@@ -98,6 +98,7 @@ export type OqtoUiConfig = {
 		scheme: "oqto-dark" | "oqto-light" | "nord-dark" | "nord-light";
 		radius: "square" | "compact" | "soft";
 		density: "compact" | "standard" | "comfortable";
+		font: "system" | "mono";
 	};
 	layout: {
 		files: "left" | "right" | "hidden";
@@ -135,6 +136,7 @@ export const DEFAULT_OQTO_UI_CONFIG: OqtoUiConfigResolution = {
 			scheme: "oqto-dark",
 			radius: "square",
 			density: "standard",
+			font: "system",
 		},
 		layout: { files: "right", navigator: "left" },
 		bindings: [

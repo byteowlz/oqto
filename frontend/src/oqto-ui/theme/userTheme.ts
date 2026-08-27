@@ -23,6 +23,9 @@ export const SHADOW_PRESET_IDS = ["none", "soft", "strong"] as const;
  */
 export type FontPresetId = "system" | "mono" | "humanist" | "serif";
 
+export const JETBRAINS_MONO_STACK =
+	'"JetBrainsMono Nerd Font", ui-monospace, monospace';
+
 export const FONT_SANS_PRESETS: ReadonlyArray<{
 	id: FontPresetId;
 	stack: string | undefined;
@@ -30,7 +33,7 @@ export const FONT_SANS_PRESETS: ReadonlyArray<{
 	{ id: "system", stack: undefined },
 	{
 		id: "mono",
-		stack: '"JetBrainsMono Nerd Font", ui-monospace, monospace',
+		stack: JETBRAINS_MONO_STACK,
 	},
 	{
 		id: "humanist",

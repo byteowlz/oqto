@@ -68,6 +68,9 @@ describe("OqtoUI shell", () => {
 		expect(shell).toHaveAttribute("data-density", "compact");
 		expect(shell?.dataset.scheme).toBe("oqto-dark");
 		expect(shell?.style.getPropertyValue("--radius")).toBe("0px");
+		expect(shell?.style.getPropertyValue("--font-sans")).toContain(
+			"JetBrainsMono",
+		);
 		expect(screen.getByText("corner-v4")).toBeInTheDocument();
 		expect(screen.getByText("2 bindings")).toBeInTheDocument();
 

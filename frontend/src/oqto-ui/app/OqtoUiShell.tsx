@@ -20,7 +20,7 @@ import { SessionMeta } from "../sessions/SessionMeta";
 import { ThemeCustomizer } from "../theme/ThemeCustomizer";
 import { ThemePicker } from "../theme/ThemePicker";
 import { useThemeRoot } from "../theme/useThemeRoot";
-import type { OqtoUiUserTheme } from "../theme/userTheme";
+import { JETBRAINS_MONO_STACK, type OqtoUiUserTheme } from "../theme/userTheme";
 import { ConfigLens } from "./ConfigLens";
 import { Splash } from "./Splash";
 import { useConfiguredBindings } from "./useConfiguredBindings";
@@ -60,9 +60,14 @@ export function OqtoUiShell({
 		compact: "4px",
 		soft: "10px",
 	}[config.appearance.radius];
+	const monoFont = config.appearance.font === "mono";
 	const configuredTheme: OqtoUiUserTheme = {
 		...userTheme,
 		radius: userTheme.radius ?? configuredRadius,
+		fontSans:
+			userTheme.fontSans ?? (monoFont ? JETBRAINS_MONO_STACK : undefined),
+		fontMono:
+			userTheme.fontMono ?? (monoFont ? JETBRAINS_MONO_STACK : undefined),
 	};
 	const { schemeId, rootRef, rootEl } = useThemeRoot(
 		requestedSchemeId ?? config.appearance.scheme,

@@ -1802,7 +1802,8 @@
 
 	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
 		padding-block: 7px 4px;
-		background: var(--sidebar);
+		/* Og v4: top chrome is the black rail, the bottom bar is page grey. */
+		background: var(--background);
 	}
 
 	/* Long-pressing the chrome must never start a mobile text selection. */
@@ -1919,14 +1920,21 @@
 
 	.wb-shell[data-mobile-mode="corner"] .wb-msg[data-author="user"] {
 		margin-left: 44px;
-		background: color-mix(in srgb, var(--primary) 5%, var(--background));
+		background: color-mix(in oklab, var(--primary) 8%, var(--background));
 		border-color: var(--primary);
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-msg__header {
-		gap: 6px;
-		padding: 7px 10px 0;
+		/* Og v4 anatomy: name and time together, no icons, no spread. */
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 9px 11px 0;
 		border-bottom: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__spacer {
+		display: none;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-msg__header > svg,
@@ -1940,23 +1948,30 @@
 		font-weight: 600;
 	}
 
+	.wb-shell[data-mobile-mode="corner"]
+		.wb-msg[data-author="user"]
+		.wb-msg__name {
+		color: var(--foreground);
+	}
+
 	.wb-shell[data-mobile-mode="corner"] .wb-msg__time {
-		font-size: 8px;
+		color: var(--muted-foreground);
+		font-size: 10px;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-msg__body {
-		padding: 8px 10px 10px;
+		padding: 4px 11px 9px;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-msg__body p {
-		font-size: 12px;
-		line-height: 1.55;
+		font-size: 12.5px;
+		line-height: 1.5;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-tool {
-		margin-top: 7px;
-		padding: 5px 7px;
-		font-size: 9px;
+		margin-top: 6px;
+		padding: 4px 8px;
+		font-size: 10.5px;
 	}
 
 	.wb-shell[data-mobile-mode="corner"] .wb-chat-card > .wb-composer {
@@ -1996,8 +2011,9 @@
 		min-width: 0;
 		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
 		color: var(--muted-foreground);
+		/* The status line is black rail, framing the grey composer above it. */
 		background: var(--sidebar);
-		border-top: 1px solid var(--border);
+		border-top: 0;
 		font-family: var(--font-mono);
 		font-size: 9px;
 		white-space: nowrap;
@@ -2220,6 +2236,7 @@
 		min-height: 0;
 		padding: 0 8px 8px;
 		overflow-y: auto;
+		overscroll-behavior: contain;
 	}
 
 	.wb-corner-session-list > button {
@@ -2498,6 +2515,13 @@
 }
 
 /* ------------------------------------------------------- virtual timeline */
+
+.wb-chat-panel {
+	/* iOS hardening: contain the gesture in the timeline, keep native
+	   momentum in this nested scroller. */
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
 
 .wb-timeline {
 	position: relative;

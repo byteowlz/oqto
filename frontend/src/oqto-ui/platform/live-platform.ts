@@ -38,6 +38,7 @@ type JsonRecord = {
 	scheme?: unknown;
 	radius?: unknown;
 	density?: unknown;
+	font?: unknown;
 	files?: unknown;
 	navigator?: unknown;
 	bindings?: unknown;
@@ -210,6 +211,7 @@ function parseUiConfig(value: unknown): OqtoUiConfigResolution {
 		typeof appearance?.scheme !== "string" ||
 		typeof appearance.radius !== "string" ||
 		typeof appearance.density !== "string" ||
+		typeof appearance.font !== "string" ||
 		typeof layout?.files !== "string" ||
 		typeof layout.navigator !== "string" ||
 		!Array.isArray(config.bindings) ||

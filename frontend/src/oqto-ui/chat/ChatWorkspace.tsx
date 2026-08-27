@@ -160,7 +160,11 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 	const scrollRef = useRef<HTMLElement | null>(null);
 	// Viewport anchoring: keep the visible content stable when an earlier page
 	// prepends, and follow the tail until the user scrolls away from it.
-	const anchorRef = useRef({ totalSize: 0, sessionId });
+	const anchorRef = useRef({
+		totalSize: 0,
+		sessionId,
+		firstMessageId: null as string | null,
+	});
 	const followTailRef = useRef(true);
 
 	// Stable identity matters: the virtualizer memoizes on getItemKey, and a
@@ -187,7 +191,11 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 		if (!element) return;
 		const anchor = anchorRef.current;
 		if (anchor.sessionId !== sessionId) {
-			anchorRef.current = { totalSize: 0, sessionId };
+			anchorRef.current = {
+				totalSize: 0,
+				sessionId,
+				firstMessageId: null,
+			};
 			followTailRef.current = true;
 			return;
 		}
@@ -197,15 +205,20 @@ function ChatPane({ platform, directory, sessionId, tasks }: ChatPaneProps) {
 		// on every commit (remeasures, unrelated queries) fights the user's
 		// momentum and reads as stutter while scrolling.
 		if (grew === 0) return;
+		// Crucially, mere size drift (mobile URL-bar collapse, keyboard,
+		// viewport resize re-measures) must NOT shift the reading position;
+		// only a real prepended page may move the offset by its growth.
+		const prepended =
+			firstMessageId !== null && anchor.firstMessageId !== firstMessageId;
+		anchorRef.current = { totalSize, sessionId, firstMessageId };
 		if (followTailRef.current) {
 			// Follow the newest content until the user scrolls up.
 			element.scrollTop = element.scrollHeight;
-		} else if (grew > 0 && firstMessageId !== null) {
+		} else if (prepended && grew > 0) {
 			// An earlier page prepended: shift the viewport by the growth so
 			// the messages the user was reading stay in place.
 			element.scrollTop += grew;
 		}
-		anchorRef.current = { totalSize, sessionId };
 	});
 
 	const visibleItems = virtualizer.getVirtualItems();
