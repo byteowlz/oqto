@@ -360,9 +360,13 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		string,
 		Extract<DisplayPart, { type: "tool_result" }>
 	>();
+	const toolCallIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
 			toolResults.set(part.toolCallId, part);
+		}
+		if (part.type === "tool_call") {
+			toolCallIds.add(part.toolCallId);
 		}
 	}
 
@@ -417,10 +421,6 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 
 		flushText();
 
-		// Results are rendered only through their matching call. An orphan
-		// result has no independent visual-message identity.
-		if (part.type === "tool_result") continue;
-
 		if (part.type === "tool_call") {
 			const matchedResult = toolResults.get(part.toolCallId);
 			segments.push({
@@ -430,6 +430,16 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 				toolResult: matchedResult,
 				timestamp,
 			});
+		} else if (part.type === "tool_result") {
+			// Render only if we don't have a corresponding tool_call
+			if (!toolCallIds.has(part.toolCallId)) {
+				segments.push({
+					key,
+					type: "tool_result_only",
+					part,
+					timestamp,
+				});
+			}
 		} else if (part.type === "thinking") {
 			segments.push({
 				key,
@@ -1576,9 +1586,29 @@ function PiPartRenderer({
 		}
 
 		case "tool_result":
-			// Defensive invariant: a result never renders independently. The
-			// grouping reducer attaches it to the matching tool_call card.
-			return null;
+			// Tool results rendered standalone (no matching tool_call found)
+			return (
+				<ToolCallCard
+					part={{
+						id: part.id,
+						sessionID: "",
+						messageID: "",
+						type: "tool",
+						tool: part.name || "result",
+						callID: part.toolCallId,
+						state: {
+							status: part.isError ? "error" : "completed",
+							output: formatToolResultOutput(part.output),
+							title: part.name || "Tool Result",
+						},
+					}}
+					defaultCollapsed={true}
+					hideTodoTools={true}
+					collapsible={collapsible}
+					hideHeader={hideHeader}
+					isRecoveredError={isRecoveredError}
+				/>
+			);
 
 		case "image": {
 			const imgPart = part as Extract<DisplayPart, { type: "image" }>;

@@ -48,65 +48,6 @@ function isAssistantAuxiliaryMessage(message: DisplayMessage): boolean {
 }
 
 /**
- * Reduce transport rows into visual messages before grouping.
- *
- * A tool result is state belonging to its call, never an independent visual
- * message. Results are moved onto the assistant message containing the matching
- * call. Orphaned results (for example at a pagination boundary before the call
- * page is loaded) remain invisible rather than becoming standalone JSON cards.
- */
-export function coalesceToolResults(
-	messages: DisplayMessage[],
-): DisplayMessage[] {
-	const visualMessages: DisplayMessage[] = [];
-	let turnRows: DisplayMessage[] = [];
-
-	const flushTurn = () => {
-		if (turnRows.length === 0) return;
-		const rows = turnRows.map(
-			(source): DisplayMessage => ({ ...source, parts: [...source.parts] }),
-		);
-		const calls = new Map<string, DisplayMessage>();
-
-		// Historical adapters do not all preserve call/result row order. Discover
-		// every call in the visual turn before moving any result onto its owner.
-		for (const row of rows) {
-			for (const part of row.parts) {
-				if (part.type === "tool_call") calls.set(part.toolCallId, row);
-			}
-		}
-		const results: Extract<DisplayPart, { type: "tool_result" }>[] = [];
-		for (const row of rows) {
-			row.parts = row.parts.filter((part) => {
-				if (part.type !== "tool_result") return true;
-				results.push(part);
-				return false;
-			});
-		}
-		for (const result of results) {
-			calls.get(result.toolCallId)?.parts.push(result);
-		}
-
-		// Rows used only to transport results disappear after reduction. This also
-		// covers historical assistant-role result rows, not only role=tool rows.
-		visualMessages.push(...rows.filter((row) => row.parts.length > 0));
-		turnRows = [];
-	};
-
-	for (const message of messages) {
-		if (message.role === "user") {
-			flushTurn();
-			visualMessages.push({ ...message, parts: [...message.parts] });
-			continue;
-		}
-		turnRows.push(message);
-	}
-	flushTurn();
-
-	return visualMessages;
-}
-
-/**
  * Canonical visual grouping shared by every Chat host.
  *
  * Durable storage rows are not visual message cards: one assistant turn can be
@@ -117,7 +58,7 @@ export function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let current: MessageGroup | null = null;
 
-	for (const message of coalesceToolResults(messages)) {
+	for (const message of messages) {
 		if (message.role === "user") {
 			const hasRenderableContent = message.parts.some((part) => {
 				if (part.type === "text") return part.text.trim().length > 0;
