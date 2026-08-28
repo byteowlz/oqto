@@ -59,6 +59,54 @@ describe("tool output leak from oqto-log imports", () => {
 		});
 	});
 
+	it("attaches a separate backend tool row using snake_case wire fields", () => {
+		const rawMessages: RawMessage[] = [
+			{
+				id: "assistant-row",
+				role: "assistant",
+				created_at: 1000,
+				parts: [
+					{
+						id: "call-part",
+						part_type: "tool_call",
+						tool_name: "bash",
+						tool_call_id: "call_backend_2",
+						tool_input: { command: "pwd" },
+						tool_status: "success",
+					},
+				],
+			},
+			{
+				id: "tool-row",
+				role: "tool",
+				created_at: 2000,
+				parts: [
+					{
+						id: "result-part",
+						part_type: "tool_result",
+						tool_name: "bash",
+						tool_call_id: "call_backend_2",
+						tool_output: "/tmp/project",
+						tool_status: "success",
+					},
+				],
+			},
+		];
+
+		const messages = normalizeMessages(rawMessages, "test");
+
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.parts.map((part) => part.type)).toEqual([
+			"tool_call",
+			"tool_result",
+		]);
+		expect(messages[0]?.parts[1]).toMatchObject({
+			toolCallId: "call_backend_2",
+			name: "bash",
+			output: "/tmp/project",
+		});
+	});
+
 	it("should expand stringified canonical parts nested inside text parts", () => {
 		const nestedParts = JSON.stringify([
 			{ type: "thinking", text: "I should inspect state" },

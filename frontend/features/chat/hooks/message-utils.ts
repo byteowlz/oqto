@@ -607,21 +607,34 @@ export function normalizeMessages(
 
 			if (!resolvedToolCallId && partsToSearch) {
 				const firstResult = (partsToSearch as Record<string, unknown>[]).find(
-					(p) => p.type === "tool_result",
+					(part) => {
+						const type = part.type ?? part.part_type;
+						return type === "tool_result" || type === "toolResult";
+					},
 				);
 				if (firstResult) {
 					resolvedToolCallId =
 						(firstResult.toolCallId as string) ||
 						(firstResult.tool_call_id as string) ||
+						(firstResult.tool_use_id as string) ||
 						(firstResult.id as string) ||
 						"";
 					resolvedToolName =
-						resolvedToolName || (firstResult.name as string | undefined);
-					resolvedOutput = firstResult.output ?? firstResult.content ?? content;
+						resolvedToolName ||
+						(firstResult.name as string | undefined) ||
+						(firstResult.toolName as string | undefined) ||
+						(firstResult.tool_name as string | undefined);
+					resolvedOutput =
+						firstResult.output ??
+						firstResult.tool_output ??
+						firstResult.content ??
+						content;
 					resolvedIsError =
 						resolvedIsError ??
 						(firstResult.is_error as boolean | undefined) ??
-						(firstResult.isError as boolean | undefined);
+						(firstResult.isError as boolean | undefined) ??
+						(firstResult.tool_status === "error" ||
+							firstResult.tool_status === "failed");
 				}
 			}
 
