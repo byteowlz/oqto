@@ -3,12 +3,12 @@ import {
 	type EngineEvent,
 	type TurnDraft,
 	projectEvent,
-} from "../src/oqto-ui/chat/engine/projection";
+} from "../src/oqto-ui/engine/projection";
 import {
 	bindIdentity,
 	createInitialChatStateMachine,
 	transitionTurn,
-} from "../src/oqto-ui/chat/engine/turn-machine";
+} from "../src/oqto-ui/engine/turn-machine";
 
 function makePartIds(): () => string {
 	let n = 0;

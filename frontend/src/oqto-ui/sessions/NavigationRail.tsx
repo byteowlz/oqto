@@ -13,7 +13,7 @@ import {
 	Shield,
 	Sun,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiNavigation, WorkDirectory } from "../platform/contracts";
 
@@ -22,7 +22,6 @@ type NavigationRailProps = {
 	workDirectoryId: string;
 	sessionId: string;
 	schemeId: string;
-	themePicker: ReactNode;
 	onNavigate: (next: UiNavigation) => void;
 };
 
@@ -31,7 +30,6 @@ export function NavigationRail({
 	workDirectoryId,
 	sessionId,
 	schemeId,
-	themePicker,
 	onNavigate,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
@@ -196,8 +194,6 @@ export function NavigationRail({
 
 			<footer className="wb-sidebar__footer">
 				<div className="wb-sidebar__preview">
-					<span>{t("oqtoUi.lab")}</span>
-					{themePicker}
 					<button
 						className="wb-language-button"
 						type="button"

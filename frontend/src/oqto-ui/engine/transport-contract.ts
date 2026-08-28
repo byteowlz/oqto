@@ -41,10 +41,8 @@ export type OutboxStore = {
 	save(entries: OutboxEntry[]): void;
 };
 
-declare const timerBrand: unique symbol;
-
-/** Opaque token minted by the platform's scheduler. */
-export type TimerHandle = { readonly [timerBrand]?: never };
+/** Token minted by the platform's scheduler (web: setTimeout id). */
+export type TimerHandle = number;
 
 export type Scheduler = {
 	schedule(callback: () => void, delayMs: number): TimerHandle;

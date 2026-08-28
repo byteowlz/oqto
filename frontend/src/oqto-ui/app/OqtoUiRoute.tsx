@@ -3,6 +3,7 @@ import { liveOqtoUiPlatform } from "../platform/live-platform";
 import { OqtoUiShell } from "./OqtoUiShell";
 import { applyNavigation } from "./routing";
 
+/** The single shipped OqtoUI entry, backed by the live platform adapter. */
 export default function OqtoUiRoute() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	return (

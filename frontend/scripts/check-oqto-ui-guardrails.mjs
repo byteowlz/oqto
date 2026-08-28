@@ -15,6 +15,7 @@ const LAYERS = [
 	"layout",
 	"sessions",
 	"chat",
+	"engine",
 	"files",
 	"gallery",
 	"theme",
@@ -22,22 +23,23 @@ const LAYERS = [
 	"dev",
 ];
 const ALLOWED_DIRECT_IMPORTS = {
+	engine: new Set(["engine"]),
 	app: new Set(LAYERS),
 	layout: new Set(["layout", "platform"]),
 	sessions: new Set(["sessions", "platform"]),
-	chat: new Set(["chat", "platform"]),
+	chat: new Set(["chat", "engine", "platform"]),
 	files: new Set(["files", "platform"]),
 	gallery: new Set(["gallery", "platform"]),
 	theme: new Set(["theme", "platform"]),
-	platform: new Set(["platform"]),
-	dev: new Set(["dev", "platform"]),
+	platform: new Set(["engine", "platform"]),
+	dev: new Set(["dev", "engine", "platform"]),
 };
 
 const ALLOWED_PROJECT_ALIASES = {
 	app: ["@/hooks/use-document-event"],
 	layout: [],
 	sessions: [],
-	chat: ["@/hooks/use-mobile"],
+	chat: ["@/hooks/use-mobile", "@/hooks/use-mount-effect"],
 	files: [],
 	gallery: [],
 	theme: [],
@@ -58,6 +60,10 @@ const FORBIDDEN_LEGACY_IMPORTS = [
 	"@/features/chat",
 	"@/features/sessions",
 ];
+
+// Scripted fixture adapters live in dev/ but are platform adapters by
+// nature; only their *-server/platform files may touch host APIs.
+const SCRIPTED_ADAPTER_PATTERN = /scripted-(chat-server|platform)\.ts$/;
 
 const ADAPTER_ONLY_GLOBALS = new Set([
 	"fetch",
@@ -903,7 +909,11 @@ function inspectFile(
 		if (
 			invokedName &&
 			ADAPTER_ONLY_GLOBALS.has(invokedName) &&
-			layer !== "platform"
+			layer !== "platform" &&
+			!(
+				layer === "dev" &&
+				SCRIPTED_ADAPTER_PATTERN.test(absolutePath)
+			)
 		) {
 			violations.push(
 				violation(
@@ -925,7 +935,11 @@ function inspectFile(
 				((ts.isCallExpression(node.parent) ||
 					ts.isNewExpression(node.parent)) &&
 					node.parent.expression === node);
-			if (!handledByParent && layer !== "platform") {
+			if (
+				!handledByParent &&
+				layer !== "platform" &&
+				!(layer === "dev" && SCRIPTED_ADAPTER_PATTERN.test(absolutePath))
+			) {
 				violations.push(
 					violation(
 						"browser/adapter-only-api",
@@ -943,7 +957,11 @@ function inspectFile(
 			ts.isIdentifier(node.expression) &&
 			["window", "globalThis"].includes(node.expression.text) &&
 			ADAPTER_ONLY_GLOBALS.has(node.name.text) &&
-			layer !== "platform"
+			layer !== "platform" &&
+			!(
+				layer === "dev" &&
+				SCRIPTED_ADAPTER_PATTERN.test(absolutePath)
+			)
 		) {
 			violations.push(
 				violation(

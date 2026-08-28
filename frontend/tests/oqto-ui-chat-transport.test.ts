@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createChatTransport } from "../src/oqto-ui/chat/engine/transport";
-import type { ChatTransport } from "../src/oqto-ui/chat/engine/transport";
+import { createChatTransport } from "../src/oqto-ui/engine/transport";
+import type { ChatTransport } from "../src/oqto-ui/engine/transport";
 import type {
 	OutboxEntry,
 	SocketLike,
 	WireEvent,
-} from "../src/oqto-ui/chat/engine/transport-contract";
+} from "../src/oqto-ui/engine/transport-contract";
 
 class FakeSocket implements SocketLike {
 	sent: Array<Record<string, unknown>> = [];

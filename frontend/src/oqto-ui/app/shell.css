@@ -111,7 +111,11 @@
 	display: flex;
 	flex-direction: column;
 	flex: 0 0 260px;
+	width: 260px;
+	min-width: 260px;
+	max-width: 260px;
 	min-height: 0;
+	overflow: hidden;
 	background: var(--sidebar);
 }
 
@@ -283,6 +287,8 @@
 }
 
 .wb-project__name {
+	flex: 1;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -290,6 +296,7 @@
 }
 
 .wb-project__count {
+	flex-shrink: 0;
 	font-size: 10px;
 	color: var(--muted-foreground);
 }
@@ -330,8 +337,10 @@
 }
 
 .wb-session-item__copy {
-	min-width: 0;
 	display: block;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
 }
 
 .wb-session-item__title {
@@ -1488,6 +1497,83 @@
 
 .wb-statusbar__item--dim {
 	opacity: 0.6;
+}
+
+.wb-settings-pane {
+	overflow-y: auto;
+}
+
+.wb-settings-pane__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 42px;
+	padding: 0 10px 0 14px;
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+}
+
+.wb-settings-pane__section {
+	display: grid;
+	gap: 10px;
+	padding: 14px;
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-settings-pane__section h2 {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--muted-foreground);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-settings-pane .wb-theme-picker {
+	flex-wrap: wrap;
+}
+
+.wb-settings-pane .wb-theme-lab[data-embedded="true"] {
+	position: static;
+	z-index: auto;
+}
+
+.wb-settings-pane .wb-theme-lab__panel {
+	position: static;
+	width: auto;
+	max-height: none;
+	padding: 14px;
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+}
+
+.wb-settings-pane > .wb-config-lens {
+	margin-top: auto;
+	border-top: 1px solid var(--border);
+}
+
+.wb-statusbar__button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	color: inherit;
+	background: transparent;
+	border: 0;
+}
+
+.wb-statusbar__button:hover,
+.wb-statusbar__button[aria-expanded="true"] {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+
+.wb-statusbar__button svg {
+	width: 12px;
+	height: 12px;
 }
 
 /* ------------------------------------------------------------ mobile tabs */

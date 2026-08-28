@@ -3,6 +3,7 @@ import { scriptedOqtoUiPlatform } from "../dev/scripted-platform";
 import { OqtoUiShell } from "./OqtoUiShell";
 import { applyNavigation } from "./routing";
 
+/** Test-only adapter wrapper. This is not registered as an application route. */
 export default function DevOqtoUiRoute() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	return (

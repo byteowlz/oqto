@@ -71,6 +71,13 @@ describe("OqtoUI shell", () => {
 		expect(shell?.style.getPropertyValue("--font-sans")).toContain(
 			"JetBrainsMono",
 		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Open interface settings" }),
+		);
+		expect(
+			screen.getByRole("complementary", { name: "Interface settings" }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("complementary", { name: "Files" })).toBeNull();
 		expect(screen.getByText("corner-v4")).toBeInTheDocument();
 		expect(screen.getByText("2 bindings")).toBeInTheDocument();
 
@@ -210,6 +217,9 @@ describe("OqtoUI shell", () => {
 
 	it("owns Base24 scheme selection in the route", async () => {
 		await renderShell("/dev/oqto-ui?scheme=oqto-dark");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Open interface settings" }),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Nord Light" }));
 		await waitFor(() => {
 			expect(screen.getByTestId("location-search")).toHaveTextContent(
@@ -250,6 +260,7 @@ describe("OqtoUI splash", () => {
 		const scripted = (await import("../src/oqto-ui/dev/scripted-platform"))
 			.scriptedOqtoUiPlatform;
 		const flakyPlatform = {
+			...scripted,
 			id: "flaky",
 			load: async () => {
 				failures += 1;

@@ -1,3 +1,5 @@
+import type { ChatEngineHandle } from "./chat-contract";
+
 export type SessionStatus = "working" | "blocked" | "done" | "idle" | "unknown";
 
 export type SessionTask = {
@@ -185,6 +187,8 @@ export type MessagePage = {
 export type OqtoUiPlatform = {
 	/** Stable adapter identity, part of every query key. */
 	readonly id: string;
+	/** Writable chat engine; scripted adapters provide a deterministic fake. */
+	chat: ChatEngineHandle;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;
 	loadUiConfig: () => Promise<OqtoUiConfigResolution>;
 	/**

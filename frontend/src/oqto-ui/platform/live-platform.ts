@@ -1,3 +1,4 @@
+import { createSessionEngine } from "../engine/session-engine";
 import type {
 	ChatMessage,
 	MessagePage,
@@ -9,6 +10,7 @@ import type {
 	WorkDirectory,
 } from "./contracts";
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
+import { liveChatTransport } from "./live-chat-transport";
 
 type JsonRecord = {
 	id?: unknown;
@@ -291,6 +293,7 @@ async function attachProjectLogos(
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
+	chat: createSessionEngine(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return parseUiConfig(await readJson("/api/oqto-ui/config"));
 	},

@@ -92,11 +92,6 @@ const AppShellRoute = lazy(() =>
 const OqtoUiRoute = lazy(() =>
 	import("./oqto-ui/app/OqtoUiRoute").then(markChunkLoadSucceeded),
 );
-const DevOqtoUiRoute = import.meta.env.DEV
-	? lazy(() =>
-			import("./oqto-ui/app/DevOqtoUiRoute").then(markChunkLoadSucceeded),
-		)
-	: null;
 
 export function App() {
 	return (
@@ -119,20 +114,6 @@ export function App() {
 						</RequireAuth>
 					}
 				/>
-				{DevOqtoUiRoute ? (
-					<Route
-						path="/dev/oqto-ui"
-						element={
-							<RequireAuth>
-								<LazyRouteBoundary>
-									<Suspense fallback={routeFallback}>
-										<DevOqtoUiRoute />
-									</Suspense>
-								</LazyRouteBoundary>
-							</RequireAuth>
-						}
-					/>
-				) : null}
 				<Route
 					path="/login"
 					element={

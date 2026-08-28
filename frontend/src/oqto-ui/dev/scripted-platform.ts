@@ -1,12 +1,90 @@
-import type { MessagePage } from "../platform/contracts";
+import { createSessionEngine } from "../engine/session-engine";
+import { createChatTransport } from "../engine/transport";
+import type { ChatMessage, MessagePage } from "../platform/contracts";
 import type {
 	OqtoUiConfigResolution,
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
 } from "../platform/contracts";
 import { scriptedFixture, scriptedTimeline } from "./fixture";
+import { ScriptedChatServer } from "./scripted-chat-server";
 
 const SCRIPTED_PAGE_SIZE = 40;
+
+/**
+ * Durable store the scripted "backend" persists into. Starts as the fixture
+ * timeline; prompts and completed turns append here, so page refetches after
+ * turn end converge exactly like the real store would.
+ */
+export const scriptedStore = new Map<string, ChatMessage[]>([
+	["frontend-rebuild", [...scriptedTimeline]],
+]);
+
+class FakeSocket {
+	sent: string[] = [];
+	serverTap: ((data: string) => void) | null = null;
+	onOpen: (() => void) | null = null;
+	onMessage: ((data: string) => void) | null = null;
+	onClose: (() => void) | null = null;
+
+	send(data: string): void {
+		this.sent.push(data);
+		this.serverTap?.(data);
+	}
+	close(): void {
+		this.onClose?.();
+	}
+	drop(): void {
+		this.onClose?.();
+	}
+	open(): void {
+		this.onOpen?.();
+	}
+	receive(event: unknown): void {
+		this.onMessage?.(JSON.stringify(event));
+	}
+}
+
+const scriptedSockets: FakeSocket[] = [];
+let activeSocket: FakeSocket | null = null;
+
+const server = new ScriptedChatServer((event) => activeSocket?.receive(event), {
+	onPersisted: (sessionId, message) => {
+		const store = scriptedStore.get(sessionId) ?? [];
+		store.push(message);
+		scriptedStore.set(sessionId, store);
+	},
+	onTurnCompleted: (sessionId, message) => {
+		const store = scriptedStore.get(sessionId) ?? [];
+		store.push(message);
+		scriptedStore.set(sessionId, store);
+	},
+});
+
+const scriptedTransport = createChatTransport({
+	sockets: () => {
+		const socket = new FakeSocket();
+		socket.serverTap = (data) => server.handleMessage(data);
+		activeSocket = socket;
+		scriptedSockets.push(socket);
+		// Real sockets open asynchronously; the fake does the same on a tick.
+		setTimeout(() => socket.open(), 0);
+		return socket;
+	},
+	outbox: { load: () => [], save: () => {} },
+	clock: {
+		schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+		cancel: (handle) => clearTimeout(handle),
+		now: () => Date.now(),
+	},
+});
+
+export const scriptedChat = createSessionEngine(scriptedTransport);
+
+/** Test hook: simulates the transport dying mid-turn (e.g. tab sleep). */
+export function dropActiveScriptedSocket(): void {
+	scriptedSockets.at(-1)?.drop();
+}
 
 const scriptedConfig: OqtoUiConfigResolution = {
 	source: "user-lua",
@@ -46,6 +124,7 @@ const scriptedConfig: OqtoUiConfigResolution = {
 
 export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
+	chat: scriptedChat,
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return scriptedConfig;
 	},
@@ -61,24 +140,23 @@ export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 
 	async loadMessages(sessionId, before, limit): Promise<MessagePage> {
 		const size = Math.min(Math.max(limit ?? SCRIPTED_PAGE_SIZE, 1), 200);
-		// The scripted session's timeline ends at the newest message; other
-		// sessions have no durable history yet.
 		const known = scriptedFixture.workDirectories.some((directory) =>
 			directory.sessions.some((session) => session.id === sessionId),
 		);
 		if (!known) {
 			return { sessionId, messages: [], hasMore: false, nextBefore: null };
 		}
+		const timeline = scriptedStore.get(sessionId) ?? [];
 		// `before` is the id of the oldest message of the previous page; the
 		// next page contains only messages strictly older than it.
 		const endExclusive = before
-			? scriptedTimeline.findIndex((message) => message.id === before)
-			: scriptedTimeline.length;
+			? timeline.findIndex((message) => message.id === before)
+			: timeline.length;
 		if (endExclusive <= 0) {
 			return { sessionId, messages: [], hasMore: false, nextBefore: null };
 		}
 		const start = Math.max(0, endExclusive - size);
-		const messages = scriptedTimeline.slice(start, endExclusive);
+		const messages = timeline.slice(start, endExclusive);
 		return {
 			sessionId,
 			messages,

@@ -18,6 +18,7 @@ import {
 type ThemeCustomizerProps = {
 	userTheme: OqtoUiUserTheme;
 	themeRoot: HTMLElement | null;
+	embedded?: boolean;
 	onChange: (next: OqtoUiUserTheme) => void;
 };
 
@@ -36,6 +37,7 @@ function tokenKey(token: string): string {
 export function ThemeCustomizer({
 	userTheme,
 	themeRoot,
+	embedded = false,
 	onChange,
 }: ThemeCustomizerProps) {
 	const { t } = useTranslation();
@@ -92,18 +94,20 @@ export function ThemeCustomizer({
 	};
 
 	return (
-		<div className="wb-theme-lab">
-			<button
-				aria-expanded={open}
-				className="wb-theme-lab__toggle"
-				type="button"
-				onClick={toggleOpen}
-			>
-				<Palette aria-hidden="true" />
-				<span>{t("oqtoUi.themeLab.label")}</span>
-			</button>
+		<div className="wb-theme-lab" data-embedded={embedded}>
+			{embedded ? null : (
+				<button
+					aria-expanded={open}
+					className="wb-theme-lab__toggle"
+					type="button"
+					onClick={toggleOpen}
+				>
+					<Palette aria-hidden="true" />
+					<span>{t("oqtoUi.themeLab.label")}</span>
+				</button>
+			)}
 
-			{open ? (
+			{embedded || open ? (
 				<section
 					aria-label={t("oqtoUi.themeLab.label")}
 					className="wb-theme-lab__panel"

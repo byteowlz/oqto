@@ -9,6 +9,7 @@ import type {
 	MessagePage,
 	OqtoUiPlatform,
 } from "../platform/contracts";
+import { timelineQueryKey } from "./query-keys";
 
 const TIMELINE_PAGE_SIZE = 200;
 
@@ -47,7 +48,7 @@ export function useTimeline(
 		InfiniteData<MessagePage, TimelinePageParam>,
 		Error
 	> = useInfiniteQuery({
-		queryKey: ["oqto-ui", "timeline", platform.id, sessionId],
+		queryKey: timelineQueryKey(platform.id, sessionId),
 		queryFn: ({ pageParam }) =>
 			platform.loadMessages(sessionId, pageParam, TIMELINE_PAGE_SIZE),
 		initialPageParam: undefined as TimelinePageParam,

@@ -30,9 +30,9 @@ import type {
 	WorkDirectory,
 } from "../platform/contracts";
 import {
+	type HoldIntentTimer,
 	cancelHoldIntent,
 	scheduleHoldIntent,
-	type HoldIntentTimer,
 } from "../platform/hold-intent";
 
 type OpenSurface =
@@ -285,7 +285,7 @@ export function CornerModeChrome({
 			<div className="wb-corner-status">
 				{config.status_line.segments.includes("session") ? (
 					<span data-status={statusFor(session)}>
-						<i aria-hidden="true" /> {statusFor(session)}
+						<i /> {statusFor(session)}
 					</span>
 				) : null}
 				{config.status_line.segments.includes("model") ? (

@@ -1,5 +1,4 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Activity, Users } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
@@ -16,12 +15,10 @@ import type {
 } from "../platform/contracts";
 import { DEFAULT_OQTO_UI_CONFIG } from "../platform/contracts";
 import { NavigationRail } from "../sessions/NavigationRail";
-import { SessionMeta } from "../sessions/SessionMeta";
-import { ThemeCustomizer } from "../theme/ThemeCustomizer";
-import { ThemePicker } from "../theme/ThemePicker";
+import { SessionStatusBar } from "../sessions/SessionStatusBar";
+import { SettingsPane } from "../theme/SettingsPane";
 import { useThemeRoot } from "../theme/useThemeRoot";
 import { JETBRAINS_MONO_STACK, type OqtoUiUserTheme } from "../theme/userTheme";
-import { ConfigLens } from "./ConfigLens";
 import { Splash } from "./Splash";
 import { useConfiguredBindings } from "./useConfiguredBindings";
 import "./shell.css";
@@ -60,14 +57,14 @@ export function OqtoUiShell({
 		compact: "4px",
 		soft: "10px",
 	}[config.appearance.radius];
-	const monoFont = config.appearance.font === "mono";
 	const configuredTheme: OqtoUiUserTheme = {
 		...userTheme,
 		radius: userTheme.radius ?? configuredRadius,
-		fontSans:
-			userTheme.fontSans ?? (monoFont ? JETBRAINS_MONO_STACK : undefined),
-		fontMono:
-			userTheme.fontMono ?? (monoFont ? JETBRAINS_MONO_STACK : undefined),
+		// OqtoUI's baseline identity is mono. A user customization may
+		// deliberately override either stack, but live config fallback must
+		// never silently regress to a proportional system font.
+		fontSans: userTheme.fontSans ?? JETBRAINS_MONO_STACK,
+		fontMono: userTheme.fontMono ?? JETBRAINS_MONO_STACK,
 	};
 	const { schemeId, rootRef, rootEl } = useThemeRoot(
 		requestedSchemeId ?? config.appearance.scheme,
@@ -150,6 +147,7 @@ function LoadedShell({
 }: LoadedShellProps) {
 	const { schemeId, rootRef, rootEl } = theme;
 	const { t } = useTranslation();
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const { sessionsOpen, setSessionsOpen, onNavigate } = shellState;
 	const directories = snapshot.workDirectories;
 	const directory =
@@ -189,9 +187,6 @@ function LoadedShell({
 				workDirectories={directories}
 				workDirectoryId={directory.id}
 				sessionId={session.id}
-				themePicker={
-					<ThemePicker schemeId={schemeId} onNavigate={onNavigate} />
-				}
 				schemeId={schemeId}
 				onNavigate={(next) => {
 					setSessionsOpen(false);
@@ -236,65 +231,28 @@ function LoadedShell({
 							galleryPane={<GalleryPane resources={snapshot.gallery} />}
 							onNavigate={onNavigate}
 						/>
-						<FilesPane files={snapshot.files} />
+						{settingsOpen ? (
+							<SettingsPane
+								schemeId={schemeId}
+								themeRoot={rootEl}
+								userTheme={userTheme}
+								resolution={resolvedConfig}
+								onChange={onUserTheme}
+								onNavigate={onNavigate}
+								onClose={() => setSettingsOpen(false)}
+							/>
+						) : (
+							<FilesPane files={snapshot.files} />
+						)}
 					</div>
 				</CornerModeChrome>
-				<ThemeCustomizer
-					themeRoot={rootEl}
-					userTheme={userTheme}
-					onChange={onUserTheme}
+				<SessionStatusBar
+					status={status}
+					session={session}
+					models={snapshot.environment.models}
+					settingsOpen={settingsOpen}
+					onToggleSettings={() => setSettingsOpen((open) => !open)}
 				/>
-				<ConfigLens resolution={resolvedConfig} />
-				{status ? (
-					<footer className="wb-statusbar">
-						<div className="wb-statusbar__group">
-							<span
-								className="wb-statusbar__item"
-								title={t("oqtoUi.statusBar.runningSessions")}
-							>
-								<Activity aria-hidden="true" />
-								{status.runningSessions}
-							</span>
-							<SessionMeta
-								key={session.id}
-								session={session}
-								models={snapshot.environment.models}
-							/>
-						</div>
-						<div className="wb-statusbar__group">
-							<span
-								className="wb-statusbar__item"
-								title={t("oqtoUi.statusBar.onlineUsers")}
-							>
-								<Users aria-hidden="true" />
-								{status.onlineUsers}
-							</span>
-							<span
-								className="wb-statusbar__item"
-								title={t("oqtoUi.statusBar.runnerLoad")}
-							>
-								<Activity aria-hidden="true" />
-								{status.runnerLoad}
-							</span>
-							<span
-								className="wb-statusbar__item wb-statusbar__item--dim"
-								title={t("oqtoUi.statusBar.version")}
-							>
-								{status.version}
-							</span>
-						</div>
-					</footer>
-				) : (
-					<footer className="wb-statusbar">
-						<div className="wb-statusbar__group">
-							<SessionMeta
-								key={session.id}
-								session={session}
-								models={snapshot.environment.models}
-							/>
-						</div>
-					</footer>
-				)}
 			</div>
 		</div>
 	);

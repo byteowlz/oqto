@@ -667,6 +667,9 @@
 			"togglePanel": "Seitenleiste umschalten",
 			"contextUsage": "Kontextfenster-Auslastung",
 			"placeholder": "Nachricht eingeben...",
+			"abort": "Stopp",
+			"pending": "wird gesendet…",
+			"stream": "Assistent",
 			"attach": "Datei anhängen",
 			"send": "Nachricht senden",
 			"contextReadout": "{{tokens}} · {{percent}}%",
@@ -800,6 +803,11 @@
 			"label": "Galerie",
 			"empty": "Diesem Arbeitsverzeichnis sind keine Galerie-Ressourcen zugeordnet.",
 			"open": "{{name}} in der Galerie öffnen"
+		},
+		"settings": {
+			"label": "Oberflächen-Einstellungen",
+			"open": "Oberflächen-Einstellungen öffnen",
+			"close": "Oberflächen-Einstellungen schließen"
 		}
 	}
 }

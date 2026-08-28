@@ -49,6 +49,9 @@
 		"title": "Chat",
 		"settings": "Chat Settings",
 		"placeholder": "Type a message...",
+		"abort": "Stop",
+		"pending": "sending…",
+		"stream": "Assistant",
 		"send": "Send",
 		"thinking": "Thinking",
 		"noMessages": "No messages yet",
@@ -800,6 +803,11 @@
 			"label": "Gallery",
 			"empty": "No Gallery resources are bound to this work directory.",
 			"open": "Open {{name}} in Gallery"
+		},
+		"settings": {
+			"label": "Interface settings",
+			"open": "Open interface settings",
+			"close": "Close interface settings"
 		}
 	}
 }
