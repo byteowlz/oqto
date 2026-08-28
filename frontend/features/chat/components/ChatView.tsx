@@ -52,6 +52,10 @@ import {
 	buildSessionDraftStorageKey,
 } from "@/features/chat/hooks/draft-storage";
 import {
+	type MessageGroup,
+	groupMessages,
+} from "@/features/chat/rendering/group-messages";
+import {
 	normalizeTokenCount,
 	parsePiSessionStats,
 } from "@/features/chat/utils/session-stats";
@@ -3140,137 +3144,6 @@ function ModelChangeDivider({ modelRef }: { modelRef: string }) {
 // ============================================================================
 // Message grouping
 // ============================================================================
-
-type MessageGroup = {
-	role: DisplayMessage["role"];
-	messages: DisplayMessage[];
-};
-
-function fingerprintPartForRender(part: DisplayPart): string {
-	switch (part.type) {
-		case "text":
-			return `text:${part.text}`;
-		case "thinking":
-			return `thinking:${part.text}`;
-		case "tool_call":
-			return `tool_call:${part.toolCallId}:${part.name}:${JSON.stringify(part.input ?? null)}`;
-		case "tool_result":
-			return `tool_result:${part.toolCallId}:${part.name ?? ""}:${JSON.stringify(part.output ?? null)}:${part.isError ? "1" : "0"}`;
-		case "compaction":
-			return `compaction:${part.text}`;
-		case "error":
-			return `error:${part.text}`;
-		case "image":
-			return "image";
-		case "file_ref":
-			return `file_ref:${part.uri}`;
-		default:
-			return part.type;
-	}
-}
-
-function messageRenderFingerprint(message: DisplayMessage): string {
-	const parts = message.parts.map(fingerprintPartForRender);
-	return `${message.role}|${parts.join("|")}`;
-}
-
-function hasRenderableAssistantPayload(message: DisplayMessage): boolean {
-	if (message.role !== "assistant") return false;
-	return message.parts.some((part) => {
-		if (part.type === "text") {
-			return (part.text ?? "").trim().length > 0;
-		}
-		return part.type === "image" || part.type === "file_ref";
-	});
-}
-
-function isAssistantAuxiliaryMessage(message: DisplayMessage): boolean {
-	return (
-		message.role === "assistant" && !hasRenderableAssistantPayload(message)
-	);
-}
-
-function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
-	const groups: MessageGroup[] = [];
-	let current: MessageGroup | null = null;
-
-	for (const message of messages) {
-		// Skip user messages that have no renderable text content.
-		// These are empty steer echoes persisted to hstry — the real
-		// content lives in the optimistic message that was already shown.
-		if (message.role === "user") {
-			const hasRenderableContent = message.parts.some((p) => {
-				if (p.type === "text") {
-					const text =
-						(p as { text?: string; content?: string }).text ??
-						(p as { content?: string }).content ??
-						"";
-					return text.trim().length > 0;
-				}
-				return p.type === "image" || p.type === "file_ref";
-			});
-			if (!hasRenderableContent) continue;
-		}
-
-		// Tool messages are always grouped with the preceding assistant message.
-		// This ensures tool_results are in the same group as their tool_calls
-		// so the segment builder can match them up.
-		if (message.role === "tool" && current?.role === "assistant") {
-			current.messages.push(message);
-			continue;
-		}
-
-		if (!current || current.role !== message.role) {
-			current = { role: message.role, messages: [message] };
-			groups.push(current);
-			continue;
-		}
-
-		const prev = current.messages[current.messages.length - 1];
-		if (message.role === "assistant") {
-			// Guard against duplicated assistant messages (same completed turn
-			// arriving through two sync paths during reconnect races, or stale
-			// cached entries that don't reconcile with the authoritative server
-			// snapshot because their IDs differ).
-			if (
-				prev &&
-				messageRenderFingerprint(prev) === messageRenderFingerprint(message)
-			) {
-				continue;
-			}
-			// Keep distinct text-bearing assistant turns visible as separate cards,
-			// but merge tool-only / auxiliary assistant rows with adjacent assistant
-			// rows so a single agent response (tools + final text) doesn't get
-			// fragmented into multiple containers.
-			const currentHasRenderableAssistant = current.messages.some(
-				(msg) => msg.role === "assistant" && hasRenderableAssistantPayload(msg),
-			);
-			const currentHasToolActivity = current.messages.some((msg) =>
-				msg.parts.some(
-					(part) => part.type === "tool_call" || part.type === "tool_result",
-				),
-			);
-			if (
-				(prev &&
-					(isAssistantAuxiliaryMessage(prev) ||
-						isAssistantAuxiliaryMessage(message))) ||
-				currentHasToolActivity ||
-				(!currentHasRenderableAssistant &&
-					hasRenderableAssistantPayload(message))
-			) {
-				current.messages.push(message);
-				continue;
-			}
-			current = { role: message.role, messages: [message] };
-			groups.push(current);
-			continue;
-		}
-
-		current.messages.push(message);
-	}
-
-	return groups;
-}
 
 // Compact copy button for message headers
 function CompactCopyButton({

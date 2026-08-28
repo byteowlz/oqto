@@ -90,6 +90,45 @@ describe("OqtoUI canonical message rendering", () => {
 		);
 	});
 
+	it("suppresses raw todo tool JSON just like the original Chat", () => {
+		render(
+			<MessageParts
+				message={{
+					id: "todo-message",
+					author: "agent",
+					content: "",
+					time: "now",
+					parts: [
+						{
+							type: "tool_call",
+							id: "todo-call",
+							toolCallId: "todo-1",
+							name: "TodoWrite",
+							input: {
+								todos: [
+									{
+										id: "task",
+										content: "Never render this raw",
+										status: "completed",
+										priority: "high",
+									},
+								],
+							},
+							status: "success",
+						},
+					],
+				}}
+				sessionId="session-1"
+				resultByCallId={new Map()}
+				knownCallIds={new Set(["todo-1"])}
+				onOpenFile={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByText("Never render this raw")).not.toBeInTheDocument();
+		expect(screen.queryByText("TodoWrite")).not.toBeInTheDocument();
+	});
+
 	it("reads only after activation and restores the prior surface", async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")

@@ -1,5 +1,7 @@
+import { groupMessages } from "@/features/chat/rendering/group-messages";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMountEffect } from "@/hooks/use-mount-effect";
+import type { DisplayMessage, DisplayPart } from "@/lib/chat-render-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -52,6 +54,54 @@ function ToolIcon({ kind }: ToolIconProps) {
 }
 
 type ToolResultPart = Extract<ChatMessagePart, { type: "tool_result" }>;
+
+type DurableVisualGroup = {
+	id: string;
+	message: ChatMessage;
+};
+
+function groupDurableMessages(messages: ChatMessage[]): DurableVisualGroup[] {
+	const sourceById = new Map(messages.map((message) => [message.id, message]));
+	const displayMessages: DisplayMessage[] = messages.map((message, index) => ({
+		id: message.id,
+		role:
+			message.author === "agent"
+				? "assistant"
+				: message.author === "tool"
+					? "tool"
+					: "user",
+		parts: (message.parts ?? [
+			{ type: "text", id: `${message.id}:text`, text: message.content },
+		]) as DisplayPart[],
+		timestamp: index,
+	}));
+
+	return groupMessages(displayMessages).map((group) => {
+		const source = sourceById.get(group.messages[0]?.id ?? "");
+		const parts = group.messages.flatMap((message) => message.parts);
+		return {
+			id: group.messages.map((message) => message.id).join(":"),
+			message: {
+				id: group.messages[0]?.id ?? "empty-group",
+				author:
+					group.role === "user"
+						? "user"
+						: group.role === "tool"
+							? "tool"
+							: "agent",
+				content: parts
+					.filter(
+						(part): part is Extract<DisplayPart, { type: "text" }> =>
+							part.type === "text",
+					)
+					.map((part) => part.text)
+					.join("\n\n"),
+				time: source?.time ?? "",
+				parts: parts as ChatMessagePart[],
+			},
+		};
+	});
+}
 
 type MessageGroupProps = {
 	message: ChatMessage;
@@ -245,6 +295,10 @@ export function ChatPane({
 		staleTime: Number.POSITIVE_INFINITY,
 	});
 	const draft = draftQuery.data;
+	const durableGroups = useMemo(
+		() => groupDurableMessages(timeline.messages),
+		[timeline.messages],
+	);
 	const { resultByCallId, knownCallIds } = useMemo(() => {
 		const results = new Map<string, ToolResultPart>();
 		const calls = new Set<string>();
@@ -298,12 +352,12 @@ export function ChatPane({
 	const followTailRef = useRef(true);
 
 	const getItemKey = useCallback(
-		(index: number) => timeline.messages[index]?.id ?? index,
-		[timeline.messages],
+		(index: number) => durableGroups[index]?.id ?? index,
+		[durableGroups],
 	);
 
 	const virtualizer = useVirtualizer({
-		count: compact ? 0 : timeline.messages.length,
+		count: compact ? 0 : durableGroups.length,
 		getScrollElement: () => scrollRef.current,
 		// Close to the real average row height; large misestimates make the
 		// scrollbar and viewport visibly jump when rows measure.
@@ -313,7 +367,7 @@ export function ChatPane({
 		isScrollingResetDelay: 150,
 	});
 
-	const firstMessageId = timeline.messages[0]?.id ?? null;
+	const firstMessageId = durableGroups[0]?.id ?? null;
 	useLayoutEffect(() => {
 		const element = scrollRef.current;
 		if (!element) return;
@@ -399,11 +453,11 @@ export function ChatPane({
 					}
 				>
 					{compact
-						? timeline.messages.map((message) => (
-								<div className="wb-timeline-row" key={message.id}>
+						? durableGroups.map((group) => (
+								<div className="wb-timeline-row" key={group.id}>
 									<MessageGroup
 										agentName={agentName}
-										message={message}
+										message={group.message}
 										sessionId={sessionId}
 										resultByCallId={resultByCallId}
 										knownCallIds={knownCallIds}
@@ -412,8 +466,8 @@ export function ChatPane({
 								</div>
 							))
 						: visibleItems.map((row) => {
-								const message = timeline.messages[row.index];
-								if (!message) return null;
+								const group = durableGroups[row.index];
+								if (!group) return null;
 								return (
 									<div
 										className="wb-timeline-row"
@@ -428,7 +482,7 @@ export function ChatPane({
 									>
 										<MessageGroup
 											agentName={agentName}
-											message={message}
+											message={group.message}
 											sessionId={sessionId}
 											resultByCallId={resultByCallId}
 											knownCallIds={knownCallIds}

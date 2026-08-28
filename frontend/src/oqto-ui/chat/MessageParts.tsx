@@ -157,6 +157,8 @@ export function MessageParts({
 					return (
 						<ToolCallCard
 							key={part.id}
+							hideTodoTools
+							defaultCollapsed
 							part={toolPart(
 								part,
 								resultByCallId.get(part.toolCallId),
@@ -170,6 +172,8 @@ export function MessageParts({
 					return knownCallIds.has(part.toolCallId) ? null : (
 						<ToolCallCard
 							key={part.id}
+							hideTodoTools
+							defaultCollapsed
 							part={orphanResultPart(part, sessionId, message.id)}
 						/>
 					);
