@@ -60,6 +60,21 @@ describe("OqtoUI architecture guardrails", () => {
 		).not.toThrow();
 	});
 
+	it("rejects transport coupling inside the shared Chat renderer", () => {
+		const frontendRoot = fixture({
+			"src/oqto-ui/chat/view.ts": "export const view = 1;\n",
+			"lib/chat-rendering/bad.ts":
+				'import { api } from "@/lib/api/chat";\nexport const bad = api;\n',
+		});
+		const result = spawnSync(
+			process.execPath,
+			[SCRIPT, "--source-root", path.join(frontendRoot, "src", "oqto-ui")],
+			{ encoding: "utf8" },
+		);
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("architecture/shared-renderer-boundary");
+	});
+
 	it("accepts internal unknown narrowing and adapter-boundary unknown", () => {
 		const root = fixture({
 			"chat/data/model.ts":

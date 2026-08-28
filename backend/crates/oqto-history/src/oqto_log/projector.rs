@@ -546,6 +546,7 @@ pub async fn project_session_messages_for_workspace(
 
 fn projected_parts_from_payload(
     msg_id: &str,
+    role: &str,
     fallback_content: Option<String>,
     json_payload: Option<&str>,
 ) -> Vec<ProjectedChatMessagePart> {
@@ -558,6 +559,35 @@ fn projected_parts_from_payload(
     let Some(content) = value.get("content") else {
         return fallback_text_part(msg_id, fallback_content);
     };
+    if matches!(role, "tool" | "toolResult") {
+        let tool_call_id = value
+            .get("toolCallId")
+            .or_else(|| value.get("tool_call_id"))
+            .and_then(|item| item.as_str())
+            .map(ToString::to_string);
+        let tool_name = value
+            .get("toolName")
+            .or_else(|| value.get("tool_name"))
+            .and_then(|item| item.as_str())
+            .map(ToString::to_string);
+        let is_error = value
+            .get("isError")
+            .or_else(|| value.get("is_error"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        return vec![ProjectedChatMessagePart {
+            id: format!("{msg_id}:part:0"),
+            part_type: "tool_result".to_string(),
+            text: None,
+            text_html: None,
+            tool_name,
+            tool_call_id,
+            tool_input: None,
+            tool_output: Some(content.clone()),
+            tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+            tool_title: None,
+        }];
+    }
     let mut parts = Vec::new();
     match content {
         serde_json::Value::Array(items) => {
@@ -691,7 +721,8 @@ fn row_to_projected_message(
         .and_then(extract_client_id_from_payload_json);
     let role: String = row.get("role");
 
-    let parts = projected_parts_from_payload(&msg_id, fallback_content, json_payload.as_deref());
+    let parts =
+        projected_parts_from_payload(&msg_id, &role, fallback_content, json_payload.as_deref());
 
     ProjectedChatMessage {
         id: msg_id.clone(),
@@ -806,6 +837,99 @@ mod tests {
         assert_eq!(projected[0].created_at, 1_779_363_330_601);
         assert_eq!(projected[1].created_at, 1_779_363_330_656);
         assert!(projected[0].created_at < projected[1].created_at);
+    }
+
+    #[tokio::test]
+    async fn projection_preserves_top_level_tool_result_as_structured_part() {
+        let temp = tempfile::tempdir().expect("create temp home");
+        let user_home = temp.path();
+        let workspace_id = "/tmp/oqto-tool-result-projection-test";
+        let session_id = "session-tool-result-projection";
+        let records = vec![
+            PiJsonlMessageRecord {
+                source_entry_id: "entry-assistant".to_string(),
+                parent_source_entry_id: None,
+                source_sequence: 0,
+                message: AgentMessage {
+                    role: "assistant".to_string(),
+                    content: serde_json::json!([{
+                        "type": "tool_use",
+                        "id": "call-1",
+                        "name": "TodoWrite",
+                        "input": {"todos": [{"content": "hidden", "status": "completed"}]}
+                    }]),
+                    timestamp: Some(1_000),
+                    tool_call_id: None,
+                    tool_name: None,
+                    is_error: None,
+                    api: None,
+                    provider: None,
+                    model: None,
+                    usage: None,
+                    stop_reason: None,
+                    extra: HashMap::new(),
+                },
+            },
+            PiJsonlMessageRecord {
+                source_entry_id: "entry-tool".to_string(),
+                parent_source_entry_id: Some("entry-assistant".to_string()),
+                source_sequence: 1,
+                message: AgentMessage {
+                    role: "toolResult".to_string(),
+                    content: serde_json::json!({"todos": [{"content": "hidden"}]}),
+                    timestamp: Some(1_001),
+                    tool_call_id: Some("call-1".to_string()),
+                    tool_name: Some("TodoWrite".to_string()),
+                    is_error: Some(false),
+                    api: None,
+                    provider: None,
+                    model: None,
+                    usage: None,
+                    stop_reason: None,
+                    extra: HashMap::new(),
+                },
+            },
+        ];
+
+        replace_session_with_pi_jsonl_records(
+            user_home,
+            "user-1",
+            workspace_id,
+            session_id,
+            "oqto-platform-1",
+            Some("external-1"),
+            "external-1",
+            &records,
+        )
+        .await
+        .expect("replace session from Pi JSONL records");
+
+        let projected =
+            project_session_messages_for_workspace(user_home, workspace_id, session_id, None)
+                .await
+                .expect("project session messages");
+
+        assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].parts[0].part_type, "tool_call");
+        assert_eq!(
+            projected[0].parts[0].tool_call_id.as_deref(),
+            Some("call-1")
+        );
+        assert_eq!(projected[1].parts[0].part_type, "tool_result");
+        assert_eq!(
+            projected[1].parts[0].tool_call_id.as_deref(),
+            Some("call-1")
+        );
+        assert_eq!(
+            projected[1].parts[0].tool_name.as_deref(),
+            Some("TodoWrite")
+        );
+        assert_eq!(
+            projected[1].parts[0].tool_status.as_deref(),
+            Some("success")
+        );
+        assert!(projected[1].parts[0].tool_output.is_some());
+        assert!(projected[1].parts[0].text.is_none());
     }
 
     #[tokio::test]

@@ -2225,7 +2225,7 @@ function TextWithFileReferences({
 		>
 			<MarkdownRenderer
 				content={markdownContent}
-				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
+				className="canonical-message-prose text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
 				enableMermaid={!deferMermaidUntilFinal}
 				isStreaming={isStreaming}
 				onFileReferenceOpen={(reference) =>

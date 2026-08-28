@@ -29,15 +29,24 @@ type JsonRecord = {
 	has_more?: unknown;
 	next_before?: unknown;
 	parts?: unknown;
+	part_type?: unknown;
 	text?: unknown;
 	content?: unknown;
 	tool_name?: unknown;
+	tool_call_id?: unknown;
+	tool_use_id?: unknown;
 	toolCallId?: unknown;
 	name?: unknown;
+	arguments?: unknown;
+	tool_input?: unknown;
 	input?: unknown;
+	tool_output?: unknown;
 	output?: unknown;
+	tool_status?: unknown;
 	status?: unknown;
+	is_error?: unknown;
 	isError?: unknown;
+	duration_ms?: unknown;
 	durationMs?: unknown;
 	uri?: unknown;
 	label?: unknown;
@@ -195,7 +204,10 @@ function parseMessageParts(
 ): ChatMessagePart[] {
 	return records(value).flatMap<ChatMessagePart>(
 		(part, index): ChatMessagePart[] => {
-			const type = text(part.type);
+			// The durable history endpoint exposes ProjectedChatMessagePart, whose
+			// wire names intentionally differ from canonical Part. Normalize that
+			// protocol DTO here; renderers only receive canonical parts.
+			const type = text(part.part_type) ?? text(part.type);
 			const id = text(part.id) ?? `${messageId}:part:${index}`;
 			if (type === "text") {
 				const value = text(part.text) ?? text(part.content);
@@ -216,37 +228,51 @@ function parseMessageParts(
 					? []
 					: [{ type: "thinking" as const, id, text: value }];
 			}
-			const toolCallId = text(part.toolCallId);
+			const toolCallId =
+				text(part.tool_call_id) ??
+				text(part.toolCallId) ??
+				text(part.tool_use_id);
 			if (type === "tool_call" && toolCallId) {
-				const rawStatus = text(part.status);
+				const rawStatus = text(part.tool_status) ?? text(part.status);
 				const status =
-					rawStatus === "pending" ||
-					rawStatus === "running" ||
-					rawStatus === "success" ||
-					rawStatus === "error"
-						? rawStatus
-						: "pending";
+					rawStatus === "running" || rawStatus === "in_progress"
+						? "running"
+						: rawStatus === "success" ||
+								rawStatus === "completed" ||
+								rawStatus === "done"
+							? "success"
+							: rawStatus === "error" || rawStatus === "failed"
+								? "error"
+								: "pending";
 				return [
 					{
 						type: "tool_call" as const,
 						id,
 						toolCallId,
-						name: text(part.name) ?? text(part.tool_name) ?? "tool",
-						input: jsonValue(part.input),
+						name: text(part.tool_name) ?? text(part.name) ?? "tool",
+						input: jsonValue(part.tool_input ?? part.input ?? part.arguments),
 						status,
 					},
 				];
 			}
 			if (type === "tool_result" && toolCallId) {
+				const rawStatus = text(part.tool_status) ?? text(part.status);
 				return [
 					{
 						type: "tool_result" as const,
 						id,
 						toolCallId,
-						name: text(part.name) ?? text(part.tool_name) ?? undefined,
-						output: jsonValue(part.output),
-						isError: part.isError === true,
-						durationMs: number(part.durationMs) ?? undefined,
+						name: text(part.tool_name) ?? text(part.name) ?? undefined,
+						output: jsonValue(
+							part.tool_output ?? part.output ?? part.content ?? part.text,
+						),
+						isError:
+							part.is_error === true ||
+							part.isError === true ||
+							rawStatus === "error" ||
+							rawStatus === "failed",
+						durationMs:
+							number(part.duration_ms) ?? number(part.durationMs) ?? undefined,
 					},
 				];
 			}

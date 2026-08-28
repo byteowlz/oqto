@@ -46,7 +46,8 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/hooks/use-document-event",
 		"@/hooks/use-mobile",
 		"@/hooks/use-mount-effect",
-		"@/lib/chat-rendering",
+		"@/lib/chat-rendering/CanonicalMessageRenderer",
+		"@/lib/chat-rendering/group-messages",
 		"@/lib/chat-render-types",
 		"@/lib/file-types",
 		"@/lib/message-part",
@@ -58,6 +59,17 @@ const ALLOWED_PROJECT_ALIASES = {
 	platform: ["@/src/generated"],
 	dev: [],
 };
+
+const FORBIDDEN_SHARED_RENDERER_IMPORTS = [
+	"@/components/contexts",
+	"@/features/chat/hooks",
+	"@/hooks",
+	"@/lib/api",
+	"@/lib/mux-files",
+	"@/lib/ws-client",
+	"@/lib/ws-manager",
+	"@/src/oqto-ui",
+];
 
 const FORBIDDEN_LEGACY_IMPORTS = [
 	"@/hooks/use-app",
@@ -1180,6 +1192,49 @@ function inspectFile(
 	return { violations, edges };
 }
 
+async function sharedRendererBoundaryViolations(sourceRoot) {
+	const frontendRoot = path.resolve(sourceRoot, "../..");
+	const sharedRoot = path.join(frontendRoot, "lib", "chat-rendering");
+	const files = await walk(sharedRoot);
+	const violations = [];
+	for (const file of files) {
+		const text = await fs.readFile(file, "utf8");
+		const sourceFile = ts.createSourceFile(
+			file,
+			text,
+			ts.ScriptTarget.Latest,
+			true,
+			file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+		);
+		function visit(node) {
+			if (
+				ts.isImportDeclaration(node) &&
+				ts.isStringLiteral(node.moduleSpecifier)
+			) {
+				const specifier = node.moduleSpecifier.text;
+				const forbidden = FORBIDDEN_SHARED_RENDERER_IMPORTS.find(
+					(prefix) =>
+						specifier === prefix || specifier.startsWith(`${prefix}/`),
+				);
+				if (forbidden) {
+					violations.push(
+						violation(
+							"architecture/shared-renderer-boundary",
+							path.relative(frontendRoot, file).replaceAll(path.sep, "/"),
+							node,
+							sourceFile,
+							`Shared Chat rendering may not depend on host state or transport: ${specifier}`,
+						),
+					);
+				}
+			}
+			ts.forEachChild(node, visit);
+		}
+		visit(sourceFile);
+	}
+	return violations;
+}
+
 function cycleViolations(sourceRoot, graph, sourceFiles) {
 	const violations = [];
 	const state = new Map();
@@ -1259,6 +1314,7 @@ export async function inspectOqtoUI(
 		violations.push(...result.violations);
 	}
 	violations.push(...cycleViolations(absoluteRoot, graph, sourceFiles));
+	violations.push(...(await sharedRendererBoundaryViolations(absoluteRoot)));
 
 	violations.sort(
 		(a, b) =>

@@ -365,6 +365,14 @@
 	word-break: normal;
 }
 
+/* Canonical Chat cards clip their outer surface to preserve tool/card anatomy.
+   Prose therefore has to wrap before reaching that boundary. Keep code blocks
+   on their dedicated horizontal-scrolling path below. */
+.markdown-content.canonical-message-prose p,
+.markdown-content.canonical-message-prose li > span {
+	overflow-wrap: anywhere;
+}
+
 .markdown-content pre {
 	overflow-x: auto;
 	max-width: 100%;
