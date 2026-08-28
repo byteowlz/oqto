@@ -30,17 +30,17 @@ describe("bash tool summaries", () => {
 	});
 
 	it("describes the command that ssh runs, prefixed by its host", () => {
-		expect(summarize('ssh proxmox "rm -rf /opt/data/log"')).toBe(
-			"proxmox: Removing files",
+		expect(summarize('ssh build-host "rm -rf /opt/data/log"')).toBe(
+			"build-host: Removing files",
 		);
-		expect(summarize("ssh octo-azure systemctl status oqto")).toBe(
-			"octo-azure: Managing service",
+		expect(summarize("ssh gpu-node systemctl status app")).toBe(
+			"gpu-node: Managing service",
 		);
 	});
 
 	it("reports the file being read, not a flag value", () => {
-		expect(summarize("tail -n 50 /tmp/oqto-runner.log")).toBe(
-			"Reading /tmp/oqto-runner.log",
+		expect(summarize("tail -n 50 /tmp/runner.log")).toBe(
+			"Reading /tmp/runner.log",
 		);
 		expect(summarize("head -c 200 README.md")).toBe("Reading README.md");
 		expect(summarize("cat -n src/main.rs")).toBe("Reading src/main.rs");

@@ -41,7 +41,7 @@ describe("shell command parsing", () => {
 	});
 
 	it("unwraps privilege and timing wrappers", () => {
-		expect(primaryOf("sudo -u wismut systemctl --user restart oqto")).toBe(
+		expect(primaryOf("sudo -u deploy systemctl --user restart app")).toBe(
 			"systemctl",
 		);
 		expect(primaryOf("timeout 30 cargo build --release")).toBe("cargo");
@@ -52,15 +52,15 @@ describe("shell command parsing", () => {
 	});
 
 	it("resolves the command that ssh actually runs, and its host", () => {
-		const quoted = parseShellCommand('ssh proxmox "rm -rf /opt/data/log"');
+		const quoted = parseShellCommand('ssh build-host "rm -rf /opt/data/log"');
 		expect(quoted.primary?.name).toBe("rm");
-		expect(quoted.primary?.remoteHost).toBe("proxmox");
+		expect(quoted.primary?.remoteHost).toBe("build-host");
 
-		const argv = parseShellCommand("ssh -t user@4090 systemctl status oqto");
+		const argv = parseShellCommand("ssh -t ops@gpu-node systemctl status app");
 		expect(argv.primary?.name).toBe("systemctl");
-		expect(argv.primary?.remoteHost).toBe("4090");
+		expect(argv.primary?.remoteHost).toBe("gpu-node");
 
-		const bare = parseShellCommand("ssh octo-azure");
+		const bare = parseShellCommand("ssh build-host");
 		expect(bare.primary?.name).toBe("ssh");
 	});
 
