@@ -1,31 +1,26 @@
-import { groupMessages } from "@/features/chat/rendering/group-messages";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import type { DisplayMessage, DisplayPart } from "@/lib/chat-render-types";
+import {
+	type ChatFileAdapter,
+	MessageGroupCard,
+} from "@/lib/chat-rendering/CanonicalMessageRenderer";
+import {
+	type MessageGroup as CanonicalMessageGroup,
+	groupMessages,
+} from "@/lib/chat-rendering/group-messages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-	Bot,
-	CircleStop,
-	Copy,
-	FileEdit,
-	FileText,
-	GitBranch,
-	Paperclip,
-	Send,
-	TestTube2,
-	User,
-} from "lucide-react";
+import { CircleStop, Paperclip, Send } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurnDraft } from "../platform/chat-contract";
 import type {
 	ChatMessage,
-	ChatMessagePart,
 	OqtoUiPlatform,
 	SessionTask,
 } from "../platform/contracts";
-import { MessageParts } from "./MessageParts";
+import { workspaceFilePreviewUrl } from "../platform/workspace-file-url";
 import { TaskProgress } from "./TaskProgress";
 import { timelineQueryKey, turnDraftQueryKey } from "./query-keys";
 import { useTimeline } from "./useTimeline";
@@ -35,33 +30,33 @@ type ChatPaneProps = {
 	agentName: string;
 	sessionId: string;
 	tasks: SessionTask[];
+	workspacePath: string;
 	onOpenFile: (
 		path: string,
 		range?: { startLine?: number; endLine?: number },
 	) => void;
 };
 
+const OQTO_UI_CHAT_FILE_ADAPTER: ChatFileAdapter = {
+	fileUrl: workspaceFilePreviewUrl,
+};
+
 type PendingPrompt = { id: string; text: string };
-
-type ActivityKind = NonNullable<ChatMessage["activity"]>["kind"];
-
-type ToolIconProps = { kind: ActivityKind };
-
-function ToolIcon({ kind }: ToolIconProps) {
-	if (kind === "edit") return <FileEdit aria-hidden="true" />;
-	if (kind === "test") return <TestTube2 aria-hidden="true" />;
-	return <FileText aria-hidden="true" />;
-}
-
-type ToolResultPart = Extract<ChatMessagePart, { type: "tool_result" }>;
 
 type DurableVisualGroup = {
 	id: string;
-	message: ChatMessage;
+	group: CanonicalMessageGroup;
 };
 
+function timestampFromDisplayTime(time: string, fallback: number): number {
+	const match = time.match(/^(\d{1,2}):(\d{2})$/);
+	if (!match) return fallback;
+	const timestamp = new Date();
+	timestamp.setHours(Number(match[1]), Number(match[2]), 0, 0);
+	return timestamp.getTime();
+}
+
 function groupDurableMessages(messages: ChatMessage[]): DurableVisualGroup[] {
-	const sourceById = new Map(messages.map((message) => [message.id, message]));
 	const displayMessages: DisplayMessage[] = messages.map((message, index) => ({
 		id: message.id,
 		role:
@@ -73,201 +68,65 @@ function groupDurableMessages(messages: ChatMessage[]): DurableVisualGroup[] {
 		parts: (message.parts ?? [
 			{ type: "text", id: `${message.id}:text`, text: message.content },
 		]) as DisplayPart[],
-		timestamp: index,
+		timestamp: timestampFromDisplayTime(message.time, index),
 	}));
 
-	return groupMessages(displayMessages).map((group) => {
-		const source = sourceById.get(group.messages[0]?.id ?? "");
-		const parts = group.messages.flatMap((message) => message.parts);
-		return {
-			id: group.messages.map((message) => message.id).join(":"),
-			message: {
-				id: group.messages[0]?.id ?? "empty-group",
-				author:
-					group.role === "user"
-						? "user"
-						: group.role === "tool"
-							? "tool"
-							: "agent",
-				content: parts
-					.filter(
-						(part): part is Extract<DisplayPart, { type: "text" }> =>
-							part.type === "text",
-					)
-					.map((part) => part.text)
-					.join("\n\n"),
-				time: source?.time ?? "",
-				parts: parts as ChatMessagePart[],
+	return groupMessages(displayMessages).map((group) => ({
+		id: group.messages.map((message) => message.id).join(":"),
+		group,
+	}));
+}
+
+function pendingPromptGroup(prompt: PendingPrompt): CanonicalMessageGroup {
+	return {
+		role: "user",
+		messages: [
+			{
+				id: prompt.id,
+				role: "user",
+				parts: [{ type: "text", id: `${prompt.id}:text`, text: prompt.text }],
+				timestamp: 0,
 			},
+		],
+	};
+}
+
+function streamingDraftGroup(draft: ChatTurnDraft): CanonicalMessageGroup {
+	const parts: DisplayPart[] = draft.parts.flatMap((part): DisplayPart[] => {
+		if (part.type !== "tool_call") return [part as DisplayPart];
+		const toolCall: DisplayPart = {
+			type: "tool_call",
+			id: part.id,
+			toolCallId: part.toolCallId,
+			name: part.name,
+			input: part.input,
+			status: part.status,
 		};
+		if (part.output === undefined) return [toolCall];
+		return [
+			toolCall,
+			{
+				type: "tool_result",
+				id: `${part.id}:result`,
+				toolCallId: part.toolCallId,
+				name: part.name,
+				output: part.output,
+				isError: part.status === "error",
+			},
+		];
 	});
-}
-
-type MessageGroupProps = {
-	message: ChatMessage;
-	agentName: string;
-	sessionId: string;
-	resultByCallId: ReadonlyMap<string, ToolResultPart>;
-	knownCallIds: ReadonlySet<string>;
-	onOpenFile: ChatPaneProps["onOpenFile"];
-	pending?: boolean;
-};
-
-function MessageGroup({
-	message,
-	agentName,
-	sessionId,
-	resultByCallId,
-	knownCallIds,
-	onOpenFile,
-	pending,
-}: MessageGroupProps) {
-	const { t } = useTranslation();
-	const isUser = message.author === "user";
-	const name = isUser
-		? t("oqtoUi.person.name")
-		: message.author === "tool"
-			? t("oqtoUi.chat.tool")
-			: agentName;
-	return (
-		<article
-			className="wb-msg"
-			data-author={message.author}
-			data-pending={pending}
-		>
-			<header className="wb-msg__header">
-				{isUser ? <User aria-hidden="true" /> : <Bot aria-hidden="true" />}
-				<span className="wb-msg__name">{name}</span>
-				<span className="wb-msg__spacer" />
-				{isUser ? (
-					<button
-						className="wb-icon-button"
-						type="button"
-						aria-label={t("oqtoUi.chat.forkHere")}
-					>
-						<GitBranch aria-hidden="true" />
-					</button>
-				) : null}
-				<span className="wb-msg__time">{message.time}</span>
-				<button
-					className="wb-icon-button"
-					type="button"
-					aria-label={t("oqtoUi.chat.copy")}
-				>
-					<Copy aria-hidden="true" />
-				</button>
-			</header>
-			<div className="wb-msg__body">
-				<MessageParts
-					message={message}
-					sessionId={sessionId}
-					resultByCallId={resultByCallId}
-					knownCallIds={knownCallIds}
-					onOpenFile={onOpenFile}
-				/>
-				{message.activity ? (
-					<div className="wb-tool" data-kind={message.activity.kind}>
-						<ToolIcon kind={message.activity.kind} />
-						<span className="wb-tool__label">
-							{t(`oqtoUi.activity.${message.activity.kind}`)}
-						</span>
-						<span className="wb-tool__target">{message.activity.name}</span>
-					</div>
-				) : null}
-			</div>
-		</article>
-	);
-}
-
-type DraftPartViewProps = {
-	part: ChatTurnDraft["parts"][number];
-	sessionId: string;
-	onOpenFile: ChatPaneProps["onOpenFile"];
-};
-
-function DraftPartView({ part, sessionId, onOpenFile }: DraftPartViewProps) {
-	const { t } = useTranslation();
-	if (part.type === "text") {
-		return (
-			<article className="wb-msg" data-author="agent" data-streaming="true">
-				<header className="wb-msg__header">
-					<Bot aria-hidden="true" />
-					<span className="wb-msg__name">{t("oqtoUi.chat.stream")}</span>
-					<span className="wb-msg__spacer" />
-				</header>
-				<div className="wb-msg__body">
-					<MessageParts
-						message={{
-							id: `draft:${part.id}`,
-							author: "agent",
-							content: part.text,
-							time: "",
-							parts: [{ type: "text", id: part.id, text: part.text }],
-						}}
-						sessionId={sessionId}
-						resultByCallId={new Map()}
-						knownCallIds={new Set()}
-						onOpenFile={onOpenFile}
-					/>
-				</div>
-			</article>
-		);
-	}
-	if (part.type === "thinking") {
-		return (
-			<div className="wb-draft-note">
-				<Bot aria-hidden="true" />
-				{part.text}
-			</div>
-		);
-	}
-	if (part.type === "tool_call") {
-		const result: ToolResultPart | undefined =
-			part.output === undefined
-				? undefined
-				: {
-						type: "tool_result",
-						id: `${part.id}:result`,
-						toolCallId: part.toolCallId,
-						name: part.name,
-						output: part.output,
-						isError: part.status === "error",
-					};
-		return (
-			<MessageParts
-				message={{
-					id: `draft:${part.id}`,
-					author: "agent",
-					content: "",
-					time: "",
-					parts: [
-						{
-							type: "tool_call",
-							id: part.id,
-							toolCallId: part.toolCallId,
-							name: part.name,
-							input: part.input,
-							status: part.status,
-						},
-					],
-				}}
-				sessionId={sessionId}
-				resultByCallId={
-					result ? new Map([[part.toolCallId, result]]) : new Map()
-				}
-				knownCallIds={new Set([part.toolCallId])}
-				onOpenFile={onOpenFile}
-			/>
-		);
-	}
-	if (part.type === "compaction") {
-		return <div className="wb-draft-note">{part.text}</div>;
-	}
-	return (
-		<div className="wb-draft-note" data-retrying={part.retrying}>
-			{part.text}
-		</div>
-	);
+	return {
+		role: "assistant",
+		messages: [
+			{
+				id: "streaming-draft",
+				role: "assistant",
+				parts,
+				timestamp: 0,
+				isStreaming: true,
+			},
+		],
+	};
 }
 
 /**
@@ -280,9 +139,11 @@ export function ChatPane({
 	agentName,
 	sessionId,
 	tasks,
+	workspacePath,
 	onOpenFile,
 }: ChatPaneProps) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
+	const locale = i18n.resolvedLanguage?.startsWith("de") ? "de" : "en";
 	const queryClient = useQueryClient();
 	const compact = useIsMobile(1024);
 	const timeline = useTimeline(platform, sessionId);
@@ -299,17 +160,6 @@ export function ChatPane({
 		() => groupDurableMessages(timeline.messages),
 		[timeline.messages],
 	);
-	const { resultByCallId, knownCallIds } = useMemo(() => {
-		const results = new Map<string, ToolResultPart>();
-		const calls = new Set<string>();
-		for (const message of timeline.messages) {
-			for (const part of message.parts ?? []) {
-				if (part.type === "tool_call") calls.add(part.toolCallId);
-				if (part.type === "tool_result") results.set(part.toolCallId, part);
-			}
-		}
-		return { resultByCallId: results, knownCallIds: calls };
-	}, [timeline.messages]);
 	const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(
 		null,
 	);
@@ -455,13 +305,16 @@ export function ChatPane({
 					{compact
 						? durableGroups.map((group) => (
 								<div className="wb-timeline-row" key={group.id}>
-									<MessageGroup
-										agentName={agentName}
-										message={group.message}
-										sessionId={sessionId}
-										resultByCallId={resultByCallId}
-										knownCallIds={knownCallIds}
-										onOpenFile={onOpenFile}
+									<MessageGroupCard
+										group={group.group}
+										assistantName={agentName}
+										workspacePath={workspacePath}
+										fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+										locale={locale}
+										messageId={group.group.messages[0]?.id}
+										onFileReferenceOpen={(path, range) =>
+											onOpenFile(path, range)
+										}
 									/>
 								</div>
 							))
@@ -480,46 +333,47 @@ export function ChatPane({
 											} as React.CSSProperties
 										}
 									>
-										<MessageGroup
-											agentName={agentName}
-											message={group.message}
-											sessionId={sessionId}
-											resultByCallId={resultByCallId}
-											knownCallIds={knownCallIds}
-											onOpenFile={onOpenFile}
+										<MessageGroupCard
+											group={group.group}
+											assistantName={agentName}
+											workspacePath={workspacePath}
+											fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+											locale={locale}
+											messageId={group.group.messages[0]?.id}
+											onFileReferenceOpen={(path, range) =>
+												onOpenFile(path, range)
+											}
 										/>
 									</div>
 								);
 							})}
 					{pendingPrompt ? (
 						<div className="wb-timeline-row" key={pendingPrompt.id}>
-							<MessageGroup
-								agentName={agentName}
-								message={{
-									id: pendingPrompt.id,
-									author: "user",
-									content: pendingPrompt.text,
-									time: t("oqtoUi.chat.pending"),
-								}}
-								sessionId={sessionId}
-								resultByCallId={resultByCallId}
-								knownCallIds={knownCallIds}
-								onOpenFile={onOpenFile}
-								pending
+							<MessageGroupCard
+								group={pendingPromptGroup(pendingPrompt)}
+								assistantName={agentName}
+								workspacePath={workspacePath}
+								fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+								locale={locale}
+								messageId={pendingPrompt.id}
+								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
 							/>
 						</div>
 					) : null}
-					{draft
-						? draft.parts.map((part) => (
-								<div className="wb-timeline-row" key={part.id}>
-									<DraftPartView
-										part={part}
-										sessionId={sessionId}
-										onOpenFile={onOpenFile}
-									/>
-								</div>
-							))
-						: null}
+					{draft ? (
+						<div className="wb-timeline-row" key="streaming-draft">
+							<MessageGroupCard
+								group={streamingDraftGroup(draft)}
+								assistantName={agentName}
+								workspacePath={workspacePath}
+								fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+								locale={locale}
+								messageId="streaming-draft"
+								showWorkingIndicator
+								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
+							/>
+						</div>
+					) : null}
 				</div>
 			</section>
 

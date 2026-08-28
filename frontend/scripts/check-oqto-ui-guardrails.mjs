@@ -46,6 +46,8 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/hooks/use-document-event",
 		"@/hooks/use-mobile",
 		"@/hooks/use-mount-effect",
+		"@/lib/chat-rendering",
+		"@/lib/chat-render-types",
 		"@/lib/file-types",
 		"@/lib/message-part",
 		"@/lib/workspace-resource",

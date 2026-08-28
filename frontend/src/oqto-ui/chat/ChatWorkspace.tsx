@@ -92,6 +92,7 @@ export function ChatWorkspace({
 								agentName={directory.name}
 								sessionId={session.id}
 								tasks={tasks}
+								workspacePath={directory.path}
 								onOpenFile={(path, range) => {
 									const normalizedPath = normalizeWorkspaceFileReference(
 										path,

@@ -1,3 +1,4 @@
+import type { A2UIMessage } from "@/lib/a2ui/types";
 import type { Part, Role, Sender, Usage } from "@/lib/canonical-types";
 
 export type CompactionPart = { type: "compaction"; id: string; text: string };
@@ -12,6 +13,19 @@ export type ErrorPart = {
 };
 
 export type DisplayPart = Part | CompactionPart | ErrorPart;
+
+export type A2UISurfaceState = {
+	surfaceId: string;
+	sessionId: string;
+	messages: A2UIMessage[];
+	blocking: boolean;
+	requestId?: string;
+	createdAt: Date;
+	anchorMessageId?: string;
+	answered?: boolean;
+	answeredAction?: string;
+	answeredAt?: Date;
+};
 
 /** Transport-neutral message contract consumed by canonical Chat renderers. */
 export type DisplayMessage = {

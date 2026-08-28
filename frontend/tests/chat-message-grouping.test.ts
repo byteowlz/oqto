@@ -1,5 +1,5 @@
-import { groupMessages } from "@/features/chat/rendering/group-messages";
 import type { DisplayMessage } from "@/lib/chat-render-types";
+import { groupMessages } from "@/lib/chat-rendering/group-messages";
 import { describe, expect, it } from "vitest";
 
 function message(
