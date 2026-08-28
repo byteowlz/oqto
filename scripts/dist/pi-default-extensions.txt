@@ -1,0 +1,9 @@
+pi-auto-rename
+pi-azure-empty-response-guard
+pi-introspection
+pi-oqto-bridge
+pi-oqto-todos
+pi-custom-context-files
+pi-read-image-guard
+pi-read-file-guard
+pi-history-search

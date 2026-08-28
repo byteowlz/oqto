@@ -19,11 +19,18 @@ EXT_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 DO_PI=true
 DO_EXT=true
 
-# Extensions installed by default (mirrors scripts/setup/06-pi-extensions.sh).
-PI_DEFAULT_EXTENSIONS=(
-  pi-auto-rename pi-azure-empty-response-guard pi-introspection pi-oqto-bridge
-  pi-oqto-todos pi-custom-context-files pi-read-image-guard pi-read-file-guard
-)
+# Extensions installed by default. oqto-usermgr embeds this same file for
+# new-principal provisioning; this script handles setup/deploy backfills.
+PI_DEFAULT_EXTENSIONS_FILE="${PI_DEFAULT_EXTENSIONS_FILE:-$SCRIPT_DIR/pi-default-extensions.txt}"
+[[ -f "$PI_DEFAULT_EXTENSIONS_FILE" ]] || {
+  echo "error: Pi default extension list missing: $PI_DEFAULT_EXTENSIONS_FILE" >&2
+  exit 1
+}
+mapfile -t PI_DEFAULT_EXTENSIONS < <(grep -Ev '^[[:space:]]*(#|$)' "$PI_DEFAULT_EXTENSIONS_FILE")
+[[ " ${PI_DEFAULT_EXTENSIONS[*]} " == *" pi-history-search "* ]] || {
+  echo "error: canonical Pi extension list must include pi-history-search" >&2
+  exit 1
+}
 
 # Superseded or fully removed extension dir names. Pruning them on every sync
 # both clears stale duplicates from the octo->oqto and pre-`pi-` renames (a

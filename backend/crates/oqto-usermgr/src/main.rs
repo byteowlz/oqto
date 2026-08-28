@@ -30,16 +30,37 @@ const SOCKET_PATH: &str = "/run/oqto/usermgr.sock";
 const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 
 /// Default extensions to install for new users.
-const PI_DEFAULT_EXTENSIONS: &[&str] = &[
-    "pi-auto-rename",
-    "pi-azure-empty-response-guard",
-    "pi-introspection",
-    "pi-oqto-bridge",
-    "pi-oqto-todos",
-    "pi-custom-context-files",
-    "pi-read-image-guard",
-    "pi-read-file-guard",
-];
+///
+/// The deploy/setup sync script consumes the same file, so existing-principal
+/// backfills and new-principal provisioning cannot silently drift apart.
+const PI_DEFAULT_EXTENSIONS: &str =
+    include_str!("../../../../scripts/dist/pi-default-extensions.txt");
+
+fn pi_default_extensions() -> impl Iterator<Item = &'static str> {
+    PI_DEFAULT_EXTENSIONS
+        .lines()
+        .filter(|line| !line.is_empty())
+}
+
+#[cfg(test)]
+mod pi_extension_tests {
+    use super::pi_default_extensions;
+
+    #[test]
+    fn shared_principal_defaults_include_history_search() {
+        assert!(pi_default_extensions().any(|name| name == "pi-history-search"));
+    }
+
+    #[test]
+    fn shared_principal_default_names_are_canonical() {
+        assert!(pi_default_extensions().all(|name| {
+            name.starts_with("pi-")
+                && name
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '-')
+        }));
+    }
+}
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
 const ALLOWED_PATH_PREFIXES: &[&str] = &[
@@ -1272,7 +1293,7 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     }
 
     let mut installed = 0u32;
-    for ext_name in PI_DEFAULT_EXTENSIONS {
+    for ext_name in pi_default_extensions() {
         let src_dir = src_root.join(ext_name);
         let actual_src = if src_dir.is_dir() && src_dir.join("index.ts").exists() {
             src_dir
@@ -1312,7 +1333,7 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     }
 
     // Final validation to avoid silent partial installs.
-    for ext_name in PI_DEFAULT_EXTENSIONS {
+    for ext_name in pi_default_extensions() {
         let ext_dir = std::path::Path::new(&dest_root).join(ext_name);
         if !ext_dir.is_dir() || !ext_dir.join("index.ts").exists() {
             return Response::error(format!(
