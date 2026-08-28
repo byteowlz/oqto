@@ -1,104 +1,96 @@
-import { initI18n } from "@/lib/i18n";
 import { getToolSummary } from "@/lib/tool-summaries";
+import enMessages from "@/messages/en.json";
+import i18next from "i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
-beforeAll(() => {
-	initI18n();
+beforeAll(async () => {
+	await i18next.init({
+		resources: { en: { translation: enMessages } },
+		lng: "en",
+		fallbackLng: "en",
+		interpolation: { escapeValue: false },
+	});
 });
 
-describe("tool summary labels", () => {
-	it("summarizes agent-browser snapshot commands with env prefixes", () => {
-		const summary = getToolSummary("bash", {
-			command: "DISPLAY=:0 agent-browser snapshot -i",
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("snapshot");
+function summarize(command: string): string | null {
+	return getToolSummary("bash", { command });
+}
+
+describe("bash tool summaries", () => {
+	it("never labels a command after a word that only appears in an argument", () => {
+		expect(summarize("df -h / /var/lib/docker 2>/dev/null | uniq")).toBe(
+			"Checking disk usage",
+		);
+		expect(summarize("df -h /tmp; probe=$(mktemp) && rm -f $probe")).toBe(
+			"Checking disk usage",
+		);
+		expect(summarize("df -h .; git status --short")).toBe(
+			"Checking disk usage",
+		);
 	});
 
-	it("summarizes agent-browser click commands", () => {
-		const summary = getToolSummary("bash", {
-			command: "agent-browser click @e2",
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("browser");
+	it("describes the command that ssh runs, prefixed by its host", () => {
+		expect(summarize('ssh proxmox "rm -rf /opt/data/log"')).toBe(
+			"proxmox: Removing files",
+		);
+		expect(summarize("ssh octo-azure systemctl status oqto")).toBe(
+			"octo-azure: Managing service",
+		);
 	});
 
-	it("still returns a readable fallback for non-browser bash commands", () => {
-		const summary = getToolSummary("bash", {
-			command: 'rg -n "rename" frontend/src',
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.length).toBeGreaterThan(0);
+	it("reports the file being read, not a flag value", () => {
+		expect(summarize("tail -n 50 /tmp/oqto-runner.log")).toBe(
+			"Reading /tmp/oqto-runner.log",
+		);
+		expect(summarize("head -c 200 README.md")).toBe("Reading README.md");
+		expect(summarize("cat -n src/main.rs")).toBe("Reading src/main.rs");
 	});
 
-	it("does not trigger cargo build/install pattern for rg searching cargo strings", () => {
-		const summary = getToolSummary("bash", {
-			command: 'rg -n "cargo install --path" justfile',
-		});
-		expect(summary).toBeTruthy();
-		// Should hit the grep/rg pattern, not the cargo pattern
-		expect(summary?.toLowerCase()).not.toContain("rust");
-		expect(summary?.toLowerCase()).not.toContain("installing");
-		expect(summary?.toLowerCase()).not.toContain("building");
+	it("reports the search pattern, including explicit -e patterns", () => {
+		expect(summarize("grep -rn 'fn main' src")).toBe("Searching for 'fn main'");
+		expect(summarize("grep -e needle haystack.txt")).toBe(
+			"Searching for 'needle'",
+		);
+		expect(summarize("rg -m 5 pattern src")).toBe("Searching for 'pattern'");
 	});
 
-	it("shows checking for cargo check", () => {
-		const summary = getToolSummary("bash", {
-			command: "cd backend && cargo check -p oqto",
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("check");
+	it("maps subcommands of known tools", () => {
+		expect(summarize("cd /repo && git commit -m 'x'")).toBe(
+			"Committing changes",
+		);
+		expect(summarize("cd /repo && cargo clippy -- -D warnings")).toBe(
+			"Linting Rust project",
+		);
+		expect(summarize("bun run build")).toBe("Building project");
+		expect(summarize("npx tsc --noEmit")).toBe("Checking types");
 	});
 
-	it("shows linting for cargo clippy", () => {
-		const summary = getToolSummary("bash", {
-			command: "cargo clippy -p oqto-runner",
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("lint");
+	it("shows the literal command when the tool is not recognized", () => {
+		// An honest command beats an invented description.
+		expect(summarize("mmdc -i diagram.mmd -o out.svg")).toBe(
+			"mmdc -i diagram.mmd",
+		);
+		expect(summarize("git rev-parse --is-inside-work-tree")).toBe(
+			"git rev-parse --is-inside-work-tree",
+		);
+		expect(summarize("cargo metadata --format-version 1")).toBe(
+			"cargo metadata --format-version",
+		);
 	});
 
-	it("does not label sx commands piped to head as reading file", () => {
-		const summary = getToolSummary("bash", {
-			command: 'sx "rust async" --json | head -n 20',
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).not.toContain("reading");
+	it("keeps labels short", () => {
+		const label = summarize(
+			"weird-tool --a=/very/long/path/one --b=/very/long/path/two --c=/three",
+		);
+		expect(label).not.toBeNull();
+		expect((label as string).length).toBeLessThanOrEqual(44);
 	});
 
-	it("labels primary head command as reading file", () => {
-		const summary = getToolSummary("bash", {
-			command: "head -n 20 README.md",
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("read");
+	it("has no label for input that runs nothing", () => {
+		expect(summarize("# just a note")).toBeNull();
 	});
 
-	it("summarizes TodoWrite as task list update", () => {
-		const summary = getToolSummary("TodoWrite", {
-			todos: [{ content: "x", status: "pending" }],
-		});
-		expect(summary).toBeTruthy();
-		expect(summary?.toLowerCase()).toContain("task");
-	});
-
-	it("summarizes Todo actions", () => {
-		expect(
-			getToolSummary("Todo", {
-				action: "add",
-				content: "x",
-			}),
-		)?.toBeTruthy();
-		expect(
-			getToolSummary("Todo", {
-				action: "update",
-				id: "1",
-			}),
-		)?.toBeTruthy();
-		expect(
-			getToolSummary("TodoRead", {
-				filter: { status: "pending" },
-			}),
-		)?.toBeTruthy();
+	it("still labels streaming calls before the command arrives", () => {
+		expect(getToolSummary("bash", {})).toBe("Running command");
 	});
 });
