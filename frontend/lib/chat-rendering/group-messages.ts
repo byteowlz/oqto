@@ -59,31 +59,49 @@ export function coalesceToolResults(
 	messages: DisplayMessage[],
 ): DisplayMessage[] {
 	const visualMessages: DisplayMessage[] = [];
-	let calls = new Map<string, DisplayMessage>();
+	let turnRows: DisplayMessage[] = [];
 
-	for (const source of messages) {
-		if (source.role === "user") calls = new Map();
+	const flushTurn = () => {
+		if (turnRows.length === 0) return;
+		const rows = turnRows.map(
+			(source): DisplayMessage => ({ ...source, parts: [...source.parts] }),
+		);
+		const calls = new Map<string, DisplayMessage>();
 
-		const message: DisplayMessage = { ...source, parts: [] };
-		for (const part of source.parts) {
-			if (part.type === "tool_call") {
-				message.parts.push(part);
-				calls.set(part.toolCallId, message);
-				continue;
+		// Historical adapters do not all preserve call/result row order. Discover
+		// every call in the visual turn before moving any result onto its owner.
+		for (const row of rows) {
+			for (const part of row.parts) {
+				if (part.type === "tool_call") calls.set(part.toolCallId, row);
 			}
-			if (part.type === "tool_result") {
-				const owner = calls.get(part.toolCallId);
-				if (owner) owner.parts.push(part);
-				continue;
-			}
-			message.parts.push(part);
+		}
+		const results: Extract<DisplayPart, { type: "tool_result" }>[] = [];
+		for (const row of rows) {
+			row.parts = row.parts.filter((part) => {
+				if (part.type !== "tool_result") return true;
+				results.push(part);
+				return false;
+			});
+		}
+		for (const result of results) {
+			calls.get(result.toolCallId)?.parts.push(result);
 		}
 
-		// Tool rows exist only to transport results. Once those results have been
-		// attached to their calls, the row has no independent visual identity.
-		if (message.role === "tool" && message.parts.length === 0) continue;
-		visualMessages.push(message);
+		// Rows used only to transport results disappear after reduction. This also
+		// covers historical assistant-role result rows, not only role=tool rows.
+		visualMessages.push(...rows.filter((row) => row.parts.length > 0));
+		turnRows = [];
+	};
+
+	for (const message of messages) {
+		if (message.role === "user") {
+			flushTurn();
+			visualMessages.push({ ...message, parts: [...message.parts] });
+			continue;
+		}
+		turnRows.push(message);
 	}
+	flushTurn();
 
 	return visualMessages;
 }

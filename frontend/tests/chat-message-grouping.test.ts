@@ -83,7 +83,39 @@ describe("canonical Chat message grouping", () => {
 		});
 	});
 
-	it("suppresses an orphan result at a pagination boundary", () => {
+	it("pairs historical result-before-call rows without leaving a running call", () => {
+		const messages = coalesceToolResults([
+			message("r1", "tool", [
+				{
+					type: "tool_result",
+					id: "result-part",
+					toolCallId: "historical-call",
+					name: "read",
+					output: "file content",
+					isError: false,
+				},
+			]),
+			message("a1", "assistant", [
+				{
+					type: "tool_call",
+					id: "call-part",
+					toolCallId: "historical-call",
+					name: "read",
+					input: { filePath: "README.md" },
+					status: "success",
+				},
+			]),
+		]);
+
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.id).toBe("a1");
+		expect(messages[0]?.parts.map(({ type }) => type)).toEqual([
+			"tool_call",
+			"tool_result",
+		]);
+	});
+
+	it("suppresses an unmatched result at a pagination boundary", () => {
 		const messages = coalesceToolResults([
 			message("r1", "tool", [
 				{
