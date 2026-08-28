@@ -48,6 +48,47 @@ function isAssistantAuxiliaryMessage(message: DisplayMessage): boolean {
 }
 
 /**
+ * Reduce transport rows into visual messages before grouping.
+ *
+ * A tool result is state belonging to its call, never an independent visual
+ * message. Results are moved onto the assistant message containing the matching
+ * call. Orphaned results (for example at a pagination boundary before the call
+ * page is loaded) remain invisible rather than becoming standalone JSON cards.
+ */
+export function coalesceToolResults(
+	messages: DisplayMessage[],
+): DisplayMessage[] {
+	const visualMessages: DisplayMessage[] = [];
+	let calls = new Map<string, DisplayMessage>();
+
+	for (const source of messages) {
+		if (source.role === "user") calls = new Map();
+
+		const message: DisplayMessage = { ...source, parts: [] };
+		for (const part of source.parts) {
+			if (part.type === "tool_call") {
+				message.parts.push(part);
+				calls.set(part.toolCallId, message);
+				continue;
+			}
+			if (part.type === "tool_result") {
+				const owner = calls.get(part.toolCallId);
+				if (owner) owner.parts.push(part);
+				continue;
+			}
+			message.parts.push(part);
+		}
+
+		// Tool rows exist only to transport results. Once those results have been
+		// attached to their calls, the row has no independent visual identity.
+		if (message.role === "tool" && message.parts.length === 0) continue;
+		visualMessages.push(message);
+	}
+
+	return visualMessages;
+}
+
+/**
  * Canonical visual grouping shared by every Chat host.
  *
  * Durable storage rows are not visual message cards: one assistant turn can be
@@ -58,7 +99,7 @@ export function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let current: MessageGroup | null = null;
 
-	for (const message of messages) {
+	for (const message of coalesceToolResults(messages)) {
 		if (message.role === "user") {
 			const hasRenderableContent = message.parts.some((part) => {
 				if (part.type === "text") return part.text.trim().length > 0;

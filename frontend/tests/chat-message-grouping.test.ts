@@ -1,5 +1,8 @@
 import type { DisplayMessage } from "@/lib/chat-render-types";
-import { groupMessages } from "@/lib/chat-rendering/group-messages";
+import {
+	coalesceToolResults,
+	groupMessages,
+} from "@/lib/chat-rendering/group-messages";
 import { describe, expect, it } from "vitest";
 
 function message(
@@ -39,7 +42,63 @@ describe("canonical Chat message grouping", () => {
 
 		expect(groups).toHaveLength(1);
 		expect(groups[0]?.role).toBe("assistant");
-		expect(groups[0]?.messages.map(({ id }) => id)).toEqual(["a1", "r1", "a2"]);
+		expect(groups[0]?.messages.map(({ id }) => id)).toEqual(["a1", "a2"]);
+		expect(groups[0]?.messages[0]?.parts.map(({ type }) => type)).toEqual([
+			"thinking",
+			"tool_call",
+			"tool_result",
+		]);
+	});
+
+	it("never exposes a standalone tool-result row to the renderer", () => {
+		const messages = coalesceToolResults([
+			message("a1", "assistant", [
+				{
+					type: "tool_call",
+					id: "call-part",
+					toolCallId: "call-1",
+					name: "bash",
+					input: { command: "printf ok" },
+					status: "success",
+				},
+			]),
+			message("r1", "tool", [
+				{
+					type: "tool_result",
+					id: "result-part",
+					toolCallId: "call-1",
+					name: "bash",
+					output: { stdout: "ok" },
+					isError: false,
+				},
+			]),
+		]);
+
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.id).toBe("a1");
+		expect(messages[0]?.parts).toHaveLength(2);
+		expect(messages[0]?.parts[1]).toMatchObject({
+			type: "tool_result",
+			toolCallId: "call-1",
+		});
+	});
+
+	it("suppresses an orphan result at a pagination boundary", () => {
+		const messages = coalesceToolResults([
+			message("r1", "tool", [
+				{
+					type: "tool_result",
+					id: "result-part",
+					toolCallId: "call-on-older-page",
+					name: "read",
+					output: "content",
+					isError: false,
+				},
+			]),
+		]);
+
+		expect(messages).toEqual([]);
+		expect(groupMessages(messages)).toEqual([]);
 	});
 
 	it("keeps distinct prose-only assistant turns separate", () => {
