@@ -5086,70 +5086,6 @@ fn get_user_home(username: &str) -> Result<String> {
 
 /// Setup oqto-runner for a user
 fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
-    // Get home directory
-    let home = std::process::Command::new("bash")
-        .args(["-c", &format!("echo ~{}", username)])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .context("Failed to get home directory")?;
-
-    if home.is_empty() {
-        anyhow::bail!("Could not determine home directory for '{}'", username);
-    }
-
-    // Create systemd user directory
-    let systemd_dir = format!("{}/.config/systemd/user", home);
-    if !json {
-        println!("Creating systemd user directory...");
-    }
-
-    let status = std::process::Command::new("sudo")
-        .args(["-u", username, "mkdir", "-p", &systemd_dir])
-        .status()
-        .context("Failed to create systemd directory")?;
-
-    if !status.success() {
-        anyhow::bail!("Failed to create systemd directory");
-    }
-
-    // Copy service file
-    let service_src = "/usr/local/share/oqto/systemd/oqto-runner.service";
-    let service_dst = format!("{}/oqto-runner.service", systemd_dir);
-
-    // If source doesn't exist, try local path
-    let service_content = if std::path::Path::new(service_src).exists() {
-        std::fs::read_to_string(service_src).context("Failed to read service file")?
-    } else {
-        // Fallback to embedded service file
-        include_str!("../../oqto/resources/systemd/oqto-runner.service").to_string()
-    };
-
-    if !json {
-        println!("Installing oqto-runner.service...");
-    }
-
-    // Write service file as user
-    let mut child = std::process::Command::new("sudo")
-        .args(["-u", username, "tee", &service_dst])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .context("Failed to write service file")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(service_content.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("Failed to write service file");
-    }
-
-    // User systemd managers are reached through /run/user/<uid>/bus. Do not
-    // rely on the invoking root shell to carry the target user's runtime dir:
-    // that made daemon-reload fail silently while restart reused a stale loaded
-    // unit (including removed environment variables such as PI_PACKAGE_DIR).
     let uid_output = std::process::Command::new("id")
         .args(["-u", username])
         .output()
@@ -5159,80 +5095,21 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
     }
     let uid = String::from_utf8_lossy(&uid_output.stdout)
         .trim()
-        .to_string();
-    let xdg_runtime_dir = format!("XDG_RUNTIME_DIR=/run/user/{uid}");
-
-    // Reload systemd and fail closed: restarting with an outdated loaded unit
-    // is not a successful runner update.
-    if !json {
-        println!("Reloading systemd...");
-    }
-    let reload_status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "daemon-reload",
-        ])
-        .status()
-        .context("Failed to reload user systemd manager")?;
-    if !reload_status.success() {
-        anyhow::bail!("Failed to reload systemd user manager for '{}'", username);
-    }
-
-    // Enable and start the service
-    if !json {
-        println!("Enabling oqto-runner service...");
-    }
-
-    let status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "enable",
-            "oqto-runner",
-        ])
-        .status()
-        .context("Failed to enable service")?;
-
-    if !status.success() {
-        eprintln!("Warning: Failed to enable oqto-runner service");
-    }
+        .parse::<u32>()
+        .with_context(|| format!("Invalid UID for '{username}'"))?;
 
     if !json {
-        println!("Starting oqto-runner service...");
+        println!("Reconciling oqto-runner through oqto-usermgr...");
     }
-
-    // `restart` (not `start`) so that reinstalling over an already-running
-    // runner actually swaps the binary. `start` is a no-op on an active
-    // service, which would silently leave the old binary in place after a
-    // runner-protocol change. On a fresh install this is equivalent to start.
-    let status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "restart",
-            "oqto-runner",
-        ])
-        .status()
-        .context("Failed to start service")?;
-
-    if !status.success() {
-        eprintln!("Warning: Failed to start oqto-runner service. It may start on user login.");
-    }
-
-    Ok(())
+    oqto_host::linux_users::usermgr_request(
+        "setup-user-runner",
+        serde_json::json!({
+            "username": username,
+            "uid": uid,
+            "force": true,
+        }),
+    )
+    .with_context(|| format!("oqto-usermgr failed to reconcile runner for '{username}'"))
 }
 
 async fn handle_a2ui(client: &OqtoClient, command: A2uiCommand, json: bool) -> Result<()> {

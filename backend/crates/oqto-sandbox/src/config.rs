@@ -872,6 +872,7 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto/runner-sockets".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
@@ -924,6 +925,7 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto/runner-sockets".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
@@ -1061,6 +1063,7 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto/runner-sockets".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
                 "/usr/bin/systemctl".to_string(),
@@ -3538,6 +3541,19 @@ max_cpu_seconds = 32
         assert!(!config.enabled);
         assert_eq!(config.profile, "development");
         assert!(config.deny_read.contains(&"~/.ssh".to_string()));
+    }
+
+    #[test]
+    fn builtin_profiles_hide_the_team_runner_control_socket_tree() {
+        for name in ["minimal", "development", "strict"] {
+            let profile = SandboxProfile::builtin(name).expect("built-in profile exists");
+            assert!(
+                profile
+                    .deny_read
+                    .contains(&"/run/oqto/runner-sockets".to_string()),
+                "{name} must hide the team runner control socket tree"
+            );
+        }
     }
 
     #[test]

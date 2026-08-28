@@ -11,7 +11,6 @@ SKIP_BUILD=false
 SKIP_FRONTEND=false
 SKIP_BACKEND=false
 SKIP_SERVICES=false
-FORCE_RUNNER_RESTART=false
 USE_REMOTE_BUILD=false
 DEPLOY_ARTIFACT=""
 DEPLOY_CHECKSUM=""
@@ -93,10 +92,8 @@ Options:
   --skip-frontend          Skip frontend staging and deploy
   --skip-backend           Skip backend binary staging and deploy
   --skip-services          Skip service restarts
-  --force-runner-restart   Multi-user: force-restart every per-user oqto-runner
-                           after activation so they pick up the new binary
-                           (bypasses the "already running" fast path). Use
-                           after runner-protocol changes.
+  --force-runner-restart   Compatibility alias. Multi-user deploys always
+                           reconcile and restart every installed runner.
   --remote-build           Use remote-build for backend binaries (default: local cargo build)
   --remote-build-server S  Remote-build server endpoint (host:port or URL). Optional if configured via REMOTE_BUILD_SERVER or ~/.config/remote-build/config.toml
   --use-mold-linker        Opt into mold for local Rust builds. Also: OQTO_USE_MOLD_LINKER=true
@@ -139,7 +136,7 @@ while [[ $# -gt 0 ]]; do
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
         --skip-backend) SKIP_BACKEND=true; shift ;;
         --skip-services) SKIP_SERVICES=true; shift ;;
-        --force-runner-restart) FORCE_RUNNER_RESTART=true; shift ;;
+        --force-runner-restart) shift ;;
         --remote-build) USE_REMOTE_BUILD=true; shift ;;
         --remote-build-server) REMOTE_BUILD_SERVER="$2"; shift 2 ;;
         --use-mold-linker) USE_MOLD_LINKER=true; shift ;;
@@ -1114,7 +1111,6 @@ restart_all_multi_user_runners() {
     # Wait for oqtoctl control plane readiness after systemctl restart oqto.
     # Retry quietly first to avoid transient "Connection refused" noise.
     host_exec_sudo "$is_local" "$ssh_target" '
-        force_flag="'"${FORCE_RUNNER_RESTART}"'"
         ready=0
         for i in $(seq 1 30); do
             if oqtoctl user list --json >/dev/null 2>&1; then
@@ -1125,8 +1121,8 @@ restart_all_multi_user_runners() {
         done
 
         if [[ "$ready" != "1" ]]; then
-            echo "warn: oqtoctl not ready after 30s; skipping multi-user runner reconciliation" >&2
-            exit 0
+            echo "error: oqtoctl not ready after 30s; cannot reconcile multi-user runners" >&2
+            exit 1
         fi
 
         # Reconcile per-user runner service files first.
@@ -1134,32 +1130,37 @@ restart_all_multi_user_runners() {
 
         # Restart/provision each user runner via usermgr API path.
         users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
-        python3 - "$users_json" "$force_flag" <<"PY"
+        python3 - "$users_json" <<"PY"
 import json, subprocess, sys
 raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
-force = (sys.argv[2] if len(sys.argv) > 2 else "false") == "true"
 try:
     users = json.loads(raw)
 except Exception:
     users = []
+failures = []
 for u in users:
     username = u.get("username")
     if not username:
         continue
-    # setup-runner is idempotent; without --force it fast-paths when the
-    # runner is already up (keeps the old binary). --force reinstalls the
-    # unit and restarts, so runner-protocol changes actually take effect.
-    cmd = ["oqtoctl", "user", "setup-runner", username]
-    if force:
-        cmd.append("--force")
-    subprocess.run(
+    # Deployment convergence always traverses the authoritative usermgr path.
+    # Non-force oqtoctl mode intentionally skips already-installed users.
+    cmd = ["oqtoctl", "user", "setup-runner", username, "--force"]
+    result = subprocess.run(
         cmd,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.DEVNULL,
         check=False,
     )
+    if result.returncode != 0:
+        failures.append(username)
+if failures:
+    print(
+        "runner reconciliation failed for: " + ", ".join(failures),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 PY
-    ' || true
+    '
 }
 
 configure_trace_environment() {
@@ -1207,13 +1208,37 @@ restart_services_ordered() {
             restart_single_user_service "$is_local" "$ssh_target" "$svc"
         done
     else
-        # Multi-user: oqto is system service; user runners are managed per-user via oqtoctl/usermgr.
-        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
+        # Multi-user runner reconciliation must execute through the newly
+        # activated usermgr. Restart it before oqto can request any per-user
+        # setup; otherwise an old fast path can preserve stale units/config.
+        host_exec_sudo "$is_local" "$ssh_target" '
+            systemctl restart oqto-usermgr
+            ready=0
+            for _ in $(seq 1 90); do
+                if python3 - <<"PY" >/dev/null 2>&1
+import socket
+client = socket.socket(socket.AF_UNIX)
+client.settimeout(1)
+client.connect("/run/oqto/usermgr.sock")
+client.close()
+PY
+                then
+                    ready=1
+                    break
+                fi
+                sleep 1
+            done
+            if [[ "$ready" != "1" ]]; then
+                echo "error: oqto-usermgr did not accept connections after restart" >&2
+                exit 1
+            fi
+        '
+        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto"
         restart_all_multi_user_runners "$is_local" "$ssh_target"
 
         local svc
         for svc in $services; do
-            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
+            if [[ "$svc" == "oqto" || "$svc" == "oqto-usermgr" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
                 continue
             fi
             host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
@@ -1447,27 +1472,39 @@ health_check_host() {
                 ok_runner="true"
             fi
         else
-            # Multi-user: ensure at least one installed user's runner socket exists.
+            # Multi-user: every installed runner must have valid config state and
+            # a live socket. Existence alone is insufficient: crash loops leave
+            # stale socket filesystem entries behind.
             if host_exec_sudo "$is_local" "$ssh_target" '
                 users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
                 python3 - "$users_json" <<"PY"
-import json, os, sys
+import json, os, socket, stat, sys
 raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
 try:
     users = json.loads(raw)
 except Exception:
     users = []
 installed = [u for u in users if u.get("runner_installed")]
-if not installed:
-    sys.exit(0)
 for u in installed:
     name = u.get("username")
     if not name:
-        continue
-    sock = f"/run/oqto/runner-sockets/{name}/oqto-runner.sock"
-    if os.path.exists(sock):
-        sys.exit(0)
-sys.exit(1)
+        sys.exit(1)
+    config = f"/home/{name}/.config/oqto/config.toml"
+    try:
+        if not stat.S_ISREG(os.lstat(config).st_mode):
+            sys.exit(1)
+    except OSError:
+        sys.exit(1)
+    path = f"/run/oqto/runner-sockets/{name}/oqto-runner.sock"
+    client = socket.socket(socket.AF_UNIX)
+    client.settimeout(1)
+    try:
+        client.connect(path)
+    except OSError:
+        sys.exit(1)
+    finally:
+        client.close()
+sys.exit(0)
 PY
             '; then
                 ok_runner="true"
