@@ -1,6 +1,8 @@
+import type { JsonValue } from "../engine/projection";
 import { createSessionEngine } from "../engine/session-engine";
 import type {
 	ChatMessage,
+	ChatMessagePart,
 	MessagePage,
 	ModelOption,
 	OqtoUiConfigResolution,
@@ -30,6 +32,19 @@ type JsonRecord = {
 	text?: unknown;
 	content?: unknown;
 	tool_name?: unknown;
+	toolCallId?: unknown;
+	name?: unknown;
+	input?: unknown;
+	output?: unknown;
+	status?: unknown;
+	isError?: unknown;
+	durationMs?: unknown;
+	uri?: unknown;
+	label?: unknown;
+	range?: unknown;
+	startLine?: unknown;
+	endLine?: unknown;
+	format?: unknown;
 	type?: unknown;
 	config?: unknown;
 	appearance?: unknown;
@@ -148,13 +163,120 @@ function parseWorkDirectories(value: unknown): WorkDirectory[] {
 	return [...directories.values()];
 }
 
-function partText(value: unknown): string {
-	return records(value)
-		.filter((part) => text(part.type) !== "thinking")
-		.map(
-			(part) => text(part.text) ?? text(part.content) ?? text(part.tool_name),
-		)
-		.filter((part): part is string => part !== null)
+function jsonValue(value: unknown): JsonValue | undefined {
+	if (
+		value === null ||
+		typeof value === "string" ||
+		typeof value === "boolean"
+	) {
+		return value;
+	}
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (Array.isArray(value)) {
+		const parsed: JsonValue[] = [];
+		for (const item of value) {
+			const next = jsonValue(item);
+			if (next !== undefined) parsed.push(next);
+		}
+		return parsed;
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	const parsed: { [key: string]: JsonValue } = {};
+	for (const [key, item] of Object.entries(value)) {
+		const next = jsonValue(item);
+		if (next !== undefined) parsed[key] = next;
+	}
+	return parsed;
+}
+
+function parseMessageParts(
+	value: unknown,
+	messageId: string,
+): ChatMessagePart[] {
+	return records(value).flatMap<ChatMessagePart>(
+		(part, index): ChatMessagePart[] => {
+			const type = text(part.type);
+			const id = text(part.id) ?? `${messageId}:part:${index}`;
+			if (type === "text") {
+				const value = text(part.text) ?? text(part.content);
+				if (value === null) return [];
+				const format = text(part.format);
+				return [
+					{
+						type: "text" as const,
+						id,
+						text: value,
+						...(format === "plain" || format === "markdown" ? { format } : {}),
+					},
+				];
+			}
+			if (type === "thinking") {
+				const value = text(part.text);
+				return value === null
+					? []
+					: [{ type: "thinking" as const, id, text: value }];
+			}
+			const toolCallId = text(part.toolCallId);
+			if (type === "tool_call" && toolCallId) {
+				const rawStatus = text(part.status);
+				const status =
+					rawStatus === "pending" ||
+					rawStatus === "running" ||
+					rawStatus === "success" ||
+					rawStatus === "error"
+						? rawStatus
+						: "pending";
+				return [
+					{
+						type: "tool_call" as const,
+						id,
+						toolCallId,
+						name: text(part.name) ?? text(part.tool_name) ?? "tool",
+						input: jsonValue(part.input),
+						status,
+					},
+				];
+			}
+			if (type === "tool_result" && toolCallId) {
+				return [
+					{
+						type: "tool_result" as const,
+						id,
+						toolCallId,
+						name: text(part.name) ?? text(part.tool_name) ?? undefined,
+						output: jsonValue(part.output),
+						isError: part.isError === true,
+						durationMs: number(part.durationMs) ?? undefined,
+					},
+				];
+			}
+			if (type === "file_ref") {
+				const uri = text(part.uri);
+				if (!uri) return [];
+				const range = record(part.range);
+				const startLine = number(range?.startLine) ?? undefined;
+				const endLine = number(range?.endLine) ?? undefined;
+				return [
+					{
+						type: "file_ref" as const,
+						id,
+						uri,
+						label: text(part.label) ?? undefined,
+						...(startLine !== undefined || endLine !== undefined
+							? { range: { startLine, endLine } }
+							: {}),
+					},
+				];
+			}
+			return [];
+		},
+	);
+}
+
+function partsText(parts: ChatMessagePart[]): string {
+	return parts
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
 		.join("\n");
 }
 
@@ -166,11 +288,13 @@ function parseMessages(value: unknown): ChatMessage[] {
 		const author =
 			role === "user" ? "user" : role === "assistant" ? "agent" : "tool";
 		if (role !== "user" && role !== "assistant" && role !== "tool") return [];
+		const parts = parseMessageParts(item.parts, id);
 		return [
 			{
 				id,
 				author,
-				content: partText(item.parts),
+				content: partsText(parts),
+				parts,
 				time: formatTime(item.created_at),
 			} satisfies ChatMessage,
 		];

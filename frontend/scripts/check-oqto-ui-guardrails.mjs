@@ -39,7 +39,17 @@ const ALLOWED_PROJECT_ALIASES = {
 	app: ["@/hooks/use-document-event"],
 	layout: [],
 	sessions: [],
-	chat: ["@/hooks/use-mobile", "@/hooks/use-mount-effect"],
+	chat: [
+		"@/components/chat/tool-call-card",
+		"@/components/data-display/markdown-renderer",
+		"@/components/viewers/resource-preview-host",
+		"@/hooks/use-document-event",
+		"@/hooks/use-mobile",
+		"@/hooks/use-mount-effect",
+		"@/lib/file-types",
+		"@/lib/message-part",
+		"@/lib/workspace-resource",
+	],
 	files: [],
 	gallery: [],
 	theme: [],
@@ -910,10 +920,7 @@ function inspectFile(
 			invokedName &&
 			ADAPTER_ONLY_GLOBALS.has(invokedName) &&
 			layer !== "platform" &&
-			!(
-				layer === "dev" &&
-				SCRIPTED_ADAPTER_PATTERN.test(absolutePath)
-			)
+			!(layer === "dev" && SCRIPTED_ADAPTER_PATTERN.test(absolutePath))
 		) {
 			violations.push(
 				violation(
@@ -958,10 +965,7 @@ function inspectFile(
 			["window", "globalThis"].includes(node.expression.text) &&
 			ADAPTER_ONLY_GLOBALS.has(node.name.text) &&
 			layer !== "platform" &&
-			!(
-				layer === "dev" &&
-				SCRIPTED_ADAPTER_PATTERN.test(absolutePath)
-			)
+			!(layer === "dev" && SCRIPTED_ADAPTER_PATTERN.test(absolutePath))
 		) {
 			violations.push(
 				violation(

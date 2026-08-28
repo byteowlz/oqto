@@ -5399,6 +5399,9 @@ function TextWithFileReferences({
 				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
 				enableMermaid={!deferMermaidUntilFinal}
 				isStreaming={isStreaming}
+				onFileReferenceOpen={(reference) =>
+					onFileReferenceOpen?.(reference.filePath)
+				}
 			/>
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (
@@ -5440,8 +5443,8 @@ function TextWithFileReferences({
 }
 
 /**
- * Card for displaying a @file reference with preview.
- * Only renders if the file exists on disk.
+ * Passive card for an explicit file reference. Rendering never probes or reads
+ * the file; content access begins only after the user activates the preview.
  */
 export const FileReferenceCard = memo(function FileReferenceCard({
 	filePath,
@@ -5577,7 +5580,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		workspaceScopedPath,
 	]);
 
-	// Don't render anything if file doesn't exist
+	// Resolve card presentation without probing the workspace.
 	if (fileExists === null) {
 		return (
 			<div className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded text-xs text-muted-foreground">

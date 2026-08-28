@@ -1,10 +1,7 @@
-import { useIsMobile } from "@/hooks/use-mobile";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bot, FileEdit, FileText } from "lucide-react";
-import { type ReactNode, useCallback, useLayoutEffect, useRef } from "react";
+import { normalizeWorkspaceFileReference } from "@/lib/workspace-resource";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type {
-	ChatMessage,
 	OqtoUiPlatform,
 	SessionOverview,
 	SessionTask,
@@ -13,30 +10,49 @@ import type {
 	WorkDirectory,
 } from "../platform/contracts";
 import { ChatPane } from "./ChatPane";
+import {
+	type PreviewSelection,
+	ResourcePreviewPane,
+} from "./ResourcePreviewPane";
 import { EditorPane, TerminalPane, WorkAreaTabs } from "./WorkAreaPanes";
-import { useTimeline } from "./useTimeline";
 
-type ChatWorkspaceProps = {
-	platform: Pick<OqtoUiPlatform, "chat" | "id" | "loadMessages">;
+export type ChatWorkspaceContext = {
 	directory: WorkDirectory;
 	session: SessionOverview;
 	tasks: SessionTask[];
+};
+
+export type PreviewState = {
+	selection: PreviewSelection | null;
+	open: (selection: PreviewSelection) => void;
+	close: () => void;
+};
+
+type ChatWorkspaceProps = {
+	platform: Pick<OqtoUiPlatform, "chat" | "id" | "loadMessages">;
+	context: ChatWorkspaceContext;
 	workArea: WorkArea;
 	workAreaTab: string;
 	galleryPane: ReactNode;
+	previewState: PreviewState;
 	onNavigate: (next: UiNavigation) => void;
 };
 
 export function ChatWorkspace({
 	platform,
-	directory,
-	session,
-	tasks,
+	context,
 	workArea,
 	workAreaTab,
 	galleryPane,
+	previewState,
 	onNavigate,
 }: ChatWorkspaceProps) {
+	const { directory, session, tasks } = context;
+	const {
+		selection: preview,
+		open: onOpenPreview,
+		close: onClosePreview,
+	} = previewState;
 	const { t } = useTranslation();
 	const editorTab = workArea.tabs.find((tab) => tab.id === "editor");
 	return (
@@ -49,30 +65,46 @@ export function ChatWorkspace({
 					chatMeta={`${directory.name} [${session.id}] | ${session.updated}`}
 					onNavigate={onNavigate}
 				/>
-				{workAreaTab === "editor" ? (
-					<EditorPane
-						fileName={editorTab?.fileName ?? ""}
-						lines={workArea.editorLines}
+				{preview ? (
+					<ResourcePreviewPane
+						selection={preview}
+						workspacePath={directory.path}
+						onClose={onClosePreview}
 					/>
-				) : null}
-				{workAreaTab === "terminal" ? (
-					<TerminalPane lines={workArea.terminalLines} />
-				) : null}
-				{workAreaTab === "gallery" ? galleryPane : null}
-				{workAreaTab !== "editor" &&
-				workAreaTab !== "terminal" &&
-				workAreaTab !== "gallery" ? (
-					<ChatPane
-						key={session.id}
-						platform={platform}
-						agentName={directory.name}
-						sessionId={session.id}
-						tasks={tasks}
-					/>
-				) : null}
+				) : (
+					<>
+						{workAreaTab === "editor" ? (
+							<EditorPane
+								fileName={editorTab?.fileName ?? ""}
+								lines={workArea.editorLines}
+							/>
+						) : null}
+						{workAreaTab === "terminal" ? (
+							<TerminalPane lines={workArea.terminalLines} />
+						) : null}
+						{workAreaTab === "gallery" ? galleryPane : null}
+						{workAreaTab !== "editor" &&
+						workAreaTab !== "terminal" &&
+						workAreaTab !== "gallery" ? (
+							<ChatPane
+								key={session.id}
+								platform={platform}
+								agentName={directory.name}
+								sessionId={session.id}
+								tasks={tasks}
+								onOpenFile={(path, range) => {
+									const normalizedPath = normalizeWorkspaceFileReference(
+										path,
+										directory.path,
+									);
+									if (normalizedPath)
+										onOpenPreview({ path: normalizedPath, range });
+								}}
+							/>
+						) : null}
+					</>
+				)}
 			</div>
 		</main>
 	);
 }
-
-/* ChatPane lives in ./ChatPane */

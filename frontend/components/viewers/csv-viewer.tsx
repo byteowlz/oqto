@@ -120,6 +120,9 @@ export function CSVViewer({
 	};
 
 	const columnCount = Math.max(...data.map((row) => row.length), 0);
+	const columns =
+		headers ??
+		Array.from({ length: columnCount }, (_, index) => `col-${index}`);
 
 	if (data.length === 0) {
 		return (
@@ -187,7 +190,7 @@ export function CSVViewer({
 								"row-empty";
 							return (
 								<TableRow key={rowKey}>
-									{headers.map((header, i) => {
+									{columns.map((header, i) => {
 										const cellKey = `${rowKey}-${header || `col-${i}`}`;
 										return (
 											<TableCell key={cellKey} className="whitespace-nowrap">

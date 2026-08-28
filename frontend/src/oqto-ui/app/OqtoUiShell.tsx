@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
+import type { PreviewSelection } from "../chat/ResourcePreviewPane";
 import { TaskProgress } from "../chat/TaskProgress";
 import { FilesPane } from "../files/FilesPane";
 import { GalleryPane } from "../gallery/GalleryPane";
@@ -148,6 +149,9 @@ function LoadedShell({
 	const { schemeId, rootRef, rootEl } = theme;
 	const { t } = useTranslation();
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [preview, setPreview] = useState<
+		(PreviewSelection & { workDirectoryId: string }) | null
+	>(null);
 	const { sessionsOpen, setSessionsOpen, onNavigate } = shellState;
 	const directories = snapshot.workDirectories;
 	const directory =
@@ -223,12 +227,21 @@ function LoadedShell({
 					<div className="wb-workarea" data-view={navigation.mobileView}>
 						<ChatWorkspace
 							platform={platform}
-							directory={directory}
-							session={session}
-							tasks={session.tasks ?? []}
+							context={{
+								directory,
+								session,
+								tasks: session.tasks ?? [],
+							}}
 							workArea={snapshot.workArea}
 							workAreaTab={navigation.workAreaTab}
 							galleryPane={<GalleryPane resources={snapshot.gallery} />}
+							previewState={{
+								selection:
+									preview?.workDirectoryId === directory.id ? preview : null,
+								open: (selection) =>
+									setPreview({ ...selection, workDirectoryId: directory.id }),
+								close: () => setPreview(null),
+							}}
 							onNavigate={onNavigate}
 						/>
 						{settingsOpen ? (

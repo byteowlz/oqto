@@ -5,7 +5,12 @@
  * draft and invalidate pages so store truth wins.
  */
 
-import { type EngineEvent, type TurnDraft, projectEvent } from "./projection";
+import {
+	type EngineEvent,
+	type JsonValue,
+	type TurnDraft,
+	projectEvent,
+} from "./projection";
 import type { ChatTransport } from "./transport";
 import type { WireEvent } from "./transport-contract";
 
@@ -17,9 +22,11 @@ export type ChatDraftPart =
 	| {
 			type: "tool_call";
 			id: string;
+			toolCallId: string;
 			name: string;
+			input?: JsonValue;
+			output?: JsonValue;
 			status: "running" | "success" | "error";
-			hasOutput: boolean;
 	  }
 	| { type: "error"; id: string; text: string; retrying: boolean }
 	| { type: "compaction"; id: string; text: string };
@@ -45,9 +52,11 @@ function toRenderDraft(draft: TurnDraft): ChatTurnDraft {
 				return {
 					type: "tool_call" as const,
 					id: part.id,
+					toolCallId: part.toolCallId,
 					name: part.name,
+					input: part.input,
+					output: part.output,
 					status: part.status,
-					hasOutput: part.output !== undefined,
 				};
 			}
 			if (part.type === "compaction") {

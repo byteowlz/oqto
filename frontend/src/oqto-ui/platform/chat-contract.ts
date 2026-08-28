@@ -1,14 +1,18 @@
 /** Writable-chat handle contract between views and platform adapters. */
 
+import type { JsonValue } from "../engine/projection";
+
 export type ChatDraftPart =
 	| { type: "text"; id: string; text: string }
 	| { type: "thinking"; id: string; text: string }
 	| {
 			type: "tool_call";
 			id: string;
+			toolCallId: string;
 			name: string;
+			input?: JsonValue;
+			output?: JsonValue;
 			status: "running" | "success" | "error";
-			hasOutput: boolean;
 	  }
 	| { type: "error"; id: string; text: string; retrying: boolean }
 	| { type: "compaction"; id: string; text: string };

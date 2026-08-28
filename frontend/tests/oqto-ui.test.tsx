@@ -301,7 +301,7 @@ describe("OqtoUI splash", () => {
 });
 
 describe("OqtoUI live platform", () => {
-	it("pages session messages through the paged endpoint, hiding thinking parts", async () => {
+	it("pages canonical Markdown, tool, and file-reference parts without flattening", async () => {
 		const payloads: Record<string, unknown> = {
 			"/api/chat-history?limit=80": [
 				{
@@ -329,8 +329,36 @@ describe("OqtoUI live platform", () => {
 							id: "msg:2",
 							role: "assistant",
 							parts: [
-								{ type: "thinking", text: "private reasoning" },
-								{ type: "text", text: "Answer" },
+								{ type: "thinking", id: "p0", text: "private reasoning" },
+								{
+									type: "text",
+									id: "p1",
+									text: "**Answer** in `src/main.rs:7`",
+									format: "markdown",
+								},
+								{
+									type: "tool_call",
+									id: "p2",
+									toolCallId: "call-1",
+									name: "read",
+									input: { path: "src/main.rs" },
+									status: "success",
+								},
+								{
+									type: "tool_result",
+									id: "p3",
+									toolCallId: "call-1",
+									name: "read",
+									output: "fn main() {}",
+									isError: false,
+								},
+								{
+									type: "file_ref",
+									id: "p4",
+									uri: "src/main.rs",
+									label: "main.rs",
+									range: { startLine: 7, endLine: 9 },
+								},
 							],
 							created_at: 1787006012000,
 						},
@@ -358,7 +386,14 @@ describe("OqtoUI live platform", () => {
 			expect(snapshot.workDirectories).toHaveLength(1);
 			const newest = await liveOqtoUiPlatform.loadMessages("oqto-abc");
 			expect(newest.messages.map((m) => [m.author, m.content])).toEqual([
-				["agent", "Answer"],
+				["agent", "**Answer** in `src/main.rs:7`"],
+			]);
+			expect(newest.messages[0]?.parts?.map((part) => part.type)).toEqual([
+				"thinking",
+				"text",
+				"tool_call",
+				"tool_result",
+				"file_ref",
 			]);
 			expect(newest.hasMore).toBe(true);
 			expect(newest.nextBefore).toBe("v3.1");

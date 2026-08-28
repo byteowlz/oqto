@@ -679,7 +679,9 @@
 			"contextUsed": "Used",
 			"tool": "Tool",
 			"loadEarlier": "Load earlier messages",
-			"loadingEarlier": "Loading earlier messages…"
+			"loadingEarlier": "Loading earlier messages…",
+			"thinking": "Thinking",
+			"openFile": "Open {{path}}"
 		},
 		"activity": {
 			"label": "Agent activity",
@@ -808,6 +810,10 @@
 			"label": "Interface settings",
 			"open": "Open interface settings",
 			"close": "Close interface settings"
+		},
+		"preview": {
+			"label": "Preview {{path}}",
+			"close": "Close preview"
 		}
 	}
 }

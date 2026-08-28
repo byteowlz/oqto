@@ -1,3 +1,4 @@
+import type { JsonValue } from "../engine/projection";
 import type { ChatEngineHandle } from "./chat-contract";
 
 export type SessionStatus = "working" | "blocked" | "done" | "idle" | "unknown";
@@ -44,10 +45,39 @@ export type FileNode = {
 	changed?: boolean;
 };
 
+export type ChatMessagePart =
+	| { type: "text"; id: string; text: string; format?: "markdown" | "plain" }
+	| { type: "thinking"; id: string; text: string }
+	| {
+			type: "tool_call";
+			id: string;
+			toolCallId: string;
+			name: string;
+			input?: JsonValue;
+			status: "pending" | "running" | "success" | "error";
+	  }
+	| {
+			type: "tool_result";
+			id: string;
+			toolCallId: string;
+			name?: string;
+			output?: JsonValue;
+			isError: boolean;
+			durationMs?: number;
+	  }
+	| {
+			type: "file_ref";
+			id: string;
+			uri: string;
+			label?: string;
+			range?: { startLine?: number; endLine?: number };
+	  };
+
 export type ChatMessage = {
 	id: string;
 	author: "user" | "agent" | "tool";
 	content: string;
+	parts?: ChatMessagePart[];
 	time: string;
 	activity?: {
 		kind: "read" | "edit" | "test";

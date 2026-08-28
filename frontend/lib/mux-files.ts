@@ -8,6 +8,10 @@ const treeCache = new Map<
 	{ timestamp: number; entries: FileTreeNode[] }
 >();
 const treeInFlight = new Map<string, Promise<FileTreeNode[]>>();
+const readInFlight = new Map<
+	string,
+	Promise<{ data: ArrayBuffer; size?: number; truncated?: boolean }>
+>();
 
 function treeCacheKey(
 	workspacePath: string,
@@ -149,23 +153,35 @@ export async function readFileMux(
 	workspacePath: string,
 	path: string,
 ): Promise<{ data: ArrayBuffer; size?: number; truncated?: boolean }> {
-	const manager = getWsManager();
-	const response = (await manager.sendAndWait({
-		channel: "files",
-		type: "read",
-		path,
-		workspace_path: workspacePath,
-	})) as FilesWsEvent;
+	const key = `${workspacePath}:${path}`;
+	const existing = readInFlight.get(key);
+	if (existing) return existing;
+	const request = (async () => {
+		const manager = getWsManager();
+		const response = (await manager.sendAndWait({
+			channel: "files",
+			type: "read",
+			path,
+			workspace_path: workspacePath,
+		})) as FilesWsEvent;
 
-	if (response.type !== "read_result") {
-		throw new Error("Unexpected file read response");
+		if (response.type === "error") throw new Error(response.error);
+		if (response.type !== "read_result") {
+			throw new Error(`Unexpected file read response: ${response.type}`);
+		}
+
+		return {
+			data: base64ToArrayBuffer(response.content),
+			size: response.size,
+			truncated: response.truncated,
+		};
+	})();
+	readInFlight.set(key, request);
+	try {
+		return await request;
+	} finally {
+		readInFlight.delete(key);
 	}
-
-	return {
-		data: base64ToArrayBuffer(response.content),
-		size: response.size,
-		truncated: response.truncated,
-	};
 }
 
 export async function writeFileMux(

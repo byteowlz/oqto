@@ -20,6 +20,7 @@ import {
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
+import { normalizeWorkspaceFileReference } from "@/lib/workspace-resource";
 import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import {
 	AppWindow,
@@ -686,18 +687,11 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const handleOpenChatFileReference = useCallback(
 		(filePath: string) => {
-			const trimmed = filePath.trim();
-			if (!trimmed) return;
-			const withoutAt = trimmed.replace(/^@+/, "");
-			const workspaceRelative = normalizedWorkspacePath
-				? withoutAt.replace(
-						new RegExp(
-							`^${normalizedWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`,
-						),
-						"",
-					)
-				: withoutAt;
-			const normalizedPath = workspaceRelative.replace(/^\.\//, "");
+			const normalizedPath = normalizeWorkspaceFileReference(
+				filePath,
+				normalizedWorkspacePath,
+			);
+			if (!normalizedPath) return;
 
 			setActiveView("files");
 			if (isChatPreviewableFile(normalizedPath)) {

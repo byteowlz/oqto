@@ -1,5 +1,9 @@
 "use client";
 
+import {
+	type FileReferenceDetail,
+	extractFileReferenceDetails,
+} from "@/lib/file-types";
 import { cn } from "@/lib/utils";
 import { Check, Code, Copy, Minus, Plus, RotateCcw } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -26,9 +30,13 @@ interface MarkdownRendererProps {
 	className?: string;
 	enableMermaid?: boolean;
 	isStreaming?: boolean;
+	onFileReferenceOpen?: (reference: FileReferenceDetail) => void;
 }
 
 const MermaidEnabledContext = createContext(true);
+const FileReferenceOpenContext = createContext<
+	((reference: FileReferenceDetail) => void) | undefined
+>(undefined);
 
 const CopyButton = memo(function CopyButton({
 	text,
@@ -380,6 +388,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const isDarkMode = resolvedTheme === "dark";
 
 	const enableMermaid = useContext(MermaidEnabledContext);
+	const onFileReferenceOpen = useContext(FileReferenceOpenContext);
 	const match = /language-(\w+)/.exec(className || "");
 	const codeString = normalizeCodeContent(children);
 	const language = match ? match[1].toLowerCase() : "text";
@@ -391,12 +400,23 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const [isExpanded, setIsExpanded] = useState(!shouldCollapse);
 
 	if (isInline) {
+		const reference = extractFileReferenceDetails(`\`${codeString}\``)[0];
+		if (reference && onFileReferenceOpen) {
+			return (
+				<button
+					type="button"
+					className="px-1 py-0.5 rounded text-[0.85em] font-mono text-primary underline underline-offset-2 whitespace-normal break-words [overflow-wrap:anywhere]"
+					style={{ backgroundColor: "var(--code-inline-bg)" }}
+					onClick={() => onFileReferenceOpen(reference)}
+				>
+					{children}
+				</button>
+			);
+		}
 		return (
 			<code
 				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]"
-				style={{
-					backgroundColor: "var(--code-inline-bg)",
-				}}
+				style={{ backgroundColor: "var(--code-inline-bg)" }}
 			>
 				{children}
 			</code>
@@ -517,17 +537,15 @@ const markdownComponents: Components = {
 		);
 	},
 	ul({ children }) {
-		return <ul className="list-none mb-3 space-y-1 pl-0">{children}</ul>;
+		return <ul className="list-disc mb-3 space-y-1 pl-3">{children}</ul>;
 	},
 	ol({ children }) {
-		return <ol className="list-none mb-3 space-y-1 pl-0">{children}</ol>;
+		return <ol className="list-decimal mb-3 space-y-1 pl-3">{children}</ol>;
 	},
-	li({ children, ordered, index }) {
-		const marker = ordered ? `${(index ?? 0) + 1}.` : "•";
+	li({ children }) {
 		return (
-			<li className="flex items-start gap-2 text-foreground leading-relaxed">
-				<span className="text-foreground/70 shrink-0">{marker}</span>
-				<span className="min-w-0 flex-1 [&>p]:m-0 [&>p]:block">{children}</span>
+			<li className="text-foreground leading-relaxed ml-5 list-item">
+				<span className="min-w-0 [&>p]:m-0 [&>p]:block">{children}</span>
 			</li>
 		);
 	},
@@ -626,6 +644,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	className,
 	enableMermaid = true,
 	isStreaming = false,
+	onFileReferenceOpen,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
 	const hyphenationLang = resolveHyphenationLang();
@@ -638,14 +657,16 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 			)}
 			lang={hyphenationLang}
 		>
-			<MermaidEnabledContext.Provider value={enableMermaid}>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins}
-					components={markdownComponents}
-				>
-					{sanitizedContent}
-				</ReactMarkdown>
-			</MermaidEnabledContext.Provider>
+			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
+				<MermaidEnabledContext.Provider value={enableMermaid}>
+					<ReactMarkdown
+						remarkPlugins={remarkPlugins}
+						components={markdownComponents}
+					>
+						{sanitizedContent}
+					</ReactMarkdown>
+				</MermaidEnabledContext.Provider>
+			</FileReferenceOpenContext.Provider>
 		</div>
 	);
 });

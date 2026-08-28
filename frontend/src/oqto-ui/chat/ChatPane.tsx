@@ -14,14 +14,16 @@ import {
 	TestTube2,
 	User,
 } from "lucide-react";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurnDraft } from "../platform/chat-contract";
 import type {
 	ChatMessage,
+	ChatMessagePart,
 	OqtoUiPlatform,
 	SessionTask,
 } from "../platform/contracts";
+import { MessageParts } from "./MessageParts";
 import { TaskProgress } from "./TaskProgress";
 import { timelineQueryKey, turnDraftQueryKey } from "./query-keys";
 import { useTimeline } from "./useTimeline";
@@ -31,6 +33,10 @@ type ChatPaneProps = {
 	agentName: string;
 	sessionId: string;
 	tasks: SessionTask[];
+	onOpenFile: (
+		path: string,
+		range?: { startLine?: number; endLine?: number },
+	) => void;
 };
 
 type PendingPrompt = { id: string; text: string };
@@ -45,17 +51,27 @@ function ToolIcon({ kind }: ToolIconProps) {
 	return <FileText aria-hidden="true" />;
 }
 
-type MessageLike = Pick<ChatMessage, "author" | "content" | "time"> & {
-	activity?: ChatMessage["activity"];
-};
+type ToolResultPart = Extract<ChatMessagePart, { type: "tool_result" }>;
 
 type MessageGroupProps = {
-	message: MessageLike;
+	message: ChatMessage;
 	agentName: string;
+	sessionId: string;
+	resultByCallId: ReadonlyMap<string, ToolResultPart>;
+	knownCallIds: ReadonlySet<string>;
+	onOpenFile: ChatPaneProps["onOpenFile"];
 	pending?: boolean;
 };
 
-function MessageGroup({ message, agentName, pending }: MessageGroupProps) {
+function MessageGroup({
+	message,
+	agentName,
+	sessionId,
+	resultByCallId,
+	knownCallIds,
+	onOpenFile,
+	pending,
+}: MessageGroupProps) {
 	const { t } = useTranslation();
 	const isUser = message.author === "user";
 	const name = isUser
@@ -92,7 +108,13 @@ function MessageGroup({ message, agentName, pending }: MessageGroupProps) {
 				</button>
 			</header>
 			<div className="wb-msg__body">
-				<p>{message.content}</p>
+				<MessageParts
+					message={message}
+					sessionId={sessionId}
+					resultByCallId={resultByCallId}
+					knownCallIds={knownCallIds}
+					onOpenFile={onOpenFile}
+				/>
 				{message.activity ? (
 					<div className="wb-tool" data-kind={message.activity.kind}>
 						<ToolIcon kind={message.activity.kind} />
@@ -107,9 +129,13 @@ function MessageGroup({ message, agentName, pending }: MessageGroupProps) {
 	);
 }
 
-type DraftPartViewProps = { part: ChatTurnDraft["parts"][number] };
+type DraftPartViewProps = {
+	part: ChatTurnDraft["parts"][number];
+	sessionId: string;
+	onOpenFile: ChatPaneProps["onOpenFile"];
+};
 
-function DraftPartView({ part }: DraftPartViewProps) {
+function DraftPartView({ part, sessionId, onOpenFile }: DraftPartViewProps) {
 	const { t } = useTranslation();
 	if (part.type === "text") {
 		return (
@@ -120,7 +146,19 @@ function DraftPartView({ part }: DraftPartViewProps) {
 					<span className="wb-msg__spacer" />
 				</header>
 				<div className="wb-msg__body">
-					<p>{part.text}</p>
+					<MessageParts
+						message={{
+							id: `draft:${part.id}`,
+							author: "agent",
+							content: part.text,
+							time: "",
+							parts: [{ type: "text", id: part.id, text: part.text }],
+						}}
+						sessionId={sessionId}
+						resultByCallId={new Map()}
+						knownCallIds={new Set()}
+						onOpenFile={onOpenFile}
+					/>
 				</div>
 			</article>
 		);
@@ -134,11 +172,42 @@ function DraftPartView({ part }: DraftPartViewProps) {
 		);
 	}
 	if (part.type === "tool_call") {
+		const result: ToolResultPart | undefined =
+			part.output === undefined
+				? undefined
+				: {
+						type: "tool_result",
+						id: `${part.id}:result`,
+						toolCallId: part.toolCallId,
+						name: part.name,
+						output: part.output,
+						isError: part.status === "error",
+					};
 		return (
-			<div className="wb-tool wb-draft-tool" data-status={part.status}>
-				<FileEdit aria-hidden="true" />
-				<span className="wb-tool__label">{part.name}</span>
-			</div>
+			<MessageParts
+				message={{
+					id: `draft:${part.id}`,
+					author: "agent",
+					content: "",
+					time: "",
+					parts: [
+						{
+							type: "tool_call",
+							id: part.id,
+							toolCallId: part.toolCallId,
+							name: part.name,
+							input: part.input,
+							status: part.status,
+						},
+					],
+				}}
+				sessionId={sessionId}
+				resultByCallId={
+					result ? new Map([[part.toolCallId, result]]) : new Map()
+				}
+				knownCallIds={new Set([part.toolCallId])}
+				onOpenFile={onOpenFile}
+			/>
 		);
 	}
 	if (part.type === "compaction") {
@@ -161,6 +230,7 @@ export function ChatPane({
 	agentName,
 	sessionId,
 	tasks,
+	onOpenFile,
 }: ChatPaneProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -175,6 +245,17 @@ export function ChatPane({
 		staleTime: Number.POSITIVE_INFINITY,
 	});
 	const draft = draftQuery.data;
+	const { resultByCallId, knownCallIds } = useMemo(() => {
+		const results = new Map<string, ToolResultPart>();
+		const calls = new Set<string>();
+		for (const message of timeline.messages) {
+			for (const part of message.parts ?? []) {
+				if (part.type === "tool_call") calls.add(part.toolCallId);
+				if (part.type === "tool_result") results.set(part.toolCallId, part);
+			}
+		}
+		return { resultByCallId: results, knownCallIds: calls };
+	}, [timeline.messages]);
 	const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(
 		null,
 	);
@@ -320,7 +401,14 @@ export function ChatPane({
 					{compact
 						? timeline.messages.map((message) => (
 								<div className="wb-timeline-row" key={message.id}>
-									<MessageGroup agentName={agentName} message={message} />
+									<MessageGroup
+										agentName={agentName}
+										message={message}
+										sessionId={sessionId}
+										resultByCallId={resultByCallId}
+										knownCallIds={knownCallIds}
+										onOpenFile={onOpenFile}
+									/>
 								</div>
 							))
 						: visibleItems.map((row) => {
@@ -338,7 +426,14 @@ export function ChatPane({
 											} as React.CSSProperties
 										}
 									>
-										<MessageGroup agentName={agentName} message={message} />
+										<MessageGroup
+											agentName={agentName}
+											message={message}
+											sessionId={sessionId}
+											resultByCallId={resultByCallId}
+											knownCallIds={knownCallIds}
+											onOpenFile={onOpenFile}
+										/>
 									</div>
 								);
 							})}
@@ -347,10 +442,15 @@ export function ChatPane({
 							<MessageGroup
 								agentName={agentName}
 								message={{
+									id: pendingPrompt.id,
 									author: "user",
 									content: pendingPrompt.text,
 									time: t("oqtoUi.chat.pending"),
 								}}
+								sessionId={sessionId}
+								resultByCallId={resultByCallId}
+								knownCallIds={knownCallIds}
+								onOpenFile={onOpenFile}
 								pending
 							/>
 						</div>
@@ -358,7 +458,11 @@ export function ChatPane({
 					{draft
 						? draft.parts.map((part) => (
 								<div className="wb-timeline-row" key={part.id}>
-									<DraftPartView part={part} />
+									<DraftPartView
+										part={part}
+										sessionId={sessionId}
+										onOpenFile={onOpenFile}
+									/>
 								</div>
 							))
 						: null}

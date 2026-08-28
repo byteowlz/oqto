@@ -679,7 +679,9 @@
 			"contextUsed": "Belegt",
 			"tool": "Tool",
 			"loadEarlier": "Frühere Nachrichten laden",
-			"loadingEarlier": "Frühere Nachrichten werden geladen…"
+			"loadingEarlier": "Frühere Nachrichten werden geladen…",
+			"thinking": "Denken",
+			"openFile": "{{path}} öffnen"
 		},
 		"activity": {
 			"label": "Agentenaktivität",
@@ -808,6 +810,10 @@
 			"label": "Oberflächen-Einstellungen",
 			"open": "Oberflächen-Einstellungen öffnen",
 			"close": "Oberflächen-Einstellungen schließen"
+		},
+		"preview": {
+			"label": "Vorschau {{path}}",
+			"close": "Vorschau schließen"
 		}
 	}
 }
