@@ -59,6 +59,7 @@ import {
 } from "./control-event-reducer";
 import {
 	convertCanonicalMessageToDisplay,
+	hasExplicitStreamingAssistant,
 	mergeServerMessages,
 	nextPartId,
 	normalizeContentToParts,
@@ -658,27 +659,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					return;
 				}
 				const preserveInFlightCache = opts?.preserveInFlightCache === true;
-				const hasLocalStreamingSnapshot = preserveInFlightCache
-					? messagesRef.current.some(
-							(msg) =>
-								msg.role === "assistant" && shouldPreserveLocalMessage(msg),
-						)
-					: false;
-				const hasCachedStreamingSnapshot =
-					preserveInFlightCache && !hasLocalStreamingSnapshot
-						? readCachedSessionMessages(
-								sessionId,
-								resolvedStorageKeyPrefix,
-							).some(
-								(msg) =>
-									msg.role === "assistant" && shouldPreserveLocalMessage(msg),
-							)
-						: false;
+				const hasLocalStreamingSnapshot =
+					preserveInFlightCache &&
+					hasExplicitStreamingAssistant(messagesRef.current);
 				const liveTurnLikely =
 					isStreamingRef.current ||
 					sendInFlightRef.current ||
-					hasLocalStreamingSnapshot ||
-					hasCachedStreamingSnapshot;
+					hasLocalStreamingSnapshot;
 
 				// REST history is authoritative once the turn is settled. While a live
 				// turn may still be in flight (e.g. switch-away/switch-back), merge as
@@ -716,12 +703,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 		},
-		[
-			applyServerMessages,
-			applyTurnState,
-			isCurrentSession,
-			resolvedStorageKeyPrefix,
-		],
+		[applyServerMessages, applyTurnState, isCurrentSession],
 	);
 
 	const clearResponseWatchdog = useCallback(() => {

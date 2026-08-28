@@ -857,6 +857,20 @@ export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
 	return false;
 }
 
+/**
+ * Only explicit streaming state proves that an assistant turn is still live.
+ * Temporary-looking IDs can survive in the disposable session cache after a
+ * crash or reconnect and must not downgrade an authoritative history refresh
+ * to a partial merge.
+ */
+export function hasExplicitStreamingAssistant(
+	messages: DisplayMessage[],
+): boolean {
+	return messages.some(
+		(message) => message.role === "assistant" && message.isStreaming === true,
+	);
+}
+
 // ============================================================================
 // Fingerprinting and merge
 // ============================================================================
