@@ -26,7 +26,7 @@ export function SessionStatusBar({
 	return (
 		<footer className="wb-statusbar">
 			<div className="wb-statusbar__group">
-				{status ? (
+				{status && status.runningSessions ? (
 					<span
 						className="wb-statusbar__item"
 						title={t("oqtoUi.statusBar.runningSessions")}
@@ -40,26 +40,32 @@ export function SessionStatusBar({
 			<div className="wb-statusbar__group">
 				{status ? (
 					<>
-						<span
-							className="wb-statusbar__item"
-							title={t("oqtoUi.statusBar.onlineUsers")}
-						>
-							<Users aria-hidden="true" />
-							{status.onlineUsers}
-						</span>
-						<span
-							className="wb-statusbar__item"
-							title={t("oqtoUi.statusBar.runnerLoad")}
-						>
-							<Activity aria-hidden="true" />
-							{status.runnerLoad}
-						</span>
-						<span
-							className="wb-statusbar__item wb-statusbar__item--dim"
-							title={t("oqtoUi.statusBar.version")}
-						>
-							{status.version}
-						</span>
+						{status.onlineUsers ? (
+							<span
+								className="wb-statusbar__item"
+								title={t("oqtoUi.statusBar.onlineUsers")}
+							>
+								<Users aria-hidden="true" />
+								{status.onlineUsers}
+							</span>
+						) : null}
+						{status.runnerLoad ? (
+							<span
+								className="wb-statusbar__item"
+								title={t("oqtoUi.statusBar.runnerLoad")}
+							>
+								<Activity aria-hidden="true" />
+								{status.runnerLoad}
+							</span>
+						) : null}
+						{status.version ? (
+							<span
+								className="wb-statusbar__item wb-statusbar__item--dim"
+								title={t("oqtoUi.statusBar.version")}
+							>
+								{status.version}
+							</span>
+						) : null}
 					</>
 				) : null}
 				<button

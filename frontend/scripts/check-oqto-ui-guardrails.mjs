@@ -41,6 +41,7 @@ const ALLOWED_PROJECT_ALIASES = {
 	sessions: [],
 	chat: [
 		"@/components/chat/tool-call-card",
+		"@/components/data-display/context-window-gauge",
 		"@/components/data-display/markdown-renderer",
 		"@/components/viewers/resource-preview-host",
 		"@/hooks/use-document-event",

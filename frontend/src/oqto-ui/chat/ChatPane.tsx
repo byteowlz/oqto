@@ -1,3 +1,4 @@
+import { ContextWindowGauge } from "@/components/data-display/context-window-gauge";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import type { DisplayMessage, DisplayPart } from "@/lib/chat-render-types";
@@ -18,16 +19,20 @@ import type { ChatTurnDraft } from "../platform/chat-contract";
 import type {
 	ChatMessage,
 	OqtoUiPlatform,
+	SessionOverview,
 	SessionTask,
 } from "../platform/contracts";
 import { workspaceFilePreviewUrl } from "../platform/workspace-file-url";
 import { TaskProgress } from "./TaskProgress";
+import { estimateContextTokens } from "./context-tokens";
 import { timelineQueryKey, turnDraftQueryKey } from "./query-keys";
 import { useTimeline } from "./useTimeline";
 
 type ChatPaneProps = {
 	platform: Pick<OqtoUiPlatform, "id" | "loadMessages" | "chat">;
 	agentName: string;
+	/** Session overview for the meta line; optional so tests can render bare. */
+	session?: SessionOverview;
 	sessionId: string;
 	tasks: SessionTask[];
 	workspacePath: string;
@@ -137,6 +142,7 @@ function streamingDraftGroup(draft: ChatTurnDraft): CanonicalMessageGroup {
 export function ChatPane({
 	platform,
 	agentName,
+	session,
 	sessionId,
 	tasks,
 	workspacePath,
@@ -258,8 +264,50 @@ export function ChatPane({
 		loading: timeline.loadingEarlier,
 	};
 
+	// Context readout: the same fallback estimate the legacy chat uses, since
+	// the canonical store does not carry per-message usage yet.
+	const contextTokens = useMemo(
+		() => estimateContextTokens(timeline.messages),
+		[timeline.messages],
+	);
+	const workspaceBasename =
+		workspacePath.split("/").filter(Boolean).pop() ?? workspacePath;
+
 	return (
 		<>
+			{session ? (
+				<header className="wb-chat-header">
+					<span className="wb-chat-header__meta">
+						<span className="wb-chat-header__item">
+							{workspaceBasename}
+							{session.readableId ? ` [${session.readableId}]` : ""}
+						</span>
+						<span className="wb-chat-header__sep" aria-hidden="true">
+							|
+						</span>
+						<span className="wb-chat-header__item">{session.updated}</span>
+						{session.model ? (
+							<>
+								<span className="wb-chat-header__sep" aria-hidden="true">
+									|
+								</span>
+								<span
+									className="wb-chat-header__item wb-chat-header__model"
+									translate="no"
+								>
+									{session.model}
+								</span>
+							</>
+						) : null}
+					</span>
+					<ContextWindowGauge
+						compact
+						locale={locale}
+						inputTokens={contextTokens.inputTokens}
+						outputTokens={contextTokens.outputTokens}
+					/>
+				</header>
+			) : null}
 			<section
 				className="wb-chat-panel"
 				aria-label={t("oqtoUi.chat.timeline")}

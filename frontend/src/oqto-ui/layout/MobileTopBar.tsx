@@ -72,7 +72,7 @@ export function MobileTopBar({
 			<span className="wb-mobile-chrome__identity">
 				<strong>{session.name}</strong>
 				<small>
-					{directory.name} [{session.id}]
+					{directory.name} [{session.readableId ?? session.id}]
 				</small>
 			</span>
 

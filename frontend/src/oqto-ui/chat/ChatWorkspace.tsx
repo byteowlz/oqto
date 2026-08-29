@@ -55,6 +55,7 @@ export function ChatWorkspace({
 	} = previewState;
 	const { t } = useTranslation();
 	const editorTab = workArea.tabs.find((tab) => tab.id === "editor");
+	const readableRef = session.readableId ?? session.id;
 	return (
 		<main className="wb-main" aria-label={t("oqtoUi.chat.label")}>
 			<div className="wb-chat-card">
@@ -62,7 +63,7 @@ export function ChatWorkspace({
 					tabs={workArea.tabs}
 					activeTab={workAreaTab}
 					chatLabel={session.name}
-					chatMeta={`${directory.name} [${session.id}] | ${session.updated}`}
+					chatMeta={`${directory.name} [${readableRef}] | ${session.updated}`}
 					onNavigate={onNavigate}
 				/>
 				{preview ? (
@@ -90,6 +91,7 @@ export function ChatWorkspace({
 								key={session.id}
 								platform={platform}
 								agentName={directory.name}
+								session={session}
 								sessionId={session.id}
 								tasks={tasks}
 								workspacePath={directory.path}

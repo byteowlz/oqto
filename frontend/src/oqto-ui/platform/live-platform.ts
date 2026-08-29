@@ -9,6 +9,7 @@ import type {
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
 	SessionOverview,
+	StatusBarData,
 	WorkDirectory,
 } from "./contracts";
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
@@ -151,6 +152,7 @@ function parseWorkDirectories(value: unknown): WorkDirectory[] {
 		const session: SessionOverview = {
 			id,
 			name: text(item.title) ?? text(item.readable_id) ?? id,
+			readableId: text(item.readable_id) ?? undefined,
 			preview: "",
 			updated: formatTimestamp(item.updated_at),
 			status: "unknown",
@@ -441,6 +443,38 @@ async function attachProjectLogos(
 	}
 }
 
+/// Status strip data: version from the public health endpoint, admin
+/// counters only when the caller is an admin (403 otherwise is normal).
+async function loadStatusBar(): Promise<StatusBarData | null> {
+	let version = "";
+	try {
+		const health = (await readJson("/api/health")) as { version?: unknown };
+		const raw = text(health.version);
+		if (raw) version = `v${raw.replace(/^v/, "")}`;
+	} catch {
+		return null;
+	}
+	let onlineUsers = "";
+	let runnerLoad = "";
+	try {
+		const stats = (await readJson("/api/admin/stats")) as {
+			active_users?: unknown;
+			total_users?: unknown;
+			running_sessions?: unknown;
+			total_sessions?: unknown;
+		};
+		const count = (value: unknown) => {
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? String(parsed) : "?";
+		};
+		onlineUsers = `${count(stats.active_users)}/${count(stats.total_users)}`;
+		runnerLoad = `${count(stats.running_sessions)}/${count(stats.total_sessions)}`;
+	} catch {
+		// Non-admin callers cannot read counters; the rest of the strip stays.
+	}
+	return { runningSessions: "", onlineUsers, runnerLoad, version };
+}
+
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
 	chat: createSessionEngine(liveChatTransport),
@@ -468,7 +502,7 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 			gallery: [],
 			environment: {
 				models: modelOptions(workDirectories),
-				statusBar: null,
+				statusBar: await loadStatusBar(),
 				connection: "connected",
 			},
 		};

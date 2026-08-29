@@ -30,9 +30,11 @@ describe("OqtoUI visual stability", () => {
 			shellCss.indexOf("@media (max-width: 1023px)"),
 		);
 		expect(mobileBlock).toMatch(/\.wb-wa-tabs\s*\{\s*display:\s*none;/);
-		// The chat header row was removed entirely; the chat tab carries the
-		// gauge and hover meta instead, so no header selector may come back.
-		expect(shellCss).not.toMatch(/\.wb-chat-header/);
+		// Parity (oqto-a9j4.6): the desktop chat column carries a meta +
+		// context-gauge header row like the legacy UI; on mobile it collapses
+		// away because the top bar already carries session meta.
+		expect(shellCss).toMatch(/\.wb-chat-header\s*\{/);
+		expect(mobileBlock).toMatch(/\.wb-chat-header\s*\{[^}]*display:\s*none;/);
 		expect(mobileBlock).toMatch(/\.wb-mobile-chrome\s*\{[^}]*display:\s*grid;/);
 		expect(mobileBlock).toMatch(/\.wb-sidebar\s*\{[^}]*position:\s*fixed;/);
 	});

@@ -1702,6 +1702,11 @@
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1023px) {
+	/* The mobile top bar already carries session meta; no duplicated header. */
+	.wb-chat-header {
+		display: none;
+	}
+
 	.wb-sidebar {
 		position: fixed;
 		z-index: 20;
@@ -2736,4 +2741,45 @@
 .wb-load-earlier:hover:not(:disabled),
 .wb-load-earlier:focus-visible {
 	color: var(--foreground);
+}
+
+.wb-chat-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 6px 12px 6px 16px;
+	border-bottom: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--muted-foreground);
+	user-select: none;
+}
+
+.wb-chat-header__meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.wb-chat-header__item {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-chat-header__model {
+	color: var(--foreground);
+	opacity: 0.72;
+}
+
+.wb-chat-header__sep {
+	opacity: 0.4;
+}
+
+.wb-chat-header .wb-chat-header__meta + * {
+	flex-shrink: 0;
 }

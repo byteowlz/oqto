@@ -12,6 +12,8 @@ export type SessionTask = {
 export type SessionOverview = {
 	id: string;
 	name: string;
+	/** Short human-readable id (e.g. "drab-task-shag") when the backend assigns one. */
+	readableId?: string;
 	preview: string;
 	updated: string;
 	status: SessionStatus;
