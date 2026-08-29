@@ -1702,11 +1702,6 @@
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1023px) {
-	/* The mobile top bar already carries session meta; no duplicated header. */
-	.wb-chat-header {
-		display: none;
-	}
-
 	.wb-sidebar {
 		position: fixed;
 		z-index: 20;
@@ -2781,5 +2776,18 @@
 }
 
 .wb-chat-header .wb-chat-header__meta + * {
+	flex-shrink: 0;
+}
+
+@media (max-width: 1023px) {
+	/* The mobile top bar already carries session meta; no duplicated header. */
+	.wb-shell .wb-chat-header {
+		display: none;
+	}
+}
+
+.wb-chat-header__gauge {
+	display: block;
+	width: 180px;
 	flex-shrink: 0;
 }

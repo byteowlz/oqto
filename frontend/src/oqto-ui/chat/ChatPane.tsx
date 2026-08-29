@@ -300,12 +300,14 @@ export function ChatPane({
 							</>
 						) : null}
 					</span>
-					<ContextWindowGauge
-						compact
-						locale={locale}
-						inputTokens={contextTokens.inputTokens}
-						outputTokens={contextTokens.outputTokens}
-					/>
+					<span className="wb-chat-header__gauge">
+						<ContextWindowGauge
+							compact
+							locale={locale}
+							inputTokens={contextTokens.inputTokens}
+							outputTokens={contextTokens.outputTokens}
+						/>
+					</span>
 				</header>
 			) : null}
 			<section
