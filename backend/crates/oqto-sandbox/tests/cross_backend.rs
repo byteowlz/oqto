@@ -58,7 +58,7 @@ fn resolved(profile_name: &str) -> ResolvedPolicy {
 fn neither_adapter_drops_a_rule() {
     for name in ["minimal", "development", "strict"] {
         let policy = resolved(name);
-        let bwrap = compile_filesystem_args(&policy, &AllPresent);
+        let bwrap = compile_filesystem_args(&policy, &AllPresent, &[]);
         let sbpl = compile_profile(&policy);
 
         for rule in policy.rules() {
@@ -81,7 +81,7 @@ fn a_denied_path_is_denied_by_both() {
     for name in ["minimal", "development", "strict"] {
         let policy = resolved(name);
         let sbpl = compile_profile(&policy);
-        let bwrap = compile_filesystem_args(&policy, &AllPresent);
+        let bwrap = compile_filesystem_args(&policy, &AllPresent, &[]);
 
         for rule in policy.rules().iter().filter(|r| r.access == Access::None) {
             let path = rule.path().to_string_lossy().to_string();

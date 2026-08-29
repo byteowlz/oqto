@@ -137,6 +137,7 @@ impl Policy {
     ) -> Result<ResolvedPolicyBuild, PolicyError> {
         let mut policy = ResolvedPolicy::new(self.default, self.default_origin.clone());
         let mut unavailable_resources = Vec::new();
+        let mut reconstructions = Vec::new();
 
         for root_default in &self.root_defaults {
             let Some(root) = resolve_policy_root(
@@ -173,16 +174,58 @@ impl Policy {
             } else {
                 root.join(relative)
             };
+            let path = match canonicalize_home_symlink(path.clone(), context.home) {
+                Some((canonical, original)) => {
+                    reconstructions.push((canonical.clone(), original));
+                    canonical
+                }
+                None => path,
+            };
             policy.add_rule(ResolvedRule::new(path, rule.access, rule.origin.clone())?);
         }
 
         unavailable_resources.sort();
         unavailable_resources.dedup();
+        reconstructions.sort();
+        reconstructions.dedup();
         Ok(ResolvedPolicyBuild {
             policy,
             unavailable_resources,
+            reconstructions,
         })
     }
+}
+
+/// Home paths that are symlinks on the host — or that live under one —
+/// resolve to their real location: bubblewrap 0.12 refuses to mount onto a
+/// symlink destination, and bwrap on any version cannot create intermediate
+/// directories through one for deeper materialized paths. Only paths under
+/// the user's home are rewritten; the FHS system symlinks (`/lib64` and
+/// friends) must keep their literal mount paths for interpreter lookups.
+/// Returns the canonical path plus the original for symlink reconstruction.
+fn canonicalize_home_symlink(path: PathBuf, home: &Path) -> Option<(PathBuf, PathBuf)> {
+    if !path.starts_with(home) {
+        return None;
+    }
+    let relative = path.strip_prefix(home).ok()?;
+    let mut ancestor = home.to_path_buf();
+    for component in relative.components() {
+        ancestor.push(component);
+        let is_symlink = std::fs::symlink_metadata(&ancestor)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if !is_symlink {
+            continue;
+        }
+        let canonical_ancestor = std::fs::canonicalize(&ancestor).ok()?;
+        let rest = path.strip_prefix(&ancestor).ok()?;
+        let canonical = canonical_ancestor.join(rest);
+        if canonical == path {
+            return None;
+        }
+        return Some((canonical, path));
+    }
+    None
 }
 
 pub struct ResolutionContext<'a> {
@@ -195,6 +238,11 @@ pub struct ResolutionContext<'a> {
 pub struct ResolvedPolicyBuild {
     pub policy: ResolvedPolicy,
     pub unavailable_resources: Vec<ResourceId>,
+    /// Home paths that are symlinks on the host and were canonicalized into
+    /// their real location. Adapters re-create the original path with a
+    /// leaf `--symlink` so processes using literal `$HOME` paths still
+    /// resolve; nothing may be mounted through these links.
+    pub reconstructions: Vec<(PathBuf, PathBuf)>,
 }
 
 /// One rule after symbolic roots have been resolved.

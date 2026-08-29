@@ -2023,7 +2023,39 @@ impl SandboxConfig {
             .target_template
             .replace("{base_path}", &base.to_string_lossy())
             .replace("{value}", &value);
-        Some(Self::expand_home_for_user(&target_expr, username))
+        Some(Self::canonicalize_namespace_path(
+            Self::expand_home_for_user(&target_expr, username),
+        ))
+    }
+
+    /// Host symlinks under the user's home are canonicalized so the sandbox
+    /// never mounts onto, or creates directories through, a symlink path:
+    /// bubblewrap 0.12 refuses symlink-destination mounts outright, and no
+    /// version can mkdir intermediate paths through one for the deeper
+    /// materialized mounts (session shards, caches). The policy layer
+    /// re-creates the original path as a leaf `--symlink` instead. Paths
+    /// without a symlinked ancestor (including FHS paths) pass through
+    /// unchanged.
+    fn canonicalize_namespace_path(path: PathBuf) -> PathBuf {
+        let mut ancestor = PathBuf::from("/");
+        for component in path.components().skip(1) {
+            ancestor.push(component);
+            let is_symlink = std::fs::symlink_metadata(&ancestor)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if !is_symlink {
+                continue;
+            }
+            let canonical_ancestor = match std::fs::canonicalize(&ancestor) {
+                Ok(canonical) => canonical,
+                Err(_) => return path,
+            };
+            let rest = path
+                .strip_prefix(&ancestor)
+                .unwrap_or_else(|_| Path::new(""));
+            return canonical_ancestor.join(rest);
+        }
+        path
     }
 
     fn apply_scoped_path_rules(
@@ -2037,7 +2069,10 @@ impl SandboxConfig {
                 continue;
             }
 
-            let base = Self::expand_home_for_user(&rule.base_path, username);
+            let base = Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                &rule.base_path,
+                username,
+            ));
             if base.as_os_str().is_empty() {
                 continue;
             }
@@ -2080,7 +2115,10 @@ impl SandboxConfig {
                 .target_template
                 .replace("{base_path}", &base_str)
                 .replace("{value}", &value);
-            let target = Self::expand_home_for_user(&target_expr, username);
+            let target = Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                &target_expr,
+                username,
+            ));
             let target_str = target.to_string_lossy().to_string();
 
             let target_exists = target.exists();
@@ -2275,6 +2313,7 @@ impl SandboxConfig {
         Some(crate::policy_bwrap::compile_filesystem_args(
             &build.policy,
             &crate::policy_bwrap::HostPaths,
+            &build.reconstructions,
         ))
     }
 
@@ -2617,9 +2656,11 @@ impl SandboxConfig {
                     let allow_write_joined = effective_allow_write
                         .iter()
                         .map(|p| {
-                            Self::expand_home_for_user(p, username)
-                                .to_string_lossy()
-                                .to_string()
+                            Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                                p, username,
+                            ))
+                            .to_string_lossy()
+                            .to_string()
                         })
                         .chain(scoped_writable)
                         .collect::<Vec<_>>()
@@ -2684,12 +2725,14 @@ impl SandboxConfig {
                 ModelMode::Restrict => {
                     // Bind workspace models.json directly over global
                     let ws_models_str = ws_models_path.to_string_lossy().to_string();
-                    let global_models_str = target_home
-                        .as_ref()
-                        .map(|h| h.join(".pi/agent/models.json"))
-                        .unwrap_or_else(|| PathBuf::from("/nonexistent"))
-                        .to_string_lossy()
-                        .to_string();
+                    let global_models_str = Self::canonicalize_namespace_path(
+                        target_home
+                            .as_ref()
+                            .map(|h| h.join(".pi/agent/models.json"))
+                            .unwrap_or_else(|| PathBuf::from("/nonexistent")),
+                    )
+                    .to_string_lossy()
+                    .to_string();
                     args.push("--ro-bind".to_string());
                     args.push(ws_models_str.clone());
                     args.push(global_models_str.clone());
@@ -2700,10 +2743,12 @@ impl SandboxConfig {
                 }
                 ModelMode::Merge => {
                     // Merge global + workspace into a temp file, bind that
-                    let global_models_path = target_home
-                        .as_ref()
-                        .map(|h| h.join(".pi/agent/models.json"))
-                        .unwrap_or_else(|| PathBuf::from("/nonexistent"));
+                    let global_models_path = Self::canonicalize_namespace_path(
+                        target_home
+                            .as_ref()
+                            .map(|h| h.join(".pi/agent/models.json"))
+                            .unwrap_or_else(|| PathBuf::from("/nonexistent")),
+                    );
                     match WorkspaceConfig::merge_models_json(&global_models_path, &ws_models_path) {
                         Ok(merged) => {
                             // Write merged JSON to a temp file that lives for this session
@@ -3548,9 +3593,7 @@ max_cpu_seconds = 32
         for name in ["minimal", "development", "strict"] {
             let profile = SandboxProfile::builtin(name).expect("built-in profile exists");
             assert!(
-                profile
-                    .deny_read
-                    .contains(&"/run/oqto".to_string()),
+                profile.deny_read.contains(&"/run/oqto".to_string()),
                 "{name} must hide the team runner control socket tree"
             );
         }
