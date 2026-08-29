@@ -78,7 +78,9 @@ fn run_directory_is_not_reachable() {
     let (_ok, out) = run_sandboxed(
         &config,
         workspace.path(),
-        "test -e /run/oqto && echo present || echo denied",
+        // deny_read masks the tree with an empty tmpfs, so the mountpoint
+        // /run/oqto may still exist; the socket tree under it must not.
+        "test -e /run/oqto/runner-sockets && echo present || echo denied",
     );
 
     assert_eq!(out, "denied");
