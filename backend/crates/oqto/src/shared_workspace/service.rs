@@ -1353,7 +1353,10 @@ impl SharedWorkspaceService {
         let uid = linux_users
             .next_available_uid()
             .with_context(|| "allocating UID for shared workspace user")?;
-        let gecos = format!("Oqto platform user shared workspace {}", username);
+        // GECOS is the ownership field parsed by oqto-host on subsequent ensure
+        // calls; it must be exactly "Oqto platform user <user_id>" — a display
+        // label here permanently breaks the ownership check.
+        let gecos = crate::local::linux_users::platform_gecos(username);
 
         let create_user_args = serde_json::json!({
             "username": username,

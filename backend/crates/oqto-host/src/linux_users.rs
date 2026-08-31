@@ -492,7 +492,7 @@ impl LinuxUsersConfig {
         // Add comment with platform user ID for reference (sanitize for useradd compat)
         // This GECOS field is used to verify ownership on subsequent calls
         args.push("-c".to_string());
-        args.push(sanitize_gecos(&format!("Oqto platform user {}", user_id)));
+        args.push(platform_gecos(user_id));
 
         args.push(username.to_string());
 
@@ -986,6 +986,15 @@ fn get_user_gecos(username: &str) -> Result<Option<String>> {
     }
 }
 
+/// Build the GECOS ownership field for a platform user.
+/// GECOS format: "Oqto platform user <user_id>" (colon removed by sanitize).
+/// This is the single source of truth for the format: `create_user` writes it and
+/// `extract_user_id_from_gecos` parses it to verify Linux-user ownership, so every
+/// provisioning path (personal and shared-workspace) must go through here.
+pub fn platform_gecos(user_id: &str) -> String {
+    sanitize_gecos(&format!("Oqto platform user {}", user_id))
+}
+
 /// Extract the platform user_id from a GECOS field.
 /// GECOS format: "Oqto platform user <user_id>" (colon removed by sanitize).
 fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
@@ -1389,6 +1398,22 @@ fn run_as_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn platform_gecos_round_trips_through_the_ownership_parser() {
+        for user_id in [
+            "usr_wismut",
+            "oqto_shared_buch-projekt",
+            "oqto_shared_it-i-group",
+        ] {
+            let gecos = platform_gecos(user_id);
+            assert_eq!(
+                extract_user_id_from_gecos(&gecos),
+                Some(user_id),
+                "ownership check must accept the GECOS we write for {user_id}"
+            );
+        }
+    }
 
     #[test]
     fn own_group_groupadd_form_is_acknowledged_without_usermgr_call() {

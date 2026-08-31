@@ -7,16 +7,30 @@ use oqto_uiconfig::{EvaluatedConfig, resolve_user_source};
 
 use crate::api::state::AppState;
 use crate::auth::CurrentUser;
+use crate::local::LinuxUsersConfig;
 
 const USER_CONFIG_RELATIVE_PATH: &str = ".config/oqto/oqto-ui.lua";
 
 fn user_config_path(state: &AppState, user_id: &str) -> PathBuf {
-    if let Ok(override_path) = std::env::var("OQTO_UI_CONFIG")
+    let override_path = std::env::var("OQTO_UI_CONFIG").ok();
+    resolve_user_config_path(
+        override_path.as_deref(),
+        state.linux_users.as_ref().filter(|config| config.enabled),
+        user_id,
+    )
+}
+
+fn resolve_user_config_path(
+    override_path: Option<&str>,
+    linux_users: Option<&LinuxUsersConfig>,
+    user_id: &str,
+) -> PathBuf {
+    if let Some(override_path) = override_path
         && !override_path.trim().is_empty()
     {
         return PathBuf::from(override_path);
     }
-    if let Some(linux_users) = state.linux_users.as_ref().filter(|config| config.enabled) {
+    if let Some(linux_users) = linux_users {
         if let Ok(Some(home)) = linux_users.get_home_dir(user_id) {
             return home.join(USER_CONFIG_RELATIVE_PATH);
         }
@@ -60,8 +74,23 @@ mod tests {
 
     #[test]
     fn config_path_is_under_user_config_directory() {
-        let state = AppState::default();
-        let path = user_config_path(&state, "test-user");
+        let linux_users = LinuxUsersConfig {
+            enabled: true,
+            prefix: "oqto_".to_string(),
+            uid_start: 2000,
+            group: "oqto".to_string(),
+            shell: "/bin/bash".to_string(),
+            use_sudo: true,
+            ..Default::default()
+        };
+        let path = resolve_user_config_path(None, Some(&linux_users), "test-user");
         assert!(path.ends_with(USER_CONFIG_RELATIVE_PATH));
+        assert!(path.starts_with("/home/oqto_test-user"));
+    }
+
+    #[test]
+    fn override_env_wins_over_everything() {
+        let path = resolve_user_config_path(Some("/tmp/custom-ui.lua"), None, "test-user");
+        assert_eq!(path, PathBuf::from("/tmp/custom-ui.lua"));
     }
 }
