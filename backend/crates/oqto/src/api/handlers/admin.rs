@@ -359,13 +359,20 @@ pub async fn sync_user_configs(
 
                 let _ = uid;
 
-                // Sync EAVS: provision virtual key if missing, then regenerate models.json.
+                // Sync EAVS: provision a virtual key only if the user has none,
+                // then regenerate models.json from the current catalog.
+                // The key lives embedded in models.json (legacy eavs.env is only
+                // read for migration), so a missing eavs.env does NOT mean a
+                // missing key -- checking only eavs.env here used to re-provision
+                // a fresh key for every user on every run.
                 if let Some(ref eavs_client) = state.eavs_client {
                     let home = linux_users
                         .get_user_home(&linux_username)
                         .unwrap_or_default();
-                    let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
-                    let has_eavs_key = std::path::Path::new(&eavs_env_path).exists();
+                    let models_path = format!("{}/.pi/agent/models.json", home);
+                    let has_eavs_key = read_eavs_key_from_models_json(&models_path).is_some()
+                        || std::path::Path::new(&format!("{}/.config/oqto/eavs.env", home))
+                            .exists();
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
