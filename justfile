@@ -904,3 +904,19 @@ update-pi: update-pi-local
 # Runs only when git working tree changed since the last successful check.
 agent-check-on-change profile="quick":
     ./scripts/dev/agent-check-on-change.sh {{profile}}
+
+# Publish Oqto's setup skill to the canonical byteowlz skills repository.
+sync-skills:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="${SKILLISSUES:-$HOME/byteowlz/skillissues}"
+    test -d "$target/skills" || { echo "skillissues repo not found: $target" >&2; exit 1; }
+    rm -rf "$target/skills/oqto-setup"
+    cp -a skills/oqto-setup "$target/skills/"
+    just --justfile "$target/Justfile" update-readme
+    git -C "$target" add skills/oqto-setup README.md
+    if [[ -n "$(git -C "$target" status --porcelain -- skills/oqto-setup README.md)" ]]; then
+        git -C "$target" commit -m "skills/oqto-setup: sync from oqto_refactor" -- skills/oqto-setup README.md
+    else
+        echo "oqto-setup is already up to date"
+    fi
