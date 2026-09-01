@@ -1,0 +1,27 @@
+:root {
+	color-scheme: light dark;
+	font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+	margin: 0;
+	padding: 2rem;
+	background: #101410;
+	color: #e2e6e2;
+}
+
+main {
+	max-width: 40rem;
+	display: grid;
+	gap: 0.75rem;
+}
+
+button {
+	min-height: 44px;
+	padding: 0 1rem;
+	border: 1px solid #3ba77c;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}

@@ -4,17 +4,33 @@ import {
 	VISUAL_RUNTIME_MODE_DEFAULT,
 	prepareVisualRuntimeDocument,
 } from "@/features/sessions/visual-runtime";
+import {
+	decideAppPermissions,
+	fetchAppPresentation,
+	getAppPermissions,
+	listAppCandidates,
+	listAppInstances,
+	publishApp,
+} from "@/lib/api/apps";
 import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
+import type { AppCandidateSummary } from "@/src/generated/AppCandidateSummary";
+import type { AppInstanceSummary } from "@/src/generated/AppInstanceSummary";
+import type { AppPermissionRequest } from "@/src/generated/AppPermissionRequest";
+import type { AppPresentationDocument } from "@/src/generated/AppPresentationDocument";
 import { AppWindow, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { AppPermissionDialog } from "./AppPermissionDialog";
+import { RuntimeOqtoAppFrame } from "./RuntimeOqtoAppFrame";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AppTab {
+export interface LegacyHtmlAppTab {
+	kind: "legacy-html";
 	id: string;
 	filePath: string;
 	title: string;
@@ -22,14 +38,32 @@ export interface AppTab {
 	pinned: boolean;
 }
 
+export interface OqtoAppTab {
+	kind: "oqto-app";
+	id: string;
+	instanceId: string;
+	installationId: string;
+	definitionId: string;
+	title: string;
+	/** Self-contained inlined document fetched over the authenticated API. */
+	html: string;
+	pinned: boolean;
+}
+
+export type AppTab = LegacyHtmlAppTab | OqtoAppTab;
+
 interface AppViewProps {
 	workspacePath?: string | null;
 	/** Tabs managed by parent */
 	tabs: AppTab[];
 	activeTabId: string | null;
-	onSetActiveTab: (id: string) => void;
+	onSetActiveTab: (id: string | null) => void;
 	onCloseTab: (id: string) => void;
 	onUpdateTab: (id: string, patch: Partial<AppTab>) => void;
+	onOpenOqtoApp: (
+		instance: AppInstanceSummary,
+		presentation: AppPresentationDocument,
+	) => void;
 	className?: string;
 	onExpand?: () => void;
 	onCollapse?: () => void;
@@ -190,6 +224,277 @@ function titleFromPath(filePath: string): string {
 	return name.replace(/\.html?$/i, "");
 }
 
+function RuntimeAppCatalog({
+	workspacePath,
+	onOpen,
+}: {
+	workspacePath: string;
+	onOpen: (
+		instance: AppInstanceSummary,
+		presentation: AppPresentationDocument,
+	) => void;
+}) {
+	const { t } = useTranslation();
+	const [candidates, setCandidates] = useState<AppCandidateSummary[]>([]);
+	const [instances, setInstances] = useState<AppInstanceSummary[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [busyAppId, setBusyAppId] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [permissionRequest, setPermissionRequest] =
+		useState<AppPermissionRequest | null>(null);
+	const [permissionError, setPermissionError] = useState<string | null>(null);
+
+	const load = useCallback(async () => {
+		setLoading(true);
+		setError(null);
+		try {
+			const [candidateList, instanceList] = await Promise.all([
+				listAppCandidates(workspacePath),
+				listAppInstances(workspacePath),
+			]);
+			setCandidates(candidateList.candidates);
+			setInstances(instanceList.instances);
+		} catch (loadError) {
+			setError(
+				loadError instanceof Error ? loadError.message : t("apps.loadFailed"),
+			);
+		} finally {
+			setLoading(false);
+		}
+	}, [workspacePath, t]);
+
+	// useeffect-guardrail: allow: runtime App discovery must follow the selected
+	// authenticated work directory and is cancelled by React on unmount.
+	useEffect(() => {
+		void load();
+	}, [load]);
+
+	const openInstance = useCallback(
+		async (instance: AppInstanceSummary) => {
+			setBusyAppId(instance.app_id);
+			setError(null);
+			try {
+				if (instance.status === "awaiting_permission") {
+					const status = await getAppPermissions(
+						workspacePath,
+						instance.instance_id,
+					);
+					setPermissionError(null);
+					setPermissionRequest(status.request);
+					return;
+				}
+				const presentation = await fetchAppPresentation(
+					workspacePath,
+					instance.instance_id,
+				);
+				onOpen(instance, presentation);
+			} catch (openError) {
+				setError(
+					openError instanceof Error ? openError.message : t("apps.openFailed"),
+				);
+			} finally {
+				setBusyAppId(null);
+			}
+		},
+		[workspacePath, onOpen, t],
+	);
+
+	const publishCandidate = useCallback(
+		async (candidate: AppCandidateSummary) => {
+			setBusyAppId(candidate.app_id);
+			setError(null);
+			try {
+				const result = await publishApp(workspacePath, candidate.app_id);
+				if (
+					result.status === "awaiting_permission" &&
+					result.permission_request
+				) {
+					setPermissionError(null);
+					setPermissionRequest(result.permission_request);
+					await load();
+					return;
+				}
+				if (result.status !== "instance_ready" || !result.instance) {
+					throw new Error(result.rejection?.message ?? t("apps.publishFailed"));
+				}
+				const presentation = await fetchAppPresentation(
+					workspacePath,
+					result.instance.instance_id,
+				);
+				onOpen(result.instance, presentation);
+				await load();
+			} catch (publishError) {
+				setError(
+					publishError instanceof Error
+						? publishError.message
+						: t("apps.publishFailed"),
+				);
+			} finally {
+				setBusyAppId(null);
+			}
+		},
+		[workspacePath, onOpen, load, t],
+	);
+
+	const decidePermission = useCallback(
+		async (decision: "allow" | "deny") => {
+			if (!permissionRequest) return;
+			setBusyAppId(permissionRequest.app_id);
+			setPermissionError(null);
+			try {
+				const status = await decideAppPermissions(
+					workspacePath,
+					permissionRequest.instance_id,
+					decision,
+					permissionRequest.content_digest,
+				);
+				setPermissionRequest(null);
+				await load();
+				if (decision === "allow") {
+					const refreshed = (
+						await listAppInstances(workspacePath)
+					).instances.find(
+						(instance) => instance.instance_id === status.request.instance_id,
+					);
+					if (!refreshed) throw new Error(t("apps.openFailed"));
+					const presentation = await fetchAppPresentation(
+						workspacePath,
+						refreshed.instance_id,
+					);
+					onOpen(refreshed, presentation);
+				}
+			} catch (decisionError) {
+				setPermissionError(
+					decisionError instanceof Error
+						? decisionError.message
+						: t("apps.publishFailed"),
+				);
+			} finally {
+				setBusyAppId(null);
+			}
+		},
+		[permissionRequest, workspacePath, load, onOpen, t],
+	);
+
+	return (
+		<div className="h-full overflow-y-auto p-3 space-y-4">
+			<AppPermissionDialog
+				request={permissionRequest}
+				busy={
+					permissionRequest !== null && busyAppId === permissionRequest.app_id
+				}
+				error={permissionError}
+				onAllow={() => void decidePermission("allow")}
+				onNotNow={() => {
+					setPermissionRequest(null);
+					setPermissionError(null);
+				}}
+				onClose={() => {
+					setPermissionRequest(null);
+					setPermissionError(null);
+				}}
+			/>
+			<div className="flex items-center justify-between gap-3">
+				<div>
+					<h2 className="text-sm font-semibold">{t("apps.title")}</h2>
+					<p className="text-xs text-muted-foreground">
+						{t("apps.description")}
+					</p>
+				</div>
+				<button
+					type="button"
+					onClick={() => void load()}
+					className="min-h-11 min-w-11 inline-flex items-center justify-center border border-border text-muted-foreground hover:text-foreground"
+					aria-label={t("common.refresh")}
+				>
+					<RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+				</button>
+			</div>
+
+			{error && (
+				<div className="border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">
+					{error}
+				</div>
+			)}
+
+			{instances.length > 0 && (
+				<section className="space-y-2">
+					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+						{t("apps.installed")}
+					</h3>
+					{instances.map((instance) => (
+						<div
+							key={instance.instance_id}
+							className="border border-border p-3 flex items-center justify-between gap-3"
+						>
+							<div className="min-w-0">
+								<div className="text-sm font-medium truncate">
+									{instance.title.en}
+								</div>
+								<div className="text-xs text-muted-foreground font-mono">
+									{instance.version}
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={() => void openInstance(instance)}
+								disabled={busyAppId === instance.app_id}
+								className="min-h-11 px-3 border border-primary text-sm text-foreground disabled:opacity-50"
+							>
+								{instance.status === "awaiting_permission"
+									? t("apps.needsPermission")
+									: t("common.open")}
+							</button>
+						</div>
+					))}
+				</section>
+			)}
+
+			<section className="space-y-2">
+				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					{t("apps.workspaceCandidates")}
+				</h3>
+				{!loading && candidates.length === 0 && (
+					<p className="text-xs text-muted-foreground">{t("apps.noneFound")}</p>
+				)}
+				{candidates.map((candidate) => (
+					<div
+						key={candidate.app_id}
+						className="border border-border p-3 space-y-2"
+					>
+						<div className="flex items-center justify-between gap-3">
+							<div className="min-w-0">
+								<div className="text-sm font-medium truncate">
+									{candidate.title.en}
+								</div>
+								<div className="text-xs text-muted-foreground font-mono">
+									{candidate.version}
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={() => void publishCandidate(candidate)}
+								disabled={
+									candidate.state !== "publishable" ||
+									busyAppId === candidate.app_id
+								}
+								className="min-h-11 px-3 border border-primary text-sm text-foreground disabled:opacity-50"
+							>
+								{t("apps.publishAndOpen")}
+							</button>
+						</div>
+						{candidate.rejection && (
+							<p className="text-xs text-destructive">
+								{candidate.rejection.message}
+							</p>
+						)}
+					</div>
+				))}
+			</section>
+		</div>
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -201,11 +506,13 @@ export const AppView = memo(function AppView({
 	onSetActiveTab,
 	onCloseTab,
 	onUpdateTab,
+	onOpenOqtoApp,
 	className,
 	onExpand,
 	onCollapse,
 	isExpanded,
 }: AppViewProps) {
+	const { t } = useTranslation();
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const { resolvedTheme } = useTheme();
 	const theme = resolvedTheme === "dark" ? "dark" : "light";
@@ -214,7 +521,7 @@ export const AppView = memo(function AppView({
 
 	// Load file content for a tab
 	const loadTab = useCallback(
-		async (tab: AppTab) => {
+		async (tab: LegacyHtmlAppTab) => {
 			if (!workspacePath) return;
 			setLoading(true);
 			try {
@@ -240,7 +547,7 @@ export const AppView = memo(function AppView({
 
 	// Load content when active tab changes or has no content
 	useEffect(() => {
-		if (activeTab && !activeTab.content) {
+		if (activeTab?.kind === "legacy-html" && !activeTab.content) {
 			void loadTab(activeTab);
 		}
 	}, [activeTab, loadTab]);
@@ -248,6 +555,7 @@ export const AppView = memo(function AppView({
 	// Handle postMessage from iframe
 	useEffect(() => {
 		const handler = async (e: MessageEvent) => {
+			if (activeTab?.kind !== "legacy-html") return;
 			if (!e.data || e.data.source !== "oqto-app") return;
 			const iframe = iframeRef.current;
 			if (!iframe || e.source !== iframe.contentWindow) return;
@@ -354,10 +662,12 @@ export const AppView = memo(function AppView({
 
 		window.addEventListener("message", handler);
 		return () => window.removeEventListener("message", handler);
-	}, [workspacePath, theme]);
+	}, [workspacePath, theme, activeTab?.kind]);
 
-	// Push theme changes to iframe
+	// Push theme changes only to the deprecated srcdoc runtime. Runtime-discovered
+	// Apps negotiate theme through the exact-origin SDK Bridge in a later slice.
 	useEffect(() => {
+		if (activeTab?.kind !== "legacy-html") return;
 		const iframe = iframeRef.current;
 		if (!iframe?.contentWindow) return;
 		const vars = theme === "dark" ? DARK_THEME_VARS : LIGHT_THEME_VARS;
@@ -365,34 +675,23 @@ export const AppView = memo(function AppView({
 			{ source: "oqto-host", type: "theme_change", theme, vars },
 			"*",
 		);
-	}, [theme]);
+	}, [theme, activeTab?.kind]);
 
 	const handleRefresh = useCallback(() => {
-		if (activeTab) {
+		if (activeTab?.kind === "legacy-html") {
 			onUpdateTab(activeTab.id, { content: "" });
 			void loadTab(activeTab);
 		}
 	}, [activeTab, onUpdateTab, loadTab]);
 
-	// Auto-collapse when no tabs remain
-	useEffect(() => {
-		if (tabs.length === 0 && onCollapse) {
-			onCollapse();
-		}
-	}, [tabs.length, onCollapse]);
-
-	if (tabs.length === 0) {
-		return null;
-	}
-
 	const preparedDocument = useMemo(() => {
-		if (!activeTab?.content) return null;
+		if (activeTab?.kind !== "legacy-html" || !activeTab.content) return null;
 		const withHostShim = injectApphost(activeTab.content, theme);
 		return prepareVisualRuntimeDocument({
 			html: withHostShim,
 			mode: VISUAL_RUNTIME_MODE_DEFAULT,
 		});
-	}, [activeTab?.content, theme]);
+	}, [activeTab, theme]);
 
 	const srcdoc = preparedDocument?.html;
 	const runtimeDiagnostics = preparedDocument?.diagnostics ?? [];
@@ -406,6 +705,19 @@ export const AppView = memo(function AppView({
 			{/* Tab bar */}
 			<div className="flex items-center gap-0.5 px-1 py-1 border-b border-border bg-muted/30 min-h-[36px]">
 				<div className="flex-1 flex items-center gap-0.5 overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+					<button
+						type="button"
+						onClick={() => onSetActiveTab(null)}
+						className={cn(
+							"flex items-center gap-1.5 px-2.5 py-1 text-xs transition-colors",
+							activeTabId === null
+								? "bg-background text-foreground"
+								: "text-muted-foreground hover:text-foreground",
+						)}
+					>
+						<AppWindow className="w-3 h-3" />
+						<span>{t("apps.catalog")}</span>
+					</button>
 					{tabs.map((tab) => (
 						<button
 							key={tab.id}
@@ -437,16 +749,18 @@ export const AppView = memo(function AppView({
 					))}
 				</div>
 				<div className="flex items-center gap-0.5 flex-shrink-0">
-					<button
-						type="button"
-						onClick={handleRefresh}
-						className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
-						title="Refresh"
-					>
-						<RefreshCw
-							className={cn("w-3.5 h-3.5", loading && "animate-spin")}
-						/>
-					</button>
+					{activeTab?.kind === "legacy-html" && (
+						<button
+							type="button"
+							onClick={handleRefresh}
+							className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+							title="Refresh"
+						>
+							<RefreshCw
+								className={cn("w-3.5 h-3.5", loading && "animate-spin")}
+							/>
+						</button>
+					)}
 					{onExpand && !isExpanded && (
 						<button
 							type="button"
@@ -489,19 +803,40 @@ export const AppView = memo(function AppView({
 
 			{/* Iframe */}
 			<div className="flex-1 min-h-0 relative">
-				{loading && (
+				{activeTab === null && workspacePath && (
+					<RuntimeAppCatalog
+						workspacePath={workspacePath}
+						onOpen={onOpenOqtoApp}
+					/>
+				)}
+				{activeTab === null && !workspacePath && (
+					<div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+						{t("apps.noWorkspace")}
+					</div>
+				)}
+				{loading && activeTab?.kind === "legacy-html" && (
 					<div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10">
 						<RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
 					</div>
 				)}
-				{srcdoc && (
+				{activeTab?.kind === "oqto-app" && (
+					<RuntimeOqtoAppFrame
+						key={activeTab.id}
+						instanceId={activeTab.instanceId}
+						installationId={activeTab.installationId}
+						definitionId={activeTab.definitionId}
+						html={activeTab.html}
+						title={activeTab.title}
+					/>
+				)}
+				{activeTab?.kind === "legacy-html" && srcdoc && (
 					<iframe
 						ref={iframeRef}
-						key={activeTab?.id}
+						key={activeTab.id}
 						srcDoc={srcdoc}
 						sandbox="allow-scripts allow-forms allow-modals allow-popups"
 						className="w-full h-full border-0"
-						title={activeTab?.title ?? "App"}
+						title={activeTab.title}
 					/>
 				)}
 			</div>

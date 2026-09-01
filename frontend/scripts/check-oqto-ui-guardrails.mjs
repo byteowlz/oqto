@@ -13,6 +13,7 @@ const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const LAYERS = [
 	"app",
 	"layout",
+	"compositor",
 	"sessions",
 	"chat",
 	"engine",
@@ -25,7 +26,8 @@ const LAYERS = [
 const ALLOWED_DIRECT_IMPORTS = {
 	engine: new Set(["engine"]),
 	app: new Set(LAYERS),
-	layout: new Set(["layout", "platform"]),
+	layout: new Set(["layout", "compositor", "platform"]),
+	compositor: new Set(["compositor", "platform"]),
 	sessions: new Set(["sessions", "platform"]),
 	chat: new Set(["chat", "engine", "platform"]),
 	files: new Set(["files", "platform"]),
@@ -38,6 +40,7 @@ const ALLOWED_DIRECT_IMPORTS = {
 const ALLOWED_PROJECT_ALIASES = {
 	app: ["@/hooks/use-document-event"],
 	layout: [],
+	compositor: [],
 	sessions: [],
 	chat: [
 		"@/components/chat/tool-call-card",
@@ -201,6 +204,24 @@ function sourceLayer(root, file) {
 
 function moduleArea(root, file) {
 	return sourceLayer(root, file);
+}
+
+// ADR-0041: the compositor kernel is a framework-independent deep module and
+// the compositor's persistence codec is the only serialization site.
+const COMPOSITOR_KERNEL_PREFIX = "compositor/kernel/";
+const COMPOSITOR_SEAM_FILES = new Set(["compositor/index.ts"]);
+const COMPOSITOR_SERIALIZATION_PATTERN =
+	/^compositor\/kernel\/persistence(\/|\.)/;
+const KERNEL_FORBIDDEN_GLOBALS = new Set([
+	"window",
+	"document",
+	"navigator",
+	"crypto",
+	"performance",
+]);
+
+function isCompositorKernelFile(relative) {
+	return relative.startsWith(COMPOSITOR_KERNEL_PREFIX);
 }
 
 function violation(rule, file, node, sourceFile, message) {
@@ -790,6 +811,21 @@ function inspectFile(
 				);
 			}
 
+			if (
+				isCompositorKernelFile(relative) &&
+				!moduleSpecifier.startsWith(".")
+			) {
+				violations.push(
+					violation(
+						"compositor/kernel-import",
+						relative,
+						node,
+						sourceFile,
+						`The compositor kernel is framework-independent; it may not import packages, aliases, or adapters: ${moduleSpecifier}`,
+					),
+				);
+			}
+
 			const resolved = resolveInternalImport(
 				sourceRoot,
 				absolutePath,
@@ -798,6 +834,36 @@ function inspectFile(
 			);
 			if (resolved) {
 				edges.push(resolved);
+				const targetRelative = normalizedRelative(sourceRoot, resolved);
+				if (
+					isCompositorKernelFile(relative) &&
+					!isCompositorKernelFile(targetRelative)
+				) {
+					violations.push(
+						violation(
+							"compositor/kernel-import",
+							relative,
+							node,
+							sourceFile,
+							`The compositor kernel may only import kernel modules: ${moduleSpecifier}`,
+						),
+					);
+				}
+				if (
+					isCompositorKernelFile(targetRelative) &&
+					!isCompositorKernelFile(relative) &&
+					!COMPOSITOR_SEAM_FILES.has(relative)
+				) {
+					violations.push(
+						violation(
+							"compositor/kernel-seam",
+							relative,
+							node,
+							sourceFile,
+							"Compositor kernel internals are reachable only through compositor/index.ts",
+						),
+					);
+				}
 				const targetLayer = sourceLayer(sourceRoot, resolved);
 				if (
 					layer &&
@@ -904,6 +970,102 @@ function inspectFile(
 					node,
 					sourceFile,
 					`${oversizedOptions.name} has ${oversizedOptions.fields} fields; limit is 8`,
+				),
+			);
+		}
+
+		if (layer === "compositor" && node.kind === ts.SyntaxKind.AnyKeyword) {
+			violations.push(
+				violation(
+					"types/compositor-any",
+					relative,
+					node,
+					sourceFile,
+					"'any' is forbidden everywhere in the compositor; model the type explicitly",
+				),
+			);
+		}
+
+		if (isCompositorKernelFile(relative)) {
+			if (
+				ts.isPropertyAccessExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				((node.expression.text === "Math" && node.name.text === "random") ||
+					(node.expression.text === "Date" && node.name.text === "now") ||
+					(node.expression.text === "performance" && node.name.text === "now"))
+			) {
+				violations.push(
+					violation(
+						"compositor/kernel-determinism",
+						relative,
+						node,
+						sourceFile,
+						`${node.expression.text}.${node.name.text} is nondeterministic; the kernel derives everything from its inputs`,
+					),
+				);
+			}
+			if (
+				ts.isNewExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				node.expression.text === "Date"
+			) {
+				violations.push(
+					violation(
+						"compositor/kernel-determinism",
+						relative,
+						node,
+						sourceFile,
+						"Wall-clock time is not layout state; the kernel derives everything from its inputs",
+					),
+				);
+			}
+			if (
+				ts.isIdentifier(node) &&
+				KERNEL_FORBIDDEN_GLOBALS.has(node.text) &&
+				!ts.isPropertyAccessExpression(node.parent) &&
+				!ts.isQualifiedName(node.parent)
+			) {
+				violations.push(
+					violation(
+						"compositor/kernel-import",
+						relative,
+						node,
+						sourceFile,
+						`${node.text} is a host global; the kernel imports no DOM, network, or persistence implementation`,
+					),
+				);
+			}
+			if (
+				ts.isPropertyAccessExpression(node) &&
+				ts.isIdentifier(node.expression) &&
+				KERNEL_FORBIDDEN_GLOBALS.has(node.expression.text)
+			) {
+				violations.push(
+					violation(
+						"compositor/kernel-import",
+						relative,
+						node,
+						sourceFile,
+						`${node.expression.text}.${node.name.text} is a host API; the kernel imports no DOM, network, or persistence implementation`,
+					),
+				);
+			}
+		}
+
+		if (
+			layer === "compositor" &&
+			ts.isPropertyAccessExpression(node) &&
+			ts.isIdentifier(node.expression) &&
+			node.expression.text === "JSON" &&
+			!COMPOSITOR_SERIALIZATION_PATTERN.test(relative)
+		) {
+			violations.push(
+				violation(
+					"compositor/serialization-boundary",
+					relative,
+					node,
+					sourceFile,
+					"Layout serialization lives only in the versioned kernel persistence codec",
 				),
 			);
 		}

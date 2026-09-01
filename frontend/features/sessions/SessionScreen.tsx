@@ -3,6 +3,7 @@
 import { ContextWindowGauge } from "@/components/data-display";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { type Features, getFeatures } from "@/features/chat/api";
+import type { AppTab } from "@/features/sessions/components/AppView";
 import {
 	type FileTreeState,
 	initialFileTreeState,
@@ -10,6 +11,8 @@ import {
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useMayUseTerminal } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
+import type { AppInstanceSummary } from "@/src/generated/AppInstanceSummary";
+import type { AppPresentationDocument } from "@/src/generated/AppPresentationDocument";
 
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -608,20 +611,14 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, []);
 
 	// --- App tabs state ---
-	const [appTabs, setAppTabs] = useState<
-		Array<{
-			id: string;
-			filePath: string;
-			title: string;
-			content: string;
-			pinned: boolean;
-		}>
-	>([]);
+	const [appTabs, setAppTabs] = useState<AppTab[]>([]);
 	const [activeAppTabId, setActiveAppTabId] = useState<string | null>(null);
 
 	const handleOpenAsApp = useCallback((filePath: string) => {
 		setAppTabs((prev) => {
-			const existing = prev.find((t) => t.filePath === filePath);
+			const existing = prev.find(
+				(t) => t.kind === "legacy-html" && t.filePath === filePath,
+			);
 			if (existing) {
 				setActiveAppTabId(existing.id);
 				return prev;
@@ -630,10 +627,56 @@ export const SessionScreen = memo(function SessionScreen() {
 			const name = filePath.split("/").pop() ?? filePath;
 			const title = name.replace(/\.html?$/i, "");
 			setActiveAppTabId(id);
-			return [...prev, { id, filePath, title, content: "", pinned: false }];
+			return [
+				...prev,
+				{
+					kind: "legacy-html",
+					id,
+					filePath,
+					title,
+					content: "",
+					pinned: false,
+				},
+			];
 		});
 		setExpandedView("app");
 	}, []);
+
+	const handleOpenOqtoApp = useCallback(
+		(instance: AppInstanceSummary, presentation: AppPresentationDocument) => {
+			const id = `oqto-app:${instance.instance_id}`;
+			setAppTabs((prev) => {
+				const existing = prev.find(
+					(tab) =>
+						tab.kind === "oqto-app" && tab.instanceId === instance.instance_id,
+				);
+				setActiveAppTabId(existing?.id ?? id);
+				if (existing) {
+					return prev.map((tab) =>
+						tab.id === existing.id && tab.kind === "oqto-app"
+							? { ...tab, html: presentation.html }
+							: tab,
+					);
+				}
+				return [
+					...prev,
+					{
+						kind: "oqto-app",
+						id,
+						instanceId: instance.instance_id,
+						installationId: instance.installation_id,
+						definitionId: instance.definition_id,
+						title: instance.title.en,
+						html: presentation.html,
+						pinned: false,
+					},
+				];
+			});
+			setActiveView("app");
+			setExpandedView("app");
+		},
+		[setActiveView],
+	);
 
 	const handleCloseAppTab = useCallback(
 		(id: string) => {
@@ -652,9 +695,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleUpdateAppTab = useCallback(
-		(id: string, patch: Partial<(typeof appTabs)[number]>) => {
+		(id: string, patch: Partial<AppTab>) => {
 			setAppTabs((prev) =>
-				prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+				prev.map((t) => (t.id === id ? ({ ...t, ...patch } as AppTab) : t)),
 			);
 		},
 		[],
@@ -773,7 +816,10 @@ export const SessionScreen = memo(function SessionScreen() {
 									handleOpenAsApp(signal.path);
 								} else if (signal.action === "close") {
 									setAppTabs((prev) => {
-										const tab = prev.find((t) => t.filePath === signal.path);
+										const tab = prev.find(
+											(t) =>
+												t.kind === "legacy-html" && t.filePath === signal.path,
+										);
 										if (tab) handleCloseAppTab(tab.id);
 										return prev;
 									});
@@ -1231,7 +1277,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								icon={Globe}
 								label="Browser"
 							/>
-							{appTabs.length > 0 && (
+							{normalizedWorkspacePath && (
 								<TabButton
 									activeView={activeView}
 									onSelect={setActiveView}
@@ -1358,6 +1404,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									onSetActiveTab={setActiveAppTabId}
 									onCloseTab={handleCloseAppTab}
 									onUpdateTab={handleUpdateAppTab}
+									onOpenOqtoApp={handleOpenOqtoApp}
 									onExpand={() => setExpandedView("app")}
 								/>
 							</Suspense>
@@ -1454,6 +1501,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										onSetActiveTab={setActiveAppTabId}
 										onCloseTab={handleCloseAppTab}
 										onUpdateTab={handleUpdateAppTab}
+										onOpenOqtoApp={handleOpenOqtoApp}
 										isExpanded
 										onCollapse={() => setExpandedView(null)}
 									/>
@@ -1617,7 +1665,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									icon={Globe}
 									label="Browser"
 								/>
-								{appTabs.length > 0 && (
+								{normalizedWorkspacePath && (
 									<CollapsedTabButton
 										activeView={activeView}
 										onSelect={(view) => {
@@ -1696,7 +1744,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										label="Browser"
 										hideLabel
 									/>
-									{appTabs.length > 0 && (
+									{normalizedWorkspacePath && (
 										<TabButton
 											activeView={activeView}
 											onSelect={setActiveView}
@@ -1837,6 +1885,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												onSetActiveTab={setActiveAppTabId}
 												onCloseTab={handleCloseAppTab}
 												onUpdateTab={handleUpdateAppTab}
+												onOpenOqtoApp={handleOpenOqtoApp}
 												onExpand={() => setExpandedView("app")}
 											/>
 										</Suspense>

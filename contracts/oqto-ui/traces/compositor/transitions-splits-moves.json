@@ -1,0 +1,1432 @@
+{
+	"format": "oqto-compositor-transitions",
+	"formatVersion": 2,
+	"schemaVersion": 2,
+	"name": "splits-and-moves",
+	"description": "Container-relative splits growing spanning neighbors, cross-Container moves, in-Container reordering, semantic resize, remove empty behavior with grid repair, and typed unknown-target rejections.",
+	"initial": {
+		"schemaVersion": 2,
+		"revision": 0,
+		"idSeed": 8,
+		"strategy": "grid",
+		"activeArrangementId": "arrangement-0",
+		"activeWorkspace": {
+			"kind": "all"
+		},
+		"arrangements": [
+			{
+				"id": "arrangement-0",
+				"grid": {
+					"rows": [
+						{
+							"id": "track-1",
+							"size": {
+								"unit": "fraction",
+								"value": 1
+							}
+						}
+					],
+					"columns": [
+						{
+							"id": "track-2",
+							"size": {
+								"unit": "fixed",
+								"value": 320,
+								"min": 240
+							}
+						},
+						{
+							"id": "track-3",
+							"size": {
+								"unit": "fraction",
+								"value": 2,
+								"min": 360
+							}
+						},
+						{
+							"id": "track-4",
+							"size": {
+								"unit": "fraction",
+								"value": 1,
+								"min": 280
+							}
+						}
+					],
+					"placements": [
+						{
+							"containerId": "container-5",
+							"row": 0,
+							"column": 0,
+							"rowSpan": 1,
+							"colSpan": 1
+						},
+						{
+							"containerId": "container-6",
+							"row": 0,
+							"column": 1,
+							"rowSpan": 1,
+							"colSpan": 1
+						},
+						{
+							"containerId": "container-7",
+							"row": 0,
+							"column": 2,
+							"rowSpan": 1,
+							"colSpan": 1
+						}
+					]
+				},
+				"scrollAnchorColumnId": null,
+				"lastFocusedContentId": "chat:session-1"
+			}
+		],
+		"containers": [
+			{
+				"id": "container-5",
+				"role": "navigation",
+				"emptyBehavior": "collapse",
+				"stack": [
+					{
+						"id": "sessions:catalog",
+						"kind": "sessions"
+					}
+				],
+				"activeContentId": "sessions:catalog",
+				"collapsed": false
+			},
+			{
+				"id": "container-6",
+				"role": "primary",
+				"emptyBehavior": "retain",
+				"stack": [
+					{
+						"id": "chat:session-1",
+						"kind": "chat"
+					}
+				],
+				"activeContentId": "chat:session-1",
+				"collapsed": false
+			},
+			{
+				"id": "container-7",
+				"role": "auxiliary",
+				"emptyBehavior": "retain",
+				"stack": [
+					{
+						"id": "files:workdir-1",
+						"kind": "files"
+					}
+				],
+				"activeContentId": "files:workdir-1",
+				"collapsed": false
+			}
+		],
+		"focusedContentId": "chat:session-1"
+	},
+	"steps": [
+		{
+			"transaction": {
+				"expectedRevision": 0,
+				"commands": [
+					{
+						"type": "open",
+						"content": {
+							"id": "git:workdir-1",
+							"kind": "git"
+						},
+						"target": {
+							"role": "auxiliary"
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 1,
+					"idSeed": 8,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 2,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								},
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "opened",
+						"contentId": "git:workdir-1",
+						"containerId": "container-7"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 1,
+				"commands": [
+					{
+						"type": "split",
+						"contentId": "files:workdir-1",
+						"relativeTo": "container-6",
+						"edge": "inline-end"
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 2,
+					"idSeed": 10,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-8",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-8",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "split",
+						"containerId": "container-8",
+						"edge": "inline-end"
+					},
+					{
+						"type": "moved",
+						"contentId": "files:workdir-1",
+						"from": "container-7",
+						"to": "container-8"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 2,
+				"commands": [
+					{
+						"type": "split",
+						"contentId": "git:workdir-1",
+						"relativeTo": "container-7",
+						"edge": "block-end"
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 3,
+					"idSeed": 12,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									},
+									{
+										"id": "track-11",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-8",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-10",
+										"row": 1,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [],
+							"activeContentId": null,
+							"collapsed": false
+						},
+						{
+							"id": "container-8",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-10",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "split",
+						"containerId": "container-10",
+						"edge": "block-end"
+					},
+					{
+						"type": "moved",
+						"contentId": "git:workdir-1",
+						"from": "container-7",
+						"to": "container-10"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 3,
+				"commands": [
+					{
+						"type": "move",
+						"contentId": "chat:session-1",
+						"destination": {
+							"containerId": "container-7"
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 4,
+					"idSeed": 12,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									},
+									{
+										"id": "track-11",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-8",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-10",
+										"row": 1,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [],
+							"activeContentId": null,
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-8",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-10",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "moved",
+						"contentId": "chat:session-1",
+						"from": "container-6",
+						"to": "container-7"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 4,
+				"commands": [
+					{
+						"type": "move",
+						"contentId": "chat:session-1",
+						"destination": {
+							"containerId": "container-7",
+							"position": 0
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 5,
+					"idSeed": 12,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									},
+									{
+										"id": "track-11",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-8",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-10",
+										"row": 1,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [],
+							"activeContentId": null,
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-8",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-10",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "moved",
+						"contentId": "chat:session-1",
+						"from": "container-7",
+						"to": "container-7"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 5,
+				"commands": [
+					{
+						"type": "resize",
+						"containerId": "container-7",
+						"axis": "inline",
+						"size": {
+							"unit": "fraction",
+							"value": 3,
+							"min": 300
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 6,
+					"idSeed": 12,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									},
+									{
+										"id": "track-11",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 3,
+											"min": 300
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-8",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-10",
+										"row": 1,
+										"column": 3,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [],
+							"activeContentId": null,
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-8",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-10",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "resized",
+						"containerId": "container-7",
+						"axis": "inline"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 6,
+				"commands": [
+					{
+						"type": "close",
+						"contentId": "files:workdir-1"
+					}
+				]
+			},
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 7,
+					"idSeed": 12,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									},
+									{
+										"id": "track-11",
+										"size": {
+											"unit": "fraction",
+											"value": 0.5
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 3,
+											"min": 300
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-10",
+										"row": 1,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [],
+							"activeContentId": null,
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-10",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "git:workdir-1",
+									"kind": "git"
+								}
+							],
+							"activeContentId": "git:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				},
+				"events": [
+					{
+						"type": "closed",
+						"contentId": "files:workdir-1",
+						"containerId": "container-8"
+					},
+					{
+						"type": "container-removed",
+						"containerId": "container-8"
+					}
+				]
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 7,
+				"commands": [
+					{
+						"type": "resize",
+						"containerId": "container-6",
+						"axis": "inline",
+						"size": {
+							"unit": "fraction",
+							"value": 0
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": false,
+				"rejection": {
+					"reason": "invalid-command",
+					"detail": "resize requires a finite positive track size"
+				}
+			}
+		},
+		{
+			"transaction": {
+				"expectedRevision": 7,
+				"commands": [
+					{
+						"type": "move",
+						"contentId": "chat:session-1",
+						"destination": {
+							"containerId": "container-9999"
+						}
+					}
+				]
+			},
+			"expected": {
+				"ok": false,
+				"rejection": {
+					"reason": "unknown-container",
+					"containerId": "container-9999"
+				}
+			}
+		}
+	]
+}

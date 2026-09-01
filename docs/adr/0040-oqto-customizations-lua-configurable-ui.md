@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-19). Tracked by `oqto-nq3b`. Companions: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) (portable Views, layout tree, fidelity), [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md) (Apps plane), [ADR-0036](0036-interactive-output-parts-declarative-first.md) (declarative-first precedent), [ADR-0035](0035-unified-egress-tiers-traceability-pluggable-enforcers.md) (enforcement/grant precedent).
+Proposed (2026-08-19). Tracked by `oqto-nq3b`. Companions: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) (portable presentation and fidelity), [ADR-0041](0041-oqto-ui-container-compositor-and-agent-control.md) (Container compositor and layout transactions), [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md) (Apps plane), [ADR-0036](0036-interactive-output-parts-declarative-first.md) (declarative-first precedent), [ADR-0035](0035-unified-egress-tiers-traceability-pluggable-enforcers.md) (enforcement/grant precedent).
 
 Design research: `docs/frontend/oqto-ui-corner-mode-ux-research.md` and the corner-mode probes under `artifacts/oqto-ui/corner-mode-concepts/` (`oqto-m5sp`).
 
@@ -48,9 +48,9 @@ Hooks are event-driven with explicit fuel/time/memory budgets. A hook that excee
 | Primitive | Contract |
 | --- | --- |
 | **Action** | Named semantic operation (`session.switch`, `chat.send`, `tool.open`) with typed parameters; host-neutral; authorization enforced at execution, never at binding. |
-| **View** | ADR-0037 View instances, including App Views. Config references Views by identity; binding stays explicit and placement-independent. |
-| **Layout** | ADR-0037's versioned tree, extended with grid nodes. Multiple Chat Views may be open simultaneously; each leaf carries its own explicit Session binding. |
-| **Surface/Slot** | Named mount points: corner slots, edge strips, sheets, status segments, rail. Slots accept Menu or View references. |
+| **Container Content** | ADR-0041 Content instances, including first-party and App presentations. Config references Content by identity; binding stays explicit and placement-independent. |
+| **Layout** | ADR-0041's versioned Container compositor and semantic Grid. Multiple Chat Content items may be open simultaneously; each keeps its own explicit Session binding. |
+| **Surface/Slot** | Named mount points: corner slots, edge strips, sheets, status segments, rail. Slots accept Menu or Container Content references. |
 | **Menu** | Radial (quarter-arc at corners, ≤4 items, dead-zone cancel), carousel, fan, list. Items reference Actions; presentation is data. |
 | **Binding** | Input chords: keys, tap/hold/blank-release gestures (320 ms dwell, constant), controller mappings. Bindings reference Actions or Menus. |
 | **Provider** | Streaming, capability-gated list source (sessions, workdirs, files, message FTS, App-contributed, sandbox-tool-backed). Declared in a queryable catalog with versions. |
@@ -126,7 +126,7 @@ Native tools backing Providers (ripgrep-class search, indexers) run inside workd
 
 ### Relationship to Apps and the kernel
 
-- **Apps provide content** (Views, Actions, Providers) under ADR-0038 sandboxing and grants. **Customizations arrange and bind** — they may reference App contributions but binding never confers authority.
+- **Apps provide content** (App Content presentations, Actions, Providers) under ADR-0038 sandboxing and grants. **Customizations arrange and bind** — they may reference App contributions but binding never confers authority.
 - **The kernel is not configurable:** identity, authorization, grants, Session identity/authority, sandbox boundaries, recovery, and audit are outside the config plane. No Lua hook observes another tenant, another user, or Session content beyond its granted capabilities.
 - Provider result streaming uses the typed ephemeral-event path; search results are invalidation-class data, never durable truth (bus-replacement direction, `oqto-07q8`).
 
@@ -134,7 +134,7 @@ Native tools backing Providers (ripgrep-class search, indexers) run inside workd
 
 - The shell refactors toward interpreting Layer-1 data (slots, bindings, menus, layout) instead of hardcoding composition; this begins as the corner-mode preset is productized, and the gallery probes become executable acceptance tests for the primitives.
 - New mandatory infrastructure: schema versioning + migrations, wasmoon/mlua conformance suite, hook budgets, config doctor, provider catalog endpoint. These are acceptance criteria for the first shipped customization, not later hardening.
-- Multi-Chat grids force timeline virtualization and per-View subscriptions before the grid preset ships.
+- Multi-Chat grids force timeline virtualization and per-Content subscriptions before the grid preset ships.
 - The config plane adds a supported surface with real maintenance cost; the compensation is deleting bespoke one-off UI options (each becomes data on a primitive) and gaining preset-based UX experimentation without frontend releases.
 - Omarchy immediately supplies a broad, curated palette ecosystem and a real compatibility corpus, while Oqto owns translation, previews, accessibility validation, provenance, and deterministic host fallbacks.
 - Risks accepted: Lua's dynamic typing (mitigated by LuaCATS + load-time schema validation), the temptation to grow hooks into an app platform (mitigated by the hard rule and budgets), and deferred compiled-component support (revisited when a second producer exists).

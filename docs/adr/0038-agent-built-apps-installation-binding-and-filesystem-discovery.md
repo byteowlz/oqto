@@ -2,15 +2,15 @@
 
 ## Status
 
-Accepted (2026-08-09). Tracked by `oqto-171p`. Companion UI-host decision: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md).
+Accepted (2026-08-09). Tracked by `oqto-171p`. Companion UI-host decisions: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) and [ADR-0041](0041-oqto-ui-container-compositor-and-agent-control.md).
 
-This ADR refines [ADR-0027](0027-one-app-contract-oqtohost-surfaces-stay-bundled.md): the Host/Bridge/Gate capability principles and content-addressed Artifact direction survive, while App identity is sharpened into Definition, Installation, Instance, binding, and View. It generalizes [ADR-0036](0036-interactive-output-parts-declarative-first.md): declarative interaction and sandboxed web content are portable App presentations, whether embedded in Chat or opened as an OqtoUI View.
+This ADR refines [ADR-0027](0027-one-app-contract-oqtohost-surfaces-stay-bundled.md): the Host/Bridge/Gate capability principles and content-addressed Artifact direction survive, while App identity is sharpened into Definition, Installation, Instance, binding, and requester-local App Content. It generalizes [ADR-0036](0036-interactive-output-parts-declarative-first.md): declarative interaction and sandboxed web content are portable App presentations, whether embedded in Chat or opened as OqtoUI Container Content.
 
 ## Context
 
 Agent-built Apps need to work in React/Web, future GPUI desktop, native iOS, and Pi without loading untrusted generated code into the host process. A declarative component vocabulary gives safe native presentation but can become an expressiveness ceiling; sandboxed web content gives an escape hatch but must not inherit Oqto credentials or unrestricted capabilities.
 
-“Global App” also conflates five facts: what immutable App exists, where it is available, which durable object owns one use, what data that use may access, and where its View is docked. Filesystem placement under `.oqto/` is excellent for agent authoring and portability, but paths are mutable, copyable, mountable, symlinkable, and agent-writable.
+“Global App” also conflates five facts: what immutable App exists, where it is available, which durable object owns one use, what data that use may access, and where its requester-local Content presentation is placed. Filesystem placement under `.oqto/` is excellent for agent authoring and portability, but paths are mutable, copyable, mountable, symlinkable, and agent-writable.
 
 ## Decision
 
@@ -23,7 +23,7 @@ An App Definition may provide:
 
 No agent-authored React, Rust, Swift, or other code loads into an OqtoUI host process. Native iOS signing constraints and multi-user trust make this a contract, not a preference. App Sidecars remain governed by ADR-0027 and require their separate server-side trust/placement decision; this ADR does not turn presentation bundles into Sidecars.
 
-The declarative manifest names a versioned profile and required component capabilities. Hosts advertise supported profiles/components. The host selects a supported presentation when opening a View, considering allocated fidelity and user preference; it fails explicitly or uses a declared fallback when requirements are unavailable.
+The declarative manifest names a versioned profile and required component capabilities. Hosts advertise supported profiles/components. The host selects a supported presentation when opening App Content, considering allocated fidelity and user preference; it fails explicitly or uses a declared fallback when requirements are unavailable.
 
 An active presentation is not automatically replaced merely because a resize crosses a fidelity threshold. Hot switching is allowed only when the App declares compatible versioned instance-state serialization. Both presentations otherwise share host-managed App-instance storage and the same binding/capability grants, but may expose different presentation depth without claiming feature identity.
 
@@ -33,7 +33,7 @@ An active presentation is not automatically replaced merely because a resize cro
 - **App Installation:** makes a Definition available under a deployment, Account, Workspace, or work-directory owner and records provenance.
 - **App Instance:** one durable/logical use of an installed Definition.
 - **App binding:** explicit durable owner/data context for the Instance: deployment, Account, Workspace, work directory, Session, or a resource addressed beneath one of them.
-- **App View:** one local OqtoUI presentation of the Instance under ADR-0037.
+- **App Content:** one requester-local OqtoUI Container Content presentation of the Instance under ADR-0041; its rendered presentation is a View.
 
 “Global” is not a scope. Use the narrowest durable binding that contains all required data. A resource under a work directory is addressed by stable work-directory id plus policy-checked relative resource reference; host paths are never public resource identity.
 
@@ -48,13 +48,21 @@ An Installation constrains availability:
 
 Promotion to a broader Installation is explicit. A technically valid but broader-than-required binding is rejected by policy or requires an explicit broader grant; the host never silently widens the default.
 
-### Capability enforcement follows Instance and binding, not View placement
+### App copy transfers availability, not Instance data
+
+Copying or sharing an App creates availability for a target owner from the same immutable Definition; on the same deployment this may be another Installation reference rather than duplicated artifact bytes. Copying editable `.oqtoapp` source into a target work directory is a separate source-authoring action. Neither operation copies an existing Instance or its binding.
+
+The default is categorically data-isolated: no authoritative bound files/resources, Account-private KV/preferences, presentation state, grants, secret bindings, credentials, or runtime state move with an App Definition, Installation promotion, source copy, or new target Installation. A target Instance starts fresh except for immutable packaged fixtures or declared initialization defaults. A Workspace target may later support a fresh Workspace-owned shared Instance or member-local Instances according to the App's supported ownership/binding model; neither form inherits source Instance data implicitly.
+
+V0 supports code-and-availability copy only. A request to include Instance data fails explicitly as unsupported rather than guessing through a generic `include_data` switch. The canonical optional data-transfer interface is deferred until concrete Apps establish recurring semantics: versioned single documents (live notes/dgrmr), schema-aware directories and conflicts (file CRM), and connector references with mandatory target-side secret rebinding (YouTube). Likely mechanisms such as explicit resource selection, provenance, atomic/versioned copy, schema migration, and pinned export/import operations remain hypotheses until that evidence exists. Any future data copy is a separately authorized operation and creates an independent snapshot unless synchronization is explicitly designed; grants and secrets are never copied and must be granted or rebound at the target.
+
+### Capability enforcement follows Instance and binding, not Content placement
 
 Apps receive small orthogonal serializable Host capabilities such as files, Session input, instance storage, navigation, theme, and dialogs. A manifest requests capabilities; an authorized Account or Operator Identity grants them; the App cannot self-grant.
 
 Server-affecting capabilities—files, Session/agent action, egress, shared storage—flow through the runner-side Gate. The backend authenticates the acting Account/Operator Identity and membership/grant; the runner executes under the target work directory/Workspace Principal and verifies that mapped execution scope before exercising the capability. Neither Account authorization nor Principal isolation substitutes for the other. Host-local presentation operations such as theme reads, local navigation, or dialogs are allowlisted by the client Host and cannot confer server authority; any resulting server action still crosses the Gate. A Bridge only transports these contracts over `postMessage`, Glimpse JSON, `WKScriptMessageHandler`, or declarative callbacks.
 
-Docking, resizing, or opening an App View somewhere else never changes Installation, binding, grants, or shared state. Workspace-bound shared instance state requires a versioned concurrency/CAS contract before collaborative mutation ships; local layout placement is not that contract.
+Docking, resizing, or opening App Content somewhere else never changes Installation, binding, grants, or shared state. Workspace-bound shared instance state requires a versioned concurrency/CAS contract before collaborative mutation ships; local layout placement is not that contract.
 
 ### Recognized filesystem roots imply an Installation candidate, never authorization
 
@@ -85,6 +93,7 @@ Oqto owns mechanism: identity, persistence, validation, deterministic build, pac
 - Portable Apps work in web, GPUI, iOS, and Pi/Glimpse hosts, but arbitrary generated native plugins remain forbidden.
 - `.oqto/apps` is a discovery/build input, not an execution directory or permission boundary.
 - App source changes and promotions are explicit lifecycle events with auditable provenance.
+- Sharing, promotion, Definition reuse, and editable-source copy transfer no Instance data, preferences, grants, or secrets by default; optional data transfer remains fail-loud and deferred in v0.
 - Existing `window.apphost` behavior remains migration input under ADR-0027; new work targets one Host contract rather than extending the old stringly API.
 
 ## Rejected alternatives
@@ -92,7 +101,7 @@ Oqto owns mechanism: identity, persistence, validation, deterministic build, pac
 - **Declarative-only Apps:** safe and native but an expressiveness ceiling.
 - **Web-only Apps:** expressive but weak compact/native presentation.
 - **Unsandboxed generated native/React plugins:** incompatible with multi-user and mobile trust/signing.
-- **One generic `global` scope:** conflates deployment, Account, availability, binding, and View placement.
+- **One generic `global` scope:** conflates deployment, Account, availability, binding, and Content placement.
 - **Filesystem path as authority:** mutable and agent-writable; suitable provenance/default, unsafe grant source.
 - **Automatic rebuild/update on source change:** makes Definitions mutable and execution nondeterministic.
 - **Resizing always swaps native/web presentation:** destroys in-progress state unless explicitly supported.
@@ -110,4 +119,5 @@ Before agent-built Apps ship, tests and real traces must prove:
 7. Server capabilities require both acting Account/Operator authorization and target Principal execution isolation at the runner Gate; host-local presentation capabilities cannot bypass either.
 8. An agent discovers host capabilities, authors source, self-corrects precise validation errors, builds, previews target modes, and reproduces the same artifact.
 9. Revocation, uninstall, explicit Definition upgrade/migration, and binding-owner deletion leave no executable stale grant and preserve the declared audit/data-retention outcome.
-10. When a non-web host supports Apps, the same Definition/Instance/binding and Host contract pass that host’s native declarative and sandboxed-web conformance tests.
+10. Copying to private work-directory, shared Workspace, Account, and deployment targets creates no source Instance data, KV/preferences, grants, secret bindings, credentials, or presentation state; v0 requests to include data fail explicitly, and target Instances start from fixtures/defaults only.
+11. When a non-web host supports Apps, the same Definition/Instance/binding and Host contract pass that host’s native declarative and sandboxed-web conformance tests.

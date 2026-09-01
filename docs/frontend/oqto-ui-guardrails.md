@@ -3,22 +3,24 @@
 OqtoUI lives under `frontend/src/oqto-ui/` and follows ADR-0037/0038. It does not extend Workbench or legacy frontend state.
 
 ```text
-app/       composition and authenticated routes
-layout/    View identity, layout schema, docking/tabs, fidelity
-sessions/  Session catalog and navigation
-chat/      canonical Session timeline and composer
-files/     file projection and Files View
-gallery/   Gallery App vertical slice
-theme/     Base24 scheme binding and user theme customization
-platform/  live HTTP/event/storage adapter and shared contracts
-dev/       development-only scripted adapter and traces
+app/        composition and authenticated routes
+layout/     View identity, layout schema, docking/tabs, fidelity
+compositor/ ADR-0041 Container compositor: kernel/ (deterministic Layout Engine) and react/ (CSS Grid adapter)
+sessions/   Session catalog and navigation
+chat/       canonical Session timeline and composer
+files/      file projection and Files View
+gallery/    Gallery App vertical slice
+theme/      Base24 scheme binding and user theme customization
+platform/   live HTTP/event/storage adapter and shared contracts
+dev/        development-only scripted adapter and traces
 ```
 
 ## Dependency rules
 
 - `app` composes features.
 - A feature imports only itself and `platform`; it never reaches another feature's internal state.
-- `layout` imports only `layout` and `platform`.
+- `layout` imports only `layout`, `compositor`, and `platform`.
+- `compositor` imports only `compositor` and `platform`. Inside it, `kernel/` is the framework-independent Layout Engine (ADR-0041): it imports only kernel-relative modules — no packages, aliases, host globals, adapters, or nondeterminism (`Math.random`, `Date.now`, `new Date`, `performance.now`) — and everything outside `kernel/` reaches it only through `compositor/index.ts`. `any` is banned everywhere in `compositor`, layout serialization lives only in the versioned `kernel/persistence` codec, and the compositor may not depend on the legacy App presentation adapter.
 - `platform` imports no product feature. Browser/network/storage APIs and bounded `unknown` narrowing live only here.
 - `dev` imports only `dev` and the `platform` interface. Production code must not import `dev`.
 - No OqtoUI source imports legacy Chat, Sessions, App registry, contexts, sockets, or Workbench.

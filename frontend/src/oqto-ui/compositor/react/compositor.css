@@ -1,0 +1,98 @@
+/* CSS Grid projection of the semantic compositor grid. Track templates and
+   the scroll offset are computed custom properties; visual styling stays on
+   design tokens. Flush lanes sit outside the horizontally scrolled body. */
+
+.oqto-compositor {
+	display: flex;
+	flex-direction: column;
+	inline-size: 100%;
+	block-size: 100%;
+	min-block-size: 0;
+	background: var(--border);
+}
+
+.oqto-compositor-lane {
+	flex: none;
+	display: grid;
+	block-size: var(--oqto-lane-size);
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.oqto-compositor-body {
+	flex: 1;
+	min-block-size: 0;
+	overflow: hidden;
+}
+
+.oqto-compositor-grid {
+	display: grid;
+	grid-template-columns: var(--oqto-compositor-columns);
+	grid-template-rows: var(--oqto-compositor-rows);
+	block-size: 100%;
+	gap: 1px;
+	transform: translateX(calc(-1 * var(--oqto-compositor-scroll)));
+	transition: transform 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.oqto-compositor-grid {
+		transition: none;
+	}
+}
+
+.oqto-compositor-cell {
+	grid-row: var(--oqto-cell-row);
+	grid-column: var(--oqto-cell-column);
+	min-inline-size: 0;
+	min-block-size: 0;
+	display: flex;
+}
+
+.oqto-compositor-lane .oqto-compositor-cell {
+	grid-row: auto;
+	grid-column: 1;
+}
+
+.oqto-compositor-container {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-inline-size: 0;
+	min-block-size: 0;
+	overflow: hidden;
+	background: var(--background);
+	color: var(--foreground);
+}
+
+.oqto-compositor-tabs {
+	display: flex;
+	flex: none;
+	overflow-x: auto;
+	border-block-end: 1px solid var(--border);
+	background: var(--card);
+}
+
+.oqto-compositor-tab {
+	display: inline-flex;
+	align-items: center;
+}
+
+.oqto-compositor-tab[data-active] {
+	background: var(--background);
+	color: var(--primary);
+}
+
+.oqto-compositor-tab-close {
+	color: var(--muted-foreground);
+}
+
+.oqto-compositor-content {
+	flex: 1;
+	min-block-size: 0;
+	overflow: auto;
+}
+
+.oqto-compositor-empty {
+	block-size: 100%;
+	background: var(--muted);
+}

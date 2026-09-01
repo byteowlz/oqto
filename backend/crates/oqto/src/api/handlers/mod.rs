@@ -15,6 +15,7 @@
 
 pub(crate) mod admin;
 mod api_keys;
+mod apps;
 mod auth;
 mod chat;
 mod feedback;
@@ -32,6 +33,12 @@ mod ui_config;
 
 // API key handlers
 pub use api_keys::{create_api_key, delete_api_key, list_api_keys, revoke_api_key};
+
+// Runtime-discovered Oqto App handlers
+pub use apps::{
+    decide_app_permissions, get_app_permissions, get_app_presentation, list_app_candidates,
+    list_app_instances, publish_app, revoke_app_permissions,
+};
 
 // Session handlers and types
 pub use sessions::{

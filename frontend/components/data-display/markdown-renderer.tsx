@@ -405,8 +405,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 			return (
 				<button
 					type="button"
-					className="px-1 py-0.5 rounded text-[0.85em] font-mono text-primary underline underline-offset-2 whitespace-normal break-words [overflow-wrap:anywhere]"
-					style={{ backgroundColor: "var(--code-inline-bg)" }}
+					className="markdown-file-reference-inline inline border-0 bg-transparent p-0 text-left text-[0.85em] font-mono text-primary underline underline-offset-2 whitespace-normal [overflow-wrap:anywhere] hover:text-primary/80"
 					onClick={() => onFileReferenceOpen(reference)}
 				>
 					{children}
@@ -537,7 +536,11 @@ const markdownComponents: Components = {
 		);
 	},
 	ul({ children }) {
-		return <ul className="list-disc mb-3 space-y-1 pl-3">{children}</ul>;
+		return (
+			<ul className="mb-3 space-y-1 pl-3 [list-style-type:square]">
+				{children}
+			</ul>
+		);
 	},
 	ol({ children }) {
 		return <ol className="list-decimal mb-3 space-y-1 pl-3">{children}</ol>;

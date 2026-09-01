@@ -854,5 +854,45 @@
 			"label": "Preview {{path}}",
 			"close": "Close preview"
 		}
+	},
+	"apps": {
+		"title": "Oqto Apps",
+		"catalog": "Catalog",
+		"description": "Runtime-discovered Apps from this work directory",
+		"installed": "Installed",
+		"workspaceCandidates": "Workspace candidates",
+		"noneFound": "No App packages found under oqto-apps/",
+		"noWorkspace": "Select a work directory to browse Apps",
+		"publishAndOpen": "Publish & open",
+		"loadFailed": "Failed to load Apps",
+		"openFailed": "Failed to open App",
+		"publishFailed": "Failed to publish App",
+		"needsPermission": "Review access",
+		"permissions": {
+			"appRequest": "App access request",
+			"title": "Let {{app}} do these things?",
+			"description": "A short, separate grant for this App. You can remove it later.",
+			"capability": {
+				"files": "Files used by this App",
+				"operations": "ComfyUI actions",
+				"theme": "Appearance",
+				"kv": "App settings"
+			},
+			"filesReadOnly": "View the listed files in this work directory.",
+			"filesReadWrite": "View its outputs and job history, and create generation requests in the listed locations.",
+			"operationsSummary": "Run {{count}} named operation for this App.",
+			"operationsSummary_plural": "Run {{count}} named operations for this App.",
+			"themeSummary": "Match your current Oqto theme. This does not expose account data.",
+			"kvSummary": "Remember settings private to this App Instance.",
+			"agentContext": "This App is separate from your agent. Your agent may already work with files here; the App gets only the access listed above.",
+			"showDetails": "Show exact access",
+			"hideDetails": "Hide exact access",
+			"readOnly": "view only",
+			"readWrite": "view and create or update",
+			"watchChanges": "see changes as they happen",
+			"allow": "Allow",
+			"notNow": "Not now",
+			"saving": "Saving…"
+		}
 	}
 }

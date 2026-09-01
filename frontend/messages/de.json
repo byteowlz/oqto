@@ -854,5 +854,45 @@
 			"label": "Vorschau {{path}}",
 			"close": "Vorschau schließen"
 		}
+	},
+	"apps": {
+		"title": "Oqto Apps",
+		"catalog": "Katalog",
+		"description": "Zur Laufzeit entdeckte Apps aus diesem Arbeitsverzeichnis",
+		"installed": "Installiert",
+		"workspaceCandidates": "Kandidaten im Arbeitsverzeichnis",
+		"noneFound": "Keine App-Pakete unter oqto-apps/ gefunden",
+		"noWorkspace": "Arbeitsverzeichnis auswählen, um Apps zu durchsuchen",
+		"publishAndOpen": "Veröffentlichen & öffnen",
+		"loadFailed": "Apps konnten nicht geladen werden",
+		"openFailed": "App konnte nicht geöffnet werden",
+		"publishFailed": "App konnte nicht veröffentlicht werden",
+		"needsPermission": "Zugriff prüfen",
+		"permissions": {
+			"appRequest": "App-Zugriffsanfrage",
+			"title": "Darf {{app}} diese Dinge tun?",
+			"description": "Eine kurze, separate Freigabe für diese App. Du kannst sie später zurücknehmen.",
+			"capability": {
+				"files": "Von dieser App verwendete Dateien",
+				"operations": "ComfyUI-Aktionen",
+				"theme": "Darstellung",
+				"kv": "App-Einstellungen"
+			},
+			"filesReadOnly": "Die aufgeführten Dateien in diesem Arbeitsverzeichnis ansehen.",
+			"filesReadWrite": "Ausgaben und Auftragsverlauf ansehen und Generierungsanfragen an den aufgeführten Orten erstellen.",
+			"operationsSummary": "{{count}} benannte Aktion für diese App ausführen.",
+			"operationsSummary_plural": "{{count}} benannte Aktionen für diese App ausführen.",
+			"themeSummary": "Das aktuelle Oqto-Design übernehmen. Kontodaten werden nicht offengelegt.",
+			"kvSummary": "Einstellungen nur für diese App-Instanz merken.",
+			"agentContext": "Diese App ist von deinem Agenten getrennt. Dein Agent kann hier möglicherweise bereits mit Dateien arbeiten; die App erhält nur den oben aufgeführten Zugriff.",
+			"showDetails": "Genauen Zugriff anzeigen",
+			"hideDetails": "Genauen Zugriff ausblenden",
+			"readOnly": "nur ansehen",
+			"readWrite": "ansehen und erstellen oder aktualisieren",
+			"watchChanges": "Änderungen sofort sehen",
+			"allow": "Erlauben",
+			"notNow": "Nicht jetzt",
+			"saving": "Wird gespeichert…"
+		}
 	}
 }

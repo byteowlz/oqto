@@ -5,6 +5,7 @@
 pub mod agent_browser;
 pub mod api;
 pub mod api_keys;
+pub mod apps;
 pub mod audit;
 pub mod auth;
 pub mod canon;

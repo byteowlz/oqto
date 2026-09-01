@@ -442,7 +442,8 @@
 	}
 	/* Exclude compact UI elements */
 	.compact-header button,
-	.compact-header a {
+	.compact-header a,
+	.markdown-file-reference-inline {
 		min-height: unset;
 	}
 	/* Exclude chat input textarea - it has its own sizing */

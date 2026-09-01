@@ -2,13 +2,13 @@
 
 ## Status
 
-Accepted (2026-08-09). Tracked by `oqto-171p`. Companion App decision: [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md).
+Accepted (2026-08-09). Tracked by `oqto-171p`. Companion App decision: [ADR-0038](0038-agent-built-apps-installation-binding-and-filesystem-discovery.md). [ADR-0041](0041-oqto-ui-container-compositor-and-agent-control.md) supersedes this ADR's persisted split-tree layout and refines Views into Container Content hosted by grid-managed Containers; the remaining decisions here stay accepted.
 
 This ADR supersedes the **Workbench name, fixed desktop composition, temporary route names, and layer-oriented source tree** in [ADR-0031](0031-session-centric-workbench-shell.md) and [ADR-0032](0032-frontend-state-ownership-and-workbench-stack.md). It preserves their Workspace → work directory → Session hierarchy, Chat/Files core-default status, exclusive state-ownership table, framework-independent Session timeline, public identity rules, file-correctness requirements, parallel migration, and delete-after-cutover policy.
 
 ## Context
 
-“Workbench” introduced a product noun users do not need, and its fixed navigation/work-area/Files composition understated the desired flexibility. Sessions, Chat, Files, Editor, Image Editor, Terminal, and App Views must be rearrangeable without giving each arrangement its own state implementation. A narrow Files View must stay fast and useful; the same View, when enlarged, must grow into a modern high-performance file manager.
+“Workbench” introduced a product noun users do not need, and its fixed navigation/work-area/Files composition understated the desired flexibility. Sessions, Chat, Files, Editor, Image Editor, Terminal, and App Content must be rearrangeable without giving each arrangement its own state implementation. A narrow Files View must stay fast and useful; the same Content, when allocated more fidelity, must grow into a modern high-performance file manager.
 
 Oqto must also admit future GPUI desktop and native iOS clients without making React the product contract or forcing every host into a lowest-common-denominator widget toolkit.
 
@@ -22,19 +22,19 @@ The old interface stays operational until OqtoUI surpasses it in correctness, ca
 
 Live and scenario routes use the same catalog, timeline, Files, layout, and React implementations. Scenarios replace only external HTTP/event transport with scripted responses and recorded traces; there is no fixture runtime or second state model.
 
-### OqtoUI hosts rearrangeable first-party Views
+### OqtoUI hosts rearrangeable first-party Content
 
-A **View** is one presentation instance hosted by OqtoUI. Initial View kinds include Sessions, Chat, Files, Editor, Image Editor, and Terminal; Apps may provide App Views under ADR-0038. Chat and Files remain core defaults, but no View is hardwired to a permanent left/center/right region.
+A **View** is the rendered presentation of one Container Content item hosted by OqtoUI. Initial Content kinds include Sessions, Chat, Files, Editor, Image Editor, and Terminal; Apps may provide App Content under ADR-0038 and ADR-0041. Chat and Files remain core defaults, but no Content kind is hardwired to a permanent left/center/right region.
 
-Desktop layout is a versioned tree of split nodes and tab stacks containing View-instance references. Users may dock, tab, resize, swap, close, pin, or focus Views. Moving a View changes presentation only; it never changes owner, data binding, capabilities, or authorization.
+Desktop composition follows ADR-0041's versioned Container compositor: a semantic Grid arranges Containers, and each Container holds an ordered stack of Container Content references. Users may dock, tab, resize, swap, close, pin, or focus Content. Moving Content changes presentation only; it never changes owner, data binding, capabilities, or authorization.
 
-Every View has stable identity and an explicit owner: deployment, Account, Workspace, work directory, Session, or an addressed resource beneath one of those owners. Deleted or inaccessible owners render an explicit unresolved View while preserving the layout reference.
+Every Container Content item has stable identity and an explicit owner: deployment, Account, Workspace, work directory, Session, App Instance, or an addressed resource beneath one of those owners. Deleted or inaccessible owners render an explicit unresolved View while preserving the Content reference.
 
-Layouts are Account-namespaced, device/profile-local state initially: they survive reload on that device but not storage removal or movement to another device. The client `layout` feature validates and migrates the versioned schema. Profiles such as `desktop`, `desktop-big-picture`, `tablet`, and `mobile` do not overwrite one another; cross-device synchronization is deferred. Unknown future View kinds survive schema round trips and render as unavailable rather than being deleted. Layout documents contain references and sizes, never messages, file contents, sockets, or server authority.
+Layouts are Account-namespaced, device/Screen-Mode-local state initially: they survive reload on that device but not storage removal or movement to another device. The client `layout` feature validates and migrates the versioned schema. Screen Modes such as `desktop`, `desktop-big-picture`, `tablet`, and `mobile` (renamed from "Layout Profiles" by ADR-0043) do not overwrite one another; cross-device synchronization is deferred. Unknown future Content kinds survive schema round trips and render as unavailable rather than being deleted. Layout documents contain references and sizes, never messages, file contents, sockets, or server authority.
 
-Durable/server state follows the ADR-0032 owner; presentation state such as scroll, selection, focus, and pane mode is keyed by View id. Multiple Chat Views of one Session share its Session-owned composer draft but retain independent presentation state. Closing a View discards unpinned ephemeral presentation state without stopping/deleting its owner; a persisted/pinned View restores its versioned presentation state when supported.
+Durable/server state follows the ADR-0032 owner; presentation state such as scroll, selection, focus, and pane mode is keyed by stable Content id. Multiple Chat Content items for one Session share its Session-owned composer draft but retain independent presentation state. Closing Content discards unpinned ephemeral presentation state without stopping/deleting its owner; a persisted/pinned restoration descriptor restores versioned presentation state when supported.
 
-Mobile projects available Views into one focused destination, drawers, and switchers instead of applying the desktop split tree directly. First-party Terminal Views are work-directory-owned; opening and sending input requires current Account authorization and runner-mediated terminal commands. Dock placement never grants terminal access.
+Mobile projects available Content into one focused destination, drawers, and switchers instead of applying the desktop Grid directly. First-party Terminal Content is work-directory-owned; opening and sending input requires current Account authorization and runner-mediated terminal commands. Placement never grants terminal access.
 
 ### Fidelity derives from the allocated container
 
@@ -50,7 +50,7 @@ The web implementation lives under `frontend/src/oqto-ui/`:
 
 ```text
 app/          composition and routes
-layout/       splits, tabs, View registry, layout schema/storage
+layout/       compositor, Containers, Content registry, layout schema/storage
 sessions/     catalog and Sessions View
 chat/         SessionTimeline and Chat View
 files/        file projection and Files View
@@ -67,17 +67,17 @@ Before functional OqtoUI code lands, a second zero-baseline OqtoUI checker and g
 
 ### Protocol and behavior are portable; rendering stays native
 
-The canonical protocol, public identities, message parts, events, commands, layout schema, View descriptors, Base24 role data, and conformance traces are platform-neutral contracts. Rust remains the wire-type source of truth; a client receives generated types for its language when that client is implemented. Stringly handwritten event mirrors are forbidden.
+The canonical protocol, public identities, message parts, events, commands, layout schema, Container Content descriptors, Base24 role data, and conformance traces are platform-neutral contracts. Rust remains the wire-type source of truth; a client receives generated types for its language when that client is implemented. Stringly handwritten event mirrors are forbidden.
 
 React/Web, GPUI/Rust, and SwiftUI/UIKit render Views with native technology. Oqto does not build a universal component abstraction across them. Sanitized canonical event/command traces and expected settled snapshots live under `contracts/oqto-ui/traces/`; runner/backend integration tests produce and validate candidate traces, and reviewed fixtures are committed. Session timeline, file projection, and layout-state transitions use that corpus to prove semantic equivalence; pixel layout and native interaction are tested per client.
 
 A portable Rust client-core may be extracted after a second native client demonstrates enough shared behavior. Oqto does not impose WASM or UniFFI on the web client speculatively.
 
-Host-neutral agent intents address semantic View kinds, owners, resources, and commands—never React components, CSS selectors, GPUI widgets, or Swift types. Unsupported capabilities fail explicitly and report available alternatives.
+Host-neutral agent intents address semantic Container/Content kinds, owners, resources, and commands—never React components, CSS selectors, GPUI widgets, or Swift types. Optional compositor control follows ADR-0041's requester-local, revisioned, policy-limited transaction contract. Unsupported capabilities fail explicitly and report available alternatives.
 
-### Big Picture is a profile, not another runtime
+### Big Picture is a Screen Mode, not another runtime
 
-A Steam/Jellyfin-style Big Picture experience is an OqtoUI layout/input profile over the same catalog, Views, identities, and permissions. Semantic actions (`navigate`, `activate`, `back`, `search`, `menu`) map to keyboard, touch, gamepad, or remote input per client.
+A Steam/Jellyfin-style Big Picture experience is an OqtoUI Screen Mode — a layout/input class — over the same catalog, Content, identities, and permissions. Semantic actions (`navigate`, `activate`, `back`, `search`, `menu`) map to keyboard, touch, gamepad, or remote input per client.
 
 A work directory may optionally provide validated, relative, non-executable presentation data under `.oqto/` such as display name, icon, banner, poster, and tags. It never grants capabilities or changes ownership; missing values have deterministic fallbacks and unknown fields are preserved.
 
@@ -102,9 +102,9 @@ A work directory may optionally provide validated, relative, non-executable pres
 OqtoUI replaces the old interface only when evidence proves:
 
 1. `/oqto-ui` and `/dev/oqto-ui` drive the same feature models and recorded live traces settle to identical snapshots.
-2. Rearranging, resizing, tabbing, and focusing Views never changes ownership or authority and causes no unrelated View rerenders/refetches.
+2. Rearranging, resizing, tabbing, and focusing Content never changes ownership or authority and causes no unrelated Content rerenders/refetches.
 3. Files and Chat demonstrate compact through focused fidelity without forked state and meet ADR-0032 scale/latency/correctness gates.
 4. Session reconnect/reload converges to oqto-log with no duplicate, lost, reordered, or cross-Session content.
-5. Desktop, Big Picture, tablet, and mobile profiles preserve unknown Views and never overwrite one another; cache-clear/new-device behavior matches the explicitly device-local contract.
+5. Desktop, Big Picture, tablet, and mobile Screen Modes preserve unknown Content and never overwrite one another; cache-clear/new-device behavior matches the explicitly device-local contract.
 6. Required accessibility, keyboard/touch operation, English/German parity, PWA reconnect behavior, pilot-route authorization/build exclusion, and old-versus-new capability journeys pass in real clients.
 7. When a GPUI or iOS client ships, it must pass the shared protocol/projection trace corpus plus its own native interaction, performance, and accessibility gates; a stub renderer is not cross-platform proof.

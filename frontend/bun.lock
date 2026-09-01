@@ -1,10 +1,11 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "workspace-frontend",
       "dependencies": {
+        "@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#b29f60c",
         "@hookform/resolvers": "^5.2.2",
         "@mdxeditor/editor": "^4.0.2",
         "@mermaid-js/layout-elk": "^0.1.4",
@@ -97,6 +98,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "@byteowlz/oqto-app-sdk",
+  ],
   "packages": {
     "@acemir/cssom": ["@acemir/cssom@0.9.29", "", {}, "sha512-G90x0VW+9nW4dFajtjCoT+NM0scAfH9Mb08IcjgFHYbfiL/lU04dTF9JuVOi3/OH+DJCQdcIseSXkdCB9Ky6JA=="],
 
@@ -171,6 +175,8 @@
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@1.9.4", "", { "os": "win32", "cpu": "x64" }, "sha512-8Y5wMhVIPaWe6jw2H+KlEm4wP/f7EW3810ZLmDlrEEy5KvBsb9ECEfu/kMWD484ijfQ8+nIi0giMgu9g1UAuuA=="],
 
     "@braintree/sanitize-url": ["@braintree/sanitize-url@7.1.2", "", {}, "sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA=="],
+
+    "@byteowlz/oqto-app-sdk": ["@byteowlz/oqto-app-sdk@github:byteowlz/oqto-app-sdk#b29f60c", { "peerDependencies": { "react": ">=18.2.0 <20" }, "optionalPeers": ["react"] }, "byteowlz-oqto-app-sdk-b29f60c", "sha512-zotugjBtu/0Fd89ZHf4ZhOy/NFaga4ws8li4D5q7ZPhR3bnjkfOiMmPSyB4KLbRd06ytf2fvWyVPNy9bY7sm2w=="],
 
     "@chevrotain/cst-dts-gen": ["@chevrotain/cst-dts-gen@11.1.2", "", { "dependencies": { "@chevrotain/gast": "11.1.2", "@chevrotain/types": "11.1.2", "lodash-es": "4.17.23" } }, "sha512-XTsjvDVB5nDZBQB8o0o/0ozNelQtn2KrUVteIHSlPd2VAV2utEb6JzyCJaJ8tGxACR4RiBNWy5uYUHX2eji88Q=="],
 

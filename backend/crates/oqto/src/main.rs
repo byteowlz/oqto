@@ -35,6 +35,7 @@ mod agent_browser;
 
 mod api;
 mod api_keys;
+mod apps;
 mod audit;
 mod auth;
 mod container;
@@ -547,6 +548,8 @@ struct AppConfig {
     agent_browser: agent_browser::AgentBrowserConfig,
     /// Server configuration.
     server: ServerConfig,
+    /// Runtime-discovered Oqto App origin configuration.
+    apps: AppsConfig,
     /// Onboarding templates configuration.
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
@@ -565,6 +568,18 @@ struct ServerConfig {
     max_upload_size_mb: usize,
     /// Optional admin Unix socket path for local CLI access.
     admin_socket_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AppsConfig {
+    enabled: bool,
+}
+
+impl Default for AppsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 impl Default for ServerConfig {
@@ -662,6 +677,7 @@ impl Default for AppConfig {
             pi: PiConfig::default(),
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
+            apps: AppsConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
             feedback: feedback::FeedbackConfig::default(),
             placement: runner::placement::PlacementConfig::default(),
@@ -2529,6 +2545,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     );
     state = state.with_single_user(single_user);
     state = state.with_feedback_config(ctx.config.feedback.clone());
+    if ctx.config.apps.enabled {
+        state = state.with_apps(apps::AppRuntimeService::new(
+            apps::AppRepository::new(database.pool().clone()),
+            apps::AppArtifactStore::new(ctx.paths.data_dir.join("app-artifacts")),
+        ));
+    }
     state = state.with_placement_store(placement_store.clone());
     if ctx.config.placement.mode == runner::placement::PlacementMode::Container {
         let manager = Arc::new(runner::placement::PlacementManager::new(

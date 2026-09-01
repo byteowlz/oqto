@@ -287,6 +287,8 @@ pub struct AppState {
     pub audit_logger: Option<Arc<crate::audit::AuditLogger>>,
     /// Feedback configuration.
     pub feedback: crate::feedback::FeedbackConfig,
+    /// Runtime-discovered Oqto App lifecycle and immutable artifact service.
+    pub apps: Option<Arc<crate::apps::AppRuntimeService>>,
     /// EAVS client for LLM proxy integration (user provisioning, model catalog).
     pub eavs_client: Option<Arc<crate::eavs::EavsClient>>,
     /// Paths to eavs config files (for admin provider management).
@@ -369,6 +371,7 @@ impl AppState {
             session_targets: Arc::new(session_targets),
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
+            apps: None,
             eavs_client: None,
             eavs_config: None,
             eavs_oauth_enabled: false,
@@ -402,6 +405,11 @@ impl AppState {
 
     pub fn with_feedback_config(mut self, config: crate::feedback::FeedbackConfig) -> Self {
         self.feedback = config;
+        self
+    }
+
+    pub fn with_apps(mut self, service: crate::apps::AppRuntimeService) -> Self {
+        self.apps = Some(Arc::new(service));
         self
     }
 

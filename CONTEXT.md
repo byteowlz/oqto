@@ -99,12 +99,36 @@ A top-level section of the Oqto shell itself — routed, role-gated, build-time 
 _Avoid_: app (a Surface is not installable, shareable, or sandboxed)
 
 **OqtoUI**:
-The platform-neutral user-interface contract for Oqto, implemented by web/React today and potentially native desktop or mobile clients later. It hosts rearrangeable Views over the same canonical protocol and domain state; it is not the name of one framework implementation or one fixed screen composition.
-_Avoid_: Workbench (retired UI concept), frontend (too implementation-specific), app (an App may provide Views inside OqtoUI)
+The platform-neutral user-interface contract for Oqto, implemented by web/React today and potentially native desktop or mobile clients later. It composes Containers and Container Content over the same canonical protocol and domain state; it is not the name of one framework implementation or one fixed screen composition.
+_Avoid_: Workbench (retired UI concept), frontend (too implementation-specific), app (an App may provide Content inside OqtoUI)
+
+**Container**:
+A stable shell-layout region that arranges an ordered stack of Container Content and owns its placement constraints, chrome, active item, and allocated fidelity. A Container never owns the content's domain state, binding, capability, or authority (ADR-0041).
+_Avoid_: panel (only one possible placement), View (the presentation it hosts), App (one possible source of Content)
+
+**Container Content**:
+One addressable presentation item eligible for placement in a Container and represented by a tab when its stack has multiple items. Kinds include first-party Chat, Files, Git, Terminal, and an App Instance presentation; placement is requester-local and never changes the item's domain owner or authority (ADR-0041).
+_Avoid_: tab (the selector, not the content), App (a Definition, Installation, or Instance is not itself layout state)
 
 **View**:
-One presentation instance hosted by OqtoUI, with stable identity and an explicit deployment, Account, Workspace, work-directory, Session, or resource owner. Docking, resizing, or focusing a View changes presentation only and never changes its owner, data binding, or authority.
-_Avoid_: panel (only one possible placement), Surface (trusted top-level shell section), App (an App may provide one or more Views)
+The host-rendered presentation of one Container Content item at its allocated fidelity. Its stable Content identity references an explicit deployment, Account, Workspace, work-directory, Session, App Instance, or resource owner; moving, resizing, revealing, or focusing it changes presentation only and never its owner, data binding, or authority.
+_Avoid_: Container (the shell region hosting it), Surface (trusted top-level shell section), App (an App may provide one or more presentations)
+
+**Presentation Context**:
+The requester-local OqtoUI client connection and Screen Mode against which a presentation action is evaluated. It is derived from the authenticated originating interaction, never supplied or redirected by an Agent, and does not identify an Account-wide shared layout (ADR-0041).
+_Avoid_: Session (one Session may appear in several clients), Account layout (layouts are requester/client/Screen-Mode-local), frontend id (implementation-specific)
+
+**Screen Mode**:
+The device/input class a layout is kept for: desktop, tablet, mobile, Big Picture. Each Screen Mode keeps its own persisted layout and they never overwrite one another; the host selects the mode, the user arranges within it (ADR-0037, ADR-0043).
+_Avoid_: profile (rejected as vague), display mode (collides with the web `display-mode` media query)
+
+**Arrangement**:
+One complete, switchable layout within a Screen Mode: its Lanes, Containers, scroll position, and focus memory, optionally bound to a work directory. A binding is an organizational reference only and never confers authority (ADR-0043).
+_Avoid_: workspace (an Oqto tenancy entity), stack (a Container's Content list), desk
+
+**Lane**:
+A horizontal strip of Containers inside an Arrangement; the first or last Lane may be flush to the screen edge. A Lane hosts Container Content only — chrome such as status segments stays in Slots (ADR-0042).
+_Avoid_: bar, panel, dock, row track (the schema-level word)
 
 **Customization**:
 User- or Agent-authored configuration that arranges and binds the cockpit — layouts, Slots, Menus, Bindings, Pickers, theme roles — expressed as declarative data, optionally produced by sandboxed Lua, and applied in precedence layers (dist Preset, deployment, user, grant-gated workspace, ephemeral). A Customization arranges and binds; it never confers authority, computes content, or touches stores (ADR-0040).
@@ -122,8 +146,12 @@ A streaming, capability-gated list source (Sessions, work directories, file list
 _Avoid_: binary/tool (an implementation detail behind the catalog), source (ambiguous)
 
 **App**:
-An installable, shareable UI capability that reaches everything outside itself through the Host contract and may provide native-declarative and sandboxed-web presentations. Keep its facts independent: the Definition (versioned, content-addressed bundle + manifest), an Installation (availability and provenance under one owner), an Instance (one durable/logical use), its binding (explicit durable data owner/resource), and any local App Views.
+An installable, shareable UI capability that reaches everything outside itself through the Host contract and may provide native-declarative and sandboxed-web presentations. Keep its facts independent: the Definition (versioned, content-addressed bundle + manifest), an Installation (availability and provenance under one owner), an Instance (one durable/logical use), its binding (explicit durable data owner/resource), and any requester-local App Content presentations.
 _Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface, global app (name deployment/Account/Workspace/work-directory availability and binding explicitly)
+
+**App Copy**:
+Creation of App availability for another owner from an existing Definition, optionally accompanied by a separate editable-source copy. It creates no copy of an Instance, binding, authoritative data, preferences, grants, secrets, credentials, or presentation state by default; optional data transfer is a separate future operation derived from proven App needs (ADR-0038).
+_Avoid_: clone (implies Instance/data duplication), share data (availability and data movement are independent), promotion (one possible broader-scope lifecycle action)
 
 **Host**:
 The implementation of the capability contract an App is handed — files, kv, theme, notifications, egress, agent. The only surface through which an App reaches the outside world; a standalone App is one backed by a local or mock Host.

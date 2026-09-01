@@ -2579,14 +2579,24 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 					fileName,
 				);
 			}}
-			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			className="group flex w-full max-w-md min-w-0 items-center gap-2.5 border border-border bg-muted/20 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
+			data-testid="file-reference-card"
 		>
-			<FileIcon className="w-4 h-4 text-muted-foreground" />
-			<span className="font-medium">{fileName}</span>
-			<span className="text-xs text-muted-foreground">
-				{workspaceScopedPath}
+			<FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate font-medium" title={fileName}>
+					{fileName}
+				</span>
+				{workspaceScopedPath !== fileName && (
+					<span
+						className="block truncate text-xs text-muted-foreground"
+						title={workspaceScopedPath}
+					>
+						{workspaceScopedPath}
+					</span>
+				)}
 			</span>
-			<ExternalLink className="w-3 h-3 text-muted-foreground" />
+			<ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
 		</button>
 	);
 });

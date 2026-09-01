@@ -4074,10 +4074,12 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "log",
+ "mime_guess",
  "nanoid",
  "notify",
  "notify-rust",
  "once_cell",
+ "oqto-apps",
  "oqto-eavs",
  "oqto-files",
  "oqto-history",
@@ -4118,6 +4120,20 @@ dependencies = [
  "ts-rs",
  "urlencoding",
  "uuid 1.21.0",
+]
+
+[[package]]
+name = "oqto-apps"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "semver",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]

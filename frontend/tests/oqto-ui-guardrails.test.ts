@@ -97,6 +97,22 @@ describe("OqtoUI architecture guardrails", () => {
 		).not.toThrow();
 	});
 
+	it("accepts the compositor kernel/seam/persistence shape", () => {
+		const root = fixture({
+			"compositor/kernel/model.ts":
+				"export type LayoutRevision = number;\nexport const initialRevision: LayoutRevision = 0;\n",
+			"compositor/kernel/persistence.ts":
+				'import { initialRevision, type LayoutRevision } from "./model";\nexport const encode = (revision: LayoutRevision) => JSON.stringify({ revision, initialRevision });\n',
+			"compositor/index.ts":
+				'export { initialRevision } from "./kernel/model";\nexport { encode } from "./kernel/persistence";\n',
+			"compositor/react/host.ts":
+				'import { initialRevision } from "../index";\nexport const host = () => initialRevision;\n',
+		});
+		expect(() =>
+			execFileSync(process.execPath, [SCRIPT, "--source-root", root]),
+		).not.toThrow();
+	});
+
 	it("rejects an exception not approved by the project owner", () => {
 		const root = fixture({
 			"sessions/chat/View.tsx":
@@ -450,6 +466,90 @@ describe("OqtoUI architecture guardrails", () => {
 			files: {
 				"sessions/chat/View.tsx":
 					"export const View = () => <p>Start a new session</p>;\n",
+			},
+		},
+		{
+			name: "compositor kernel importing a framework package",
+			rule: "compositor/kernel-import",
+			files: {
+				"compositor/kernel/model.ts":
+					'import { useState } from "react";\nexport const model = useState;\n',
+			},
+		},
+		{
+			name: "compositor kernel importing a platform adapter",
+			rule: "compositor/kernel-import",
+			files: {
+				"compositor/kernel/engine.ts":
+					'import { readLayout } from "../../platform/layout/storage";\nexport const engine = readLayout;\n',
+				"platform/layout/storage.ts":
+					'export const readLayout = () => localStorage.getItem("oqto:layout");\n',
+			},
+		},
+		{
+			name: "compositor kernel touching a host global",
+			rule: "compositor/kernel-import",
+			files: {
+				"compositor/kernel/geometry.ts":
+					"export const width = () => window.innerWidth;\n",
+			},
+		},
+		{
+			name: "compositor kernel bypassed around the public seam",
+			rule: "compositor/kernel-seam",
+			files: {
+				"compositor/kernel/model.ts": "export const revision = 0;\n",
+				"compositor/react/host.ts":
+					'import { revision } from "../kernel/model";\nexport const host = () => revision;\n',
+			},
+		},
+		{
+			name: "compositor kernel bypassed from another layer",
+			rule: "compositor/kernel-seam",
+			files: {
+				"compositor/kernel/model.ts": "export const revision = 0;\n",
+				"layout/chrome/frame.ts":
+					'import { revision } from "@/src/oqto-ui/compositor/kernel/model";\nexport const frame = () => revision;\n',
+			},
+		},
+		{
+			name: "nondeterministic compositor kernel id",
+			rule: "compositor/kernel-determinism",
+			files: {
+				"compositor/kernel/ids.ts":
+					"export const mint = () => Math.random().toString();\n",
+			},
+		},
+		{
+			name: "wall-clock time in the compositor kernel",
+			rule: "compositor/kernel-determinism",
+			files: {
+				"compositor/kernel/engine.ts":
+					"export const stamp = () => Date.now();\n",
+			},
+		},
+		{
+			name: "any anywhere in the compositor",
+			rule: "types/compositor-any",
+			files: {
+				"compositor/react/host.ts":
+					"export const host = (value: string) => value as any;\n",
+			},
+		},
+		{
+			name: "serialization outside the kernel persistence codec",
+			rule: "compositor/serialization-boundary",
+			files: {
+				"compositor/react/save.ts":
+					"export const save = (value: { revision: number }) => JSON.stringify(value);\n",
+			},
+		},
+		{
+			name: "compositor depending on the legacy App presentation adapter",
+			rule: "architecture/legacy-import",
+			files: {
+				"compositor/react/legacy.ts":
+					'import { AppView } from "@/features/sessions/components/AppView";\nexport const legacy = AppView;\n',
 			},
 		},
 		{

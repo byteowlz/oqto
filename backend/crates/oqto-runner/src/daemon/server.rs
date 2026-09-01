@@ -662,6 +662,9 @@ impl Runner {
     }
 
     /// Get stdout broadcast receiver for a process.
+    // The error is the wire RunnerResponse returned directly to the client;
+    // boxing it here would only add an allocation before serialization.
+    #[allow(clippy::result_large_err)]
     async fn get_stdout_receiver(
         &self,
         process_id: &str,

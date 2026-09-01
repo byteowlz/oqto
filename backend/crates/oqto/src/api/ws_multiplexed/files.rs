@@ -877,6 +877,9 @@ impl TtydConnection {
 }
 
 impl TtydConnectionWrite {
+    // Mirrors tungstenite's own send signature; boxing the error would force
+    // conversions at every `?` passthrough call site.
+    #[allow(clippy::result_large_err)]
     async fn send(
         &mut self,
         msg: tokio_tungstenite::tungstenite::Message,

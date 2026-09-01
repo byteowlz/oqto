@@ -99,6 +99,26 @@ fn create_router_with_config_and_auth(
         .route("/oqto-ui/config", get(handlers::get_oqto_ui_config))
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
+        // Runtime-discovered Oqto Apps (original-UI migration surface).
+        .route("/apps/candidates", get(handlers::list_app_candidates))
+        .route("/apps/publish", post(handlers::publish_app))
+        .route("/apps/instances", get(handlers::list_app_instances))
+        .route(
+            "/apps/instances/{instance_id}/presentation",
+            post(handlers::get_app_presentation),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions",
+            get(handlers::get_app_permissions),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions/decision",
+            post(handlers::decide_app_permissions),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions/revoke",
+            post(handlers::revoke_app_permissions),
+        )
         .route(
             "/projects/locations",
             get(handlers::list_workspace_locations).post(handlers::upsert_workspace_location),
@@ -508,7 +528,7 @@ fn create_router_with_config_and_auth(
             "/a2ui/surface/{session_id}/{surface_id}",
             delete(a2ui_handlers::delete_surface),
         )
-        .with_state(state);
+        .with_state(state.clone());
 
     let permissions_policy =
         HeaderValue::from_static("geolocation=(), microphone=(self), camera=()");
