@@ -178,6 +178,7 @@ entry = "bundle/index.html"
             digest,
             total_bytes: 5,
             operations: Vec::new(),
+            agent_context: None,
         }
     }
 

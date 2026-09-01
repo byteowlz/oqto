@@ -13,6 +13,25 @@ body {
 main {
 	max-width: 40rem;
 	display: grid;
+	gap: 1rem;
+}
+
+.eyebrow, .hint, #status {
+	color: #9ba69f;
+	font-size: 0.8rem;
+}
+
+h1, p { margin: 0; }
+
+output {
+	font-size: clamp(4rem, 20vw, 9rem);
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
 	gap: 0.75rem;
 }
 
@@ -24,4 +43,9 @@ button {
 	color: inherit;
 	font: inherit;
 	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
 }

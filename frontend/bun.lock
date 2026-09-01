@@ -5,7 +5,7 @@
     "": {
       "name": "workspace-frontend",
       "dependencies": {
-        "@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#b29f60c",
+        "@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#36e6417",
         "@hookform/resolvers": "^5.2.2",
         "@mdxeditor/editor": "^4.0.2",
         "@mermaid-js/layout-elk": "^0.1.4",
@@ -176,7 +176,7 @@
 
     "@braintree/sanitize-url": ["@braintree/sanitize-url@7.1.2", "", {}, "sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA=="],
 
-    "@byteowlz/oqto-app-sdk": ["@byteowlz/oqto-app-sdk@github:byteowlz/oqto-app-sdk#b29f60c", { "peerDependencies": { "react": ">=18.2.0 <20" }, "optionalPeers": ["react"] }, "byteowlz-oqto-app-sdk-b29f60c", "sha512-zotugjBtu/0Fd89ZHf4ZhOy/NFaga4ws8li4D5q7ZPhR3bnjkfOiMmPSyB4KLbRd06ytf2fvWyVPNy9bY7sm2w=="],
+    "@byteowlz/oqto-app-sdk": ["@byteowlz/oqto-app-sdk@github:byteowlz/oqto-app-sdk#36e6417", { "peerDependencies": { "react": ">=18.2.0 <20" }, "optionalPeers": ["react"] }, "byteowlz-oqto-app-sdk-36e6417", "sha512-JTKJd65Pie9D7GSMBUMPoGIaT3PABRFgwKLk2Tq7DZOFIl0afT5NEWbU9NOsS7gt6CgroyBDTn+wstMZWJiPkw=="],
 
     "@chevrotain/cst-dts-gen": ["@chevrotain/cst-dts-gen@11.1.2", "", { "dependencies": { "@chevrotain/gast": "11.1.2", "@chevrotain/types": "11.1.2", "lodash-es": "4.17.23" } }, "sha512-XTsjvDVB5nDZBQB8o0o/0ozNelQtn2KrUVteIHSlPd2VAV2utEb6JzyCJaJ8tGxACR4RiBNWy5uYUHX2eji88Q=="],
 

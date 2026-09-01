@@ -5,6 +5,7 @@
 //! to an authorized work directory and publish the returned immutable snapshot
 //! into a trusted artifact store.
 
+mod agent_context;
 mod capability;
 mod digest;
 mod discovery;
@@ -16,10 +17,15 @@ mod source;
 #[cfg(test)]
 mod test_source;
 
+pub use agent_context::{
+    AGENT_CONTEXT_SCHEMA_V0, AgentContextCatalog, ContextActionDefinition, ContextDisclosure,
+    ContextLifetime, ContextTopicDefinition, parse_agent_context_catalog,
+};
 pub use capability::{
-    AppCapabilityKind, AppCapabilityRequest, AppFileAccess, AppFileResourceRequest,
-    AppFilesCapability, AppOperationsCapability, CAPABILITY_FILES, CAPABILITY_KV,
-    CAPABILITY_OPERATIONS, CAPABILITY_THEME, DEFAULT_OPERATIONS_TABLE, OPERATIONS_DIR,
+    AppAgentContextCapability, AppCapabilityKind, AppCapabilityRequest, AppFileAccess,
+    AppFileResourceRequest, AppFilesCapability, AppOperationsCapability, CAPABILITY_AGENT_CONTEXT,
+    CAPABILITY_FILES, CAPABILITY_KV, CAPABILITY_OPERATIONS, CAPABILITY_THEME, CONTEXT_DIR,
+    DEFAULT_CONTEXT_CATALOG, DEFAULT_OPERATIONS_TABLE, OPERATIONS_DIR, RawAgentContextCapability,
     RawCapabilityTable, RawFileResource, RawFilesCapability, RawOperationsCapability,
 };
 pub use digest::{ContentDigest, digest_bundle};

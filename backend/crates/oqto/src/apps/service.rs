@@ -7,11 +7,12 @@ use oqto_apps::{
     ValidatedManifest, discover_candidates, snapshot_bundle,
 };
 use oqto_protocol::apps::{
-    AppCandidateList, AppCandidateState, AppCandidateSummary, AppCapabilityRequest, AppFileAccess,
-    AppFileResourceRequest, AppInstanceList, AppInstanceStatus, AppInstanceSummary,
-    AppLocalizedTitle, AppOperationRequest, AppOwnerKind, AppPermissionDecision,
-    AppPermissionRequest, AppPermissionState, AppPermissionStatus, AppPresentationKind,
-    AppPresentationSummary, AppPublishResult, AppPublishStatus, AppRejection, AppRejectionCode,
+    AppCandidateList, AppCandidateState, AppCandidateSummary, AppCapabilityRequest,
+    AppContextActionRequest, AppContextTopicRequest, AppFileAccess, AppFileResourceRequest,
+    AppInstanceList, AppInstanceStatus, AppInstanceSummary, AppLocalizedTitle, AppOperationRequest,
+    AppOwnerKind, AppPermissionDecision, AppPermissionRequest, AppPermissionState,
+    AppPermissionStatus, AppPresentationKind, AppPresentationSummary, AppPublishResult,
+    AppPublishStatus, AppRejection, AppRejectionCode,
 };
 use sha2::{Digest, Sha256};
 
@@ -165,7 +166,7 @@ impl AppRuntimeService {
                     // Pre-publication browsing shows the request without
                     // operation summaries; those live in the immutable
                     // operations table resolved at publication.
-                    requested_capabilities: capability_requests(&manifest, &[]),
+                    requested_capabilities: capability_requests(&manifest, &[], None),
                     state: AppCandidateState::Publishable,
                     rejection: None,
                 },
@@ -293,7 +294,11 @@ impl AppRuntimeService {
 
         // The canonical request is computed once, pinned with the Definition,
         // and later approved verbatim. Nothing re-derives it from source.
-        let capabilities = capability_requests(&snapshot.manifest, &snapshot.operations);
+        let capabilities = capability_requests(
+            &snapshot.manifest,
+            &snapshot.operations,
+            snapshot.agent_context.as_ref(),
+        );
         let requested_capabilities_json = serde_json::to_string(&capabilities)
             .context("serializing the App capability request")?;
         let requires_permission = !capabilities.is_empty();
@@ -549,6 +554,102 @@ impl AppRuntimeService {
     /// Render the App Instance presentation as one self-contained HTML
     /// document from the immutable artifact. Delivery rides the normal
     /// authenticated API; no unauthenticated URL for App content exists.
+    async fn authorize_kv(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+    ) -> Result<bool> {
+        let Some(instance) = self
+            .repository
+            .get_instance_for_work_directory(instance_id, &work_directory.id)
+            .await?
+        else {
+            return Ok(false);
+        };
+        if instance.status != STATUS_ACTIVE {
+            return Ok(false);
+        }
+        let Some(grant) = self.repository.get_capability_grant(instance_id).await? else {
+            return Ok(false);
+        };
+        if grant.decision != "allowed"
+            || grant.revoked_at.is_some()
+            || grant.decided_by_account_id != account_id
+            || grant.definition_id != instance.definition_id
+            || grant.content_digest != instance.content_digest
+        {
+            return Ok(false);
+        }
+        let capabilities = stored_capabilities(&grant.request_json)?;
+        Ok(capabilities
+            .iter()
+            .any(|capability| matches!(capability, AppCapabilityRequest::Kv)))
+    }
+
+    pub async fn kv_get(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        key: &str,
+    ) -> Result<Option<Option<serde_json::Value>>> {
+        validate_kv_key(key)?;
+        if !self
+            .authorize_kv(account_id, work_directory, instance_id)
+            .await?
+        {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.repository
+                .get_instance_kv(instance_id, account_id, key)
+                .await?,
+        ))
+    }
+
+    pub async fn kv_set(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> Result<bool> {
+        validate_kv_key(key)?;
+        validate_kv_value(value)?;
+        if !self
+            .authorize_kv(account_id, work_directory, instance_id)
+            .await?
+        {
+            return Ok(false);
+        }
+        self.repository
+            .set_instance_kv(instance_id, account_id, key, value)
+            .await?;
+        Ok(true)
+    }
+
+    pub async fn kv_delete(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        key: &str,
+    ) -> Result<bool> {
+        validate_kv_key(key)?;
+        if !self
+            .authorize_kv(account_id, work_directory, instance_id)
+            .await?
+        {
+            return Ok(false);
+        }
+        self.repository
+            .delete_instance_kv(instance_id, account_id, key)
+            .await?;
+        Ok(true)
+    }
+
     pub async fn presentation_document(
         &self,
         work_directory: &AuthorizedWorkDirectory,
@@ -586,6 +687,7 @@ impl AppRuntimeService {
 fn capability_requests(
     manifest: &ValidatedManifest,
     operations: &[ResolvedOperation],
+    agent_context: Option<&oqto_apps::AgentContextCatalog>,
 ) -> Vec<AppCapabilityRequest> {
     manifest
         .capabilities
@@ -623,8 +725,72 @@ fn capability_requests(
             }
             oqto_apps::AppCapabilityRequest::Theme => AppCapabilityRequest::Theme,
             oqto_apps::AppCapabilityRequest::Kv => AppCapabilityRequest::Kv,
+            oqto_apps::AppCapabilityRequest::AgentContext(_) => {
+                AppCapabilityRequest::AgentContext {
+                    topics: agent_context
+                        .map(|catalog| catalog.topics.as_slice())
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|topic| AppContextTopicRequest {
+                            id: topic.id.clone(),
+                            title: topic.title.clone(),
+                            disclosure: format!("{:?}", topic.disclosure).to_lowercase(),
+                        })
+                        .collect(),
+                    actions: agent_context
+                        .map(|catalog| catalog.actions.as_slice())
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|action| AppContextActionRequest {
+                            id: action.id.clone(),
+                            title: action.title.clone(),
+                            requires_user_activation: action.requires_user_activation,
+                        })
+                        .collect(),
+                }
+            }
         })
         .collect()
+}
+
+fn validate_kv_key(key: &str) -> Result<()> {
+    if key.is_empty()
+        || key.len() > 256
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+    {
+        return Err(anyhow!(
+            "App KV key must contain 1-256 ASCII letters, digits, '.', '_', '-', or '/'"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_kv_value(value: &serde_json::Value) -> Result<()> {
+    const MAX_KV_BYTES: usize = 65_536;
+    const MAX_DEPTH: usize = 32;
+    fn depth(value: &serde_json::Value, current: usize) -> bool {
+        if current > MAX_DEPTH {
+            return false;
+        }
+        match value {
+            serde_json::Value::Array(values) => {
+                values.iter().all(|value| depth(value, current + 1))
+            }
+            serde_json::Value::Object(values) => {
+                values.values().all(|value| depth(value, current + 1))
+            }
+            _ => true,
+        }
+    }
+    if !depth(value, 0) {
+        return Err(anyhow!("App KV value exceeds maximum nesting depth"));
+    }
+    if serde_json::to_vec(value)?.len() > MAX_KV_BYTES {
+        return Err(anyhow!("App KV value exceeds {MAX_KV_BYTES} bytes"));
+    }
+    Ok(())
 }
 
 fn stored_capabilities(json: &str) -> Result<Vec<AppCapabilityRequest>> {

@@ -130,6 +130,16 @@ impl ValidatedManifest {
             .iter()
             .find_map(AppCapabilityRequest::as_operations)
     }
+
+    #[must_use]
+    pub fn agent_context_request(&self) -> Option<&crate::capability::AppAgentContextCapability> {
+        self.capabilities
+            .iter()
+            .find_map(|capability| match capability {
+                AppCapabilityRequest::AgentContext(context) => Some(context),
+                _ => None,
+            })
+    }
 }
 
 pub fn parse_manifest(

@@ -155,6 +155,9 @@ _Avoid_: prompt context (may imply automatic model injection), UI state dump, DO
 
 **App Context Topic**:
 One App Definition-declared Agent Context value with a stable topic ID, versioned bounded JSON Schema, lifetime, disclosure class, and monotonic runtime revision. Topic declarations are immutable Definition data; an App Instance may publish values only for its own declared topics through the Host (ADR-0044).
+
+**Context Attachment**:
+A user's explicit, visible choice to include one Context Provider topic at a particular revision with a Chat turn. It preserves provider identity, provenance, revision, and resolution policy as structured context; it is neither ambient Agent Context nor an instruction, and unavailable or changed state is never silently substituted (ADR-0044).
 _Avoid_: event (updates may be observed as events but the topic is state), tool (Actions are separate), global context
 
 **App**:

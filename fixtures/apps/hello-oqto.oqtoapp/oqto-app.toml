@@ -1,12 +1,14 @@
 schema = "oqto-app/v0"
 id = "hello-oqto"
-version = "0.1.0"
+version = "0.2.0"
 title = { en = "Hello Oqto", de = "Hallo Oqto" }
-description = "Zero-capability acceptance App for the first runtime slice"
+description = "Persisted-counter acceptance App for the private KV Bridge"
 presentations = ["sandboxed-web"]
-requested_capabilities = []
+requested_capabilities = ["kv"]
 bindings = ["work-directory"]
 default_binding = "work-directory"
+
+[capability.kv]
 
 [presentation.sandboxed-web]
 entry = "bundle/index.html"

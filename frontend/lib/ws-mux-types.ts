@@ -519,6 +519,12 @@ export type SystemWsEvent =
 	| ({ channel: "system"; type: "ping" } & WsEventBase)
 	| ({
 			channel: "system";
+			type: "app.lifecycle";
+			instance_id: string;
+			state: string;
+	  } & WsEventBase)
+	| ({
+			channel: "system";
 			type: "shared_workspace.updated";
 			workspace_id: string;
 			change_type: SharedWorkspaceChangeType;

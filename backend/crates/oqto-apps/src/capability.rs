@@ -22,11 +22,14 @@ pub const CAPABILITY_FILES: &str = "files";
 pub const CAPABILITY_OPERATIONS: &str = "operations";
 pub const CAPABILITY_THEME: &str = "theme";
 pub const CAPABILITY_KV: &str = "kv";
+pub const CAPABILITY_AGENT_CONTEXT: &str = "agent_context";
 
 /// Package-relative root holding immutable, content-addressed operation files.
 pub const OPERATIONS_DIR: &str = "operations";
 /// Conventional operations table path; any safe path under `operations/` works.
 pub const DEFAULT_OPERATIONS_TABLE: &str = "operations/table.toml";
+pub const CONTEXT_DIR: &str = "context";
+pub const DEFAULT_CONTEXT_CATALOG: &str = "context/catalog.toml";
 
 const MAX_REQUESTED_CAPABILITIES: usize = 8;
 const MAX_FILE_RESOURCES: usize = 32;
@@ -59,6 +62,7 @@ pub enum AppCapabilityKind {
     Operations,
     Theme,
     Kv,
+    AgentContext,
 }
 
 impl AppCapabilityKind {
@@ -69,6 +73,7 @@ impl AppCapabilityKind {
             CAPABILITY_OPERATIONS => Some(Self::Operations),
             CAPABILITY_THEME => Some(Self::Theme),
             CAPABILITY_KV => Some(Self::Kv),
+            CAPABILITY_AGENT_CONTEXT => Some(Self::AgentContext),
             _ => None,
         }
     }
@@ -80,6 +85,7 @@ impl AppCapabilityKind {
             Self::Operations => CAPABILITY_OPERATIONS,
             Self::Theme => CAPABILITY_THEME,
             Self::Kv => CAPABILITY_KV,
+            Self::AgentContext => CAPABILITY_AGENT_CONTEXT,
         }
     }
 
@@ -87,7 +93,7 @@ impl AppCapabilityKind {
     /// its own `[capability.<name>]` table.
     #[must_use]
     pub fn requires_table(self) -> bool {
-        matches!(self, Self::Files | Self::Operations)
+        matches!(self, Self::Files | Self::Operations | Self::AgentContext)
     }
 }
 
@@ -125,6 +131,12 @@ pub struct AppFilesCapability {
     pub resources: Vec<AppFileResourceRequest>,
 }
 
+/// App-defined Agent Context catalog shipped inside the immutable package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppAgentContextCapability {
+    pub catalog: PathBuf,
+}
+
 /// Pinned semantic operations an App asks to invoke.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppOperationsCapability {
@@ -141,6 +153,7 @@ pub enum AppCapabilityRequest {
     Operations(AppOperationsCapability),
     Theme,
     Kv,
+    AgentContext(AppAgentContextCapability),
 }
 
 impl AppCapabilityRequest {
@@ -151,6 +164,7 @@ impl AppCapabilityRequest {
             Self::Operations(_) => AppCapabilityKind::Operations,
             Self::Theme => AppCapabilityKind::Theme,
             Self::Kv => AppCapabilityKind::Kv,
+            Self::AgentContext(_) => AppCapabilityKind::AgentContext,
         }
     }
 
@@ -181,6 +195,8 @@ pub struct RawCapabilityTable {
     pub theme: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_context: Option<RawAgentContextCapability>,
     #[serde(flatten)]
     pub unknown: BTreeMap<String, toml::Value>,
 }
@@ -199,6 +215,12 @@ pub struct RawFileResource {
     pub access: String,
     #[serde(default)]
     pub watch: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawAgentContextCapability {
+    pub catalog: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -260,6 +282,10 @@ pub(crate) fn validate_capabilities(
             .then_some(AppCapabilityKind::Operations),
         table.theme.is_some().then_some(AppCapabilityKind::Theme),
         table.kv.is_some().then_some(AppCapabilityKind::Kv),
+        table
+            .agent_context
+            .is_some()
+            .then_some(AppCapabilityKind::AgentContext),
     ]
     .into_iter()
     .flatten()
@@ -314,6 +340,26 @@ pub(crate) fn validate_capabilities(
             }
             AppCapabilityKind::Theme => AppCapabilityRequest::Theme,
             AppCapabilityKind::Kv => AppCapabilityRequest::Kv,
+            AppCapabilityKind::AgentContext => {
+                let raw = table.agent_context.as_ref().ok_or_else(|| {
+                    AppPackageError::new(
+                        AppPackageErrorCode::MissingCapabilityTable,
+                        "[capability.agent_context] is required",
+                    )
+                })?;
+                let catalog =
+                    bounded_relative_path(&raw.catalog, PACKAGE_PATH_LIMITS).map_err(|error| {
+                        error.with_code(AppPackageErrorCode::InvalidCapabilityRequest)
+                    })?;
+                if !is_beneath(&catalog, CONTEXT_DIR) {
+                    return Err(AppPackageError::new(
+                        AppPackageErrorCode::InvalidCapabilityRequest,
+                        "capability.agent_context catalog must be a package-relative file under context/",
+                    )
+                    .at(&catalog));
+                }
+                AppCapabilityRequest::AgentContext(AppAgentContextCapability { catalog })
+            }
         };
         validated.push(request);
     }
@@ -572,6 +618,7 @@ mod tests {
             }),
             theme: None,
             kv: None,
+            agent_context: None,
             unknown: BTreeMap::new(),
         };
         let validated =

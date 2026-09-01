@@ -81,6 +81,76 @@ impl AppRepository {
         Ok(workflow_id)
     }
 
+    pub async fn get_instance_kv(
+        &self,
+        instance_id: &str,
+        account_id: &str,
+        key: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query(
+            "SELECT value_json FROM app_instance_kv WHERE instance_id = ? AND account_id = ? AND key = ?",
+        )
+        .bind(instance_id)
+        .bind(account_id)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .context("reading App Instance KV")?;
+        row.map(|row| {
+            let json: String = row
+                .try_get("value_json")
+                .context("reading App Instance KV JSON")?;
+            serde_json::from_str(&json).context("decoding App Instance KV JSON")
+        })
+        .transpose()
+    }
+
+    pub async fn set_instance_kv(
+        &self,
+        instance_id: &str,
+        account_id: &str,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        let json = serde_json::to_string(value).context("encoding App Instance KV JSON")?;
+        sqlx::query(
+            r#"
+            INSERT INTO app_instance_kv (instance_id, account_id, key, value_json)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(instance_id, account_id, key) DO UPDATE SET
+                value_json = excluded.value_json,
+                version = app_instance_kv.version + 1,
+                updated_at = datetime('now')
+            "#,
+        )
+        .bind(instance_id)
+        .bind(account_id)
+        .bind(key)
+        .bind(json)
+        .execute(&self.pool)
+        .await
+        .context("writing App Instance KV")?;
+        Ok(())
+    }
+
+    pub async fn delete_instance_kv(
+        &self,
+        instance_id: &str,
+        account_id: &str,
+        key: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM app_instance_kv WHERE instance_id = ? AND account_id = ? AND key = ?",
+        )
+        .bind(instance_id)
+        .bind(account_id)
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .context("deleting App Instance KV")?;
+        Ok(())
+    }
+
     pub async fn update_workflow_status(&self, workflow_id: &str, status: &str) -> Result<()> {
         sqlx::query(
             "UPDATE app_publish_workflows SET status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -861,6 +931,57 @@ mod tests {
                 .revoke_capability_grant(&instance.instance_id, "acct-2")
                 .await?,
             "revoking twice must report that no live grant remained"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn instance_kv_is_private_to_account_and_instance() -> Result<()> {
+        let database = Database::in_memory().await?;
+        let repository = AppRepository::new(database.pool().clone());
+        let work_directory_id = repository
+            .upsert_work_directory("account", "acct-1", "/workspace")
+            .await?;
+        let first =
+            publish_awaiting(&repository, &work_directory_id, "appdef_a", &"a".repeat(64)).await?;
+        let second =
+            publish_awaiting(&repository, &work_directory_id, "appdef_b", &"b".repeat(64)).await?;
+
+        repository
+            .set_instance_kv(
+                &first.instance_id,
+                "acct-1",
+                "counter",
+                &serde_json::json!(7),
+            )
+            .await?;
+        assert_eq!(
+            repository
+                .get_instance_kv(&first.instance_id, "acct-1", "counter")
+                .await?,
+            Some(serde_json::json!(7))
+        );
+        assert_eq!(
+            repository
+                .get_instance_kv(&first.instance_id, "acct-2", "counter")
+                .await?,
+            None
+        );
+        assert_eq!(
+            repository
+                .get_instance_kv(&second.instance_id, "acct-1", "counter")
+                .await?,
+            None
+        );
+
+        repository
+            .delete_instance_kv(&first.instance_id, "acct-1", "counter")
+            .await?;
+        assert_eq!(
+            repository
+                .get_instance_kv(&first.instance_id, "acct-1", "counter")
+                .await?,
+            None
         );
         Ok(())
     }

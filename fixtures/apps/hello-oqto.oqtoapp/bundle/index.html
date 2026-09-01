@@ -8,15 +8,15 @@
 	</head>
 	<body>
 		<main>
-			<h1>Hello Oqto</h1>
-			<p>
-				This App was discovered from <code>oqto-apps/hello-oqto.oqtoapp/</code>,
-				published as an immutable Definition, and served from an isolated App
-				origin.
-			</p>
-			<p id="origin"></p>
-			<button id="ping" type="button">Prove script execution</button>
-			<p id="pong" hidden>Script ran inside the sandboxed App origin.</p>
+			<p class="eyebrow">OQTO APP KV ACCEPTANCE</p>
+			<h1>Persisted counter</h1>
+			<p id="status" role="status">Connecting to the private Oqto Bridge…</p>
+			<output id="count" aria-label="Counter value">0</output>
+			<div class="actions">
+				<button id="increment" type="button" disabled>Increment and save</button>
+				<button id="reset" type="button" disabled>Reset</button>
+			</div>
+			<p class="hint">The value is authoritative backend state, isolated by Account and App Instance.</p>
 		</main>
 		<script src="./assets/app.js"></script>
 	</body>

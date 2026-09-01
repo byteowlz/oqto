@@ -3,7 +3,8 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::capability::OPERATIONS_DIR;
+use crate::agent_context::{AgentContextCatalog, parse_agent_context_catalog};
+use crate::capability::{CONTEXT_DIR, OPERATIONS_DIR};
 use crate::digest::{ContentDigest, digest_bundle};
 use crate::manifest::{MANIFEST_FILE, ValidatedManifest, parse_manifest};
 use crate::operations::{ResolvedOperation, parse_operations_table};
@@ -73,6 +74,7 @@ pub struct BundleSnapshot {
     /// Requested operations resolved against the immutable operations table.
     /// Empty when the App requests no operations capability.
     pub operations: Vec<ResolvedOperation>,
+    pub agent_context: Option<AgentContextCatalog>,
 }
 
 pub async fn discover_candidates(
@@ -320,6 +322,38 @@ pub async fn snapshot_bundle(
         None => {}
     }
 
+    // Context catalogs and JSON Schemas determine what Agents may observe and
+    // invoke. Pin every byte under context/ whenever that root exists.
+    let context_root = PathBuf::from(CONTEXT_DIR);
+    let context_source_root = package_path.join(&context_root);
+    let context_requested = manifest.agent_context_request().is_some();
+    match source
+        .stat(&context_source_root)
+        .await
+        .map_err(source_error)?
+    {
+        Some(_) => {
+            require_directory(source, &context_source_root, "context root").await?;
+            collect_inventory(
+                source,
+                &package_path,
+                &context_root,
+                0,
+                limits,
+                &mut inventory,
+            )
+            .await?;
+        }
+        None if context_requested => {
+            return Err(AppPackageError::new(
+                AppPackageErrorCode::MissingCapabilityTable,
+                format!("the agent_context capability requires a {CONTEXT_DIR}/ directory"),
+            )
+            .at(&context_root));
+        }
+        None => {}
+    }
+
     if inventory.len() > limits.max_bundle_files {
         return Err(AppPackageError::new(
             AppPackageErrorCode::TooManyFiles,
@@ -421,6 +455,7 @@ pub async fn snapshot_bundle(
     }
 
     let operations = resolve_operations(&manifest, &files, &inventory, limits)?;
+    let agent_context = resolve_agent_context(&manifest, &files, &inventory)?;
 
     let digest = digest_bundle(
         &manifest_bytes,
@@ -436,7 +471,69 @@ pub async fn snapshot_bundle(
         digest,
         total_bytes,
         operations,
+        agent_context,
     })
+}
+
+fn resolve_agent_context(
+    manifest: &ValidatedManifest,
+    files: &[BundleFile],
+    inventory: &BTreeMap<PathBuf, AppFileStat>,
+) -> Result<Option<AgentContextCatalog>, AppPackageError> {
+    let Some(request) = manifest.agent_context_request() else {
+        return Ok(None);
+    };
+    let catalog_file = files
+        .iter()
+        .find(|file| file.relative_path == request.catalog)
+        .ok_or_else(|| {
+            AppPackageError::new(
+                AppPackageErrorCode::MissingCapabilityTable,
+                "Agent Context catalog is absent from the immutable package",
+            )
+            .at(&request.catalog)
+        })?;
+    let catalog = parse_agent_context_catalog(&catalog_file.bytes, &request.catalog)?;
+    for schema_path in catalog.topics.iter().map(|topic| &topic.schema_file).chain(
+        catalog
+            .actions
+            .iter()
+            .map(|action| &action.input_schema_file),
+    ) {
+        let schema_file = files
+            .iter()
+            .find(|file| &file.relative_path == schema_path)
+            .ok_or_else(|| {
+                AppPackageError::new(
+                    AppPackageErrorCode::InvalidCapabilityRequest,
+                    "declared Agent Context JSON Schema is absent",
+                )
+                .at(schema_path)
+            })?;
+        if !inventory.get(schema_path).is_some_and(|stat| stat.is_file) {
+            return Err(AppPackageError::new(
+                AppPackageErrorCode::InvalidCapabilityRequest,
+                "Agent Context schema must be a regular file",
+            )
+            .at(schema_path));
+        }
+        let schema: serde_json::Value =
+            serde_json::from_slice(&schema_file.bytes).map_err(|error| {
+                AppPackageError::new(
+                    AppPackageErrorCode::InvalidCapabilityRequest,
+                    format!("invalid Agent Context JSON Schema: {error}"),
+                )
+                .at(schema_path)
+            })?;
+        if !schema.is_object() {
+            return Err(AppPackageError::new(
+                AppPackageErrorCode::InvalidCapabilityRequest,
+                "Agent Context JSON Schema root must be an object",
+            )
+            .at(schema_path));
+        }
+    }
+    Ok(Some(catalog))
 }
 
 /// Prove that every requested operation exists in the immutable table and that

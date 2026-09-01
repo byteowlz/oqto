@@ -44,6 +44,10 @@ pub enum WsEvent {
         session_id: Option<String>,
     },
 
+    // ========== App Lifecycle Events ==========
+    /// Durable App authority changed; connected hosts must fail closed.
+    AppLifecycle { instance_id: String, state: String },
+
     // ========== Session Lifecycle Events ==========
     /// Session created or updated.
     SessionUpdated {

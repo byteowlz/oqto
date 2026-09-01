@@ -1,8 +1,9 @@
 use axum::extract::{Path, Query, State};
 use axum::response::Json;
 use oqto_protocol::apps::{
-    AppCandidateList, AppInstanceList, AppPermissionDecisionRequest, AppPermissionStatus,
-    AppPresentationDocument, AppPublishRequest, AppPublishResult,
+    AppCandidateList, AppInstanceList, AppKvDeleteRequest, AppKvGetResponse, AppKvSetRequest,
+    AppPermissionDecisionRequest, AppPermissionStatus, AppPresentationDocument, AppPublishRequest,
+    AppPublishResult,
 };
 use serde::Deserialize;
 
@@ -10,6 +11,7 @@ use crate::api::{ApiError, ApiResult, AppState};
 use crate::apps::authorize_work_directory;
 use crate::apps::{AppPermissionOutcome, AppRuntimeService, AuthorizedWorkDirectory};
 use crate::auth::CurrentUser;
+use crate::ws::WsEvent;
 
 #[derive(Debug, Deserialize)]
 pub struct AppWorkDirectoryQuery {
@@ -216,7 +218,83 @@ pub async fn revoke_app_permissions(
             ApiError::internal(format!("Failed to revoke App permissions: {error:#}"))
         })?
         .ok_or_else(|| ApiError::not_found("App Instance unavailable"))?;
-    permission_outcome(outcome)
+    let response = permission_outcome(outcome)?;
+    state
+        .ws_hub
+        .send_to_user(
+            user.id(),
+            WsEvent::AppLifecycle {
+                instance_id,
+                state: "revoked".to_owned(),
+            },
+        )
+        .await;
+    Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppKvGetQuery {
+    pub workspace_path: String,
+    pub key: String,
+}
+
+pub async fn get_app_kv(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Query(query): Query<AppKvGetQuery>,
+) -> ApiResult<Json<AppKvGetResponse>> {
+    let (apps, work_directory) = authorized_apps(&state, user.id(), &query.workspace_path).await?;
+    let value = apps
+        .kv_get(user.id(), &work_directory, &instance_id, &query.key)
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Invalid App KV request: {error:#}")))?
+        .ok_or_else(|| ApiError::forbidden("App KV capability is not active"))?;
+    Ok(Json(AppKvGetResponse { value }))
+}
+
+pub async fn set_app_kv(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppKvSetRequest>,
+) -> ApiResult<Json<AppKvGetResponse>> {
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    if !apps
+        .kv_set(
+            user.id(),
+            &work_directory,
+            &instance_id,
+            &request.key,
+            &request.value,
+        )
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Invalid App KV request: {error:#}")))?
+    {
+        return Err(ApiError::forbidden("App KV capability is not active"));
+    }
+    Ok(Json(AppKvGetResponse {
+        value: Some(request.value),
+    }))
+}
+
+pub async fn delete_app_kv(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppKvDeleteRequest>,
+) -> ApiResult<Json<AppKvGetResponse>> {
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    if !apps
+        .kv_delete(user.id(), &work_directory, &instance_id, &request.key)
+        .await
+        .map_err(|error| ApiError::bad_request(format!("Invalid App KV request: {error:#}")))?
+    {
+        return Err(ApiError::forbidden("App KV capability is not active"));
+    }
+    Ok(Json(AppKvGetResponse { value: None }))
 }
 
 pub async fn list_app_instances(

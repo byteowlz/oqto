@@ -1,6 +1,18 @@
 import {
+	APP_PERMISSION_CHANGED_EVENT,
+	type AppPermissionChangedDetail,
+	deleteAppKv,
+	getAppKv,
+	getAppPermissions,
+	setAppKv,
+} from "@/lib/api/apps";
+import { getWsManager } from "@/lib/ws-manager";
+import {
+	type JsonValue,
 	OQTO_APP_PROTOCOL,
 	OQTO_APP_PROTOCOL_V1,
+	OQTO_APP_PROTOCOL_V2,
+	type OqtoCapability,
 	type OqtoHostContext,
 	type OqtoPresentationContext,
 	type OqtoThemeSnapshot,
@@ -18,6 +30,7 @@ interface RuntimeOqtoAppFrameProps {
 	definitionId: string;
 	html: string;
 	title: string;
+	workspacePath: string;
 }
 
 const THEME_TOKENS = [
@@ -96,6 +109,7 @@ export function RuntimeOqtoAppFrame({
 	definitionId,
 	html,
 	title,
+	workspacePath,
 }: RuntimeOqtoAppFrameProps) {
 	const cleanupRef = useRef<(() => void) | null>(null);
 	const setFrame = useCallback(
@@ -106,6 +120,43 @@ export function RuntimeOqtoAppFrame({
 
 			let bridge: OqtoHostBridge | undefined;
 			let accepted = false;
+			const suspendIfWithdrawn = (detail: AppPermissionChangedDetail) => {
+				if (
+					detail.instanceId === instanceId &&
+					detail.state !== "allowed" &&
+					detail.state !== "not_required"
+				) {
+					bridge?.suspend({
+						reason: detail.state === "revoked" ? "revoked" : "suspended",
+						message: "Oqto App permission was withdrawn",
+					});
+				}
+			};
+			const onPermissionChanged = (event: Event) => {
+				suspendIfWithdrawn(
+					(event as CustomEvent<AppPermissionChangedDetail>).detail,
+				);
+			};
+			window.addEventListener(
+				APP_PERMISSION_CHANGED_EVENT,
+				onPermissionChanged,
+			);
+			const unsubscribeLifecycle = getWsManager().subscribeAll((event) => {
+				if (event.channel === "system" && event.type === "app.lifecycle") {
+					suspendIfWithdrawn({
+						instanceId: event.instance_id,
+						state: event.state as AppPermissionChangedDetail["state"],
+					});
+				}
+			});
+			let lifecycleChannel: BroadcastChannel | undefined;
+			try {
+				lifecycleChannel = new BroadcastChannel(APP_PERMISSION_CHANGED_EVENT);
+				lifecycleChannel.onmessage = (event) =>
+					suspendIfWithdrawn(event.data as AppPermissionChangedDetail);
+			} catch {
+				// The current document still receives lifecycle events.
+			}
 			const onMessage = (event: MessageEvent<unknown>) => {
 				if (
 					accepted ||
@@ -133,59 +184,102 @@ export function RuntimeOqtoAppFrame({
 					Array.isArray(message.supportedVersions)
 						? message.supportedVersions
 						: [OQTO_APP_PROTOCOL];
-				const protocol = offered.includes(OQTO_APP_PROTOCOL_V1)
-					? OQTO_APP_PROTOCOL_V1
-					: offered.includes(OQTO_APP_PROTOCOL)
-						? OQTO_APP_PROTOCOL
-						: undefined;
+				const protocol = offered.includes(OQTO_APP_PROTOCOL_V2)
+					? OQTO_APP_PROTOCOL_V2
+					: offered.includes(OQTO_APP_PROTOCOL_V1)
+						? OQTO_APP_PROTOCOL_V1
+						: offered.includes(OQTO_APP_PROTOCOL)
+							? OQTO_APP_PROTOCOL
+							: undefined;
 				if (!protocol) return;
 
 				accepted = true;
-				const context: OqtoHostContext = {
-					protocol,
-					instanceId,
-					installationId,
-					definitionId,
-					capabilities: ["theme", "presentation"],
-					grants: {
-						capabilities: ["theme", "presentation"],
-						resources: [],
-						operations: [],
-					},
-					presentation: presentationContext(frame),
-				};
-				const channel = new MessageChannel();
-				bridge = serveOqtoAppPort(
-					{
-						context,
-						theme: { get: async () => themeSnapshot(), watch: watchTheme },
-						presentation: {
-							get: async () => presentationContext(frame),
-							watch: (listener) => watchPresentation(frame, listener),
-						},
-					},
-					channel.port1,
-				);
-				frame.contentWindow?.postMessage(
-					{
+				void (async () => {
+					const permission = await getAppPermissions(workspacePath, instanceId);
+					if (
+						permission.state !== "allowed" &&
+						permission.state !== "not_required"
+					)
+						return;
+					const granted = permission.request.capabilities.map(
+						(capability) => capability.capability,
+					) as OqtoCapability[];
+					const capabilities = [...granted, "presentation"] as OqtoCapability[];
+					const context: OqtoHostContext = {
 						protocol,
-						kind: "oqto.app.connect",
-						nonce: message.nonce,
-						context,
-					},
-					"*",
-					[channel.port2],
-				);
+						instanceId,
+						installationId,
+						definitionId,
+						capabilities,
+						grants: {
+							capabilities,
+							resources: [],
+							operations: [],
+						},
+						presentation: presentationContext(frame),
+					};
+					const channel = new MessageChannel();
+					bridge = serveOqtoAppPort(
+						{
+							context,
+							...(granted.includes("kv")
+								? {
+										kv: {
+											get: (key: string) =>
+												getAppKv(workspacePath, instanceId, key) as Promise<
+													JsonValue | undefined
+												>,
+											set: (key: string, value: JsonValue) =>
+												setAppKv(workspacePath, instanceId, key, value),
+											delete: (key: string) =>
+												deleteAppKv(workspacePath, instanceId, key),
+										},
+									}
+								: {}),
+							...(granted.includes("theme")
+								? {
+										theme: {
+											get: async () => themeSnapshot(),
+											watch: watchTheme,
+										},
+									}
+								: {}),
+							presentation: {
+								get: async () => presentationContext(frame),
+								watch: (listener) => watchPresentation(frame, listener),
+							},
+						},
+						channel.port1,
+					);
+					frame.contentWindow?.postMessage(
+						{
+							protocol,
+							kind: "oqto.app.connect",
+							nonce: message.nonce,
+							context,
+						},
+						"*",
+						[channel.port2],
+					);
+				})().catch(() => {
+					bridge?.close();
+				});
 			};
 
 			window.addEventListener("message", onMessage);
 			frame.srcdoc = html;
 			cleanupRef.current = () => {
 				window.removeEventListener("message", onMessage);
+				window.removeEventListener(
+					APP_PERMISSION_CHANGED_EVENT,
+					onPermissionChanged,
+				);
+				lifecycleChannel?.close();
+				unsubscribeLifecycle();
 				bridge?.close();
 			};
 		},
-		[definitionId, html, installationId, instanceId],
+		[definitionId, html, installationId, instanceId, workspacePath],
 	);
 
 	return (

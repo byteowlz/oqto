@@ -741,6 +741,9 @@ pub enum SystemWsEvent {
     },
     /// Ping for keep-alive
     Ping,
+    /// App authority changed after durable state was committed.
+    #[serde(rename = "app.lifecycle")]
+    AppLifecycle { instance_id: String, state: String },
     /// Shared workspace membership/metadata changed.
     #[serde(rename = "shared_workspace.updated")]
     SharedWorkspaceUpdated {
@@ -973,6 +976,12 @@ async fn handle_multiplexed_ws(
 
         let convert_hub_event = |event: LegacyHubEvent| -> Option<WsEvent> {
             match event {
+                LegacyHubEvent::AppLifecycle { instance_id, state } => {
+                    Some(WsEvent::System(SystemWsEvent::AppLifecycle {
+                        instance_id,
+                        state,
+                    }))
+                }
                 LegacyHubEvent::SharedWorkspaceUpdated {
                     workspace_id,
                     change,

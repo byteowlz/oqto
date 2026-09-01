@@ -827,6 +827,7 @@ export const AppView = memo(function AppView({
 						definitionId={activeTab.definitionId}
 						html={activeTab.html}
 						title={activeTab.title}
+						workspacePath={workspacePath ?? ""}
 					/>
 				)}
 				{activeTab?.kind === "legacy-html" && srcdoc && (

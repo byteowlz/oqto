@@ -120,6 +120,12 @@ fn create_router_with_config_and_auth(
             post(handlers::revoke_app_permissions),
         )
         .route(
+            "/apps/instances/{instance_id}/kv",
+            get(handlers::get_app_kv)
+                .put(handlers::set_app_kv)
+                .delete(handlers::delete_app_kv),
+        )
+        .route(
             "/projects/locations",
             get(handlers::list_workspace_locations).post(handlers::upsert_workspace_location),
         )

@@ -83,6 +83,22 @@ pub struct AppOperationRequest {
     pub summary: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppContextTopicRequest {
+    pub id: String,
+    pub title: String,
+    pub disclosure: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppContextActionRequest {
+    pub id: String,
+    pub title: String,
+    pub requires_user_activation: bool,
+}
+
 /// One capability an App asks for, in the exact shape a person approves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "capability", rename_all = "snake_case")]
@@ -100,6 +116,12 @@ pub enum AppCapabilityRequest {
     Theme,
     /// Store the App's own settings, private to this Instance.
     Kv,
+    /// Publish declared semantic context for authorized Agents and expose
+    /// revision-bound contextual actions.
+    AgentContext {
+        topics: Vec<AppContextTopicRequest>,
+        actions: Vec<AppContextActionRequest>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -343,6 +365,29 @@ pub struct AppInstanceList {
 /// sandboxed frame. No App content URL exists, so there is no bearer token,
 /// cookie, hostname, port, or DNS requirement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppKvGetResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppKvSetRequest {
+    pub workspace_path: String,
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppKvDeleteRequest {
+    pub workspace_path: String,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct AppPresentationDocument {
     pub instance_id: String,
