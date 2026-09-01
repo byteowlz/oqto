@@ -145,6 +145,18 @@ _Avoid_: CSS/theme CSS (web-specific), skin (understates semantic and accessibil
 A streaming, capability-gated list source (Sessions, work directories, file listings, message search, App-contributed, sandbox-tool-backed) declared with its version in a queryable catalog. Configuration binds semantic Provider IDs; the catalog resolves availability; absence degrades along declared fallbacks and is reported, never discovered by failure.
 _Avoid_: binary/tool (an implementation detail behind the catalog), source (ambiguous)
 
+**Context Provider**:
+One independently authoritative publisher of versioned Agent Context topics and, optionally, revision-bound semantic Actions. Context Providers include Oqto platform/compositor providers, reviewed first-party Views, App Instances, and optional external adapters such as desktop ctx; providers refine one another with explicit provenance and never publish under another provider's identity (ADR-0044).
+_Avoid_: Provider (reserved for streaming list sources), context source (does not name authority), plugin (implementation-specific)
+
+**Agent Context**:
+Bounded, typed, pull-by-default state that helps an Agent resolve references such as “this,” “these,” or “here.” Oqto owns its provider identity, authorization, schema validation, revisions, reconnect, disclosure, and revocation; an App Definition may declare its domain topic schemas and values. Agent Context is not durable domain data, a writable control object, a prompt, or a model-triggering event (ADR-0044).
+_Avoid_: prompt context (may imply automatic model injection), UI state dump, DOM context, ctx Capture (a separate durable evidence concept)
+
+**App Context Topic**:
+One App Definition-declared Agent Context value with a stable topic ID, versioned bounded JSON Schema, lifetime, disclosure class, and monotonic runtime revision. Topic declarations are immutable Definition data; an App Instance may publish values only for its own declared topics through the Host (ADR-0044).
+_Avoid_: event (updates may be observed as events but the topic is state), tool (Actions are separate), global context
+
 **App**:
 An installable, shareable UI capability that reaches everything outside itself through the Host contract and may provide native-declarative and sandboxed-web presentations. Keep its facts independent: the Definition (versioned, content-addressed bundle + manifest), an Installation (availability and provenance under one owner), an Instance (one durable/logical use), its binding (explicit durable data owner/resource), and any requester-local App Content presentations.
 _Avoid_: mini-app (the SDK name, not the domain term), plugin, Surface, global app (name deployment/Account/Workspace/work-directory availability and binding explicitly)
