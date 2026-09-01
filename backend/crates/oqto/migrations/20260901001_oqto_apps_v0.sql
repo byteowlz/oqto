@@ -25,10 +25,6 @@ CREATE TABLE IF NOT EXISTS app_definitions (
     manifest_toml TEXT NOT NULL,
     web_entry_path TEXT NOT NULL,
     file_index_json TEXT NOT NULL,
-    -- Canonical validated capability request, pinned with the Definition.
-    -- A grant is written from this exact JSON, never re-derived from mutable
-    -- source, so approving a Definition can never approve different authority.
-    requested_capabilities_json TEXT NOT NULL DEFAULT '[]',
     total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -59,11 +55,7 @@ CREATE TABLE IF NOT EXISTS app_instances (
         binding_kind IN ('work_directory', 'workspace', 'account', 'deployment')
     ),
     binding_id TEXT NOT NULL,
-    -- A capability-requesting Instance is born 'awaiting_permission': it is
-    -- pinned and addressable but holds no authority and cannot present.
-    status TEXT NOT NULL CHECK (
-        status IN ('active', 'awaiting_permission', 'suspended', 'unavailable')
-    ),
+    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'unavailable')),
     created_by_account_id TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -101,29 +93,6 @@ CREATE TABLE IF NOT EXISTS app_publish_workflows (
     FOREIGN KEY(instance_id) REFERENCES app_instances(id)
 );
 
-
--- One current permission decision per Instance, bound to the exact Definition
--- and digest the deciding Account reviewed. Republishing changed source creates
--- a different Definition and therefore a different Instance, which starts
--- undecided rather than inheriting this row.
-CREATE TABLE IF NOT EXISTS app_capability_grants (
-    id TEXT PRIMARY KEY NOT NULL,
-    instance_id TEXT NOT NULL UNIQUE,
-    definition_id TEXT NOT NULL,
-    content_digest TEXT NOT NULL,
-    -- Exact canonical request that was approved or refused.
-    request_json TEXT NOT NULL,
-    decision TEXT NOT NULL CHECK (decision IN ('allowed', 'denied')),
-    decided_by_account_id TEXT NOT NULL,
-    decided_at TEXT NOT NULL DEFAULT (datetime('now')),
-    revoked_at TEXT,
-    revoked_by_account_id TEXT,
-    FOREIGN KEY(instance_id) REFERENCES app_instances(id),
-    FOREIGN KEY(definition_id) REFERENCES app_definitions(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_app_capability_grants_active
-    ON app_capability_grants(instance_id, decision, revoked_at);
 
 CREATE INDEX IF NOT EXISTS idx_app_installations_owner
     ON app_installations(owner_kind, owner_id);

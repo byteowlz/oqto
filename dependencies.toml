@@ -34,9 +34,9 @@ kokorox = "0.2.3"
 # pins are advanced by the test-gated auto-bump (just check-agent-updates ->
 # scripts/dist/check-agent-runtime.sh) which only bumps a pin when a candidate
 # passes the gate. sync via scripts/dist/sync-agent-runtime.sh.
-pi = "0.83.0"  # official standalone release; staged + RPC-verified before atomic promotion
-pi-linux-x64-sha256 = "b0625eb623197b0afe20c870d21ef2f34481f1504e5777df3f698a66c7636f5f"
-pi-linux-arm64-sha256 = "b84f9016610c738dd9440df62f649880dbe9951db97a7ae936cbf292850e9802"
+pi = "0.84.4"  # official standalone release; staged + RPC-verified before atomic promotion
+pi-linux-x64-sha256 = "c2f3c3e6a1850bd87654cc3ca8811013272397c3d042a4e2a64c43ee1b423972"
+pi-linux-arm64-sha256 = "135580f6b942151646e67b8b866d987d28ce3cff5a497030775ddd29659f943d"
 pi-extensions = "e9f158619aa11a92f050baf75340298755bc686a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv

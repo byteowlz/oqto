@@ -173,9 +173,24 @@ sync_extensions() {
   log "extensions synced to $count location(s)"
 }
 
+verify_managed_pi_selection() {
+  local config="$HOME/.config/oqto/config.toml"
+  [[ -f "$config" ]] || return 0
+  local configured
+  configured="$(sed -n '/^\[pi\]/,/^\[/{s/^executable *= *"\([^"]*\)".*/\1/p}' "$config" | head -1)"
+  case "$configured" in
+    */.bun/bin/pi|*/.local/bin/pi)
+      err "stale Pi override shadows the managed runtime: $configured"
+      err "back up $config and set [pi].executable = \"pi\""
+      return 1
+      ;;
+  esac
+}
+
 log "manifest=$MANIFEST  pi=${PI_VERSION:-<unset>}  pi-extensions=${EXT_REF:-<unset>}"
 rc=0
 $DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
+$DO_PI && { verify_managed_pi_selection || rc=1; }
 $DO_EXT && { sync_extensions || rc=1; }
 [[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
 exit "$rc"

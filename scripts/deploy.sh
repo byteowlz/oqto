@@ -2210,6 +2210,10 @@ prime_sudo_credentials() {
     done
 }
 
+# Release migrations are append-only. Catch known immutable-byte drift before
+# building or activating an artifact, rather than discovering it on restart.
+python3 "$ROOT_DIR/scripts/dist/verify-immutable-migrations.py"
+
 if [[ "$CANARY_THEN_FLEET" == "true" ]]; then
     declare -a sudo_targets
     collect_targets "true" "true" sudo_targets
