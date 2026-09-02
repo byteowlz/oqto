@@ -3,7 +3,12 @@ const count = document.getElementById("count");
 const increment = document.getElementById("increment");
 const reset = document.getElementById("reset");
 
-const nonce = crypto.randomUUID();
+// `randomUUID()` is secure-context-only and is not guaranteed inside an
+// opaque-origin sandbox. `getRandomValues()` remains available without giving
+// the App origin, storage, or network authority.
+const nonceBytes = new Uint8Array(16);
+crypto.getRandomValues(nonceBytes);
+const nonce = Array.from(nonceBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 let port;
 let protocol;
 let nextId = 1;
