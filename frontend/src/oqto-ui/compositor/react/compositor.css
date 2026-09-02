@@ -96,3 +96,91 @@
 	block-size: 100%;
 	background: var(--muted);
 }
+
+.oqto-compositor {
+	position: relative;
+}
+
+.oqto-compositor-gutter {
+	z-index: 1;
+	background: transparent;
+}
+
+.oqto-compositor-gutter[data-axis="inline"] {
+	grid-row: 1 / -1;
+	grid-column: var(--oqto-gutter-line);
+	justify-self: start;
+	inline-size: 7px;
+	margin-inline-start: -4px;
+	cursor: col-resize;
+}
+
+.oqto-compositor-gutter[data-axis="block"] {
+	grid-column: 1 / -1;
+	grid-row: var(--oqto-gutter-line);
+	align-self: start;
+	block-size: 7px;
+	margin-block-start: -4px;
+	cursor: row-resize;
+}
+
+.oqto-compositor-gutter:hover {
+	background: var(--primary);
+}
+
+.oqto-compositor-container[data-drop] {
+	outline: 2px solid var(--primary);
+	outline-offset: -2px;
+}
+
+.oqto-compositor-container[data-drop="inline-start"] {
+	box-shadow: inset 6px 0 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="inline-end"] {
+	box-shadow: inset -6px 0 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="block-start"] {
+	box-shadow: inset 0 6px 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="block-end"] {
+	box-shadow: inset 0 -6px 0 var(--primary);
+}
+
+.oqto-compositor-edge {
+	position: absolute;
+	z-index: 2;
+	display: none;
+	background: var(--primary);
+	opacity: 0.35;
+}
+
+.oqto-compositor[data-dragging] .oqto-compositor-edge {
+	display: block;
+}
+
+.oqto-compositor-edge[data-edge="block-start"] {
+	inset-inline: 0;
+	inset-block-start: 0;
+	block-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="block-end"] {
+	inset-inline: 0;
+	inset-block-end: 0;
+	block-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="inline-start"] {
+	inset-block: 0;
+	inset-inline-start: 0;
+	inline-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="inline-end"] {
+	inset-block: 0;
+	inset-inline-end: 0;
+	inline-size: 24px;
+}

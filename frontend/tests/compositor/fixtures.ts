@@ -52,3 +52,13 @@ export function activeArrangementOf(snapshot: LayoutSnapshot) {
 	if (!arrangement) throw new Error("no active arrangement");
 	return arrangement;
 }
+
+export const LABELS = {
+	closeTab: "close-tab",
+	resizeColumns: "resize-columns",
+	resizeRows: "resize-rows",
+	dropTop: "drop-top",
+	dropBottom: "drop-bottom",
+	dropStart: "drop-start",
+	dropEnd: "drop-end",
+};

@@ -653,6 +653,14 @@
 		"autoDenySuffix": "seconds"
 	},
 	"oqtoUi": {
+		"compositor": {
+			"resizeColumns": "Resize columns",
+			"resizeRows": "Resize rows",
+			"dropTop": "Drop here to create a lane at the top",
+			"dropBottom": "Drop here to create a lane at the bottom",
+			"dropStart": "Drop here to create a column at the start",
+			"dropEnd": "Drop here to create a column at the end"
+		},
 		"brandLabel": "OqtoUI",
 		"lab": "Preview",
 		"theme": {

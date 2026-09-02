@@ -23,6 +23,12 @@ export type ContentLabel = (content: ContentRef) => string;
 /** Translated chrome strings, injected by the composing host. */
 export interface CompositorChromeLabels {
 	readonly closeTab: string;
+	readonly resizeColumns: string;
+	readonly resizeRows: string;
+	readonly dropTop: string;
+	readonly dropBottom: string;
+	readonly dropStart: string;
+	readonly dropEnd: string;
 }
 
 export type CommitCommands = (commands: readonly LayoutCommand[]) => void;

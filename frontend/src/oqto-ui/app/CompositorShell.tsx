@@ -288,7 +288,18 @@ function LoadedCompositorShell({
 		},
 		[snapshot, t],
 	);
-	const labels = useMemo(() => ({ closeTab: t("common.close") }), [t]);
+	const labels = useMemo(
+		() => ({
+			closeTab: t("common.close"),
+			resizeColumns: t("oqtoUi.compositor.resizeColumns"),
+			resizeRows: t("oqtoUi.compositor.resizeRows"),
+			dropTop: t("oqtoUi.compositor.dropTop"),
+			dropBottom: t("oqtoUi.compositor.dropBottom"),
+			dropStart: t("oqtoUi.compositor.dropStart"),
+			dropEnd: t("oqtoUi.compositor.dropEnd"),
+		}),
+		[t],
+	);
 	return (
 		<CompositorHost
 			store={store}

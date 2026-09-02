@@ -5,6 +5,7 @@ import { createCompositorStore } from "@/src/oqto-ui/compositor/react/store";
 import { act, fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
+	LABELS,
 	VIEWPORT,
 	activeArrangementOf,
 	chatContent,
@@ -16,7 +17,6 @@ import {
 	terminalContent,
 } from "./fixtures";
 
-const LABELS = { closeTab: "close-tab" };
 const DESKTOP = { ...VIEWPORT, responsive: "scroll" as const };
 
 function probeSetup(viewport = DESKTOP) {

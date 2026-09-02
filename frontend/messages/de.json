@@ -650,6 +650,14 @@
 		"autoDenySuffix": "Sekunden"
 	},
 	"oqtoUi": {
+		"compositor": {
+			"resizeColumns": "Spalten anpassen",
+			"resizeRows": "Zeilen anpassen",
+			"dropTop": "Hier ablegen, um oben eine Lane zu erstellen",
+			"dropBottom": "Hier ablegen, um unten eine Lane zu erstellen",
+			"dropStart": "Hier ablegen, um am Anfang eine Spalte zu erstellen",
+			"dropEnd": "Hier ablegen, um am Ende eine Spalte zu erstellen"
+		},
 		"brandLabel": "OqtoUI",
 		"lab": "Vorschau",
 		"theme": {
