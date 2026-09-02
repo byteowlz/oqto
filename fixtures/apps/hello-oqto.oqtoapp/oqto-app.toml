@@ -8,8 +8,6 @@ requested_capabilities = ["kv"]
 bindings = ["work-directory"]
 default_binding = "work-directory"
 
-[capability.kv]
-
 [presentation.sandboxed-web]
 entry = "bundle/index.html"
 
