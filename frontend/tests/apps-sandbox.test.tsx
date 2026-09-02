@@ -41,14 +41,18 @@ vi.mock("@/lib/api/apps", () => ({
 
 const noop = () => {};
 
-function renderTabs(tabs: AppTab[], activeTabId: string | null) {
+function renderTabs(
+	tabs: AppTab[],
+	activeTabId: string | null,
+	onCloseTab: (tabId: string) => void = noop,
+) {
 	return render(
 		<AppView
 			workspacePath="/workspace/demo"
 			tabs={tabs}
 			activeTabId={activeTabId}
 			onSetActiveTab={noop}
-			onCloseTab={noop}
+			onCloseTab={onCloseTab}
 			onUpdateTab={noop}
 			onOpenOqtoApp={noop}
 		/>,
@@ -150,6 +154,16 @@ describe("runtime App presentation sandbox", () => {
 			kind: "suspend",
 			reason: "revoked",
 		});
+	});
+
+	it("shows an accessible close control without nesting buttons", () => {
+		const onClose = vi.fn();
+		const view = renderTabs([oqtoAppTab], oqtoAppTab.id, onClose);
+		const close = view.getByRole("button", { name: "Close Hello Oqto" });
+		expect(close).toBeVisible();
+		expect(close.closest("button button")).toBeNull();
+		close.click();
+		expect(onClose).toHaveBeenCalledWith(oqtoAppTab.id);
 	});
 
 	it("legacy html tabs also stay sandboxed without allow-same-origin", () => {

@@ -719,33 +719,35 @@ export const AppView = memo(function AppView({
 						<span>{t("apps.catalog")}</span>
 					</button>
 					{tabs.map((tab) => (
-						<button
+						<div
 							key={tab.id}
-							type="button"
-							onClick={() => onSetActiveTab(tab.id)}
 							className={cn(
-								"flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors max-w-[160px] group",
+								"flex items-stretch text-xs max-w-[200px]",
 								tab.id === activeTabId
 									? "bg-background text-foreground shadow-sm"
 									: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
 							)}
 						>
-							<AppWindow className="w-3 h-3 flex-shrink-0" />
-							<span className="truncate">{tab.title}</span>
+							<button
+								type="button"
+								onClick={() => onSetActiveTab(tab.id)}
+								className="flex min-w-0 items-center gap-1.5 px-2.5 py-1"
+							>
+								<AppWindow className="w-3 h-3 flex-shrink-0" />
+								<span className="truncate">{tab.title}</span>
+							</button>
 							{!tab.pinned && (
 								<button
 									type="button"
-									onClick={(e) => {
-										e.stopPropagation();
-										onCloseTab(tab.id);
-									}}
-									className="ml-auto flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 hover:bg-muted rounded transition-opacity"
-									aria-label="Close tab"
+									onClick={() => onCloseTab(tab.id)}
+									className="flex size-11 flex-shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:size-7"
+									aria-label={`Close ${tab.title}`}
+									title={`Close ${tab.title}`}
 								>
-									<X className="w-3 h-3" />
+									<X className="w-3.5 h-3.5" />
 								</button>
 							)}
-						</button>
+						</div>
 					))}
 				</div>
 				<div className="flex items-center gap-0.5 flex-shrink-0">

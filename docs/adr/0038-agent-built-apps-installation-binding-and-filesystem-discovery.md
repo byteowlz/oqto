@@ -79,7 +79,13 @@ Discovery produces a source candidate. An agent or Account may invoke the runner
 
 Copying the same source/bundle into another work directory creates another Installation of the same Definition (or a new Definition after changed-source build) with a different owner. It transfers no instance state, grant, approval, or authority. Work-directory → Workspace/Account/deployment promotion creates a reviewed new Installation; moving files never promotes access.
 
-Instances pin a Definition version. Updating an Installation makes a new version available but never mutates running Instances; migration is explicit and validated against the App's versioned state schema. Revoking a grant takes effect immediately at the Gate. Uninstall prevents new Instances and suspends existing ones without silently deleting their data. Deleting a binding owner revokes grants and leaves an auditable unavailable/tombstoned Instance until explicit retention cleanup.
+Instances pin a Definition version. Updating an Installation makes a new version available but never mutates a running Instance in place. For the ordinary one-use-per-binding flow, publication creates or selects the Instance pinned to the new current Definition and marks prior Instances for the same Installation and binding as `superseded`. Superseded Instances remain auditable and may retain migration source state, but hold no executable grant, cannot open new Content, and do not appear in the normal launcher. Definition upgrade/migration is explicit and validated against the App's versioned state schema.
+
+Multiple active Instances of one Installation are valid only when the App and user explicitly create distinct logical uses or bindings—for example separate project profiles, dashboards, Account-private versus Workspace-shared uses, or bindings to different resources. Republishing changed source alone is not user intent to create another logical App use and must not present old and new Definition-pinned Instances as peers.
+
+Closing App Content is requester-local presentation disposal only: it does not revoke grants, delete the Instance, or uninstall the App. Every closable App presentation must expose a visible host-owned close control; hover-only controls and App-rendered close affordances are insufficient, and touch targets follow the Host's mobile accessibility rules.
+
+Uninstall is a host-owned Installation lifecycle action, not closing Content, revoking one grant, or deleting source. After reauthorizing the acting Account against the Installation owner, uninstall atomically prevents new Instances, suspends all current Instances, revokes their grants, emits lifecycle events that terminate open Bridges and pending calls, removes the Installation from normal launch/discovery results, and preserves immutable Definitions and audit records. Bound files/resources, shared domain data, Account-private KV, and `.oqtoapp` source are preserved by default. Deleting private settings or source is a separate explicit choice with its own authorization and clear scope; uninstall never silently deletes authoritative data. Deleting a binding owner revokes grants and leaves an auditable unavailable/tombstoned Instance until explicit retention cleanup.
 
 ### Artifacts and extension vocabulary remain bitter-lesson-proof
 
@@ -92,7 +98,8 @@ Oqto owns mechanism: identity, persistence, validation, deterministic build, pac
 - One App can have a native compact presentation and rich web presentation without becoming two Installations or Instances.
 - Portable Apps work in web, GPUI, iOS, and Pi/Glimpse hosts, but arbitrary generated native plugins remain forbidden.
 - `.oqto/apps` is a discovery/build input, not an execution directory or permission boundary.
-- App source changes and promotions are explicit lifecycle events with auditable provenance.
+- App source changes and promotions are explicit lifecycle events with auditable provenance; ordinary republish supersedes the prior Instance rather than cluttering the launcher with Definition history.
+- Close, revoke, uninstall, source deletion, and data deletion are distinct host-owned actions with different effects.
 - Sharing, promotion, Definition reuse, and editable-source copy transfer no Instance data, preferences, grants, or secrets by default; optional data transfer remains fail-loud and deferred in v0.
 - Existing `window.apphost` behavior remains migration input under ADR-0027; new work targets one Host contract rather than extending the old stringly API.
 
@@ -105,6 +112,8 @@ Oqto owns mechanism: identity, persistence, validation, deterministic build, pac
 - **Filesystem path as authority:** mutable and agent-writable; suitable provenance/default, unsafe grant source.
 - **Automatic rebuild/update on source change:** makes Definitions mutable and execution nondeterministic.
 - **Resizing always swaps native/web presentation:** destroys in-progress state unless explicitly supported.
+- **Treat every republished Definition as another peer App Instance:** rejected because immutable authorization history would leak into ordinary launcher UX and imply user intent that did not exist.
+- **Treat close, revoke, source deletion, and uninstall as synonyms:** rejected because presentation placement, runtime authority, availability, editable source, and authoritative data have independent ownership and retention.
 
 ## Verification
 
@@ -121,3 +130,7 @@ Before agent-built Apps ship, tests and real traces must prove:
 9. Revocation, uninstall, explicit Definition upgrade/migration, and binding-owner deletion leave no executable stale grant and preserve the declared audit/data-retention outcome.
 10. Copying to private work-directory, shared Workspace, Account, and deployment targets creates no source Instance data, KV/preferences, grants, secret bindings, credentials, or presentation state; v0 requests to include data fail explicitly, and target Instances start from fixtures/defaults only.
 11. When a non-web host supports Apps, the same Definition/Instance/binding and Host contract pass that host’s native declarative and sandboxed-web conformance tests.
+12. Republishing changed source for the same Installation and binding leaves exactly one current launchable Instance; prior Instances are superseded, ungranted, absent from normal launch results, and available only through authorized audit/history surfaces.
+13. Explicitly created Instances with distinct logical uses/bindings remain independently launchable and isolated; publication alone cannot create this user-visible multiplicity.
+14. Closing App Content has no Installation, Instance, grant, KV, source, or bound-resource side effect and is always available through visible accessible host chrome.
+15. Uninstall tests prove new launches fail, all open Bridges suspend immediately, pending/future calls fail, grants are revoked, normal discovery omits the Installation, immutable audit records remain, and bound resources/KV/source survive unless separately selected and authorized for deletion.
