@@ -28,6 +28,23 @@ const MAX_OPERATIONS: usize = 128;
 const MAX_SUMMARY_BYTES: usize = 256;
 const MAX_EXEC_ARGS: usize = 16;
 const MAX_EXEC_ARG_BYTES: usize = 256;
+pub const MAX_OPERATION_INPUT_BYTES: usize = 65_536;
+pub const MAX_OPERATION_OUTPUT_BYTES: usize = 1_048_576;
+pub const MAX_OPERATION_TIMEOUT_SECONDS: u64 = 300;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStdin {
+    None,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStdout {
+    Json,
+    Lines,
+}
 
 /// One operation definition with the fields publication must understand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +56,38 @@ pub struct OperationDefinition {
     pub executable: PathBuf,
     /// Fixed arguments appended after the executable. Never a shell string.
     pub args: Vec<String>,
+    pub stdin: OperationStdin,
+    pub stdout: OperationStdout,
+    pub timeout_seconds: u64,
+    pub params: BTreeMap<String, OperationParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationParam {
+    #[serde(rename = "type")]
+    pub kind: OperationParamKind,
+    #[serde(default)]
+    pub optional: bool,
+    #[serde(default)]
+    pub default: Option<i64>,
+    #[serde(default)]
+    pub min: Option<i64>,
+    #[serde(default)]
+    pub max: Option<i64>,
+    #[serde(default)]
+    pub min_bytes: Option<usize>,
+    #[serde(default)]
+    pub max_bytes: Option<usize>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationParamKind {
+    String,
+    Integer,
+    Boolean,
 }
 
 /// A parsed, validated operations table.
@@ -57,6 +106,10 @@ pub struct ResolvedOperation {
     pub summary: Option<String>,
     pub executable: PathBuf,
     pub args: Vec<String>,
+    pub stdin: OperationStdin,
+    pub stdout: OperationStdout,
+    pub timeout_seconds: u64,
+    pub params: BTreeMap<String, OperationParam>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -70,16 +123,132 @@ struct RawOperationsFile {
     extra: BTreeMap<String, toml::Value>,
 }
 
+fn default_stdin() -> OperationStdin {
+    OperationStdin::None
+}
+
+fn default_stdout() -> OperationStdout {
+    OperationStdout::Json
+}
+
+const fn default_timeout_seconds() -> u64 {
+    30
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct RawOperation {
     id: String,
     #[serde(default)]
     summary: Option<String>,
     exec: Vec<String>,
-    /// Execution policy consumed by the runner Gate, not by publication.
+    #[serde(default = "default_stdin")]
+    stdin: OperationStdin,
+    #[serde(default = "default_stdout")]
+    stdout: OperationStdout,
+    #[serde(default = "default_timeout_seconds")]
+    timeout_seconds: u64,
+    #[serde(default)]
+    params: BTreeMap<String, OperationParam>,
     #[serde(flatten)]
     #[allow(dead_code)]
     extra: BTreeMap<String, toml::Value>,
+}
+
+impl ResolvedOperation {
+    /// Validate and apply defaults to untrusted invocation input.
+    pub fn validate_input(
+        &self,
+        input: &serde_json::Value,
+    ) -> Result<serde_json::Value, AppPackageError> {
+        if self.params.is_empty() && input.is_null() {
+            return Ok(serde_json::json!({}));
+        }
+        let object = input
+            .as_object()
+            .ok_or_else(|| invalid_input(&self.id, "input must be a JSON object"))?;
+        for key in object.keys() {
+            if !self.params.contains_key(key) {
+                return Err(invalid_input(
+                    &self.id,
+                    format!("unknown parameter {key:?}"),
+                ));
+            }
+        }
+        let mut validated = serde_json::Map::new();
+        for (name, rule) in &self.params {
+            let value = match (object.get(name), rule.default) {
+                (Some(value), _) => value.clone(),
+                (None, Some(default)) => serde_json::Value::from(default),
+                (None, None) if rule.optional => continue,
+                (None, None) => {
+                    return Err(invalid_input(
+                        &self.id,
+                        format!("missing parameter {name:?}"),
+                    ));
+                }
+            };
+            match rule.kind {
+                OperationParamKind::String => {
+                    let text = value.as_str().ok_or_else(|| {
+                        invalid_input(&self.id, format!("parameter {name:?} must be a string"))
+                    })?;
+                    let bytes = text.len();
+                    if rule.min_bytes.is_some_and(|min| bytes < min)
+                        || rule.max_bytes.is_some_and(|max| bytes > max)
+                    {
+                        return Err(invalid_input(
+                            &self.id,
+                            format!("parameter {name:?} has invalid byte length"),
+                        ));
+                    }
+                    if let Some(pattern) = &rule.pattern {
+                        let regex = regex::Regex::new(pattern).map_err(|_| {
+                            invalid_input(
+                                &self.id,
+                                format!("parameter {name:?} has an invalid package pattern"),
+                            )
+                        })?;
+                        if !regex.is_match(text) {
+                            return Err(invalid_input(
+                                &self.id,
+                                format!("parameter {name:?} does not match its required pattern"),
+                            ));
+                        }
+                    }
+                }
+                OperationParamKind::Integer => {
+                    let number = value.as_i64().ok_or_else(|| {
+                        invalid_input(&self.id, format!("parameter {name:?} must be an integer"))
+                    })?;
+                    if rule.min.is_some_and(|min| number < min)
+                        || rule.max.is_some_and(|max| number > max)
+                    {
+                        return Err(invalid_input(
+                            &self.id,
+                            format!("parameter {name:?} is outside its allowed range"),
+                        ));
+                    }
+                }
+                OperationParamKind::Boolean if !value.is_boolean() => {
+                    return Err(invalid_input(
+                        &self.id,
+                        format!("parameter {name:?} must be a boolean"),
+                    ));
+                }
+                OperationParamKind::Boolean => {}
+            }
+            validated.insert(name.clone(), value);
+        }
+        let value = serde_json::Value::Object(validated);
+        if serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > MAX_OPERATION_INPUT_BYTES)
+        {
+            return Err(invalid_input(
+                &self.id,
+                "validated input exceeds the operation input limit",
+            ));
+        }
+        Ok(value)
+    }
 }
 
 impl OperationsTable {
@@ -107,6 +276,10 @@ impl OperationsTable {
                 summary: definition.summary.clone(),
                 executable: definition.executable.clone(),
                 args: definition.args.clone(),
+                stdin: definition.stdin,
+                stdout: definition.stdout,
+                timeout_seconds: definition.timeout_seconds,
+                params: definition.params.clone(),
             });
         }
         Ok(resolved)
@@ -195,11 +368,30 @@ pub fn parse_operations_table(
         }
 
         let (executable, args) = validate_exec(&entry.id, &entry.exec, table_path)?;
+        if entry.timeout_seconds == 0 || entry.timeout_seconds > MAX_OPERATION_TIMEOUT_SECONDS {
+            return Err(invalid_table(
+                table_path,
+                format!(
+                    "operation {:?} timeout must be within 1..={MAX_OPERATION_TIMEOUT_SECONDS} seconds",
+                    entry.id
+                ),
+            ));
+        }
+        if entry.stdin == OperationStdin::None && !entry.params.is_empty() {
+            return Err(invalid_table(
+                table_path,
+                format!("operation {:?} declares params but stdin is none", entry.id),
+            ));
+        }
         operations.push(OperationDefinition {
             id: entry.id.clone(),
             summary: entry.summary.clone(),
             executable,
             args,
+            stdin: entry.stdin,
+            stdout: entry.stdout,
+            timeout_seconds: entry.timeout_seconds,
+            params: entry.params.clone(),
         });
     }
 
@@ -263,6 +455,13 @@ fn validate_exec(
     }
 
     Ok((executable, args.to_vec()))
+}
+
+fn invalid_input(id: &str, message: impl Into<String>) -> AppPackageError {
+    AppPackageError::new(
+        AppPackageErrorCode::OperationsTableInvalid,
+        format!("operation {id:?}: {}", message.into()),
+    )
 }
 
 fn invalid_table(table_path: &Path, message: impl Into<String>) -> AppPackageError {

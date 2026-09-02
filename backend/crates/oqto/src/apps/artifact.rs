@@ -100,6 +100,21 @@ impl AppArtifactStore {
             fs::write(&target, &file.bytes)
                 .await
                 .with_context(|| format!("writing App artifact file {}", target.display()))?;
+            #[cfg(unix)]
+            if file.relative_path.starts_with("operations/")
+                && file
+                    .relative_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    != Some("table.toml")
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&target, std::fs::Permissions::from_mode(0o500))
+                    .await
+                    .with_context(|| {
+                        format!("marking App operation executable {}", target.display())
+                    })?;
+            }
         }
 
         fs::write(directory.join(".complete"), snapshot.digest.as_str())

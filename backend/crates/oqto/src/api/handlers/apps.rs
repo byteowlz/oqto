@@ -2,8 +2,8 @@ use axum::extract::{Path, Query, State};
 use axum::response::Json;
 use oqto_protocol::apps::{
     AppCandidateList, AppInstanceList, AppKvDeleteRequest, AppKvGetResponse, AppKvSetRequest,
-    AppPermissionDecisionRequest, AppPermissionStatus, AppPresentationDocument, AppPublishRequest,
-    AppPublishResult,
+    AppOperationInvokeRequest, AppOperationResult, AppPermissionDecisionRequest,
+    AppPermissionStatus, AppPresentationDocument, AppPublishRequest, AppPublishResult,
 };
 use serde::Deserialize;
 
@@ -73,6 +73,27 @@ pub async fn publish_app(
 #[derive(Debug, Deserialize)]
 pub struct AppPresentationHttpRequest {
     pub workspace_path: String,
+}
+
+pub async fn invoke_app_operation(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppOperationInvokeRequest>,
+) -> ApiResult<Json<AppOperationResult>> {
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    apps.invoke_operation(
+        user.id(),
+        &work_directory,
+        &instance_id,
+        &request.operation_id,
+        &request.input,
+    )
+    .await
+    .map_err(|error| ApiError::internal(format!("App operation failed: {error:#}")))?
+    .map(Json)
+    .ok_or_else(|| ApiError::forbidden("App operation is not granted"))
 }
 
 pub async fn get_app_presentation(

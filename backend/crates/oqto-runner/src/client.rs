@@ -488,6 +488,23 @@ impl RunnerClient {
         }
     }
 
+    /// Execute one immutable App operation through the runner Gate.
+    pub async fn run_app_operation(
+        &self,
+        request: RunAppOperationRequest,
+    ) -> Result<AppOperationResultResponse> {
+        match self
+            .request(&RunnerRequest::RunAppOperation(request))
+            .await?
+        {
+            RunnerResponse::AppOperationResult(response) => Ok(response),
+            RunnerResponse::Error(error) => {
+                anyhow::bail!("runner error ({:?}): {}", error.code, error.message)
+            }
+            _ => anyhow::bail!("unexpected response to run_app_operation"),
+        }
+    }
+
     // ========================================================================
     // Filesystem Operations (user-plane)
     // ========================================================================

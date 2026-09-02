@@ -39,7 +39,7 @@ pub use manifest::{
     SandboxedWebPresentation, ValidatedManifest, parse_manifest,
 };
 pub use operations::{
-    OPERATIONS_SCHEMA_V0_DRAFT, OperationDefinition, OperationsTable, ResolvedOperation,
-    parse_operations_table,
+    OPERATIONS_SCHEMA_V0_DRAFT, OperationDefinition, OperationParam, OperationParamKind,
+    OperationStdin, OperationStdout, OperationsTable, ResolvedOperation, parse_operations_table,
 };
 pub use source::{AppDirEntry, AppFileSource, AppFileStat, AppSourceError};

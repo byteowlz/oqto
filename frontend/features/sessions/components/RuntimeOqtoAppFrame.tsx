@@ -4,6 +4,7 @@ import {
 	deleteAppKv,
 	getAppKv,
 	getAppPermissions,
+	invokeAppOperation,
 	setAppKv,
 } from "@/lib/api/apps";
 import { getWsManager } from "@/lib/ws-manager";
@@ -13,6 +14,7 @@ import {
 	OQTO_APP_PROTOCOL_V1,
 	OQTO_APP_PROTOCOL_V2,
 	type OqtoCapability,
+	type OqtoGrantedOperation,
 	type OqtoHostContext,
 	type OqtoPresentationContext,
 	type OqtoThemeSnapshot,
@@ -204,6 +206,11 @@ export function RuntimeOqtoAppFrame({
 					const granted = permission.request.capabilities.map(
 						(capability) => capability.capability,
 					) as OqtoCapability[];
+					const operationGrants = permission.request.capabilities
+						.filter((capability) => capability.capability === "operations")
+						.flatMap(
+							(capability) => capability.operations,
+						) as OqtoGrantedOperation[];
 					const capabilities = [
 						...granted.filter((capability) => capability !== "theme"),
 						"theme",
@@ -218,7 +225,7 @@ export function RuntimeOqtoAppFrame({
 						grants: {
 							capabilities,
 							resources: [],
-							operations: [],
+							operations: operationGrants,
 						},
 						presentation: presentationContext(frame),
 					};
@@ -237,6 +244,37 @@ export function RuntimeOqtoAppFrame({
 												setAppKv(workspacePath, instanceId, key, value),
 											delete: (key: string) =>
 												deleteAppKv(workspacePath, instanceId, key),
+										},
+									}
+								: {}),
+							...(granted.includes("operations")
+								? {
+										operations: {
+											list: async () => operationGrants,
+											invoke: async (
+												id: string,
+												input: JsonValue = null,
+												options?: { signal?: AbortSignal },
+											) => {
+												const result = await invokeAppOperation(
+													workspacePath,
+													instanceId,
+													id,
+													input,
+													options?.signal,
+												);
+												return result.ok
+													? {
+															ok: true as const,
+															output: result.output as JsonValue,
+														}
+													: {
+															ok: false as const,
+															reason: "failed" as const,
+															code: result.code,
+															message: result.message,
+														};
+											},
 										},
 									}
 								: {}),

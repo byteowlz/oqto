@@ -380,6 +380,24 @@ pub struct AppKvSetRequest {
     pub value: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppOperationInvokeRequest {
+    pub workspace_path: String,
+    pub operation_id: String,
+    #[serde(default)]
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct AppOperationResult {
+    pub ok: bool,
+    pub code: String,
+    pub message: String,
+    pub output: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct AppKvDeleteRequest {

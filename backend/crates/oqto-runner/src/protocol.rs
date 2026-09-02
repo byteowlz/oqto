@@ -90,6 +90,9 @@ pub enum RunnerRequest {
     /// Create a directory (with parents if needed).
     CreateDirectory(CreateDirectoryRequest),
 
+    /// Execute one immutable, schema-validated App operation.
+    RunAppOperation(RunAppOperationRequest),
+
     // ========================================================================
     // Session Operations (user-plane)
     // ========================================================================
@@ -382,6 +385,9 @@ pub enum RunnerResponse {
 
     /// Directory created successfully.
     DirectoryCreated(DirectoryCreatedResponse),
+
+    /// Bounded result from an immutable App operation.
+    AppOperationResult(AppOperationResultResponse),
 
     // ========================================================================
     // Session Responses
@@ -696,6 +702,23 @@ pub struct CreateDirectoryRequest {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunAppOperationRequest {
+    pub content_digest: String,
+    pub app_id: String,
+    pub operation_id: String,
+    pub work_directory: PathBuf,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppOperationResultResponse {
+    pub success: bool,
+    pub code: String,
+    pub message: String,
+    pub output: Value,
 }
 
 // ============================================================================

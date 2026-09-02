@@ -5,6 +5,23 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
+pub struct AppOperationExecution {
+    pub content_digest: String,
+    pub app_id: String,
+    pub operation_id: String,
+    pub work_directory: PathBuf,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppOperationExecutionResult {
+    pub success: bool,
+    pub code: String,
+    pub message: String,
+    pub output: Value,
+}
+
 /// File content response.
 #[derive(Debug, Clone)]
 pub struct FileContent {

@@ -1,3 +1,4 @@
+pub mod apps;
 pub mod dispatch;
 pub mod files;
 pub mod memories;

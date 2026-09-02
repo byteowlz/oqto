@@ -134,6 +134,37 @@ export async function revokeAppPermissions(
 	return status;
 }
 
+export interface AppOperationResult {
+	ok: boolean;
+	code: string;
+	message: string;
+	output: unknown;
+}
+
+export async function invokeAppOperation(
+	workspacePath: string,
+	instanceId: string,
+	operationId: string,
+	input: unknown,
+	signal?: AbortSignal,
+): Promise<AppOperationResult> {
+	const encodedId = encodeURIComponent(instanceId);
+	const response = await authFetch(
+		controlPlaneApiUrl(`/api/apps/instances/${encodedId}/operations/invoke`),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				workspace_path: workspacePath,
+				operation_id: operationId,
+				input,
+			}),
+			signal,
+		},
+	);
+	return appJson<AppOperationResult>(response);
+}
+
 export async function getAppKv(
 	workspacePath: string,
 	instanceId: string,

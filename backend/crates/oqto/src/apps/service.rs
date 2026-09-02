@@ -4,19 +4,20 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use oqto_apps::{
     AppCandidateStatus, AppPackageError, AppPackageErrorCode, BundleLimits, ResolvedOperation,
-    ValidatedManifest, discover_candidates, snapshot_bundle,
+    ValidatedManifest, discover_candidates, parse_manifest, parse_operations_table,
+    snapshot_bundle,
 };
 use oqto_protocol::apps::{
     AppCandidateList, AppCandidateState, AppCandidateSummary, AppCapabilityRequest,
     AppContextActionRequest, AppContextTopicRequest, AppFileAccess, AppFileResourceRequest,
     AppInstanceList, AppInstanceStatus, AppInstanceSummary, AppLocalizedTitle, AppOperationRequest,
-    AppOwnerKind, AppPermissionDecision, AppPermissionRequest, AppPermissionState,
-    AppPermissionStatus, AppPresentationKind, AppPresentationSummary, AppPublishResult,
-    AppPublishStatus, AppRejection, AppRejectionCode,
+    AppOperationResult, AppOwnerKind, AppPermissionDecision, AppPermissionRequest,
+    AppPermissionState, AppPermissionStatus, AppPresentationKind, AppPresentationSummary,
+    AppPublishResult, AppPublishStatus, AppRejection, AppRejectionCode,
 };
 use sha2::{Digest, Sha256};
 
-use crate::user_plane::UserPlane;
+use crate::user_plane::{AppOperationExecution, UserPlane};
 
 use super::artifact::AppArtifactStore;
 use super::models::{DefinitionInsert, PublicationInsert, StoredBundleFile};
@@ -648,6 +649,96 @@ impl AppRuntimeService {
             .delete_instance_kv(instance_id, account_id, key)
             .await?;
         Ok(true)
+    }
+
+    pub async fn invoke_operation(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        operation_id: &str,
+        input: &serde_json::Value,
+    ) -> Result<Option<AppOperationResult>> {
+        let Some(instance) = self
+            .repository
+            .get_instance_for_work_directory(instance_id, &work_directory.id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if instance.status != STATUS_ACTIVE {
+            return Ok(None);
+        }
+        let Some(grant) = self.repository.get_capability_grant(instance_id).await? else {
+            return Ok(None);
+        };
+        if grant.decision != "allowed"
+            || grant.revoked_at.is_some()
+            || grant.decided_by_account_id != account_id
+            || grant.definition_id != instance.definition_id
+            || grant.content_digest != instance.content_digest
+        {
+            return Ok(None);
+        }
+        let capabilities = stored_capabilities(&grant.request_json)?;
+        if !capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                AppCapabilityRequest::Operations { operations }
+                    if operations.iter().any(|operation| operation.id == operation_id)
+            )
+        }) {
+            return Ok(None);
+        }
+
+        let definition = self
+            .artifacts
+            .definition_dir(&instance.content_digest)
+            .ok_or_else(|| anyhow!("invalid pinned App Definition digest"))?;
+        let manifest_bytes = tokio::fs::read(definition.join("oqto-app.toml"))
+            .await
+            .context("reading pinned App manifest")?;
+        let manifest = parse_manifest(
+            &format!("{}.oqtoapp", instance.app_id),
+            &manifest_bytes,
+            self.limits.max_manifest_bytes,
+        )
+        .map_err(|error| anyhow!(error))?;
+        let request = manifest
+            .operations_request()
+            .ok_or_else(|| anyhow!("granted App Definition has no operations request"))?;
+        let table_bytes = tokio::fs::read(definition.join(&request.table))
+            .await
+            .context("reading pinned App operations table")?;
+        let table =
+            parse_operations_table(&table_bytes, self.limits.max_file_bytes, &request.table)
+                .map_err(|error| anyhow!(error))?;
+        let operation = table
+            .resolve(&[operation_id.to_owned()])
+            .map_err(|error| anyhow!(error))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("granted operation is absent from its pinned table"))?;
+        let validated_input = operation
+            .validate_input(input)
+            .map_err(|error| anyhow!(error))?;
+        let result = work_directory
+            .plane
+            .run_app_operation(AppOperationExecution {
+                content_digest: instance.content_digest,
+                app_id: instance.app_id,
+                operation_id: operation.id,
+                work_directory: work_directory.root.clone(),
+                input: validated_input,
+            })
+            .await
+            .context("executing pinned App operation")?;
+        Ok(Some(AppOperationResult {
+            ok: result.success,
+            code: result.code,
+            message: result.message,
+            output: result.output,
+        }))
     }
 
     pub async fn presentation_document(

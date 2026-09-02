@@ -652,6 +652,7 @@ impl Runner {
             // Scanning and repairing JSONL chat metadata can be expensive for
             // users with large session histories.
             RunnerRequest::RepairWorkspaceChatHistory(_) => std::time::Duration::from_secs(120),
+            RunnerRequest::RunAppOperation(_) => std::time::Duration::from_secs(305),
             _ => std::time::Duration::from_secs(10),
         }
     }
