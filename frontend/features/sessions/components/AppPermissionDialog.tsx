@@ -15,7 +15,6 @@ import {
 	Database,
 	FileImage,
 	FolderOpen,
-	Palette,
 	Play,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -41,7 +40,7 @@ function capabilityIcon(capability: AppCapabilityRequest) {
 		case "operations":
 			return <Play className="size-4" aria-hidden="true" />;
 		case "theme":
-			return <Palette className="size-4" aria-hidden="true" />;
+			return null;
 		case "kv":
 			return <Database className="size-4" aria-hidden="true" />;
 	}
@@ -131,7 +130,13 @@ export function AppPermissionDialog({
 }: AppPermissionDialogProps) {
 	const { t } = useTranslation();
 	const [detailsOpen, setDetailsOpen] = useState(false);
-	const capabilities = useMemo(() => request?.capabilities ?? [], [request]);
+	const capabilities = useMemo(
+		() =>
+			(request?.capabilities ?? []).filter(
+				(capability) => capability.capability !== "theme",
+			),
+		[request],
+	);
 
 	return (
 		<Dialog

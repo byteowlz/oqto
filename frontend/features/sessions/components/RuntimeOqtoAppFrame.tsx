@@ -204,7 +204,11 @@ export function RuntimeOqtoAppFrame({
 					const granted = permission.request.capabilities.map(
 						(capability) => capability.capability,
 					) as OqtoCapability[];
-					const capabilities = [...granted, "presentation"] as OqtoCapability[];
+					const capabilities = [
+						...granted.filter((capability) => capability !== "theme"),
+						"theme",
+						"presentation",
+					] as OqtoCapability[];
 					const context: OqtoHostContext = {
 						protocol,
 						instanceId,
@@ -236,14 +240,10 @@ export function RuntimeOqtoAppFrame({
 										},
 									}
 								: {}),
-							...(granted.includes("theme")
-								? {
-										theme: {
-											get: async () => themeSnapshot(),
-											watch: watchTheme,
-										},
-									}
-								: {}),
+							theme: {
+								get: async () => themeSnapshot(),
+								watch: watchTheme,
+							},
 							presentation: {
 								get: async () => presentationContext(frame),
 								watch: (listener) => watchPresentation(frame, listener),

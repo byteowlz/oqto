@@ -692,8 +692,8 @@ fn capability_requests(
     manifest
         .capabilities
         .iter()
-        .map(|capability| match capability {
-            oqto_apps::AppCapabilityRequest::Files(files) => AppCapabilityRequest::Files {
+        .filter_map(|capability| match capability {
+            oqto_apps::AppCapabilityRequest::Files(files) => Some(AppCapabilityRequest::Files {
                 resources: files
                     .resources
                     .iter()
@@ -707,9 +707,9 @@ fn capability_requests(
                         watch: resource.watch,
                     })
                     .collect(),
-            },
+            }),
             oqto_apps::AppCapabilityRequest::Operations(request) => {
-                AppCapabilityRequest::Operations {
+                Some(AppCapabilityRequest::Operations {
                     operations: request
                         .ids
                         .iter()
@@ -721,12 +721,14 @@ fn capability_requests(
                                 .and_then(|operation| operation.summary.clone()),
                         })
                         .collect(),
-                }
+                })
             }
-            oqto_apps::AppCapabilityRequest::Theme => AppCapabilityRequest::Theme,
-            oqto_apps::AppCapabilityRequest::Kv => AppCapabilityRequest::Kv,
+            // Theme and Presentation Context are baseline Host presentation
+            // environment, never grant-bearing authority.
+            oqto_apps::AppCapabilityRequest::Theme => None,
+            oqto_apps::AppCapabilityRequest::Kv => Some(AppCapabilityRequest::Kv),
             oqto_apps::AppCapabilityRequest::AgentContext(_) => {
-                AppCapabilityRequest::AgentContext {
+                Some(AppCapabilityRequest::AgentContext {
                     topics: agent_context
                         .map(|catalog| catalog.topics.as_slice())
                         .unwrap_or_default()
@@ -747,7 +749,7 @@ fn capability_requests(
                             requires_user_activation: action.requires_user_activation,
                         })
                         .collect(),
-                }
+                })
             }
         })
         .collect()
