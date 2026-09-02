@@ -3,8 +3,10 @@ import path from "node:path";
 import {
 	type LayoutSnapshot,
 	type LayoutTransaction,
+	type ViewportClass,
 	type ViewportConstraints,
 	applyTransaction,
+	projectLayout,
 	recoverLayoutDocument,
 	solveLayoutGeometry,
 } from "@/src/oqto-ui/compositor/index";
@@ -12,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type GeometryTrace,
 	type PersistenceTrace,
+	type ProjectionTrace,
 	TRACE_FORMAT_VERSION,
 	type TransitionTrace,
 	buildCompositorTraceCorpus,
@@ -41,7 +44,7 @@ describe("conformance corpus freshness", () => {
 		for (const file of built) {
 			// Structural comparison: byte-stable encoding is not part of the
 			// contract; a Rust host may serialize keys in any order.
-			expect(readTrace(file.path)).toEqual(roundTrip(file.data));
+			expect(readTrace(file.path), file.path).toEqual(roundTrip(file.data));
 		}
 	});
 
@@ -54,7 +57,24 @@ describe("conformance corpus freshness", () => {
 			};
 			expect(trace.format).toMatch(/^oqto-compositor-/);
 			expect(trace.formatVersion).toBe(TRACE_FORMAT_VERSION);
-			expect(trace.schemaVersion).toBe(1);
+			expect(trace.schemaVersion).toBe(2);
+		}
+	});
+
+	it("engine-level invariant violations never appear as expected outcomes", () => {
+		// The engine's post-transaction invariant re-check is defense in depth;
+		// a trace recording it means a kernel bug, not a contract.
+		for (const fileName of committedFiles.filter((name) =>
+			name.startsWith("transitions-"),
+		)) {
+			const trace = readTrace(fileName) as TransitionTrace;
+			for (const [index, step] of trace.steps.entries()) {
+				expect(
+					step.expected.ok ||
+						step.expected.rejection.reason !== "invariant-violation",
+					`${fileName} step ${index}`,
+				).toBe(true);
+			}
 		}
 	});
 });
@@ -95,6 +115,24 @@ describe("conformance corpus replay (public seam only, from JSON alone)", () => 
 					`${scenario.name}/${geometryCase.name}`,
 				).toEqual(geometryCase.expected);
 			}
+		}
+	});
+
+	it("reproduces every responsive projection fixture without touching the input", () => {
+		const trace = readTrace("projection-ladder.json") as ProjectionTrace;
+		for (const scenario of trace.scenarios) {
+			const before = JSON.stringify(scenario.snapshot);
+			for (const projectionCase of scenario.cases) {
+				const actual = projectLayout(
+					scenario.snapshot as LayoutSnapshot,
+					projectionCase.viewport as ViewportClass,
+				);
+				expect(
+					roundTrip(actual),
+					`${scenario.name}/${projectionCase.name}`,
+				).toEqual(projectionCase.expected);
+			}
+			expect(JSON.stringify(scenario.snapshot)).toBe(before);
 		}
 	});
 

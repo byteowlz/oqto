@@ -6,9 +6,20 @@
  * ownership, or content state.
  */
 
-import { activeArrangement, arrangementOf, findArrangement, replaceArrangement } from "./arrangement";
 import { resolveDestination } from "./apply-open";
-import type { CommandOutcome, LayoutEvent, MoveDestination, SplitEdge } from "./commands";
+import {
+	activeArrangement,
+	arrangementOf,
+	findArrangement,
+	replaceArrangement,
+} from "./arrangement";
+import type {
+	CommandOutcome,
+	LayoutEvent,
+	MoveDestination,
+	SplitEdge,
+} from "./commands";
+import { placementOf } from "./grid";
 import type { ContainerId, ContentId } from "./ids";
 import { mintEdgeContainer, mintSplitContainer } from "./mint";
 import type { Container, LayoutSnapshot } from "./model";
@@ -32,7 +43,8 @@ function finish(
 	events: LayoutEvent[],
 ): CommandOutcome {
 	const settled = settleEmptiedContainer(state, sourceId);
-	if (settled.removed) events.push({ type: "container-removed", containerId: sourceId });
+	if (settled.removed)
+		events.push({ type: "container-removed", containerId: sourceId });
 	return { ok: true, state: repairFocus(settled.state), events };
 }
 
@@ -52,7 +64,13 @@ export function applyMove(
 	if (destination.containerId !== undefined) {
 		target = findContainer(state, destination.containerId);
 		if (!target) {
-			return { ok: false, rejection: { reason: "unknown-container", containerId: destination.containerId } };
+			return {
+				ok: false,
+				rejection: {
+					reason: "unknown-container",
+					containerId: destination.containerId,
+				},
+			};
 		}
 	} else {
 		const arrangement =
@@ -62,15 +80,28 @@ export function applyMove(
 		if (!arrangement) {
 			return {
 				ok: false,
-				rejection: { reason: "unknown-arrangement", arrangementId: destination.arrangementId as never },
+				rejection: {
+					reason: "unknown-arrangement",
+					arrangementId: destination.arrangementId as never,
+				},
 			};
 		}
 		target = resolveDestination(state, arrangement, undefined);
 		if (!target || target.id === source.id) {
-			const minted = mintEdgeContainer(arrangement, state.idSeed, "inline-end", [], undefined);
+			const minted = mintEdgeContainer(
+				arrangement,
+				state.idSeed,
+				"inline-end",
+				[],
+				undefined,
+			);
 			target = minted.container;
 			working = replaceArrangement(
-				{ ...state, idSeed: minted.idSeed, containers: [...state.containers, minted.container] },
+				{
+					...state,
+					idSeed: minted.idSeed,
+					containers: [...state.containers, minted.container],
+				},
 				{ ...arrangement, grid: minted.grid },
 			);
 		}
@@ -90,8 +121,15 @@ export function applyMove(
 	working = replaceContainer(working, removeFromStack(source, contentId));
 	const stack = [...target.stack];
 	stack.splice(clampPosition(destination.position, stack.length), 0, ref);
-	working = replaceContainer(working, { ...target, stack, activeContentId: contentId, collapsed: false });
-	return finish(working, source.id, [{ type: "moved", contentId, from: source.id, to: target.id }]);
+	working = replaceContainer(working, {
+		...target,
+		stack,
+		activeContentId: contentId,
+		collapsed: false,
+	});
+	return finish(working, source.id, [
+		{ type: "moved", contentId, from: source.id, to: target.id },
+	]);
 }
 
 export function applySplit(
@@ -106,20 +144,56 @@ export function applySplit(
 		return { ok: false, rejection: { reason: "unknown-content", contentId } };
 	}
 	const arrangement =
-		relativeTo === undefined ? activeArrangement(state) : arrangementOf(state, relativeTo);
-	if (!arrangement || (relativeTo !== undefined && !findContainer(state, relativeTo))) {
-		return { ok: false, rejection: { reason: "unknown-container", containerId: relativeTo as ContainerId } };
+		relativeTo === undefined
+			? activeArrangement(state)
+			: arrangementOf(state, relativeTo);
+	if (
+		!arrangement ||
+		(relativeTo !== undefined && !findContainer(state, relativeTo))
+	) {
+		return {
+			ok: false,
+			rejection: {
+				reason: "unknown-container",
+				containerId: relativeTo as ContainerId,
+			},
+		};
+	}
+	if (
+		relativeTo !== undefined &&
+		(edge === "block-start" || edge === "block-end")
+	) {
+		const placement = placementOf(arrangement.grid, relativeTo);
+		if (placement && arrangement.grid.rows[placement.row]?.flush) {
+			return {
+				ok: false,
+				rejection: {
+					reason: "invalid-command",
+					detail: "a flush lane cannot be split along the block axis",
+				},
+			};
+		}
 	}
 	const minted =
 		relativeTo === undefined
 			? mintEdgeContainer(arrangement, state.idSeed, edge, [ref])
 			: mintSplitContainer(arrangement, state.idSeed, edge, relativeTo, [ref]);
 	if (!minted) {
-		return { ok: false, rejection: { reason: "unknown-container", containerId: relativeTo as ContainerId } };
+		return {
+			ok: false,
+			rejection: {
+				reason: "unknown-container",
+				containerId: relativeTo as ContainerId,
+			},
+		};
 	}
 	let working = replaceContainer(state, removeFromStack(source, contentId));
 	working = replaceArrangement(
-		{ ...working, idSeed: minted.idSeed, containers: [...working.containers, minted.container] },
+		{
+			...working,
+			idSeed: minted.idSeed,
+			containers: [...working.containers, minted.container],
+		},
 		{ ...arrangement, grid: minted.grid },
 	);
 	return finish(working, source.id, [
@@ -135,7 +209,10 @@ export function applyCollapse(
 ): CommandOutcome {
 	const container = findContainer(state, containerId);
 	if (!container) {
-		return { ok: false, rejection: { reason: "unknown-container", containerId } };
+		return {
+			ok: false,
+			rejection: { reason: "unknown-container", containerId },
+		};
 	}
 	return {
 		ok: true,

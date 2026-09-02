@@ -10,7 +10,11 @@ import { checkLayoutInvariants } from "../invariants";
 import type { JsonValue, LayoutSnapshot } from "../model";
 import { LAYOUT_SCHEMA_VERSION } from "../model";
 import { isJsonObject } from "./json-guards";
-import { LAYOUT_MIGRATIONS, type LayoutMigration, runLayoutMigrations } from "./migrations";
+import {
+	LAYOUT_MIGRATIONS,
+	type LayoutMigration,
+	runLayoutMigrations,
+} from "./migrations";
 import { readSnapshot } from "./read";
 
 export type DecodeFailureReason =
@@ -20,8 +24,16 @@ export type DecodeFailureReason =
 	| "invariant-violation";
 
 export type DecodeLayoutResult =
-	| { readonly ok: true; readonly snapshot: LayoutSnapshot; readonly migratedFrom: number | null }
-	| { readonly ok: false; readonly reason: DecodeFailureReason; readonly detail: string };
+	| {
+			readonly ok: true;
+			readonly snapshot: LayoutSnapshot;
+			readonly migratedFrom: number | null;
+	  }
+	| {
+			readonly ok: false;
+			readonly reason: DecodeFailureReason;
+			readonly detail: string;
+	  };
 
 export interface RecoveredLayout {
 	readonly snapshot: LayoutSnapshot;
@@ -47,7 +59,9 @@ export function encodeLayoutDocument(snapshot: LayoutSnapshot): string {
 			...arrangement.extensions,
 			id: arrangement.id,
 			...(arrangement.label !== undefined ? { label: arrangement.label } : {}),
-			...(arrangement.binding !== undefined ? { binding: arrangement.binding } : {}),
+			...(arrangement.binding !== undefined
+				? { binding: arrangement.binding }
+				: {}),
 			scrollAnchorColumnId: arrangement.scrollAnchorColumnId,
 			lastFocusedContentId: arrangement.lastFocusedContentId,
 			grid: arrangement.grid,
@@ -76,14 +90,30 @@ export function decodeLayoutDocument(
 	try {
 		parsed = JSON.parse(raw) as JsonValue;
 	} catch (error) {
-		return { ok: false, reason: "parse-error", detail: error instanceof Error ? error.message : String(error) };
+		return {
+			ok: false,
+			reason: "parse-error",
+			detail: error instanceof Error ? error.message : String(error),
+		};
 	}
 	if (!isJsonObject(parsed)) {
-		return { ok: false, reason: "invalid-shape", detail: "layout document root must be an object" };
+		return {
+			ok: false,
+			reason: "invalid-shape",
+			detail: "layout document root must be an object",
+		};
 	}
 	const version = parsed.schemaVersion;
-	if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
-		return { ok: false, reason: "invalid-shape", detail: "layout document is missing a valid schemaVersion" };
+	if (
+		typeof version !== "number" ||
+		!Number.isInteger(version) ||
+		version < 1
+	) {
+		return {
+			ok: false,
+			reason: "invalid-shape",
+			detail: "layout document is missing a valid schemaVersion",
+		};
 	}
 	if (version > LAYOUT_SCHEMA_VERSION) {
 		return {
@@ -94,21 +124,36 @@ export function decodeLayoutDocument(
 	}
 	const migrated = runLayoutMigrations(parsed, migrations);
 	if (!migrated) {
-		return { ok: false, reason: "unsupported-version", detail: `no migration path from schemaVersion ${version}` };
+		return {
+			ok: false,
+			reason: "unsupported-version",
+			detail: `no migration path from schemaVersion ${version}`,
+		};
 	}
 	const snapshot = readSnapshot(migrated.layoutDocument);
 	if (!snapshot) {
-		return { ok: false, reason: "invalid-shape", detail: "layout document fields failed validation" };
+		return {
+			ok: false,
+			reason: "invalid-shape",
+			detail: "layout document fields failed validation",
+		};
 	}
 	const violations = checkLayoutInvariants(snapshot);
 	if (violations.length > 0) {
 		return {
 			ok: false,
 			reason: "invariant-violation",
-			detail: violations.map((violation) => `${violation.code}: ${violation.detail}`).join("; "),
+			detail: violations
+				.map((violation) => `${violation.code}: ${violation.detail}`)
+				.join("; "),
 		};
 	}
-	return { ok: true, snapshot, migratedFrom: migrated.from === LAYOUT_SCHEMA_VERSION ? null : migrated.from };
+	return {
+		ok: true,
+		snapshot,
+		migratedFrom:
+			migrated.from === LAYOUT_SCHEMA_VERSION ? null : migrated.from,
+	};
 }
 
 /**
@@ -120,12 +165,17 @@ export function recoverLayoutDocument(
 	candidates: readonly (string | null | undefined)[],
 	fallback: LayoutSnapshot,
 ): RecoveredLayout {
-	const failures: { index: number; reason: DecodeFailureReason; detail: string }[] = [];
+	const failures: {
+		index: number;
+		reason: DecodeFailureReason;
+		detail: string;
+	}[] = [];
 	for (let index = 0; index < candidates.length; index += 1) {
 		const candidate = candidates[index];
 		if (candidate === null || candidate === undefined) continue;
 		const result = decodeLayoutDocument(candidate);
-		if (result.ok) return { snapshot: result.snapshot, sourceIndex: index, failures };
+		if (result.ok)
+			return { snapshot: result.snapshot, sourceIndex: index, failures };
 		failures.push({ index, reason: result.reason, detail: result.detail });
 	}
 	return { snapshot: fallback, sourceIndex: null, failures };

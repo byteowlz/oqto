@@ -45,9 +45,7 @@ export function replaceContainer(
 }
 
 /** Content ids placed anywhere in the document (all Arrangements). */
-export function placedContentIds(
-	state: LayoutSnapshot,
-): readonly ContentId[] {
+export function placedContentIds(state: LayoutSnapshot): readonly ContentId[] {
 	return state.containers.flatMap((container) =>
 		container.stack.map((content) => content.id),
 	);
@@ -107,7 +105,9 @@ export function repairFocus(state: LayoutSnapshot): LayoutSnapshot {
 		}
 	}
 	const withFocus =
-		state.focusedContentId === focus ? state : { ...state, focusedContentId: focus };
+		state.focusedContentId === focus
+			? state
+			: { ...state, focusedContentId: focus };
 	return active.lastFocusedContentId === focus
 		? withFocus
 		: replaceArrangement(withFocus, { ...active, lastFocusedContentId: focus });

@@ -11,11 +11,15 @@ import {
 	type Container,
 	type GridPlacement,
 	type LayoutCommand,
-	projectLayout,
 	type ViewportClass,
+	projectLayout,
 } from "../index";
 import { ContainerView } from "./ContainerView";
-import type { CompositorChromeLabels, ContentLabel, RenderContent } from "./contracts";
+import type {
+	CompositorChromeLabels,
+	ContentLabel,
+	RenderContent,
+} from "./contracts";
 import { gridLines, gridTemplateFromSizes } from "./grid-template";
 import type { CompositorStore } from "./store";
 import "./compositor.css";
@@ -44,15 +48,30 @@ function Cell({ container, placement, rowOffset, ...view }: CellProps) {
 	return (
 		<div
 			className="oqto-compositor-cell"
-			style={{ "--oqto-cell-row": lines.row, "--oqto-cell-column": lines.column } as CSSProperties}
+			style={
+				{
+					"--oqto-cell-row": lines.row,
+					"--oqto-cell-column": lines.column,
+				} as CSSProperties
+			}
 		>
 			<ContainerView container={container} {...view} />
 		</div>
 	);
 }
 
-export function CompositorHost({ store, viewport, renderContent, contentLabel, labels }: CompositorHostProps) {
-	const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+export function CompositorHost({
+	store,
+	viewport,
+	renderContent,
+	contentLabel,
+	labels,
+}: CompositorHostProps) {
+	const snapshot = useSyncExternalStore(
+		store.subscribe,
+		store.getSnapshot,
+		store.getSnapshot,
+	);
 	const commit = useCallback(
 		(commands: readonly LayoutCommand[]) => {
 			store.commit(commands, viewport);
@@ -61,19 +80,27 @@ export function CompositorHost({ store, viewport, renderContent, contentLabel, l
 	);
 	const projected = projectLayout(snapshot, viewport);
 	const arrangement =
-		projected.snapshot.arrangements.find((candidate) => candidate.id === projected.snapshot.activeArrangementId) ??
-		projected.snapshot.arrangements[0];
+		projected.snapshot.arrangements.find(
+			(candidate) => candidate.id === projected.snapshot.activeArrangementId,
+		) ?? projected.snapshot.arrangements[0];
 	if (!arrangement) return null;
-	const containersById = new Map(projected.snapshot.containers.map((container) => [container.id, container]));
+	const containersById = new Map(
+		projected.snapshot.containers.map((container) => [container.id, container]),
+	);
 	const rows = arrangement.grid.rows;
 	const flushTop = rows[0]?.flush === true ? 0 : null;
-	const flushBottom = rows.length > 1 && rows[rows.length - 1]?.flush === true ? rows.length - 1 : null;
+	const flushBottom =
+		rows.length > 1 && rows[rows.length - 1]?.flush === true
+			? rows.length - 1
+			: null;
 	const bodyRowSizes = projected.geometry.rowSizes.filter(
 		(_, index) => index !== flushTop && index !== flushBottom,
 	);
 	const focusOf = (container: Container) =>
 		projected.snapshot.focusedContentId !== null &&
-		container.stack.some((content) => content.id === projected.snapshot.focusedContentId)
+		container.stack.some(
+			(content) => content.id === projected.snapshot.focusedContentId,
+		)
 			? projected.snapshot.focusedContentId
 			: null;
 	const cell = (placement: GridPlacement, rowOffset: number) => {
@@ -96,20 +123,31 @@ export function CompositorHost({ store, viewport, renderContent, contentLabel, l
 		rowIndex === null ? null : (
 			<div
 				className="oqto-compositor-lane"
-				style={{ "--oqto-lane-size": `${projected.geometry.rowSizes[rowIndex]}px` } as CSSProperties}
+				style={
+					{
+						"--oqto-lane-size": `${projected.geometry.rowSizes[rowIndex]}px`,
+					} as CSSProperties
+				}
 			>
-				{arrangement.grid.placements.filter((p) => p.row === rowIndex).map((p) => cell(p, rowIndex))}
+				{arrangement.grid.placements
+					.filter((p) => p.row === rowIndex)
+					.map((p) => cell(p, rowIndex))}
 			</div>
 		);
 	return (
-		<div className="oqto-compositor" data-merges={projected.merges.length || undefined}>
+		<div
+			className="oqto-compositor"
+			data-merges={projected.merges.length || undefined}
+		>
 			{lane(flushTop)}
 			<div className="oqto-compositor-body">
 				<div
 					className="oqto-compositor-grid"
 					style={
 						{
-							"--oqto-compositor-columns": gridTemplateFromSizes(projected.geometry.columnSizes),
+							"--oqto-compositor-columns": gridTemplateFromSizes(
+								projected.geometry.columnSizes,
+							),
 							"--oqto-compositor-rows": gridTemplateFromSizes(bodyRowSizes),
 							"--oqto-compositor-scroll": `${projected.geometry.scrollOffset}px`,
 						} as CSSProperties

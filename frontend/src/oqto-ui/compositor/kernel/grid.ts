@@ -123,7 +123,10 @@ export function insertRowTrack(
 }
 
 function placeholderRow(track: GridTrack): GridTrack {
-	return { id: `${track.id}-row` as GridTrack["id"], size: { unit: "fraction", value: 1 } };
+	return {
+		id: `${track.id}-row` as GridTrack["id"],
+		size: { unit: "fraction", value: 1 },
+	};
 }
 
 function placeholderColumn(track: GridTrack): GridTrack {
@@ -183,7 +186,8 @@ function removableIndex(
 	for (let index = 0; index < count; index += 1) {
 		const covering = placements.filter(
 			(placement) =>
-				placement[axis] <= index && index < placement[axis] + placement[spanKey],
+				placement[axis] <= index &&
+				index < placement[axis] + placement[spanKey],
 		);
 		if (covering.every((placement) => placement[spanKey] > 1)) return index;
 	}

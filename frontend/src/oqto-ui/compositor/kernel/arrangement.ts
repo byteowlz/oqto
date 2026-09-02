@@ -60,8 +60,12 @@ export function repairFocusMemory(state: LayoutSnapshot): LayoutSnapshot {
 		if (arrangement.lastFocusedContentId === null) return arrangement;
 		const placed = state.containers.some(
 			(container) =>
-				arrangement.grid.placements.some((placement) => placement.containerId === container.id) &&
-				container.stack.some((content) => content.id === arrangement.lastFocusedContentId),
+				arrangement.grid.placements.some(
+					(placement) => placement.containerId === container.id,
+				) &&
+				container.stack.some(
+					(content) => content.id === arrangement.lastFocusedContentId,
+				),
 		);
 		if (placed) return arrangement;
 		changed = true;
@@ -75,7 +79,10 @@ export function repairScrollAnchors(state: LayoutSnapshot): LayoutSnapshot {
 	let changed = false;
 	const arrangements = state.arrangements.map((arrangement) => {
 		const anchor = arrangement.scrollAnchorColumnId;
-		if (anchor === null || arrangement.grid.columns.some((column) => column.id === anchor)) {
+		if (
+			anchor === null ||
+			arrangement.grid.columns.some((column) => column.id === anchor)
+		) {
 			return arrangement;
 		}
 		changed = true;

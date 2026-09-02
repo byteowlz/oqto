@@ -48,7 +48,11 @@ export type GeometryDegradation =
 			readonly axis: "inline" | "block";
 			readonly deficit: number;
 	  }
-	| { readonly kind: "overflow"; readonly axis: "inline"; readonly extent: number };
+	| {
+			readonly kind: "overflow";
+			readonly axis: "inline";
+			readonly extent: number;
+	  };
 
 export interface SolvedLayout {
 	readonly rects: readonly SolvedRect[];
@@ -132,9 +136,13 @@ function solveTracks(
 	};
 }
 
-function collapsedIds(containers: readonly Container[]): ReadonlySet<ContainerId> {
+function collapsedIds(
+	containers: readonly Container[],
+): ReadonlySet<ContainerId> {
 	return new Set(
-		containers.filter((container) => container.collapsed).map((container) => container.id),
+		containers
+			.filter((container) => container.collapsed)
+			.map((container) => container.id),
 	);
 }
 
@@ -148,7 +156,8 @@ function trackRequests(
 	return tracks.map((track, index) => {
 		const covering = placements.filter(
 			(placement) =>
-				placement[axis] <= index && index < placement[axis] + placement[spanKey],
+				placement[axis] <= index &&
+				index < placement[axis] + placement[spanKey],
 		);
 		return {
 			track,
@@ -193,9 +202,13 @@ function anchorOffset(
 	anchor: GridTrackId | null,
 	available: number,
 ): number {
-	const index = anchor === null ? -1 : columns.findIndex((column) => column.id === anchor);
+	const index =
+		anchor === null ? -1 : columns.findIndex((column) => column.id === anchor);
 	const extent = starts[starts.length - 1];
-	return Math.min(index < 0 ? 0 : starts[index], Math.max(0, extent - available));
+	return Math.min(
+		index < 0 ? 0 : starts[index],
+		Math.max(0, extent - available),
+	);
 }
 
 /**
@@ -213,13 +226,25 @@ export function anchorToReveal(
 	const columns = arrangement.grid.columns;
 	const current = arrangement.scrollAnchorColumnId;
 	const currentIndex =
-		current === null ? 0 : Math.max(0, columns.findIndex((column) => column.id === current));
+		current === null
+			? 0
+			: Math.max(
+					0,
+					columns.findIndex((column) => column.id === current),
+				);
 	if (!viewport) {
-		return placement.column < currentIndex ? columns[placement.column].id : current;
+		return placement.column < currentIndex
+			? columns[placement.column].id
+			: current;
 	}
 	const safe = safeInsets(viewport);
 	const available = Math.max(0, viewport.inlineSize - safe.left - safe.right);
-	const { sizes } = columnSolution(arrangement, containers, available, "scroll");
+	const { sizes } = columnSolution(
+		arrangement,
+		containers,
+		available,
+		"scroll",
+	);
 	const starts = prefixSums(sizes);
 	const offset = anchorOffset(columns, starts, current, available);
 	const start = starts[placement.column];
@@ -237,19 +262,43 @@ export function solveLayoutGeometry(
 	viewport: ViewportConstraints,
 ): SolvedLayout {
 	const arrangement =
-		state.arrangements.find((candidate) => candidate.id === state.activeArrangementId) ??
-		state.arrangements[0];
+		state.arrangements.find(
+			(candidate) => candidate.id === state.activeArrangementId,
+		) ?? state.arrangements[0];
 	const safe = safeInsets(viewport);
-	const availableInline = Math.max(0, viewport.inlineSize - safe.left - safe.right);
-	const availableBlock = Math.max(0, viewport.blockSize - safe.top - safe.bottom);
+	const availableInline = Math.max(
+		0,
+		viewport.inlineSize - safe.left - safe.right,
+	);
+	const availableBlock = Math.max(
+		0,
+		viewport.blockSize - safe.top - safe.bottom,
+	);
 	const mode = viewport.overflow ?? "scroll";
 	if (!arrangement) {
-		return { rects: [], degradations: [], scrollOffset: 0, inlineExtent: 0, columnSizes: [], rowSizes: [] };
+		return {
+			rects: [],
+			degradations: [],
+			scrollOffset: 0,
+			inlineExtent: 0,
+			columnSizes: [],
+			rowSizes: [],
+		};
 	}
 	const collapsed = collapsedIds(state.containers);
-	const columns = columnSolution(arrangement, state.containers, availableInline, mode);
+	const columns = columnSolution(
+		arrangement,
+		state.containers,
+		availableInline,
+		mode,
+	);
 	const rows = solveTracks(
-		trackRequests(arrangement.grid.rows, arrangement.grid.placements, "row", collapsed),
+		trackRequests(
+			arrangement.grid.rows,
+			arrangement.grid.placements,
+			"row",
+			collapsed,
+		),
 		availableBlock,
 		"fit",
 	);
@@ -257,18 +306,35 @@ export function solveLayoutGeometry(
 	if (columns.deficit > 0) {
 		degradations.push(
 			mode === "scroll"
-				? { kind: "overflow", axis: "inline", extent: availableInline + columns.deficit }
-				: { kind: "minima-unsatisfiable", axis: "inline", deficit: columns.deficit },
+				? {
+						kind: "overflow",
+						axis: "inline",
+						extent: availableInline + columns.deficit,
+					}
+				: {
+						kind: "minima-unsatisfiable",
+						axis: "inline",
+						deficit: columns.deficit,
+					},
 		);
 	}
 	if (rows.deficit > 0) {
-		degradations.push({ kind: "minima-unsatisfiable", axis: "block", deficit: rows.deficit });
+		degradations.push({
+			kind: "minima-unsatisfiable",
+			axis: "block",
+			deficit: rows.deficit,
+		});
 	}
 	const colStarts = prefixSums(columns.sizes);
 	const rowStarts = prefixSums(rows.sizes);
 	const scrollOffset =
 		mode === "scroll"
-			? anchorOffset(arrangement.grid.columns, colStarts, arrangement.scrollAnchorColumnId, availableInline)
+			? anchorOffset(
+					arrangement.grid.columns,
+					colStarts,
+					arrangement.scrollAnchorColumnId,
+					availableInline,
+				)
 			: 0;
 	const rects: SolvedRect[] = [...arrangement.grid.placements]
 		.sort((a, b) => a.row - b.row || a.column - b.column)
@@ -277,11 +343,15 @@ export function solveLayoutGeometry(
 			const flush = arrangement.grid.rows[placement.row]?.flush === true;
 			const inlineSize = flush
 				? availableInline
-				: colStarts[placement.column + placement.colSpan] - colStarts[placement.column];
-			const blockSize = rowStarts[placement.row + placement.rowSpan] - rowStarts[placement.row];
+				: colStarts[placement.column + placement.colSpan] -
+					colStarts[placement.column];
+			const blockSize =
+				rowStarts[placement.row + placement.rowSpan] - rowStarts[placement.row];
 			return {
 				containerId: placement.containerId,
-				x: flush ? safe.left : safe.left + colStarts[placement.column] - scrollOffset,
+				x: flush
+					? safe.left
+					: safe.left + colStarts[placement.column] - scrollOffset,
 				y: safe.top + rowStarts[placement.row],
 				inlineSize: isCollapsed ? 0 : inlineSize,
 				blockSize: isCollapsed ? 0 : blockSize,

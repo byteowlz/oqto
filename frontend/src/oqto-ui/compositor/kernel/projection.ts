@@ -8,8 +8,16 @@
  * nothing merges: overflowing columns scroll instead.
  */
 
-import { activeArrangement, repairScrollAnchors, replaceArrangement } from "./arrangement";
-import { solveLayoutGeometry, type SolvedLayout, type ViewportConstraints } from "./geometry";
+import {
+	activeArrangement,
+	repairScrollAnchors,
+	replaceArrangement,
+} from "./arrangement";
+import {
+	type SolvedLayout,
+	type ViewportConstraints,
+	solveLayoutGeometry,
+} from "./geometry";
 import { removePlacement } from "./grid";
 import type { ContainerId, ContentId } from "./ids";
 import type { Container, GridPlacement, LayoutSnapshot } from "./model";
@@ -33,10 +41,14 @@ export interface ProjectedLayout {
 	readonly geometry: SolvedLayout;
 }
 
-function overflows(state: LayoutSnapshot, viewport: ViewportConstraints): boolean {
-	return solveLayoutGeometry(state, { ...viewport, overflow: "scroll" }).degradations.some(
-		(degradation) => degradation.kind === "overflow",
-	);
+function overflows(
+	state: LayoutSnapshot,
+	viewport: ViewportConstraints,
+): boolean {
+	return solveLayoutGeometry(state, {
+		...viewport,
+		overflow: "scroll",
+	}).degradations.some((degradation) => degradation.kind === "overflow");
 }
 
 interface MergeCandidate {
@@ -54,13 +66,23 @@ function mergeCandidate(state: LayoutSnapshot): MergeCandidate | null {
 	}
 	for (const row of [...rows.keys()].sort((a, b) => a - b)) {
 		const inRow = (rows.get(row) ?? [])
-			.map((placement) => ({ placement, container: findContainer(state, placement.containerId) }))
-			.filter((item): item is { placement: GridPlacement; container: Container } => item.container !== null);
+			.map((placement) => ({
+				placement,
+				container: findContainer(state, placement.containerId),
+			}))
+			.filter(
+				(item): item is { placement: GridPlacement; container: Container } =>
+					item.container !== null,
+			);
 		const sources = inRow
-			.filter(({ container }) => !NEVER_MERGED.has(container.role ?? "") && !container.collapsed)
+			.filter(
+				({ container }) =>
+					!NEVER_MERGED.has(container.role ?? "") && !container.collapsed,
+			)
 			.sort(
 				(a, b) =>
-					Number(b.container.role === "auxiliary") - Number(a.container.role === "auxiliary") ||
+					Number(b.container.role === "auxiliary") -
+						Number(a.container.role === "auxiliary") ||
 					b.placement.column - a.placement.column,
 			);
 		if (sources.length === 0) continue;
@@ -68,14 +90,20 @@ function mergeCandidate(state: LayoutSnapshot): MergeCandidate | null {
 		const target =
 			inRow.find(({ container }) => container.role === "primary")?.container ??
 			inRow
-				.filter(({ container }) => container.id !== source.id && container.role !== "navigation")
+				.filter(
+					({ container }) =>
+						container.id !== source.id && container.role !== "navigation",
+				)
 				.sort((a, b) => a.placement.column - b.placement.column)[0]?.container;
 		if (target) return { source, target };
 	}
 	return null;
 }
 
-function merge(state: LayoutSnapshot, candidate: MergeCandidate): LayoutSnapshot {
+function merge(
+	state: LayoutSnapshot,
+	candidate: MergeCandidate,
+): LayoutSnapshot {
 	const arrangement = activeArrangement(state);
 	const stack = [...candidate.target.stack, ...candidate.source.stack];
 	const focused = state.focusedContentId;
@@ -83,16 +111,32 @@ function merge(state: LayoutSnapshot, candidate: MergeCandidate): LayoutSnapshot
 		focused !== null && stack.some((content) => content.id === focused)
 			? focused
 			: (candidate.target.activeContentId ?? candidate.source.activeContentId);
-	const merged = replaceContainer(state, { ...candidate.target, stack, activeContentId, collapsed: false });
+	const merged = replaceContainer(state, {
+		...candidate.target,
+		stack,
+		activeContentId,
+		collapsed: false,
+	});
 	return repairScrollAnchors(
 		replaceArrangement(
-			{ ...merged, containers: merged.containers.filter((container) => container.id !== candidate.source.id) },
-			{ ...arrangement, grid: removePlacement(arrangement.grid, candidate.source.id) },
+			{
+				...merged,
+				containers: merged.containers.filter(
+					(container) => container.id !== candidate.source.id,
+				),
+			},
+			{
+				...arrangement,
+				grid: removePlacement(arrangement.grid, candidate.source.id),
+			},
 		),
 	);
 }
 
-export function projectLayout(state: LayoutSnapshot, viewport: ViewportClass): ProjectedLayout {
+export function projectLayout(
+	state: LayoutSnapshot,
+	viewport: ViewportClass,
+): ProjectedLayout {
 	if ((viewport.responsive ?? "scroll") !== "merge") {
 		return {
 			snapshot: state,
@@ -105,9 +149,15 @@ export function projectLayout(state: LayoutSnapshot, viewport: ViewportClass): P
 	const collapsedForSpace: ContainerId[] = [];
 	const merges: MergeProvenance[] = [];
 	if (overflows(working, viewport)) {
-		for (const containerId of activeArrangement(working).grid.placements.map((p) => p.containerId)) {
+		for (const containerId of activeArrangement(working).grid.placements.map(
+			(p) => p.containerId,
+		)) {
 			const container = findContainer(working, containerId);
-			if (container && container.role === "navigation" && !container.collapsed) {
+			if (
+				container &&
+				container.role === "navigation" &&
+				!container.collapsed
+			) {
 				working = replaceContainer(working, { ...container, collapsed: true });
 				collapsedForSpace.push(containerId);
 			}

@@ -7,14 +7,29 @@
  * focus-stealing command.
  */
 
-import { activeArrangement, arrangementOf, findArrangement, replaceArrangement } from "./arrangement";
+import {
+	activeArrangement,
+	arrangementOf,
+	findArrangement,
+	replaceArrangement,
+} from "./arrangement";
 import type { CommandOutcome, LayoutEvent, OpenTarget } from "./commands";
-import { anchorToReveal, type ViewportConstraints } from "./geometry";
+import { type ViewportConstraints, anchorToReveal } from "./geometry";
 import { containerOrder, placementOf } from "./grid";
 import type { ContentId } from "./ids";
 import { mintEdgeContainer } from "./mint";
-import type { Arrangement, Container, ContentRef, LayoutSnapshot } from "./model";
-import { containerOf, findContainer, repairFocus, replaceContainer } from "./state";
+import type {
+	Arrangement,
+	Container,
+	ContentRef,
+	LayoutSnapshot,
+} from "./model";
+import {
+	containerOf,
+	findContainer,
+	repairFocus,
+	replaceContainer,
+} from "./state";
 
 export interface CommandContext {
 	readonly viewport?: ViewportConstraints;
@@ -30,11 +45,16 @@ function switchTo(
 	state: LayoutSnapshot,
 	arrangement: Arrangement,
 ): { readonly state: LayoutSnapshot; readonly events: LayoutEvent[] } {
-	if (state.activeArrangementId === arrangement.id) return { state, events: [] };
+	if (state.activeArrangementId === arrangement.id)
+		return { state, events: [] };
 	return {
 		state: { ...state, activeArrangementId: arrangement.id },
 		events: [
-			{ type: "arrangement-switched", from: state.activeArrangementId, to: arrangement.id },
+			{
+				type: "arrangement-switched",
+				from: state.activeArrangementId,
+				to: arrangement.id,
+			},
 		],
 	};
 }
@@ -56,8 +76,17 @@ function scrollInto(
 	);
 	if (anchor === arrangement.scrollAnchorColumnId) return { state, events: [] };
 	return {
-		state: replaceArrangement(state, { ...arrangement, scrollAnchorColumnId: anchor }),
-		events: [{ type: "scrolled", arrangementId: arrangement.id, anchorColumnId: anchor }],
+		state: replaceArrangement(state, {
+			...arrangement,
+			scrollAnchorColumnId: anchor,
+		}),
+		events: [
+			{
+				type: "scrolled",
+				arrangementId: arrangement.id,
+				anchorColumnId: anchor,
+			},
+		],
 	};
 }
 
@@ -71,7 +100,10 @@ function revealPlaced(
 	if (!owner) {
 		return {
 			ok: false,
-			rejection: { reason: "invariant-violation", detail: `container ${container.id} is unplaced` },
+			rejection: {
+				reason: "invariant-violation",
+				detail: `container ${container.id} is unplaced`,
+			},
 		};
 	}
 	const switched = switchTo(state, owner);
@@ -137,28 +169,56 @@ export function applyOpen(
 	if (target?.containerId !== undefined) {
 		destination = findContainer(state, target.containerId);
 		if (!destination) {
-			return { ok: false, rejection: { reason: "unknown-container", containerId: target.containerId } };
+			return {
+				ok: false,
+				rejection: {
+					reason: "unknown-container",
+					containerId: target.containerId,
+				},
+			};
 		}
 		arrangement = arrangementOf(state, destination.id);
 	} else if (target?.arrangementId !== undefined) {
 		arrangement = findArrangement(state, target.arrangementId);
 		if (!arrangement) {
-			return { ok: false, rejection: { reason: "unknown-arrangement", arrangementId: target.arrangementId } };
+			return {
+				ok: false,
+				rejection: {
+					reason: "unknown-arrangement",
+					arrangementId: target.arrangementId,
+				},
+			};
 		}
 	} else {
 		arrangement = activeArrangement(state);
 	}
 	if (!arrangement) {
-		return { ok: false, rejection: { reason: "invariant-violation", detail: "container without arrangement" } };
+		return {
+			ok: false,
+			rejection: {
+				reason: "invariant-violation",
+				detail: "container without arrangement",
+			},
+		};
 	}
 
 	let working = state;
 	destination ??= resolveDestination(working, arrangement, target);
 	if (!destination) {
-		const minted = mintEdgeContainer(arrangement, working.idSeed, "inline-end", [], target?.role);
+		const minted = mintEdgeContainer(
+			arrangement,
+			working.idSeed,
+			"inline-end",
+			[],
+			target?.role,
+		);
 		destination = minted.container;
 		working = replaceArrangement(
-			{ ...working, idSeed: minted.idSeed, containers: [...working.containers, minted.container] },
+			{
+				...working,
+				idSeed: minted.idSeed,
+				containers: [...working.containers, minted.container],
+			},
 			{ ...arrangement, grid: minted.grid },
 		);
 		arrangement = findArrangement(working, arrangement.id) ?? arrangement;
@@ -166,7 +226,12 @@ export function applyOpen(
 
 	const stack = [...destination.stack];
 	stack.splice(clampPosition(target?.position, stack.length), 0, content);
-	const placedContainer = { ...destination, stack, activeContentId: content.id, collapsed: false };
+	const placedContainer = {
+		...destination,
+		stack,
+		activeContentId: content.id,
+		collapsed: false,
+	};
 	working = replaceContainer(working, placedContainer);
 	const switched = switchTo(working, arrangement);
 	const scrolled = scrollInto(switched.state, placedContainer, context);
@@ -203,7 +268,9 @@ export function applyActivate(
 	}
 	return {
 		ok: true,
-		state: repairFocus(replaceContainer(state, { ...container, activeContentId: contentId })),
+		state: repairFocus(
+			replaceContainer(state, { ...container, activeContentId: contentId }),
+		),
 		events: [{ type: "activated", contentId, containerId: container.id }],
 	};
 }

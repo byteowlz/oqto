@@ -8,7 +8,10 @@
 export { applyTransaction } from "./kernel/engine";
 export { solveLayoutGeometry } from "./kernel/geometry";
 export { contentIdFrom } from "./kernel/ids";
-export { encodeLayoutDocument, recoverLayoutDocument } from "./kernel/persistence/codec";
+export {
+	encodeLayoutDocument,
+	recoverLayoutDocument,
+} from "./kernel/persistence/codec";
 export { createClassicPresetLayout } from "./kernel/preset";
 export { projectLayout } from "./kernel/projection";
 
@@ -30,7 +33,13 @@ export type {
 	SolvedRect,
 	ViewportConstraints,
 } from "./kernel/geometry";
-export type { ArrangementId, ContainerId, ContentId, GridTrackId, LayoutRevision } from "./kernel/ids";
+export type {
+	ArrangementId,
+	ContainerId,
+	ContentId,
+	GridTrackId,
+	LayoutRevision,
+} from "./kernel/ids";
 export type { InvariantViolation } from "./kernel/invariants";
 export type {
 	ActiveWorkspace,
@@ -48,7 +57,15 @@ export type {
 	LayoutSnapshot,
 	TrackSize,
 } from "./kernel/model";
-export type { DecodeFailureReason, DecodeLayoutResult, RecoveredLayout } from "./kernel/persistence/codec";
+export type {
+	DecodeFailureReason,
+	DecodeLayoutResult,
+	RecoveredLayout,
+} from "./kernel/persistence/codec";
 export type { LayoutMigration } from "./kernel/persistence/migrations";
 export type { ClassicPresetContent } from "./kernel/preset";
-export type { MergeProvenance, ProjectedLayout, ViewportClass } from "./kernel/projection";
+export type {
+	MergeProvenance,
+	ProjectedLayout,
+	ViewportClass,
+} from "./kernel/projection";

@@ -6,6 +6,7 @@
  * pure engine: previewing is calling `applyTransaction` without committing.
  */
 
+import type { ViewportConstraints } from "./geometry";
 import type {
 	ArrangementId,
 	ContainerId,
@@ -13,7 +14,6 @@ import type {
 	GridTrackId,
 	LayoutRevision,
 } from "./ids";
-import type { ViewportConstraints } from "./geometry";
 import type {
 	ActiveWorkspace,
 	ArrangementBinding,
@@ -76,7 +76,11 @@ export type LayoutCommand =
 			readonly containerId: ContainerId;
 			readonly collapsed: boolean;
 	  }
-	| { readonly type: "flush"; readonly rowId: GridTrackId; readonly flush: boolean }
+	| {
+			readonly type: "flush";
+			readonly rowId: GridTrackId;
+			readonly flush: boolean;
+	  }
 	| {
 			readonly type: "scroll";
 			readonly anchorColumnId: GridTrackId | null;
@@ -144,7 +148,11 @@ export type LayoutEvent =
 			readonly containerId: ContainerId;
 			readonly collapsed: boolean;
 	  }
-	| { readonly type: "flushed"; readonly rowId: GridTrackId; readonly flush: boolean }
+	| {
+			readonly type: "flushed";
+			readonly rowId: GridTrackId;
+			readonly flush: boolean;
+	  }
 	| {
 			readonly type: "scrolled";
 			readonly arrangementId: ArrangementId;
@@ -185,7 +193,10 @@ export type LayoutRejection =
 			readonly reason: "unknown-arrangement";
 			readonly arrangementId: ArrangementId;
 	  }
-	| { readonly reason: "last-arrangement"; readonly arrangementId: ArrangementId }
+	| {
+			readonly reason: "last-arrangement";
+			readonly arrangementId: ArrangementId;
+	  }
 	| { readonly reason: "invalid-command"; readonly detail: string }
 	| { readonly reason: "invariant-violation"; readonly detail: string };
 

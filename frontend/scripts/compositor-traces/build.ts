@@ -52,7 +52,11 @@ export interface TransitionTrace extends TraceHeader {
 export interface GeometryScenario {
 	readonly name: string;
 	readonly snapshot: LayoutSnapshot;
-	readonly cases: readonly { readonly name: string; readonly viewport: ViewportConstraints; readonly expected: SolvedLayout }[];
+	readonly cases: readonly {
+		readonly name: string;
+		readonly viewport: ViewportConstraints;
+		readonly expected: SolvedLayout;
+	}[];
 }
 
 export interface GeometryTrace extends TraceHeader {
@@ -63,7 +67,11 @@ export interface GeometryTrace extends TraceHeader {
 export interface ProjectionScenario {
 	readonly name: string;
 	readonly snapshot: LayoutSnapshot;
-	readonly cases: readonly { readonly name: string; readonly viewport: ViewportClass; readonly expected: ProjectedLayout }[];
+	readonly cases: readonly {
+		readonly name: string;
+		readonly viewport: ViewportClass;
+		readonly expected: ProjectedLayout;
+	}[];
 }
 
 export interface ProjectionTrace extends TraceHeader {
@@ -84,7 +92,11 @@ export interface PersistenceTrace extends TraceHeader {
 	readonly documents: readonly PersistenceDocument[];
 }
 
-export type CompositorTrace = TransitionTrace | GeometryTrace | ProjectionTrace | PersistenceTrace;
+export type CompositorTrace =
+	| TransitionTrace
+	| GeometryTrace
+	| ProjectionTrace
+	| PersistenceTrace;
 
 export interface TraceFile {
 	readonly path: string;
@@ -92,18 +104,46 @@ export interface TraceFile {
 }
 
 const VIEWPORT: ViewportConstraints = { inlineSize: 1600, blockSize: 900 };
-const sessionsContent: ContentRef = { id: contentIdFrom("sessions:catalog"), kind: "sessions" };
-const chatContent: ContentRef = { id: contentIdFrom("chat:session-1"), kind: "chat" };
-const filesContent: ContentRef = { id: contentIdFrom("files:workdir-1"), kind: "files" };
-const gitContent: ContentRef = { id: contentIdFrom("git:workdir-1"), kind: "git" };
-const terminalContent: ContentRef = { id: contentIdFrom("terminal:workdir-1"), kind: "terminal" };
+const sessionsContent: ContentRef = {
+	id: contentIdFrom("sessions:catalog"),
+	kind: "sessions",
+};
+const chatContent: ContentRef = {
+	id: contentIdFrom("chat:session-1"),
+	kind: "chat",
+};
+const filesContent: ContentRef = {
+	id: contentIdFrom("files:workdir-1"),
+	kind: "files",
+};
+const gitContent: ContentRef = {
+	id: contentIdFrom("git:workdir-1"),
+	kind: "git",
+};
+const terminalContent: ContentRef = {
+	id: contentIdFrom("terminal:workdir-1"),
+	kind: "terminal",
+};
 
 function classic(): LayoutSnapshot {
-	return createClassicPresetLayout({ navigation: [sessionsContent], primary: [chatContent], auxiliary: [filesContent] });
+	return createClassicPresetLayout({
+		navigation: [sessionsContent],
+		primary: [chatContent],
+		auxiliary: [filesContent],
+	});
 }
 
-function header(name: string, description: string, schemaVersion: number): TraceHeader {
-	return { formatVersion: TRACE_FORMAT_VERSION, schemaVersion, name, description };
+function header(
+	name: string,
+	description: string,
+	schemaVersion: number,
+): TraceHeader {
+	return {
+		formatVersion: TRACE_FORMAT_VERSION,
+		schemaVersion,
+		name,
+		description,
+	};
 }
 
 type PlanEntry = (state: LayoutSnapshot) => {
@@ -112,7 +152,12 @@ type PlanEntry = (state: LayoutSnapshot) => {
 	readonly viewport?: ViewportConstraints;
 };
 
-function record(name: string, description: string, initial: LayoutSnapshot, plan: readonly PlanEntry[]): TransitionTrace {
+function record(
+	name: string,
+	description: string,
+	initial: LayoutSnapshot,
+	plan: readonly PlanEntry[],
+): TransitionTrace {
 	let state = initial;
 	const steps: TransitionStep[] = [];
 	for (const entry of plan) {
@@ -126,24 +171,44 @@ function record(name: string, description: string, initial: LayoutSnapshot, plan
 		steps.push({ transaction, expected });
 		if (expected.ok) state = expected.snapshot;
 	}
-	return { format: "oqto-compositor-transitions", ...header(name, description, initial.schemaVersion), initial, steps };
+	return {
+		format: "oqto-compositor-transitions",
+		...header(name, description, initial.schemaVersion),
+		initial,
+		steps,
+	};
 }
 
 function byRole(state: LayoutSnapshot, role: string) {
-	const container = state.containers.find((candidate) => candidate.role === role);
+	const container = state.containers.find(
+		(candidate) => candidate.role === role,
+	);
 	if (!container) throw new Error(`trace builder: no ${role} container`);
 	return container;
 }
 
 function activeGrid(state: LayoutSnapshot) {
-	const arrangement = state.arrangements.find((a) => a.id === state.activeArrangementId);
+	const arrangement = state.arrangements.find(
+		(a) => a.id === state.activeArrangementId,
+	);
 	if (!arrangement) throw new Error("trace builder: no active arrangement");
 	return arrangement.grid;
 }
 
-function mustApply(state: LayoutSnapshot, commands: readonly LayoutCommand[], viewport = VIEWPORT): LayoutSnapshot {
-	const result = applyTransaction(state, { expectedRevision: state.revision, commands, viewport });
-	if (!result.ok) throw new Error(`trace builder setup failed: ${JSON.stringify(result.rejection)}`);
+function mustApply(
+	state: LayoutSnapshot,
+	commands: readonly LayoutCommand[],
+	viewport = VIEWPORT,
+): LayoutSnapshot {
+	const result = applyTransaction(state, {
+		expectedRevision: state.revision,
+		commands,
+		viewport,
+	});
+	if (!result.ok)
+		throw new Error(
+			`trace builder setup failed: ${JSON.stringify(result.rejection)}`,
+		);
 	return result.snapshot;
 }
 
@@ -153,17 +218,41 @@ function classicLifecycleTrace(): TransitionTrace {
 		"Open/tab/reveal/activate/focus/collapse/close over the classic preset, including idempotent open, typed not-placed reveal, empty retain/collapse behavior, and deterministic focus handoff.",
 		classic(),
 		[
-			() => ({ commands: [{ type: "open", content: gitContent, target: { role: "auxiliary" } }] }),
+			() => ({
+				commands: [
+					{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+				],
+			}),
 			() => ({ commands: [{ type: "open", content: chatContent }] }),
-			() => ({ commands: [{ type: "reveal", contentId: contentIdFrom("chat:never-opened") }] }),
+			() => ({
+				commands: [
+					{ type: "reveal", contentId: contentIdFrom("chat:never-opened") },
+				],
+			}),
 			() => ({ commands: [{ type: "activate", contentId: filesContent.id }] }),
 			() => ({ commands: [{ type: "focus", contentId: filesContent.id }] }),
-			(s) => ({ commands: [{ type: "collapse", containerId: byRole(s, "navigation").id, collapsed: true }] }),
+			(s) => ({
+				commands: [
+					{
+						type: "collapse",
+						containerId: byRole(s, "navigation").id,
+						collapsed: true,
+					},
+				],
+			}),
 			() => ({ commands: [{ type: "reveal", contentId: sessionsContent.id }] }),
 			() => ({ commands: [{ type: "close", contentId: gitContent.id }] }),
 			() => ({ commands: [{ type: "close", contentId: sessionsContent.id }] }),
 			() => ({ commands: [{ type: "close", contentId: chatContent.id }] }),
-			(s) => ({ commands: [{ type: "open", content: chatContent, target: { containerId: byRole(s, "primary").id } }] }),
+			(s) => ({
+				commands: [
+					{
+						type: "open",
+						content: chatContent,
+						target: { containerId: byRole(s, "primary").id },
+					},
+				],
+			}),
 		],
 	);
 }
@@ -174,15 +263,82 @@ function splitsMovesTrace(): TransitionTrace {
 		"Container-relative splits growing spanning neighbors, cross-Container moves, in-Container reordering, semantic resize, remove empty behavior with grid repair, and typed unknown-target rejections.",
 		classic(),
 		[
-			() => ({ commands: [{ type: "open", content: gitContent, target: { role: "auxiliary" } }] }),
-			(s) => ({ commands: [{ type: "split", contentId: filesContent.id, relativeTo: byRole(s, "primary").id, edge: "inline-end" }] }),
-			(s) => ({ commands: [{ type: "split", contentId: gitContent.id, relativeTo: byRole(s, "auxiliary").id, edge: "block-end" }] }),
-			(s) => ({ commands: [{ type: "move", contentId: chatContent.id, destination: { containerId: byRole(s, "auxiliary").id } }] }),
-			(s) => ({ commands: [{ type: "move", contentId: chatContent.id, destination: { containerId: byRole(s, "auxiliary").id, position: 0 } }] }),
-			(s) => ({ commands: [{ type: "resize", containerId: byRole(s, "auxiliary").id, axis: "inline", size: { unit: "fraction", value: 3, min: 300 } }] }),
+			() => ({
+				commands: [
+					{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "split",
+						contentId: filesContent.id,
+						relativeTo: byRole(s, "primary").id,
+						edge: "inline-end",
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "split",
+						contentId: gitContent.id,
+						relativeTo: byRole(s, "auxiliary").id,
+						edge: "block-end",
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "move",
+						contentId: chatContent.id,
+						destination: { containerId: byRole(s, "auxiliary").id },
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "move",
+						contentId: chatContent.id,
+						destination: {
+							containerId: byRole(s, "auxiliary").id,
+							position: 0,
+						},
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "resize",
+						containerId: byRole(s, "auxiliary").id,
+						axis: "inline",
+						size: { unit: "fraction", value: 3, min: 300 },
+					},
+				],
+			}),
 			() => ({ commands: [{ type: "close", contentId: filesContent.id }] }),
-			(s) => ({ commands: [{ type: "resize", containerId: byRole(s, "primary").id, axis: "inline", size: { unit: "fraction", value: 0 } }] }),
-			() => ({ commands: [{ type: "move", contentId: chatContent.id, destination: { containerId: "container-9999" as never } }] }),
+			(s) => ({
+				commands: [
+					{
+						type: "resize",
+						containerId: byRole(s, "primary").id,
+						axis: "inline",
+						size: { unit: "fraction", value: 0 },
+					},
+				],
+			}),
+			() => ({
+				commands: [
+					{
+						type: "move",
+						contentId: chatContent.id,
+						destination: { containerId: "container-9999" as never },
+					},
+				],
+			}),
 		],
 	);
 }
@@ -194,12 +350,31 @@ function conflictsUndoTrace(): TransitionTrace {
 		"Stale-revision conflicts (newer state wins), undo to a captured prior snapshot with forward-moving revision, undo schema-version rejection, identity-reuse rejection, and unknown-content close.",
 		initial,
 		[
-			() => ({ commands: [{ type: "open", content: gitContent, target: { role: "auxiliary" } }] }),
-			() => ({ expectedRevision: 0, commands: [{ type: "close", contentId: chatContent.id }] }),
+			() => ({
+				commands: [
+					{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+				],
+			}),
+			() => ({
+				expectedRevision: 0,
+				commands: [{ type: "close", contentId: chatContent.id }],
+			}),
 			() => ({ commands: [{ type: "undo", snapshot: initial }] }),
-			() => ({ commands: [{ type: "undo", snapshot: { ...initial, schemaVersion: 99 } }] }),
-			() => ({ commands: [{ type: "open", content: { id: chatContent.id, kind: "files" } }] }),
-			() => ({ commands: [{ type: "close", contentId: contentIdFrom("chat:never-opened") }] }),
+			() => ({
+				commands: [
+					{ type: "undo", snapshot: { ...initial, schemaVersion: 99 } },
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "open", content: { id: chatContent.id, kind: "files" } },
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "close", contentId: contentIdFrom("chat:never-opened") },
+				],
+			}),
 		],
 	);
 }
@@ -210,21 +385,87 @@ function lanesScrollingTrace(): TransitionTrace {
 		"Edge splits creating full-width Lanes at the bottom and top, flush lanes (lane-level, edge-only, fixed size), wide fixed columns overflowing the screen, discrete scroll commands, and reveal settling the scroll anchor with and without a viewport.",
 		classic(),
 		[
-			() => ({ commands: [{ type: "open", content: terminalContent, target: { role: "auxiliary" } }] }),
-			() => ({ commands: [{ type: "split", contentId: terminalContent.id, edge: "block-end" }] }),
-			(s) => ({ commands: [{ type: "flush", rowId: activeGrid(s).rows[1].id, flush: true }] }),
-			(s) => ({ commands: [{ type: "flush", rowId: activeGrid(s).rows[0].id, flush: true }] }),
-			() => ({ commands: [{ type: "split", contentId: gitContent.id, edge: "block-start" }] }),
-			() => ({ commands: [{ type: "open", content: gitContent, target: { role: "auxiliary" } }] }),
-			() => ({ commands: [{ type: "split", contentId: gitContent.id, edge: "block-start" }] }),
-			(s) => ({ commands: [{ type: "flush", rowId: activeGrid(s).rows[1].id, flush: true }] }),
-			(s) => ({ commands: [{ type: "resize", containerId: byRole(s, "primary").id, axis: "inline", size: { unit: "fixed", value: 1400 } }] }),
-			(s) => ({ commands: [{ type: "scroll", anchorColumnId: activeGrid(s).columns[2].id }] }),
-			() => ({ commands: [{ type: "reveal", contentId: sessionsContent.id }], viewport: VIEWPORT }),
-			() => ({ commands: [{ type: "reveal", contentId: filesContent.id }], viewport: VIEWPORT }),
+			() => ({
+				commands: [
+					{
+						type: "open",
+						content: terminalContent,
+						target: { role: "auxiliary" },
+					},
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "split", contentId: terminalContent.id, edge: "block-end" },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "flush", rowId: activeGrid(s).rows[1].id, flush: true },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "flush", rowId: activeGrid(s).rows[0].id, flush: true },
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "split", contentId: gitContent.id, edge: "block-start" },
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+				],
+			}),
+			() => ({
+				commands: [
+					{ type: "split", contentId: gitContent.id, edge: "block-start" },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "flush", rowId: activeGrid(s).rows[1].id, flush: true },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "resize",
+						containerId: byRole(s, "primary").id,
+						axis: "inline",
+						size: { unit: "fixed", value: 1400 },
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "scroll", anchorColumnId: activeGrid(s).columns[2].id },
+				],
+			}),
+			() => ({
+				commands: [{ type: "reveal", contentId: sessionsContent.id }],
+				viewport: VIEWPORT,
+			}),
+			() => ({
+				commands: [{ type: "reveal", contentId: filesContent.id }],
+				viewport: VIEWPORT,
+			}),
 			() => ({ commands: [{ type: "reveal", contentId: sessionsContent.id }] }),
-			() => ({ commands: [{ type: "scroll", anchorColumnId: "track-404" as never }] }),
-			(s) => ({ commands: [{ type: "resize", containerId: byRole(s, "primary").id, axis: "inline", size: { unit: "fraction", value: 2, min: 360 } }] }),
+			() => ({
+				commands: [{ type: "scroll", anchorColumnId: "track-404" as never }],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "resize",
+						containerId: byRole(s, "primary").id,
+						axis: "inline",
+						size: { unit: "fraction", value: 2, min: 360 },
+					},
+				],
+			}),
 		],
 	);
 }
@@ -235,23 +476,80 @@ function arrangementsTrace(): TransitionTrace {
 		"Arrangement create/switch/remove with per-Arrangement focus memory, work-directory binding as data, moving Content across Arrangements without switching, reveal teleporting across Arrangements, last-Arrangement refusal, and active-Workspace switching as opaque data.",
 		classic(),
 		[
-			() => ({ commands: [{ type: "arrangement-create", label: "second", binding: { kind: "work-directory", id: "wd-2" }, activate: true }] }),
+			() => ({
+				commands: [
+					{
+						type: "arrangement-create",
+						label: "second",
+						binding: { kind: "work-directory", id: "wd-2" },
+						activate: true,
+					},
+				],
+			}),
 			() => ({ commands: [{ type: "open", content: gitContent }] }),
-			(s) => ({ commands: [{ type: "arrangement-switch", arrangementId: s.arrangements[0].id }] }),
-			(s) => ({ commands: [{ type: "move", contentId: filesContent.id, destination: { arrangementId: s.arrangements[1].id } }] }),
-			() => ({ commands: [{ type: "reveal", contentId: gitContent.id }], viewport: VIEWPORT }),
-			() => ({ commands: [{ type: "workspace-switch", workspace: { kind: "workspace", id: "ws-1" } }] }),
-			(s) => ({ commands: [{ type: "arrangement-switch", arrangementId: s.arrangements[0].id }] }),
-			(s) => ({ commands: [{ type: "arrangement-remove", arrangementId: s.arrangements[1].id }] }),
-			(s) => ({ commands: [{ type: "arrangement-remove", arrangementId: s.arrangements[0].id }] }),
-			() => ({ commands: [{ type: "arrangement-switch", arrangementId: "arrangement-404" as never }] }),
-			() => ({ commands: [{ type: "workspace-switch", workspace: { kind: "all" } }] }),
+			(s) => ({
+				commands: [
+					{ type: "arrangement-switch", arrangementId: s.arrangements[0].id },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{
+						type: "move",
+						contentId: filesContent.id,
+						destination: { arrangementId: s.arrangements[1].id },
+					},
+				],
+			}),
+			() => ({
+				commands: [{ type: "reveal", contentId: gitContent.id }],
+				viewport: VIEWPORT,
+			}),
+			() => ({
+				commands: [
+					{
+						type: "workspace-switch",
+						workspace: { kind: "workspace", id: "ws-1" },
+					},
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "arrangement-switch", arrangementId: s.arrangements[0].id },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "arrangement-remove", arrangementId: s.arrangements[1].id },
+				],
+			}),
+			(s) => ({
+				commands: [
+					{ type: "arrangement-remove", arrangementId: s.arrangements[0].id },
+				],
+			}),
+			() => ({
+				commands: [
+					{
+						type: "arrangement-switch",
+						arrangementId: "arrangement-404" as never,
+					},
+				],
+			}),
+			() => ({
+				commands: [{ type: "workspace-switch", workspace: { kind: "all" } }],
+			}),
 		],
 	);
 }
 
 const GENERATED_KINDS = ["chat", "files", "git", "terminal", "app"];
-const EDGES = ["inline-start", "inline-end", "block-start", "block-end"] as const;
+const EDGES = [
+	"inline-start",
+	"inline-end",
+	"block-start",
+	"block-end",
+] as const;
 
 function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 	const rng = new SeededRng(seed);
@@ -262,9 +560,13 @@ function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 	const steps: TransitionStep[] = [];
 
 	for (let index = 0; index < stepCount; index += 1) {
-		const placed = state.containers.flatMap((container) => container.stack.map((content) => content.id));
+		const placed = state.containers.flatMap((container) =>
+			container.stack.map((content) => content.id),
+		);
 		const containers = state.containers.map((container) => container.id);
-		const arrangements = state.arrangements.map((arrangement) => arrangement.id);
+		const arrangements = state.arrangements.map(
+			(arrangement) => arrangement.id,
+		);
 		const grid = activeGrid(state);
 		const roll = rng.int(100);
 		let command: LayoutCommand;
@@ -274,13 +576,26 @@ function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 			minted += 1;
 			command = {
 				type: "open",
-				content: { id: contentIdFrom(`generated-${seed}-${minted}`), kind: rng.pick(GENERATED_KINDS) },
-				...(containers.length > 0 && rng.bool(0.4) ? { target: { containerId: rng.pick(containers) } } : {}),
+				content: {
+					id: contentIdFrom(`generated-${seed}-${minted}`),
+					kind: rng.pick(GENERATED_KINDS),
+				},
+				...(containers.length > 0 && rng.bool(0.4)
+					? { target: { containerId: rng.pick(containers) } }
+					: {}),
 			};
 		} else if (roll < 20) {
-			command = { type: "reveal", contentId: rng.bool(0.7) ? rng.pick(placed) : contentIdFrom(`ghost-${index}`) };
+			command = {
+				type: "reveal",
+				contentId: rng.bool(0.7)
+					? rng.pick(placed)
+					: contentIdFrom(`ghost-${index}`),
+			};
 		} else if (roll < 27) {
-			command = { type: rng.bool() ? "activate" : "focus", contentId: rng.pick(placed) };
+			command = {
+				type: rng.bool() ? "activate" : "focus",
+				contentId: rng.pick(placed),
+			};
 		} else if (roll < 37) {
 			command = {
 				type: "move",
@@ -301,24 +616,57 @@ function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 				type: "resize",
 				containerId: rng.pick(containers),
 				axis: rng.bool() ? "inline" : "block",
-				size: rng.bool(0.8) ? { unit: rng.bool() ? "fraction" : "fixed", value: 1 + rng.int(300) } : { unit: "fraction", value: 0 },
+				size: rng.bool(0.8)
+					? { unit: rng.bool() ? "fraction" : "fixed", value: 1 + rng.int(300) }
+					: { unit: "fraction", value: 0 },
 			};
 		} else if (roll < 60) {
-			command = { type: "collapse", containerId: rng.pick(containers), collapsed: rng.bool() };
+			command = {
+				type: "collapse",
+				containerId: rng.pick(containers),
+				collapsed: rng.bool(),
+			};
 		} else if (roll < 64 && grid.rows.length > 0) {
-			command = { type: "flush", rowId: rng.pick(grid.rows).id, flush: rng.bool(0.7) };
+			command = {
+				type: "flush",
+				rowId: rng.pick(grid.rows).id,
+				flush: rng.bool(0.7),
+			};
 		} else if (roll < 68) {
-			command = { type: "scroll", anchorColumnId: grid.columns.length > 0 && rng.bool(0.8) ? rng.pick(grid.columns).id : null };
+			command = {
+				type: "scroll",
+				anchorColumnId:
+					grid.columns.length > 0 && rng.bool(0.8)
+						? rng.pick(grid.columns).id
+						: null,
+			};
 		} else if (roll < 78) {
 			command = { type: "close", contentId: rng.pick(placed) };
 		} else if (roll < 82) {
-			command = { type: "arrangement-create", activate: rng.bool(), ...(rng.bool() ? { binding: { kind: "work-directory", id: `wd-${index}` } } : {}) };
+			command = {
+				type: "arrangement-create",
+				activate: rng.bool(),
+				...(rng.bool()
+					? { binding: { kind: "work-directory", id: `wd-${index}` } }
+					: {}),
+			};
 		} else if (roll < 86) {
-			command = { type: "arrangement-switch", arrangementId: rng.pick(arrangements) };
+			command = {
+				type: "arrangement-switch",
+				arrangementId: rng.pick(arrangements),
+			};
 		} else if (roll < 89) {
-			command = { type: "arrangement-remove", arrangementId: rng.pick(arrangements) };
+			command = {
+				type: "arrangement-remove",
+				arrangementId: rng.pick(arrangements),
+			};
 		} else if (roll < 91) {
-			command = { type: "workspace-switch", workspace: rng.bool() ? { kind: "all" } : { kind: "workspace", id: `ws-${index}` } };
+			command = {
+				type: "workspace-switch",
+				workspace: rng.bool()
+					? { kind: "all" }
+					: { kind: "workspace", id: `ws-${index}` },
+			};
 		} else if (roll < 96 && history.length > 0) {
 			command = { type: "undo", snapshot: rng.pick(history) };
 		} else {
@@ -326,7 +674,11 @@ function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 			expectedRevision = state.revision + 1;
 		}
 
-		const transaction: LayoutTransaction = { expectedRevision, commands: [command], viewport: VIEWPORT };
+		const transaction: LayoutTransaction = {
+			expectedRevision,
+			commands: [command],
+			viewport: VIEWPORT,
+		};
 		const expected = applyTransaction(state, transaction);
 		steps.push({ transaction, expected });
 		if (expected.ok) {
@@ -348,20 +700,48 @@ function generatedTrace(seed: number, stepCount: number): TransitionTrace {
 	};
 }
 
-function representativeSnapshots(): readonly { name: string; snapshot: LayoutSnapshot }[] {
+function representativeSnapshots(): readonly {
+	name: string;
+	snapshot: LayoutSnapshot;
+}[] {
 	const base = classic();
-	const collapsedNav = mustApply(base, [{ type: "collapse", containerId: byRole(base, "navigation").id, collapsed: true }]);
-	const blockSplit = mustApply(base, [{ type: "split", contentId: filesContent.id, relativeTo: byRole(base, "primary").id, edge: "block-end" }]);
+	const collapsedNav = mustApply(base, [
+		{
+			type: "collapse",
+			containerId: byRole(base, "navigation").id,
+			collapsed: true,
+		},
+	]);
+	const blockSplit = mustApply(base, [
+		{
+			type: "split",
+			contentId: filesContent.id,
+			relativeTo: byRole(base, "primary").id,
+			edge: "block-end",
+		},
+	]);
 	let flushLane = mustApply(base, [
 		{ type: "open", content: terminalContent, target: { role: "auxiliary" } },
 		{ type: "split", contentId: terminalContent.id, edge: "block-end" },
 	]);
-	flushLane = mustApply(flushLane, [{ type: "flush", rowId: activeGrid(flushLane).rows[1].id, flush: true }]);
 	flushLane = mustApply(flushLane, [
-		{ type: "resize", containerId: byRole(flushLane, "primary").id, axis: "inline", size: { unit: "fixed", value: 1400 } },
+		{ type: "flush", rowId: activeGrid(flushLane).rows[1].id, flush: true },
 	]);
-	flushLane = mustApply(flushLane, [{ type: "scroll", anchorColumnId: activeGrid(flushLane).columns[2].id }]);
-	const tabbed = mustApply(base, [{ type: "open", content: gitContent, target: { role: "auxiliary" } }, { type: "focus", contentId: filesContent.id }]);
+	flushLane = mustApply(flushLane, [
+		{
+			type: "resize",
+			containerId: byRole(flushLane, "primary").id,
+			axis: "inline",
+			size: { unit: "fixed", value: 1400 },
+		},
+	]);
+	flushLane = mustApply(flushLane, [
+		{ type: "scroll", anchorColumnId: activeGrid(flushLane).columns[2].id },
+	]);
+	const tabbed = mustApply(base, [
+		{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+		{ type: "focus", contentId: filesContent.id },
+	]);
 	return [
 		{ name: "classic-preset", snapshot: base },
 		{ name: "collapsed-navigation", snapshot: collapsedNav },
@@ -372,13 +752,23 @@ function representativeSnapshots(): readonly { name: string; snapshot: LayoutSna
 }
 
 function geometryTrace(): GeometryTrace {
-	const viewports: readonly { name: string; viewport: ViewportConstraints }[] = [
-		{ name: "desktop", viewport: VIEWPORT },
-		{ name: "desktop-safe-area", viewport: { ...VIEWPORT, safeArea: { top: 24, right: 8, bottom: 16, left: 8 } } },
-		{ name: "narrow-scroll", viewport: { inlineSize: 500, blockSize: 400 } },
-		{ name: "narrow-fit", viewport: { inlineSize: 500, blockSize: 400, overflow: "fit" } },
-		{ name: "tall", viewport: { inlineSize: 900, blockSize: 1400 } },
-	];
+	const viewports: readonly { name: string; viewport: ViewportConstraints }[] =
+		[
+			{ name: "desktop", viewport: VIEWPORT },
+			{
+				name: "desktop-safe-area",
+				viewport: {
+					...VIEWPORT,
+					safeArea: { top: 24, right: 8, bottom: 16, left: 8 },
+				},
+			},
+			{ name: "narrow-scroll", viewport: { inlineSize: 500, blockSize: 400 } },
+			{
+				name: "narrow-fit",
+				viewport: { inlineSize: 500, blockSize: 400, overflow: "fit" },
+			},
+			{ name: "tall", viewport: { inlineSize: 900, blockSize: 1400 } },
+		];
 	return {
 		format: "oqto-compositor-geometry",
 		...header(
@@ -389,7 +779,10 @@ function geometryTrace(): GeometryTrace {
 		scenarios: representativeSnapshots().map(({ name, snapshot }) => ({
 			name,
 			snapshot,
-			cases: viewports.map((entry) => ({ ...entry, expected: solveLayoutGeometry(snapshot, entry.viewport) })),
+			cases: viewports.map((entry) => ({
+				...entry,
+				expected: solveLayoutGeometry(snapshot, entry.viewport),
+			})),
 		})),
 	};
 }
@@ -408,8 +801,16 @@ function projectionTrace(): ProjectionTrace {
 			snapshot,
 			cases: widths.flatMap((inlineSize) =>
 				(["merge", "scroll"] as const).map((responsive) => {
-					const viewport: ViewportClass = { inlineSize, blockSize: 800, responsive };
-					return { name: `${responsive}-${inlineSize}`, viewport, expected: projectLayout(snapshot, viewport) };
+					const viewport: ViewportClass = {
+						inlineSize,
+						blockSize: 800,
+						responsive,
+					};
+					return {
+						name: `${responsive}-${inlineSize}`,
+						viewport,
+						expected: projectLayout(snapshot, viewport),
+					};
 				}),
 			),
 		})),
@@ -432,23 +833,75 @@ function persistenceTrace(): PersistenceTrace {
 		focusedContentId: chatContent.id,
 		grid: {
 			columns: [
-				{ id: "column-1", size: { unit: "fixed", value: 320, min: 240 }, cells: [{ containerId: "container-0", size: { unit: "fraction", value: 1 } }] },
+				{
+					id: "column-1",
+					size: { unit: "fixed", value: 320, min: 240 },
+					cells: [
+						{
+							containerId: "container-0",
+							size: { unit: "fraction", value: 1 },
+						},
+					],
+				},
 				{
 					id: "column-3",
 					size: { unit: "fraction", value: 2, min: 360 },
 					cells: [
-						{ containerId: "container-2", size: { unit: "fraction", value: 1 } },
-						{ containerId: "container-6", size: { unit: "fraction", value: 1 } },
+						{
+							containerId: "container-2",
+							size: { unit: "fraction", value: 1 },
+						},
+						{
+							containerId: "container-6",
+							size: { unit: "fraction", value: 1 },
+						},
 					],
 				},
-				{ id: "column-5", size: { unit: "fraction", value: 1, min: 280 }, cells: [{ containerId: "container-4", size: { unit: "fraction", value: 1 } }] },
+				{
+					id: "column-5",
+					size: { unit: "fraction", value: 1, min: 280 },
+					cells: [
+						{
+							containerId: "container-4",
+							size: { unit: "fraction", value: 1 },
+						},
+					],
+				},
 			],
 		},
 		containers: [
-			{ id: "container-0", role: "navigation", emptyBehavior: "collapse", collapsed: false, activeContentId: sessionsContent.id, stack: [sessionsContent] },
-			{ id: "container-2", role: "primary", emptyBehavior: "retain", collapsed: false, activeContentId: chatContent.id, stack: [chatContent] },
-			{ id: "container-6", emptyBehavior: "remove", collapsed: false, activeContentId: "terminal:x", stack: [{ id: "terminal:x", kind: "terminal" }] },
-			{ id: "container-4", role: "auxiliary", emptyBehavior: "retain", collapsed: false, activeContentId: filesContent.id, stack: [filesContent], futureField: 1 },
+			{
+				id: "container-0",
+				role: "navigation",
+				emptyBehavior: "collapse",
+				collapsed: false,
+				activeContentId: sessionsContent.id,
+				stack: [sessionsContent],
+			},
+			{
+				id: "container-2",
+				role: "primary",
+				emptyBehavior: "retain",
+				collapsed: false,
+				activeContentId: chatContent.id,
+				stack: [chatContent],
+			},
+			{
+				id: "container-6",
+				emptyBehavior: "remove",
+				collapsed: false,
+				activeContentId: "terminal:x",
+				stack: [{ id: "terminal:x", kind: "terminal" }],
+			},
+			{
+				id: "container-4",
+				role: "auxiliary",
+				emptyBehavior: "retain",
+				collapsed: false,
+				activeContentId: filesContent.id,
+				stack: [filesContent],
+				futureField: 1,
+			},
 		],
 		futureTopLevel: true,
 	});
@@ -467,15 +920,60 @@ function persistenceTrace(): PersistenceTrace {
 		{ name: "schema-v1-migrated", raw: v1 },
 		{ name: "truncated-json", raw: '{"schemaVersion": 2, "rev' },
 		{ name: "non-object-root", raw: "[1,2,3]" },
-		{ name: "missing-schema-version", raw: mutate((doc) => { doc.schemaVersion = undefined; }) },
-		{ name: "newer-schema-version", raw: mutate((doc) => { doc.schemaVersion = 99; }) },
-		{ name: "unknown-empty-behavior", raw: mutate((doc) => { doc.containers[0].emptyBehavior = "detonate"; }) },
-		{ name: "malformed-active-workspace", raw: mutate((doc) => { doc.activeWorkspace = { kind: "galaxy" }; }) },
-		{ name: "negative-track-size", raw: mutate((doc) => { doc.arrangements[0].grid.columns[0].size.value = -5; }) },
-		{ name: "overlapping-placements", raw: mutate((doc) => { doc.arrangements[0].grid.placements[1].column = 0; }) },
-		{ name: "active-content-not-in-stack", raw: mutate((doc) => { doc.containers[0].activeContentId = "nonexistent"; }) },
-		{ name: "focus-on-unplaced-content", raw: mutate((doc) => { doc.focusedContentId = "nonexistent"; }) },
-		{ name: "unknown-active-arrangement", raw: mutate((doc) => { doc.activeArrangementId = "arrangement-404"; }) },
+		{
+			name: "missing-schema-version",
+			raw: mutate((doc) => {
+				doc.schemaVersion = undefined;
+			}),
+		},
+		{
+			name: "newer-schema-version",
+			raw: mutate((doc) => {
+				doc.schemaVersion = 99;
+			}),
+		},
+		{
+			name: "unknown-empty-behavior",
+			raw: mutate((doc) => {
+				doc.containers[0].emptyBehavior = "detonate";
+			}),
+		},
+		{
+			name: "malformed-active-workspace",
+			raw: mutate((doc) => {
+				doc.activeWorkspace = { kind: "galaxy" };
+			}),
+		},
+		{
+			name: "negative-track-size",
+			raw: mutate((doc) => {
+				doc.arrangements[0].grid.columns[0].size.value = -5;
+			}),
+		},
+		{
+			name: "overlapping-placements",
+			raw: mutate((doc) => {
+				doc.arrangements[0].grid.placements[1].column = 0;
+			}),
+		},
+		{
+			name: "active-content-not-in-stack",
+			raw: mutate((doc) => {
+				doc.containers[0].activeContentId = "nonexistent";
+			}),
+		},
+		{
+			name: "focus-on-unplaced-content",
+			raw: mutate((doc) => {
+				doc.focusedContentId = "nonexistent";
+			}),
+		},
+		{
+			name: "unknown-active-arrangement",
+			raw: mutate((doc) => {
+				doc.activeArrangementId = "arrangement-404";
+			}),
+		},
 	];
 	return {
 		format: "oqto-compositor-persistence",
@@ -489,7 +987,10 @@ function persistenceTrace(): PersistenceTrace {
 			return {
 				name,
 				raw,
-				expected: recovered.sourceIndex === 0 ? { ok: true, snapshot: recovered.snapshot } : { ok: false, reason: recovered.failures[0].reason },
+				expected:
+					recovered.sourceIndex === 0
+						? { ok: true, snapshot: recovered.snapshot }
+						: { ok: false, reason: recovered.failures[0].reason },
 			};
 		}),
 	};
@@ -497,14 +998,29 @@ function persistenceTrace(): PersistenceTrace {
 
 export function buildCompositorTraceCorpus(): readonly TraceFile[] {
 	return [
-		{ path: "transitions-classic-lifecycle.json", data: classicLifecycleTrace() },
+		{
+			path: "transitions-classic-lifecycle.json",
+			data: classicLifecycleTrace(),
+		},
 		{ path: "transitions-splits-moves.json", data: splitsMovesTrace() },
 		{ path: "transitions-conflicts-undo.json", data: conflictsUndoTrace() },
 		{ path: "transitions-lanes-scrolling.json", data: lanesScrollingTrace() },
-		{ path: "transitions-arrangements-workspaces.json", data: arrangementsTrace() },
-		{ path: "transitions-generated-seed-11.json", data: generatedTrace(11, 30) },
-		{ path: "transitions-generated-seed-23.json", data: generatedTrace(23, 30) },
-		{ path: "transitions-generated-seed-37.json", data: generatedTrace(37, 30) },
+		{
+			path: "transitions-arrangements-workspaces.json",
+			data: arrangementsTrace(),
+		},
+		{
+			path: "transitions-generated-seed-11.json",
+			data: generatedTrace(11, 30),
+		},
+		{
+			path: "transitions-generated-seed-23.json",
+			data: generatedTrace(23, 30),
+		},
+		{
+			path: "transitions-generated-seed-37.json",
+			data: generatedTrace(37, 30),
+		},
 		{ path: "geometry-grid.json", data: geometryTrace() },
 		{ path: "projection-ladder.json", data: projectionTrace() },
 		{ path: "persistence-documents.json", data: persistenceTrace() },

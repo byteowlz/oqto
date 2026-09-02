@@ -2411,8 +2411,8 @@
 			"expected": {
 				"ok": false,
 				"rejection": {
-					"reason": "invariant-violation",
-					"detail": "flush-confined: placement of container-6 spans into flush lane track-1; flush-confined: placement of container-7 spans into flush lane track-1"
+					"reason": "invalid-command",
+					"detail": "a flush lane cannot be split along the block axis"
 				}
 			}
 		},
@@ -3636,8 +3636,8 @@
 			"expected": {
 				"ok": false,
 				"rejection": {
-					"reason": "invariant-violation",
-					"detail": "flush-confined: placement of container-5 spans into flush lane track-1; flush-confined: placement of container-6 spans into flush lane track-1; flush-confined: placement of container-7 spans into flush lane track-1"
+					"reason": "invalid-command",
+					"detail": "a flush lane cannot be split along the block axis"
 				}
 			}
 		},

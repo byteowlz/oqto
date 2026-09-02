@@ -23,11 +23,17 @@ export interface LayoutMigration {
 function migrateV1ToV2(layoutDocument: ExtensionFields): ExtensionFields {
 	const grid = layoutDocument.grid;
 	const idSeed = layoutDocument.idSeed;
-	if (!isJsonObject(grid) || !Array.isArray(grid.columns) || typeof idSeed !== "number") {
+	if (
+		!isJsonObject(grid) ||
+		!Array.isArray(grid.columns) ||
+		typeof idSeed !== "number"
+	) {
 		return { ...layoutDocument, schemaVersion: 2 };
 	}
 	const v1Columns = grid.columns.filter(isJsonObject);
-	const cellCounts = v1Columns.map((column) => (Array.isArray(column.cells) ? column.cells.length : 0));
+	const cellCounts = v1Columns.map((column) =>
+		Array.isArray(column.cells) ? column.cells.length : 0,
+	);
 	const rowCount = Math.max(1, ...cellCounts);
 	let seed = Math.floor(idSeed);
 	const rows: JsonValue[] = [];
@@ -38,8 +44,13 @@ function migrateV1ToV2(layoutDocument: ExtensionFields): ExtensionFields {
 	const columns: JsonValue[] = [];
 	const placements: JsonValue[] = [];
 	v1Columns.forEach((column, columnIndex) => {
-		columns.push({ id: String(column.id ?? `track-${seed + columnIndex}`), size: column.size ?? { unit: "fraction", value: 1 } });
-		const cells = Array.isArray(column.cells) ? column.cells.filter(isJsonObject) : [];
+		columns.push({
+			id: String(column.id ?? `track-${seed + columnIndex}`),
+			size: column.size ?? { unit: "fraction", value: 1 },
+		});
+		const cells = Array.isArray(column.cells)
+			? column.cells.filter(isJsonObject)
+			: [];
 		cells.forEach((cell, cellIndex) => {
 			const start = Math.floor((cellIndex * rowCount) / cells.length);
 			const end = Math.floor(((cellIndex + 1) * rowCount) / cells.length);
@@ -73,7 +84,9 @@ function migrateV1ToV2(layoutDocument: ExtensionFields): ExtensionFields {
 }
 
 /** Registered schema migrations; append one entry per version bump. */
-export const LAYOUT_MIGRATIONS: readonly LayoutMigration[] = [{ from: 1, migrate: migrateV1ToV2 }];
+export const LAYOUT_MIGRATIONS: readonly LayoutMigration[] = [
+	{ from: 1, migrate: migrateV1ToV2 },
+];
 
 /** Walks migrations from the document version upward. */
 export function runLayoutMigrations(
@@ -82,7 +95,11 @@ export function runLayoutMigrations(
 	targetVersion: number = LAYOUT_SCHEMA_VERSION,
 ): { readonly layoutDocument: ExtensionFields; readonly from: number } | null {
 	const version = layoutDocument.schemaVersion;
-	if (!(typeof version === "number" && Number.isInteger(version)) || version < 1) return null;
+	if (
+		!(typeof version === "number" && Number.isInteger(version)) ||
+		version < 1
+	)
+		return null;
 	let working = layoutDocument;
 	let current = version;
 	while (current < targetVersion) {

@@ -7,7 +7,6 @@
  * simply not committing the returned snapshot.
  */
 
-import { repairFocusMemory, repairScrollAnchors } from "./arrangement";
 import { applyCollapse, applyMove, applySplit } from "./apply-arrange";
 import {
 	applyArrangementCreate,
@@ -16,14 +15,31 @@ import {
 	applyWorkspaceSwitch,
 } from "./apply-arrangement";
 import { applyClose, applyUndo } from "./apply-close";
-import { applyActivate, applyFocus, applyOpen, applyReveal, type CommandContext } from "./apply-open";
+import {
+	type CommandContext,
+	applyActivate,
+	applyFocus,
+	applyOpen,
+	applyReveal,
+} from "./apply-open";
 import { applyFlush, applyResize, applyScroll } from "./apply-track";
-import type { ApplyResult, CommandOutcome, LayoutCommand, LayoutEvent, LayoutTransaction } from "./commands";
+import { repairFocusMemory, repairScrollAnchors } from "./arrangement";
+import type {
+	ApplyResult,
+	CommandOutcome,
+	LayoutCommand,
+	LayoutEvent,
+	LayoutTransaction,
+} from "./commands";
 import { checkLayoutInvariants } from "./invariants";
 import type { LayoutSnapshot } from "./model";
 import { repairFocus } from "./state";
 
-function applyCommand(state: LayoutSnapshot, command: LayoutCommand, context: CommandContext): CommandOutcome {
+function applyCommand(
+	state: LayoutSnapshot,
+	command: LayoutCommand,
+	context: CommandContext,
+): CommandOutcome {
 	switch (command.type) {
 		case "open":
 			return applyOpen(state, command.content, command.target, context);
@@ -36,9 +52,19 @@ function applyCommand(state: LayoutSnapshot, command: LayoutCommand, context: Co
 		case "move":
 			return applyMove(state, command.contentId, command.destination);
 		case "split":
-			return applySplit(state, command.contentId, command.edge, command.relativeTo);
+			return applySplit(
+				state,
+				command.contentId,
+				command.edge,
+				command.relativeTo,
+			);
 		case "resize":
-			return applyResize(state, command.containerId, command.axis, command.size);
+			return applyResize(
+				state,
+				command.containerId,
+				command.axis,
+				command.size,
+			);
 		case "collapse":
 			return applyCollapse(state, command.containerId, command.collapsed);
 		case "flush":
@@ -48,7 +74,12 @@ function applyCommand(state: LayoutSnapshot, command: LayoutCommand, context: Co
 		case "close":
 			return applyClose(state, command.contentId);
 		case "arrangement-create":
-			return applyArrangementCreate(state, command.label, command.binding, command.activate);
+			return applyArrangementCreate(
+				state,
+				command.label,
+				command.binding,
+				command.activate,
+			);
 		case "arrangement-switch":
 			return applyArrangementSwitch(state, command.arrangementId);
 		case "arrangement-remove":
@@ -60,11 +91,18 @@ function applyCommand(state: LayoutSnapshot, command: LayoutCommand, context: Co
 	}
 }
 
-export function applyTransaction(state: LayoutSnapshot, transaction: LayoutTransaction): ApplyResult {
+export function applyTransaction(
+	state: LayoutSnapshot,
+	transaction: LayoutTransaction,
+): ApplyResult {
 	if (transaction.expectedRevision !== state.revision) {
 		return {
 			ok: false,
-			rejection: { reason: "revision-conflict", expected: transaction.expectedRevision, actual: state.revision },
+			rejection: {
+				reason: "revision-conflict",
+				expected: transaction.expectedRevision,
+				actual: state.revision,
+			},
 		};
 	}
 	const context: CommandContext = { viewport: transaction.viewport };
@@ -73,7 +111,9 @@ export function applyTransaction(state: LayoutSnapshot, transaction: LayoutTrans
 	for (const command of transaction.commands) {
 		const outcome = applyCommand(working, command, context);
 		if (!outcome.ok) return { ok: false, rejection: outcome.rejection };
-		working = repairFocus(repairFocusMemory(repairScrollAnchors(outcome.state)));
+		working = repairFocus(
+			repairFocusMemory(repairScrollAnchors(outcome.state)),
+		);
 		events.push(...outcome.events);
 	}
 	const snapshot: LayoutSnapshot = { ...working, revision: state.revision + 1 };
@@ -83,7 +123,9 @@ export function applyTransaction(state: LayoutSnapshot, transaction: LayoutTrans
 			ok: false,
 			rejection: {
 				reason: "invariant-violation",
-				detail: violations.map((violation) => `${violation.code}: ${violation.detail}`).join("; "),
+				detail: violations
+					.map((violation) => `${violation.code}: ${violation.detail}`)
+					.join("; "),
 			},
 		};
 	}

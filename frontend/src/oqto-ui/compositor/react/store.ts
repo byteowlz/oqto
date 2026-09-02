@@ -6,11 +6,11 @@
 
 import {
 	type ApplyResult,
-	applyTransaction,
 	type LayoutCommand,
 	type LayoutSnapshot,
 	type LayoutTransaction,
 	type ViewportConstraints,
+	applyTransaction,
 } from "../index";
 
 export interface CompositorStore {
@@ -19,10 +19,15 @@ export interface CompositorStore {
 	/** Applies a full transaction; stale expected revisions conflict. */
 	dispatch(transaction: LayoutTransaction): ApplyResult;
 	/** Convenience: applies commands against the current revision. */
-	commit(commands: readonly LayoutCommand[], viewport?: ViewportConstraints): ApplyResult;
+	commit(
+		commands: readonly LayoutCommand[],
+		viewport?: ViewportConstraints,
+	): ApplyResult;
 }
 
-export function createCompositorStore(initial: LayoutSnapshot): CompositorStore {
+export function createCompositorStore(
+	initial: LayoutSnapshot,
+): CompositorStore {
 	let snapshot = initial;
 	const listeners = new Set<() => void>();
 	const dispatch = (transaction: LayoutTransaction): ApplyResult => {
@@ -41,6 +46,10 @@ export function createCompositorStore(initial: LayoutSnapshot): CompositorStore 
 		},
 		dispatch,
 		commit: (commands, viewport) =>
-			dispatch({ expectedRevision: snapshot.revision, commands, ...(viewport ? { viewport } : {}) }),
+			dispatch({
+				expectedRevision: snapshot.revision,
+				commands,
+				...(viewport ? { viewport } : {}),
+			}),
 	};
 }

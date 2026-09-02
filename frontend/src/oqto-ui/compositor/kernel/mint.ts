@@ -72,17 +72,28 @@ export function mintEdgeContainer(
 			container,
 			idSeed: idSeed + 3,
 			grid: {
-				rows: [{ id: trackIdFrom(idSeed + 1), size: { unit: "fraction", value: 1 } }],
+				rows: [
+					{ id: trackIdFrom(idSeed + 1), size: { unit: "fraction", value: 1 } },
+				],
 				columns: [
 					{ id: trackIdFrom(idSeed + 2), size: { unit: "fraction", value: 1 } },
 				],
 				placements: [
-					{ containerId: container.id, row: 0, column: 0, rowSpan: 1, colSpan: 1 },
+					{
+						containerId: container.id,
+						row: 0,
+						column: 0,
+						rowSpan: 1,
+						colSpan: 1,
+					},
 				],
 			},
 		};
 	}
-	const track: GridTrack = { id: trackIdFrom(idSeed + 1), size: { unit: "fraction", value: 1 } };
+	const track: GridTrack = {
+		id: trackIdFrom(idSeed + 1),
+		size: { unit: "fraction", value: 1 },
+	};
 	if (edge === "inline-start" || edge === "inline-end") {
 		return {
 			container,
@@ -95,12 +106,21 @@ export function mintEdgeContainer(
 			),
 		};
 	}
+	// A flush lane stays outermost: new edge lanes go just inside it.
+	const index =
+		edge === "block-start"
+			? grid.rows[0]?.flush === true
+				? 1
+				: 0
+			: grid.rows[grid.rows.length - 1]?.flush === true
+				? grid.rows.length - 1
+				: grid.rows.length;
 	return {
 		container,
 		idSeed: idSeed + 2,
 		grid: insertRowTrack(
 			grid,
-			edge === "block-start" ? 0 : grid.rows.length,
+			index,
 			{ ...track, size: { unit: "fixed", value: 240, min: 120 } },
 			{ containerId: container.id, column: 0, colSpan: grid.columns.length },
 		),
@@ -129,10 +149,15 @@ export function mintSplitContainer(
 				? placement.column
 				: placement.column + placement.colSpan;
 		const sizes = halved(arrangement.grid.columns[placement.column].size);
-		const halvedGrid = replaceTrack(arrangement.grid, "column", placement.column, {
-			...arrangement.grid.columns[placement.column],
-			size: sizes.existing,
-		});
+		const halvedGrid = replaceTrack(
+			arrangement.grid,
+			"column",
+			placement.column,
+			{
+				...arrangement.grid.columns[placement.column],
+				size: sizes.existing,
+			},
+		);
 		return {
 			container,
 			idSeed: idSeed + 2,
@@ -140,7 +165,12 @@ export function mintSplitContainer(
 				halvedGrid,
 				index,
 				{ id: trackId, size: sizes.created },
-				{ containerId: container.id, row: placement.row, rowSpan: placement.rowSpan, subdivide: placement },
+				{
+					containerId: container.id,
+					row: placement.row,
+					rowSpan: placement.rowSpan,
+					subdivide: placement,
+				},
 			),
 		};
 	}
@@ -158,7 +188,12 @@ export function mintSplitContainer(
 			halvedGrid,
 			index,
 			{ id: trackId, size: sizes.created },
-			{ containerId: container.id, column: placement.column, colSpan: placement.colSpan, subdivide: placement },
+			{
+				containerId: container.id,
+				column: placement.column,
+				colSpan: placement.colSpan,
+				subdivide: placement,
+			},
 		),
 	};
 }

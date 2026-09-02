@@ -2,7 +2,9 @@
 
 import type { ExtensionFields, JsonValue } from "../model";
 
-export function isJsonObject(value: JsonValue | undefined): value is ExtensionFields {
+export function isJsonObject(
+	value: JsonValue | undefined,
+): value is ExtensionFields {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
