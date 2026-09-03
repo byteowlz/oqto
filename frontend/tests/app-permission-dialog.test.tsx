@@ -53,9 +53,9 @@ describe("AppPermissionDialog", () => {
 			/>,
 		);
 
-		expect(screen.getByText("Let Comfy Studio do these things?")).toBeTruthy();
-		expect(screen.getByText("Files used by this App")).toBeTruthy();
-		expect(screen.getByText("ComfyUI actions")).toBeTruthy();
+		expect(screen.getByText("Open Comfy Studio?")).toBeTruthy();
+		expect(screen.getByText("Use workspace files")).toBeTruthy();
+		expect(screen.getByText("Use App actions")).toBeTruthy();
 		expect(
 			screen.getByText(/This App is separate from your agent/),
 		).toBeTruthy();
@@ -85,7 +85,7 @@ describe("AppPermissionDialog", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+		fireEvent.click(screen.getByRole("button", { name: "Open with access" }));
 		fireEvent.click(screen.getByRole("button", { name: "Not now" }));
 		expect(onAllow).toHaveBeenCalledOnce();
 		expect(onNotNow).toHaveBeenCalledOnce();

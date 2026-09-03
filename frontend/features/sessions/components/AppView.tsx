@@ -224,6 +224,36 @@ function titleFromPath(filePath: string): string {
 	return name.replace(/\.html?$/i, "");
 }
 
+export interface AppCatalogEntry {
+	appId: string;
+	candidate?: AppCandidateSummary;
+	instance?: AppInstanceSummary;
+}
+
+export function buildAppCatalogEntries(
+	candidates: AppCandidateSummary[],
+	instances: AppInstanceSummary[],
+): AppCatalogEntry[] {
+	const instancesByApp = new Map(
+		instances.map((instance) => [instance.app_id, instance]),
+	);
+	const discovered = candidates.map((candidate) => ({
+		appId: candidate.app_id,
+		candidate,
+		instance: instancesByApp.get(candidate.app_id),
+	}));
+	const discoveredIds = new Set(
+		candidates.map((candidate) => candidate.app_id),
+	);
+	const installedOnly = instances
+		.filter((instance) => !discoveredIds.has(instance.app_id))
+		.map((instance) => ({
+			appId: instance.app_id,
+			instance,
+		}));
+	return [...discovered, ...installedOnly];
+}
+
 function RuntimeAppCatalog({
 	workspacePath,
 	onOpen,
@@ -376,6 +406,22 @@ function RuntimeAppCatalog({
 		[permissionRequest, workspacePath, load, onOpen, t],
 	);
 
+	const catalogEntries = useMemo(
+		() => buildAppCatalogEntries(candidates, instances),
+		[candidates, instances],
+	);
+
+	const openCatalogEntry = useCallback(
+		(entry: (typeof catalogEntries)[number]) => {
+			if (entry.candidate?.state === "publishable") {
+				void publishCandidate(entry.candidate);
+				return;
+			}
+			if (entry.instance) void openInstance(entry.instance);
+		},
+		[publishCandidate, openInstance],
+	);
+
 	return (
 		<div className="h-full overflow-y-auto p-3 space-y-4">
 			<AppPermissionDialog
@@ -417,79 +463,62 @@ function RuntimeAppCatalog({
 				</div>
 			)}
 
-			{instances.length > 0 && (
-				<section className="space-y-2">
-					<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-						{t("apps.installed")}
-					</h3>
-					{instances.map((instance) => (
-						<div
-							key={instance.instance_id}
-							className="border border-border p-3 flex items-center justify-between gap-3"
-						>
-							<div className="min-w-0">
-								<div className="text-sm font-medium truncate">
-									{instance.title.en}
-								</div>
-								<div className="text-xs text-muted-foreground font-mono">
-									{instance.version}
-								</div>
-							</div>
-							<button
-								type="button"
-								onClick={() => void openInstance(instance)}
-								disabled={busyAppId === instance.app_id}
-								className="min-h-11 px-3 border border-primary text-sm text-foreground disabled:opacity-50"
-							>
-								{instance.status === "awaiting_permission"
-									? t("apps.needsPermission")
-									: t("common.open")}
-							</button>
-						</div>
-					))}
-				</section>
-			)}
-
-			<section className="space-y-2">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					{t("apps.workspaceCandidates")}
-				</h3>
-				{!loading && candidates.length === 0 && (
+			<section className="space-y-2" aria-label={t("apps.available")}>
+				{!loading && catalogEntries.length === 0 && (
 					<p className="text-xs text-muted-foreground">{t("apps.noneFound")}</p>
 				)}
-				{candidates.map((candidate) => (
-					<div
-						key={candidate.app_id}
-						className="border border-border p-3 space-y-2"
-					>
-						<div className="flex items-center justify-between gap-3">
+				{catalogEntries.map((entry) => {
+					const app = entry.candidate ?? entry.instance;
+					if (!app) return null;
+					const canOpen =
+						entry.candidate?.state === "publishable" ||
+						entry.instance !== undefined;
+					return (
+						<div
+							key={entry.appId}
+							className="flex items-center justify-between gap-3 border border-border bg-card/30 p-3"
+						>
 							<div className="min-w-0">
-								<div className="text-sm font-medium truncate">
-									{candidate.title.en}
+								<div className="flex items-center gap-2">
+									<AppWindow
+										className="size-4 shrink-0 text-primary"
+										aria-hidden="true"
+									/>
+									<div className="truncate text-sm font-medium">
+										{app.title.en}
+									</div>
 								</div>
-								<div className="text-xs text-muted-foreground font-mono">
-									{candidate.version}
+								{entry.candidate?.description && (
+									<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+										{entry.candidate.description}
+									</p>
+								)}
+								<div className="mt-1 text-[11px] text-muted-foreground">
+									{entry.instance?.status === "awaiting_permission"
+										? t("apps.accessNeeded")
+										: t("apps.availableInWorkspace")}
+									<span aria-hidden="true"> · </span>
+									<span className="font-mono">v{app.version}</span>
 								</div>
 							</div>
 							<button
 								type="button"
-								onClick={() => void publishCandidate(candidate)}
-								disabled={
-									candidate.state !== "publishable" ||
-									busyAppId === candidate.app_id
-								}
-								className="min-h-11 px-3 border border-primary text-sm text-foreground disabled:opacity-50"
+								onClick={() => openCatalogEntry(entry)}
+								disabled={!canOpen || busyAppId === entry.appId}
+								className="min-h-11 shrink-0 border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
 							>
-								{t("apps.publishAndOpen")}
+								{entry.instance?.status === "awaiting_permission"
+									? t("apps.reviewAndOpen")
+									: t("common.open")}
 							</button>
+							{entry.candidate?.rejection && (
+								<p className="text-xs text-destructive">
+									{entry.candidate.rejection.message}
+								</p>
+							)}
 						</div>
-						{candidate.rejection && (
-							<p className="text-xs text-destructive">
-								{candidate.rejection.message}
-							</p>
-						)}
-					</div>
-				))}
+					);
+				})}
 			</section>
 		</div>
 	);

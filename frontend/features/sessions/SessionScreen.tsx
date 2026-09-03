@@ -614,33 +614,41 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [appTabs, setAppTabs] = useState<AppTab[]>([]);
 	const [activeAppTabId, setActiveAppTabId] = useState<string | null>(null);
 
-	const handleOpenAsApp = useCallback((filePath: string) => {
-		setAppTabs((prev) => {
-			const existing = prev.find(
-				(t) => t.kind === "legacy-html" && t.filePath === filePath,
-			);
-			if (existing) {
-				setActiveAppTabId(existing.id);
-				return prev;
+	const handleOpenAsApp = useCallback(
+		(filePath: string) => {
+			if (filePath.endsWith(".oqtoapp")) {
+				setActiveView("app");
+				setExpandedView("app");
+				return;
 			}
-			const id = `app-${Date.now()}`;
-			const name = filePath.split("/").pop() ?? filePath;
-			const title = name.replace(/\.html?$/i, "");
-			setActiveAppTabId(id);
-			return [
-				...prev,
-				{
-					kind: "legacy-html",
-					id,
-					filePath,
-					title,
-					content: "",
-					pinned: false,
-				},
-			];
-		});
-		setExpandedView("app");
-	}, []);
+			setAppTabs((prev) => {
+				const existing = prev.find(
+					(t) => t.kind === "legacy-html" && t.filePath === filePath,
+				);
+				if (existing) {
+					setActiveAppTabId(existing.id);
+					return prev;
+				}
+				const id = `app-${Date.now()}`;
+				const name = filePath.split("/").pop() ?? filePath;
+				const title = name.replace(/\.html?$/i, "");
+				setActiveAppTabId(id);
+				return [
+					...prev,
+					{
+						kind: "legacy-html",
+						id,
+						filePath,
+						title,
+						content: "",
+						pinned: false,
+					},
+				];
+			});
+			setExpandedView("app");
+		},
+		[setActiveView],
+	);
 
 	const handleOpenOqtoApp = useCallback(
 		(instance: AppInstanceSummary, presentation: AppPresentationDocument) => {
