@@ -10,4 +10,7 @@ pub use access::authorize_work_directory;
 pub use artifact::AppArtifactStore;
 
 pub use repository::AppRepository;
-pub use service::{AppPermissionOutcome, AppRuntimeService, AuthorizedWorkDirectory};
+pub use service::{
+    AppFileContents, AppFileEntry, AppFileWriteResult, AppGrantedFileResource,
+    AppPermissionOutcome, AppRuntimeService, AuthorizedWorkDirectory,
+};

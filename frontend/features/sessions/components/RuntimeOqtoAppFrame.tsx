@@ -2,10 +2,14 @@ import {
 	APP_PERMISSION_CHANGED_EVENT,
 	type AppPermissionChangedDetail,
 	deleteAppKv,
+	getAppFileResources,
 	getAppKv,
 	getAppPermissions,
 	invokeAppOperation,
+	listAppFiles,
+	readAppFile,
 	setAppKv,
+	writeAppFile,
 } from "@/lib/api/apps";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -14,7 +18,11 @@ import {
 	OQTO_APP_PROTOCOL_V1,
 	OQTO_APP_PROTOCOL_V2,
 	type OqtoCapability,
+	type OqtoFileRef,
+	type OqtoFileVersion,
+	type OqtoFilesCapability,
 	type OqtoGrantedOperation,
+	type OqtoGrantedResource,
 	type OqtoHostContext,
 	type OqtoPresentationContext,
 	type OqtoThemeSnapshot,
@@ -103,6 +111,112 @@ function watchPresentation(
 		observer.disconnect();
 		reducedMotion.removeEventListener("change", emit);
 	});
+}
+
+function decodeBase64(value: string): Uint8Array {
+	const binary = atob(value);
+	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function createFilesCapability(
+	workspacePath: string,
+	instanceId: string,
+	resources: readonly OqtoGrantedResource[],
+): OqtoFilesCapability {
+	const contents = async (ref: OqtoFileRef) => {
+		const file = await readAppFile(workspacePath, instanceId, ref);
+		return {
+			ref,
+			version: file.version as OqtoFileVersion,
+			label: file.label,
+			mediaType: file.media_type,
+			size: file.size,
+			access:
+				resources.find((resource) =>
+					String(ref).startsWith(String(resource.ref)),
+				)?.access ?? "read",
+			modifiedAt: file.modified_at,
+			bytes: decodeBase64(file.bytes_base64),
+		};
+	};
+	return {
+		pick: async () => [],
+		read: contents,
+		stat: async (ref) => {
+			const { bytes: _, ...stat } = await contents(ref);
+			return stat;
+		},
+		write: async (ref, bytes, options) => {
+			const result = await writeAppFile(
+				workspacePath,
+				instanceId,
+				ref,
+				options.expectedVersion,
+				bytes,
+			);
+			if (!result.written) {
+				return {
+					ok: false as const,
+					reason: "conflict" as const,
+					currentVersion: result.version as OqtoFileVersion,
+				};
+			}
+			const stat = await contents(ref);
+			const { bytes: _, ...fileStat } = stat;
+			return { ok: true as const, stat: fileStat };
+		},
+		watch: async (ref, listener) => {
+			let previous: string | undefined;
+			let generation = 0;
+			const poll = async () => {
+				try {
+					const stat = await contents(ref);
+					if (previous !== undefined && previous !== stat.version) {
+						generation += 1;
+						listener({ ref, version: stat.version, generation, gap: false });
+					}
+					previous = stat.version;
+				} catch {
+					// A lifecycle revocation or transient absence fails closed.
+				}
+			};
+			void poll();
+			const timer = window.setInterval(() => void poll(), 2000);
+			return () => window.clearInterval(timer);
+		},
+		resources: async () => resources,
+		list: async (ref, options) => {
+			const entries = await listAppFiles(workspacePath, instanceId, ref);
+			const limit = Math.max(1, Math.min(options?.limit ?? 100, 256));
+			return {
+				entries: entries.slice(0, limit).map((entry) => ({
+					ref: entry.reference as OqtoFileRef,
+					label: entry.label,
+					mediaType: entry.media_type,
+					access:
+						resources.find((resource) =>
+							entry.reference.startsWith(String(resource.ref)),
+						)?.access ?? "read",
+					version: entry.version as OqtoFileVersion,
+					size: entry.size,
+					modifiedAt: entry.modified_at,
+				})),
+			};
+		},
+		watchResources: async (refs, listener) => {
+			const unsubscribes = await Promise.all(
+				refs.map((ref) =>
+					createFilesCapability(workspacePath, instanceId, resources).watch(
+						ref,
+						listener,
+					),
+				),
+			);
+			return () => {
+				for (const unsubscribe of unsubscribes) unsubscribe();
+			};
+		},
+	};
 }
 
 export function RuntimeOqtoAppFrame({
@@ -206,6 +320,22 @@ export function RuntimeOqtoAppFrame({
 					const granted = permission.request.capabilities.map(
 						(capability) => capability.capability,
 					) as OqtoCapability[];
+					const resourceGrants = granted.includes("files")
+						? ((await getAppFileResources(workspacePath, instanceId)).map(
+								(resource) => ({
+									ref: resource.reference as OqtoFileRef,
+									role: resource.role,
+									label: resource.label,
+									mediaType:
+										resource.kind === "collection"
+											? "inode/directory"
+											: "application/octet-stream",
+									access: resource.access,
+									kind: resource.kind,
+									watch: resource.watch,
+								}),
+							) as OqtoGrantedResource[])
+						: [];
 					const operationGrants = permission.request.capabilities
 						.filter((capability) => capability.capability === "operations")
 						.flatMap(
@@ -224,7 +354,7 @@ export function RuntimeOqtoAppFrame({
 						capabilities,
 						grants: {
 							capabilities,
-							resources: [],
+							resources: resourceGrants,
 							operations: operationGrants,
 						},
 						presentation: presentationContext(frame),
@@ -245,6 +375,15 @@ export function RuntimeOqtoAppFrame({
 											delete: (key: string) =>
 												deleteAppKv(workspacePath, instanceId, key),
 										},
+									}
+								: {}),
+							...(granted.includes("files")
+								? {
+										files: createFilesCapability(
+											workspacePath,
+											instanceId,
+											resourceGrants,
+										),
 									}
 								: {}),
 							...(granted.includes("operations")

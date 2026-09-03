@@ -120,6 +120,22 @@ fn create_router_with_config_and_auth(
             post(handlers::revoke_app_permissions),
         )
         .route(
+            "/apps/instances/{instance_id}/files/resources",
+            post(handlers::get_app_file_resources),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/list",
+            post(handlers::list_app_files),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/read",
+            post(handlers::read_app_file),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/write",
+            post(handlers::write_app_file),
+        )
+        .route(
             "/apps/instances/{instance_id}/operations/invoke",
             post(handlers::invoke_app_operation),
         )

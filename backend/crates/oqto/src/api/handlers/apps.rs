@@ -5,7 +5,7 @@ use oqto_protocol::apps::{
     AppOperationInvokeRequest, AppOperationResult, AppPermissionDecisionRequest,
     AppPermissionStatus, AppPresentationDocument, AppPublishRequest, AppPublishResult,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiError, ApiResult, AppState};
 use crate::apps::authorize_work_directory;
@@ -73,6 +73,109 @@ pub async fn publish_app(
 #[derive(Debug, Deserialize)]
 pub struct AppPresentationHttpRequest {
     pub workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppFileHttpRequest {
+    pub workspace_path: String,
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppFileResourcesResponse<T> {
+    pub resources: Vec<T>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppFileListResponse<T> {
+    pub entries: Vec<T>,
+}
+
+pub async fn get_app_file_resources(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppFileHttpRequest>,
+) -> ApiResult<Json<AppFileResourcesResponse<crate::apps::AppGrantedFileResource>>> {
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    apps.file_resources(user.id(), &work_directory, &instance_id)
+        .await
+        .map_err(|error| ApiError::internal(format!("Failed to load App files: {error:#}")))?
+        .map(|resources| Json(AppFileResourcesResponse { resources }))
+        .ok_or_else(|| ApiError::forbidden("App files are not granted"))
+}
+
+pub async fn list_app_files(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppFileHttpRequest>,
+) -> ApiResult<Json<AppFileListResponse<crate::apps::AppFileEntry>>> {
+    let reference = request
+        .reference
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("file reference is required"))?;
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    apps.file_list(user.id(), &work_directory, &instance_id, reference)
+        .await
+        .map_err(|error| ApiError::internal(format!("Failed to list App files: {error:#}")))?
+        .map(|entries| Json(AppFileListResponse { entries }))
+        .ok_or_else(|| ApiError::forbidden("App file reference is not granted"))
+}
+
+pub async fn read_app_file(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppFileHttpRequest>,
+) -> ApiResult<Json<crate::apps::AppFileContents>> {
+    let reference = request
+        .reference
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("file reference is required"))?;
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    apps.file_read(user.id(), &work_directory, &instance_id, reference)
+        .await
+        .map_err(|error| ApiError::internal(format!("Failed to read App file: {error:#}")))?
+        .map(Json)
+        .ok_or_else(|| ApiError::forbidden("App file reference is not granted"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppFileWriteHttpRequest {
+    pub workspace_path: String,
+    pub reference: String,
+    pub expected_version: String,
+    pub bytes_base64: String,
+}
+
+pub async fn write_app_file(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(instance_id): Path<String>,
+    Json(request): Json<AppFileWriteHttpRequest>,
+) -> ApiResult<Json<crate::apps::AppFileWriteResult>> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&request.bytes_base64)
+        .map_err(|_| ApiError::bad_request("file bytes are not valid base64"))?;
+    let (apps, work_directory) =
+        authorized_apps(&state, user.id(), &request.workspace_path).await?;
+    apps.file_write(
+        user.id(),
+        &work_directory,
+        &instance_id,
+        &request.reference,
+        &request.expected_version,
+        &bytes,
+    )
+    .await
+    .map_err(|error| ApiError::internal(format!("Failed to write App file: {error:#}")))?
+    .map(Json)
+    .ok_or_else(|| ApiError::forbidden("App file reference is not writable"))
 }
 
 pub async fn invoke_app_operation(

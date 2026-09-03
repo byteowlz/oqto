@@ -134,6 +134,116 @@ export async function revokeAppPermissions(
 	return status;
 }
 
+export interface AppFileResource {
+	role: string;
+	reference: string;
+	label: string;
+	access: "read" | "readwrite";
+	kind: "document" | "collection";
+	watch: boolean;
+}
+
+export interface AppFileEntry {
+	reference: string;
+	label: string;
+	media_type: string;
+	version: string;
+	size: number;
+	is_directory: boolean;
+	modified_at?: string;
+}
+
+export interface AppFileContents extends AppFileEntry {
+	bytes_base64: string;
+}
+
+async function appFilePost<T>(
+	workspacePath: string,
+	instanceId: string,
+	action: "resources" | "list" | "read",
+	reference?: string,
+): Promise<T> {
+	const encodedId = encodeURIComponent(instanceId);
+	const response = await authFetch(
+		controlPlaneApiUrl(`/api/apps/instances/${encodedId}/files/${action}`),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ workspace_path: workspacePath, reference }),
+		},
+	);
+	return appJson<T>(response);
+}
+
+export async function getAppFileResources(
+	workspacePath: string,
+	instanceId: string,
+) {
+	return (
+		await appFilePost<{ resources: AppFileResource[] }>(
+			workspacePath,
+			instanceId,
+			"resources",
+		)
+	).resources;
+}
+
+export async function listAppFiles(
+	workspacePath: string,
+	instanceId: string,
+	reference: string,
+) {
+	return (
+		await appFilePost<{ entries: AppFileEntry[] }>(
+			workspacePath,
+			instanceId,
+			"list",
+			reference,
+		)
+	).entries;
+}
+
+export function readAppFile(
+	workspacePath: string,
+	instanceId: string,
+	reference: string,
+) {
+	return appFilePost<AppFileContents>(
+		workspacePath,
+		instanceId,
+		"read",
+		reference,
+	);
+}
+
+export async function writeAppFile(
+	workspacePath: string,
+	instanceId: string,
+	reference: string,
+	expectedVersion: string,
+	bytes: Uint8Array,
+): Promise<{ written: boolean; version: string }> {
+	let binary = "";
+	for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+	}
+	const encodedId = encodeURIComponent(instanceId);
+	const response = await authFetch(
+		controlPlaneApiUrl(`/api/apps/instances/${encodedId}/files/write`),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				workspace_path: workspacePath,
+				reference,
+				expected_version: expectedVersion,
+				bytes_base64: btoa(binary),
+			}),
+		},
+	);
+	return appJson(response);
+}
+
 export interface AppOperationResult {
 	ok: boolean;
 	code: string;

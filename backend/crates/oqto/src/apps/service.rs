@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
@@ -28,6 +28,44 @@ use super::source::UserPlaneAppSource;
 const STATUS_ACTIVE: &str = "active";
 const STATUS_AWAITING_PERMISSION: &str = "awaiting_permission";
 const STATUS_SUSPENDED: &str = "suspended";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppGrantedFileResource {
+    pub role: String,
+    pub reference: String,
+    pub label: String,
+    pub access: &'static str,
+    pub kind: &'static str,
+    pub watch: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppFileEntry {
+    pub reference: String,
+    pub label: String,
+    pub media_type: String,
+    pub version: String,
+    pub size: u64,
+    pub is_directory: bool,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppFileWriteResult {
+    pub written: bool,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppFileContents {
+    pub reference: String,
+    pub label: String,
+    pub media_type: String,
+    pub version: String,
+    pub size: u64,
+    pub modified_at: Option<String>,
+    pub bytes_base64: String,
+}
 
 /// Typed outcome of a permission action, so callers map one enum instead of
 /// re-deriving policy from strings.
@@ -651,6 +689,265 @@ impl AppRuntimeService {
         Ok(true)
     }
 
+    async fn authorized_file_resources(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+    ) -> Result<Option<Vec<AppFileResourceRequest>>> {
+        let Some(instance) = self
+            .repository
+            .get_instance_for_work_directory(instance_id, &work_directory.id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if instance.status != STATUS_ACTIVE {
+            return Ok(None);
+        }
+        let Some(grant) = self.repository.get_capability_grant(instance_id).await? else {
+            return Ok(None);
+        };
+        if grant.decision != "allowed"
+            || grant.revoked_at.is_some()
+            || grant.decided_by_account_id != account_id
+            || grant.definition_id != instance.definition_id
+            || grant.content_digest != instance.content_digest
+        {
+            return Ok(None);
+        }
+        let resources = stored_capabilities(&grant.request_json)?
+            .into_iter()
+            .find_map(|capability| match capability {
+                AppCapabilityRequest::Files { resources } => Some(resources),
+                _ => None,
+            });
+        Ok(resources)
+    }
+
+    pub async fn file_resources(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+    ) -> Result<Option<Vec<AppGrantedFileResource>>> {
+        Ok(self
+            .authorized_file_resources(account_id, work_directory, instance_id)
+            .await?
+            .map(|resources| {
+                resources
+                    .into_iter()
+                    .map(|resource| AppGrantedFileResource {
+                        reference: resource.role.clone(),
+                        label: resource.role.clone(),
+                        role: resource.role,
+                        kind: if Path::new(&resource.path).extension().is_some() {
+                            "document"
+                        } else {
+                            "collection"
+                        },
+                        access: match resource.access {
+                            AppFileAccess::Read => "read",
+                            AppFileAccess::ReadWrite => "readwrite",
+                        },
+                        watch: resource.watch,
+                    })
+                    .collect()
+            }))
+    }
+
+    async fn resolve_file_reference(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        reference: &str,
+        require_write: bool,
+    ) -> Result<Option<(PathBuf, PathBuf)>> {
+        let mut segments = reference.split('/');
+        let role = segments.next().unwrap_or_default();
+        let relative = segments.collect::<PathBuf>();
+        if role.is_empty()
+            || reference.len() > 2048
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Ok(None);
+        }
+        let Some(resource) = self
+            .authorized_file_resources(account_id, work_directory, instance_id)
+            .await?
+            .and_then(|resources| resources.into_iter().find(|resource| resource.role == role))
+        else {
+            return Ok(None);
+        };
+        if require_write && resource.access != AppFileAccess::ReadWrite {
+            return Ok(None);
+        }
+        let resource_root = work_directory.root.join(resource.path);
+        Ok(Some((resource_root.join(relative), resource_root)))
+    }
+
+    pub async fn file_list(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        reference: &str,
+    ) -> Result<Option<Vec<AppFileEntry>>> {
+        let Some((path, resource_root)) = self
+            .resolve_file_reference(account_id, work_directory, instance_id, reference, false)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let canonical_resource = match resource_root.canonicalize() {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Some(Vec::new()));
+            }
+            Err(error) => return Err(error).context("canonicalizing App resource root"),
+        };
+        let canonical = match path.canonicalize() {
+            Ok(path) if path.starts_with(&canonical_resource) => path,
+            Ok(_) => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Some(Vec::new()));
+            }
+            Err(error) => return Err(error).context("canonicalizing App file collection"),
+        };
+        let entries = work_directory
+            .plane
+            .list_directory(&canonical, false)
+            .await?;
+        let mut result = Vec::new();
+        for entry in entries.into_iter().take(256) {
+            if entry.is_symlink
+                || entry.name.contains('/')
+                || entry.name == "."
+                || entry.name == ".."
+            {
+                continue;
+            }
+            let child_ref = format!("{reference}/{}", entry.name);
+            let child_path = canonical.join(&entry.name);
+            let version = file_version(&work_directory.plane, &child_path, entry.is_dir).await?;
+            result.push(AppFileEntry {
+                reference: child_ref,
+                label: entry.name.clone(),
+                media_type: if entry.is_dir {
+                    "inode/directory".to_owned()
+                } else {
+                    media_type(&entry.name)
+                },
+                version,
+                size: entry.size,
+                is_directory: entry.is_dir,
+                modified_at: Some(entry.modified_at.to_string()),
+            });
+        }
+        Ok(Some(result))
+    }
+
+    pub async fn file_read(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        reference: &str,
+    ) -> Result<Option<AppFileContents>> {
+        use base64::Engine;
+        let Some((path, resource_root)) = self
+            .resolve_file_reference(account_id, work_directory, instance_id, reference, false)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let canonical_resource = resource_root
+            .canonicalize()
+            .context("canonicalizing App resource root")?;
+        let canonical = path.canonicalize().context("canonicalizing App file")?;
+        if !canonical.starts_with(canonical_resource) {
+            return Ok(None);
+        }
+        let content = work_directory
+            .plane
+            .read_file(&canonical, None, Some(8 * 1024 * 1024))
+            .await?;
+        if content.truncated {
+            anyhow::bail!("App file exceeds the 8 MiB read limit");
+        }
+        let stat = work_directory.plane.stat(&canonical).await?;
+        let label = canonical
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(reference)
+            .to_owned();
+        let version = format!("sha256:{}", hex::encode(Sha256::digest(&content.content)));
+        Ok(Some(AppFileContents {
+            reference: reference.to_owned(),
+            media_type: media_type(&label),
+            label,
+            version,
+            size: content.size,
+            modified_at: Some(stat.modified_at.to_string()),
+            bytes_base64: base64::engine::general_purpose::STANDARD.encode(content.content),
+        }))
+    }
+
+    pub async fn file_write(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        reference: &str,
+        expected_version: &str,
+        bytes: &[u8],
+    ) -> Result<Option<AppFileWriteResult>> {
+        if bytes.len() > 8 * 1024 * 1024 {
+            anyhow::bail!("App file exceeds the 8 MiB write limit");
+        }
+        let Some((path, resource_root)) = self
+            .resolve_file_reference(account_id, work_directory, instance_id, reference, true)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("App file has no parent"))?;
+        work_directory.plane.create_directory(parent, true).await?;
+        let canonical_parent = parent
+            .canonicalize()
+            .context("canonicalizing App file parent")?;
+        let canonical_resource = resource_root
+            .canonicalize()
+            .context("canonicalizing App resource root")?;
+        if !canonical_parent.starts_with(canonical_resource) {
+            return Ok(None);
+        }
+        let current = match work_directory.plane.stat(&path).await {
+            Ok(stat) if stat.exists && stat.is_file => {
+                file_version(&work_directory.plane, &path, false).await?
+            }
+            _ => "missing".to_owned(),
+        };
+        if current != expected_version {
+            return Ok(Some(AppFileWriteResult {
+                written: false,
+                version: current,
+            }));
+        }
+        work_directory.plane.write_file(&path, bytes, false).await?;
+        let version = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        Ok(Some(AppFileWriteResult {
+            written: true,
+            version,
+        }))
+    }
+
     pub async fn invoke_operation(
         &self,
         account_id: &str,
@@ -844,6 +1141,40 @@ fn capability_requests(
             }
         })
         .collect()
+}
+
+async fn file_version(plane: &Arc<dyn UserPlane>, path: &Path, directory: bool) -> Result<String> {
+    if directory {
+        let stat = plane.stat(path).await?;
+        return Ok(format!("dir:{}:{}", stat.modified_at, stat.size));
+    }
+    let content = plane.read_file(path, None, Some(8 * 1024 * 1024)).await?;
+    if content.truncated {
+        return Ok(format!("large:{}", content.size));
+    }
+    Ok(format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(&content.content))
+    ))
+}
+
+fn media_type(name: &str) -> String {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "json" => "application/json",
+        "jsonl" => "application/x-ndjson",
+        "txt" | "log" => "text/plain",
+        _ => "application/octet-stream",
+    }
+    .to_owned()
 }
 
 fn validate_kv_key(key: &str) -> Result<()> {

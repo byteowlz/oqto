@@ -36,9 +36,10 @@ pub use api_keys::{create_api_key, delete_api_key, list_api_keys, revoke_api_key
 
 // Runtime-discovered Oqto App handlers
 pub use apps::{
-    decide_app_permissions, delete_app_kv, get_app_kv, get_app_permissions, get_app_presentation,
-    invoke_app_operation, list_app_candidates, list_app_instances, publish_app,
-    revoke_app_permissions, set_app_kv,
+    decide_app_permissions, delete_app_kv, get_app_file_resources, get_app_kv, get_app_permissions,
+    get_app_presentation, invoke_app_operation, list_app_candidates, list_app_files,
+    list_app_instances, publish_app, read_app_file, revoke_app_permissions, set_app_kv,
+    write_app_file,
 };
 
 // Session handlers and types
