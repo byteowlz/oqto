@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 # Fail closed: never produce a tarball missing manifest-declared content.
 # Strict (no --allow-missing-*): binaries must be staged and pi extensions /

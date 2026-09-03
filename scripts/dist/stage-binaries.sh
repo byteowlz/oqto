@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 # Guard against system-wide cargo homes (e.g. /usr/local/cargo) that are not
 # writable for normal users in CI/dev shells. RUSTUP_HOME may intentionally be
