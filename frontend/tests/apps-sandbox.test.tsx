@@ -82,7 +82,9 @@ describe("runtime App presentation sandbox", () => {
 		expect(sandbox).not.toContain("allow-downloads");
 		expect(iframe?.getAttribute("srcdoc")).toBe(oqtoAppTab.html);
 		expect(iframe?.getAttribute("src")).toBeNull();
-		expect(iframe?.getAttribute("referrerpolicy")).toBe("no-referrer");
+		// The SDK derives the exact Host origin from the origin-only referrer;
+		// paths, queries, and bearer material are never disclosed.
+		expect(iframe?.getAttribute("referrerpolicy")).toBe("origin");
 		expect(iframe?.getAttribute("allow")).toBe("");
 	});
 

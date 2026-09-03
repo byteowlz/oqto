@@ -465,7 +465,7 @@ export function RuntimeOqtoAppFrame({
 			title={title}
 			className="h-full w-full border-0 bg-background"
 			sandbox="allow-scripts"
-			referrerPolicy="no-referrer"
+			referrerPolicy="origin"
 			allow=""
 		/>
 	);
