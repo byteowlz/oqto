@@ -41,6 +41,7 @@ export interface LegacyHtmlAppTab {
 export interface OqtoAppTab {
 	kind: "oqto-app";
 	id: string;
+	appId: string;
 	instanceId: string;
 	installationId: string;
 	definitionId: string;

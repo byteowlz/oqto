@@ -62,6 +62,7 @@ function renderTabs(
 const oqtoAppTab: AppTab = {
 	kind: "oqto-app",
 	id: "oqto-app:instance-1",
+	appId: "hello-oqto",
 	instanceId: "instance-1",
 	installationId: "installation-1",
 	definitionId: "appdef_x",

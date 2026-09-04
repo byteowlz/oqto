@@ -3,6 +3,7 @@
 import { ContextWindowGauge } from "@/components/data-display";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { type Features, getFeatures } from "@/features/chat/api";
+import { openOqtoAppTab } from "@/features/sessions/app-tabs";
 import type { AppTab } from "@/features/sessions/components/AppView";
 import {
 	type FileTreeState,
@@ -653,33 +654,10 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const handleOpenOqtoApp = useCallback(
 		(instance: AppInstanceSummary, presentation: AppPresentationDocument) => {
-			const id = `oqto-app:${instance.instance_id}`;
-			setAppTabs((prev) => {
-				const existing = prev.find(
-					(tab) =>
-						tab.kind === "oqto-app" && tab.instanceId === instance.instance_id,
-				);
-				setActiveAppTabId(existing?.id ?? id);
-				if (existing) {
-					return prev.map((tab) =>
-						tab.id === existing.id && tab.kind === "oqto-app"
-							? { ...tab, html: presentation.html }
-							: tab,
-					);
-				}
-				return [
-					...prev,
-					{
-						kind: "oqto-app",
-						id,
-						instanceId: instance.instance_id,
-						installationId: instance.installation_id,
-						definitionId: instance.definition_id,
-						title: instance.title.en,
-						html: presentation.html,
-						pinned: false,
-					},
-				];
+			setAppTabs((previous) => {
+				const opened = openOqtoAppTab(previous, instance, presentation);
+				setActiveAppTabId(opened.activeTabId);
+				return opened.tabs;
 			});
 			setActiveView("app");
 			setExpandedView("app");
