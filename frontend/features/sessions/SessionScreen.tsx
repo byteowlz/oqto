@@ -8,6 +8,7 @@ import {
 	type FileTreeState,
 	initialFileTreeState,
 } from "@/features/sessions/components/FileTreeView";
+import { shouldMountInUtilityPane } from "@/features/sessions/layout-visibility";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useMayUseTerminal } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
@@ -1884,7 +1885,11 @@ export const SessionScreen = memo(function SessionScreen() {
 											/>
 										</Suspense>
 									</div>
-									{activeView === "app" && (
+									{shouldMountInUtilityPane(
+										activeView,
+										expandedView,
+										"app",
+									) && (
 										<Suspense fallback={viewLoadingFallback}>
 											<AppView
 												workspacePath={normalizedWorkspacePath}
