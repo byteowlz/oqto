@@ -883,7 +883,7 @@
 		"permissions": {
 			"appRequest": "Access needed",
 			"title": "Open {{app}}?",
-			"description": "This App needs the following access to work. You can remove it later.",
+			"description": "This App needs the following access to work. Oqto asks again only when its code or requested access changes. You can remove access later.",
 			"capability": {
 				"files": "Use workspace files",
 				"operations": "Use App actions",
