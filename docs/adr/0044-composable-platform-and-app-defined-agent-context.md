@@ -4,6 +4,8 @@ Oqto needs Agents to understand references such as “these images,” “this s
 
 **Status:** accepted
 
+Host-owned menu, command-palette, transformation, and native-ingress projections of Actions are proposed in [ADR-0045](0045-unified-app-actions-and-host-owned-action-surfaces.md).
+
 ## Decision
 
 ### One provider registry, multiple authorities

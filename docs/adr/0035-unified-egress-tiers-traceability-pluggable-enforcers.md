@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-08-06). Tracked by `oqto-gyqr.4`.
+Proposed (2026-08-06). Tracked by `oqto-gyqr.4`. App consumption of this egress and credential channel is proposed separately in [ADR-0046](0046-app-egress-credential-mediation-and-mcp-adapters.md).
 
 Refines ADR-0007 (three-layer egress) and ADR-0019 (deny-all network + granted
 endpoints). **Supersedes ADR-0030's enforcer decision**: the CONNECT proxy is

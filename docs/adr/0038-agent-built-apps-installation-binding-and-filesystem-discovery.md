@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-09). Tracked by `oqto-171p`. Companion UI-host decisions: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) and [ADR-0041](0041-oqto-ui-container-compositor-and-agent-control.md).
+Accepted (2026-08-09). Tracked by `oqto-171p`. Companion UI-host decisions: [ADR-0037](0037-oqto-ui-portable-rearrangeable-views.md) and [ADR-0041](0041-oqto-ui-container-compositor-and-agent-control.md). Proposed extensions cover [unified App Actions and host-owned action surfaces](0045-unified-app-actions-and-host-owned-action-surfaces.md) and [App egress, credential mediation, capability endpoints, and MCP adapters](0046-app-egress-credential-mediation-and-mcp-adapters.md).
 
 This ADR refines [ADR-0027](0027-one-app-contract-oqtohost-surfaces-stay-bundled.md): the Host/Bridge/Gate capability principles and content-addressed Artifact direction survive, while App identity is sharpened into Definition, Installation, Instance, binding, and requester-local App Content. It generalizes [ADR-0036](0036-interactive-output-parts-declarative-first.md): declarative interaction and sandboxed web content are portable App presentations, whether embedded in Chat or opened as OqtoUI Container Content.
 
