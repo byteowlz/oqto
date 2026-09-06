@@ -8,7 +8,7 @@ import {
 	memoryLayoutStorage,
 } from "@/src/oqto-ui/platform/layout-storage";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n, initI18n } from "../../lib/i18n";
@@ -16,7 +16,7 @@ import { classicLayout, containerByRole } from "./fixtures";
 
 initI18n();
 
-function renderShell(storage: LayoutDocumentStore) {
+function renderShell(storage: LayoutDocumentStore, mobileView = "chat") {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -29,6 +29,7 @@ function renderShell(storage: LayoutDocumentStore) {
 					platform={scriptedOqtoUiPlatform}
 					workDirectoryId={null}
 					sessionId={null}
+					mobileView={mobileView}
 					schemeId={null}
 					workAreaTab="chat"
 					storage={storage}
@@ -173,5 +174,75 @@ describe("dev route compositor switch", () => {
 		expect(
 			view.container.querySelector('[data-compositor="classic"]'),
 		).not.toBeNull();
+	});
+});
+
+function setViewportWidth(width: number) {
+	Object.defineProperty(window, "innerWidth", {
+		configurable: true,
+		value: width,
+	});
+	window.dispatchEvent(new Event("resize"));
+}
+
+describe("OG shell parity chrome", () => {
+	afterEach(() => setViewportWidth(1024));
+
+	it("renders the status bar and opens Settings as auxiliary Content on desktop", async () => {
+		setViewportWidth(1600);
+		const view = renderShell(memoryLayoutStorage());
+		await screen.findByRole("main", { name: "Session conversation" });
+		expect(view.container.querySelector(".wb-statusbar")).not.toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Open interface settings" }),
+		);
+		expect(
+			screen.getByRole("tab", { name: "Interface settings" }),
+		).toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Close interface settings" }),
+		);
+		expect(
+			screen.queryByRole("tab", { name: "Interface settings" }),
+		).toBeNull();
+	});
+
+	it("projects into one destination on mobile with a full-screen navigation drawer", async () => {
+		setViewportWidth(600);
+		const view = renderShell(memoryLayoutStorage());
+		await screen.findByRole("main", { name: "Session conversation" });
+		const shell = view.container.querySelector(".wb-shell") as HTMLElement;
+		expect(shell).toHaveAttribute("data-compositor", "mobile");
+		expect(view.container.querySelector(".oqto-compositor-grid")).toBeNull();
+		expect(view.container.querySelector(".wb-workarea")).toHaveAttribute(
+			"data-view",
+			"chat",
+		);
+		expect(view.container.querySelector(".wb-mobile-chrome")).not.toBeNull();
+		expect(
+			screen.getByRole("complementary", { name: "Files" }),
+		).toBeInTheDocument();
+		expect(shell).toHaveAttribute("data-sessions-open", "false");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Switch workspace or session" }),
+		);
+		expect(shell).toHaveAttribute("data-sessions-open", "true");
+		expect(
+			screen.getByRole("complementary", {
+				name: "Workspace and session navigation",
+			}),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByText("Chat persistence diagnosis"));
+		expect(shell).toHaveAttribute("data-sessions-open", "false");
+	});
+
+	it("shows the Files destination on mobile when the view is files", async () => {
+		setViewportWidth(600);
+		const view = renderShell(memoryLayoutStorage(), "files");
+		await screen.findByRole("complementary", { name: "Files" });
+		expect(view.container.querySelector(".wb-workarea")).toHaveAttribute(
+			"data-view",
+			"files",
+		);
 	});
 });

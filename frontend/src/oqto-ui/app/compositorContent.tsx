@@ -1,0 +1,138 @@
+/**
+ * Content renderer registry for the compositor shell: maps Content kinds
+ * (sessions, chat, files, settings) to the real OqtoUI panes. The
+ * compositor never knows what a "chat" is; this is the composition edge.
+ */
+
+import type { TFunction } from "i18next";
+import { ChatWorkspace } from "../chat/ChatWorkspace";
+import type { PreviewState } from "../chat/ChatWorkspace";
+import type {
+	ContentLabel,
+	RenderContent,
+} from "../compositor/react/contracts";
+import { FilesPane } from "../files/FilesPane";
+import { GalleryPane } from "../gallery/GalleryPane";
+import type {
+	OqtoUiConfigResolution,
+	OqtoUiPlatform,
+	OqtoUiSnapshot,
+	SessionOverview,
+	UiNavigation,
+	WorkDirectory,
+} from "../platform/contracts";
+import { NavigationRail } from "../sessions/NavigationRail";
+import { SettingsPane } from "../theme/SettingsPane";
+import type { OqtoUiUserTheme } from "../theme/userTheme";
+import { findSession } from "./compositorRefs";
+
+export interface ContentRendererDeps {
+	readonly snapshot: OqtoUiSnapshot;
+	readonly platform: OqtoUiPlatform;
+	readonly context: {
+		readonly directory: WorkDirectory;
+		readonly session: SessionOverview;
+	};
+	readonly workAreaTab: string;
+	readonly theme: {
+		schemeId: string;
+		rootEl: HTMLElement | null;
+		userTheme: OqtoUiUserTheme;
+		onUserTheme: (next: OqtoUiUserTheme) => void;
+	};
+	readonly resolvedConfig: OqtoUiConfigResolution;
+	readonly previewState: PreviewState;
+	readonly navigate: (next: UiNavigation) => void;
+	readonly closeSettings: () => void;
+}
+
+export function createContentRenderer(
+	deps: ContentRendererDeps,
+): RenderContent {
+	const {
+		snapshot,
+		platform,
+		context,
+		workAreaTab,
+		theme,
+		resolvedConfig,
+		previewState,
+		navigate,
+		closeSettings,
+	} = deps;
+	return (content) => {
+		if (content.kind === "sessions") {
+			return (
+				<NavigationRail
+					workDirectories={snapshot.workDirectories}
+					workDirectoryId={context.directory.id}
+					sessionId={context.session.id}
+					schemeId={theme.schemeId}
+					onNavigate={navigate}
+				/>
+			);
+		}
+		if (content.kind === "chat") {
+			const sessionId = content.extensions?.sessionId;
+			const target =
+				typeof sessionId === "string" ? findSession(snapshot, sessionId) : null;
+			if (!target)
+				return (
+					<div
+						className="oqto-compositor-unavailable"
+						data-kind={content.kind}
+					/>
+				);
+			return (
+				<ChatWorkspace
+					platform={platform}
+					context={{
+						directory: target.directory,
+						session: target.session,
+						tasks: target.session.tasks ?? [],
+					}}
+					workArea={snapshot.workArea}
+					workAreaTab={workAreaTab}
+					galleryPane={<GalleryPane resources={snapshot.gallery} />}
+					previewState={previewState}
+					onNavigate={navigate}
+				/>
+			);
+		}
+		if (content.kind === "files") return <FilesPane files={snapshot.files} />;
+		if (content.kind === "settings") {
+			return (
+				<SettingsPane
+					schemeId={theme.schemeId}
+					themeRoot={theme.rootEl}
+					userTheme={theme.userTheme}
+					resolution={resolvedConfig}
+					onChange={theme.onUserTheme}
+					onNavigate={navigate}
+					onClose={closeSettings}
+				/>
+			);
+		}
+		return (
+			<div className="oqto-compositor-unavailable" data-kind={content.kind} />
+		);
+	};
+}
+
+export function createContentLabel(
+	snapshot: OqtoUiSnapshot,
+	t: TFunction,
+): ContentLabel {
+	return (content) => {
+		if (content.kind === "sessions") return t("oqtoUi.navigation.sessions");
+		if (content.kind === "files") return t("oqtoUi.files.label");
+		if (content.kind === "settings") return t("oqtoUi.settings.label");
+		if (content.kind === "chat") {
+			const sessionId = content.extensions?.sessionId;
+			const target =
+				typeof sessionId === "string" ? findSession(snapshot, sessionId) : null;
+			return target?.session.name ?? content.id;
+		}
+		return content.kind;
+	};
+}

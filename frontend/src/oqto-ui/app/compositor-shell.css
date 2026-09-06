@@ -1,0 +1,21 @@
+/* Compositor shell parity chrome on top of shell.css. Desktop renders the
+   Container grid directly inside the content column; the mobile Screen
+   Mode reuses the OG drawer and workarea rules, with the navigation drawer
+   filling the whole screen. */
+
+.wb-shell[data-compositor="classic"] .oqto-compositor {
+	flex: 1;
+	min-block-size: 0;
+}
+
+@media (max-width: 1023px) {
+	.wb-shell[data-compositor="mobile"] .wb-sidebar {
+		inline-size: 100vw;
+		inset-inline-end: 0;
+	}
+
+	.wb-shell[data-compositor="mobile"][data-sessions-open="true"]
+		.wb-sessions-backdrop {
+		display: none;
+	}
+}

@@ -1,153 +1,84 @@
 /**
- * The classic OqtoUI preset composed through the ADR-0041 compositor: the
- * real NavigationRail, ChatWorkspace, and FilesPane become Container
- * Content rendered by CompositorHost. Layout persists device-locally via
- * the platform layout store; every change is a semantic transaction.
+ * The classic OqtoUI preset composed through the ADR-0041 compositor with
+ * OG-shell parity chrome: desktop renders the Container grid; the mobile
+ * Screen Mode projects the same Content into one destination with a
+ * full-screen navigation drawer and the mobile top bar. Layout persists
+ * device-locally; every change is a semantic transaction.
  */
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChatWorkspace } from "../chat/ChatWorkspace";
-import type { PreviewSelection } from "../chat/ResourcePreviewPane";
-import {
-	type ContentRef,
-	contentIdFrom,
-	createClassicPresetLayout,
-} from "../compositor/index";
-import { CompositorHost } from "../compositor/react/CompositorHost";
-import { bindingsFromConfig } from "../compositor/react/config-bindings";
 import type {
-	ContentLabel,
-	RenderContent,
-} from "../compositor/react/contracts";
-import {
-	DEFAULT_KEY_BINDINGS,
-	actionId,
-} from "../compositor/react/keybindings";
-import {
-	type PersistedCompositorStore,
-	createPersistedCompositorStore,
-} from "../compositor/react/persisted-store";
-import { useViewportClass } from "../compositor/react/useViewportClass";
-import { FilesPane } from "../files/FilesPane";
-import { GalleryPane } from "../gallery/GalleryPane";
-import { DEFAULT_OQTO_UI_CONFIG } from "../platform/contracts";
-import type {
+	OqtoUiConfigResolution,
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
 	SessionOverview,
 	UiNavigation,
 	WorkDirectory,
 } from "../platform/contracts";
+import { DEFAULT_OQTO_UI_CONFIG } from "../platform/contracts";
 import {
 	type LayoutDocumentStore,
 	layoutStorageKey,
 } from "../platform/layout-storage";
-import { NavigationRail } from "../sessions/NavigationRail";
 import { useThemeRoot } from "../theme/useThemeRoot";
+import { JETBRAINS_MONO_STACK, type OqtoUiUserTheme } from "../theme/userTheme";
+import { LoadedCompositorShell } from "./LoadedCompositorShell";
 import { Splash } from "./Splash";
+import {
+	SESSIONS_CONTENT,
+	SETTINGS_CONTENT,
+	chatContent,
+	filesContent,
+} from "./compositorRefs";
 import "./shell.css";
+import "./compositor-shell.css";
 
 type CompositorShellProps = {
 	platform: OqtoUiPlatform;
 	workDirectoryId: string | null;
 	sessionId: string | null;
+	mobileView: string;
 	schemeId: string | null;
 	workAreaTab: string;
 	storage: LayoutDocumentStore;
 	onNavigate: (next: UiNavigation) => void;
 };
 
-/** Action id -> i18n key suffix under oqtoUi.compositor.actions. */
-const ACTION_LABEL_KEYS: { [id: string]: string } = {
-	"compositor.toggleNavigation": "toggleNavigation",
-	"compositor.focus.start": "focusStart",
-	"compositor.focus.end": "focusEnd",
-	"compositor.focus.up": "focusUp",
-	"compositor.focus.down": "focusDown",
-	"compositor.move.start": "moveStart",
-	"compositor.move.end": "moveEnd",
-	"compositor.move.up": "moveUp",
-	"compositor.move.down": "moveDown",
-	"compositor.shrink": "shrink",
-	"compositor.grow": "grow",
-	"compositor.prevTab": "prevTab",
-	"compositor.nextTab": "nextTab",
-	"compositor.closeFocused": "closeFocused",
-	"compositor.scrollStart": "scrollStart",
-	"compositor.scrollEnd": "scrollEnd",
-	"compositor.undo": "undo",
-	"shell.openCommandPalette": "openPalette",
-};
-
-const SESSIONS_CONTENT: ContentRef = {
-	id: contentIdFrom("sessions:catalog"),
-	kind: "sessions",
-};
-
-function chatContent(sessionId: string): ContentRef {
-	return {
-		id: contentIdFrom(`chat:${sessionId}`),
-		kind: "chat",
-		extensions: { sessionId },
-	};
-}
-
-function filesContent(workDirectoryId: string): ContentRef {
-	return {
-		id: contentIdFrom(`files:${workDirectoryId}`),
-		kind: "files",
-		extensions: { workDirectoryId },
-	};
-}
-
-/** Idempotent: reveals the Session's Chat, opening it into primary if absent. */
-function ensureSessionChat(
-	store: PersistedCompositorStore,
-	sessionId: string,
-): void {
-	store.commit([
-		{
-			type: "open",
-			content: chatContent(sessionId),
-			target: { role: "primary" },
-		},
-	]);
-}
-
-function findSession(snapshot: OqtoUiSnapshot, sessionId: string) {
-	for (const directory of snapshot.workDirectories) {
-		const session = directory.sessions.find(
-			(candidate) => candidate.id === sessionId,
-		);
-		if (session) return { directory, session };
-	}
-	return null;
-}
-
 export function CompositorShell({
 	platform,
 	workDirectoryId,
 	sessionId,
+	mobileView,
 	schemeId: requestedSchemeId,
 	workAreaTab,
 	storage,
 	onNavigate,
 }: CompositorShellProps) {
 	const { t } = useTranslation();
-	const { schemeId, rootRef } = useThemeRoot(
-		requestedSchemeId ?? "oqto-dark",
-		{},
-	);
+	const [userTheme, setUserTheme] = useState<OqtoUiUserTheme>({});
 	const configQuery = useQuery({
 		queryKey: ["oqto-ui-config", platform.id],
 		queryFn: () => platform.loadUiConfig(),
 		staleTime: 30_000,
 		retry: false,
 	});
-	const configuredBindings = (configQuery.data ?? DEFAULT_OQTO_UI_CONFIG).config
-		.bindings;
+	const resolvedConfig = configQuery.data ?? DEFAULT_OQTO_UI_CONFIG;
+	const config = resolvedConfig.config;
+	const configuredRadius = { square: "0px", compact: "4px", soft: "10px" }[
+		config.appearance.radius
+	];
+	const configuredTheme: OqtoUiUserTheme = {
+		...userTheme,
+		radius: userTheme.radius ?? configuredRadius,
+		fontSans: userTheme.fontSans ?? JETBRAINS_MONO_STACK,
+		fontMono: userTheme.fontMono ?? JETBRAINS_MONO_STACK,
+	};
+	const { schemeId, rootRef, rootEl } = useThemeRoot(
+		requestedSchemeId ?? config.appearance.scheme,
+		configuredTheme,
+	);
 	const snapshotQuery = useQuery({
 		queryKey: ["oqto-ui-compositor", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
@@ -187,181 +118,21 @@ export function CompositorShell({
 		);
 	}
 	return (
-		<div className="wb-shell" data-compositor="classic" ref={rootRef}>
-			<LoadedCompositorShell
-				snapshot={snapshot}
-				platform={platform}
-				context={{ directory, session }}
-				workAreaTab={workAreaTab}
-				storage={storage}
-				schemeId={schemeId}
-				configuredBindings={configuredBindings}
-				onNavigate={onNavigate}
-			/>
-		</div>
-	);
-}
-
-type LoadedCompositorShellProps = {
-	snapshot: OqtoUiSnapshot;
-	platform: OqtoUiPlatform;
-	context: { directory: WorkDirectory; session: SessionOverview };
-	workAreaTab: string;
-	storage: LayoutDocumentStore;
-	schemeId: string;
-	configuredBindings: readonly { keys: string; action: string }[];
-	onNavigate: (next: UiNavigation) => void;
-};
-
-function LoadedCompositorShell({
-	snapshot,
-	platform,
-	context,
-	workAreaTab,
-	storage,
-	schemeId,
-	configuredBindings,
-	onNavigate,
-}: LoadedCompositorShellProps) {
-	const { t } = useTranslation();
-	const viewport = useViewportClass();
-	const [preview, setPreview] = useState<PreviewSelection | null>(null);
-	const [store] = useState(() => {
-		const created = createPersistedCompositorStore({
-			storage,
-			key: layoutStorageKey(platform.id, "desktop"),
-			fallback: createClassicPresetLayout({
-				navigation: [SESSIONS_CONTENT],
-				primary: [chatContent(context.session.id)],
-				auxiliary: [filesContent(context.directory.id)],
-			}),
-		});
-		ensureSessionChat(created, context.session.id);
-		return created;
-	});
-	const navigate = useCallback(
-		(next: UiNavigation) => {
-			if (next.sessionId) ensureSessionChat(store, next.sessionId);
-			onNavigate(next);
-		},
-		[store, onNavigate],
-	);
-	const previewState = useMemo(
-		() => ({
-			selection: preview,
-			open: setPreview,
-			close: () => setPreview(null),
-		}),
-		[preview],
-	);
-	const renderContent: RenderContent = useCallback(
-		(content) => {
-			if (content.kind === "sessions") {
-				return (
-					<NavigationRail
-						workDirectories={snapshot.workDirectories}
-						workDirectoryId={context.directory.id}
-						sessionId={context.session.id}
-						schemeId={schemeId}
-						onNavigate={navigate}
-					/>
-				);
-			}
-			if (content.kind === "chat") {
-				const sessionId = content.extensions?.sessionId;
-				const target =
-					typeof sessionId === "string"
-						? findSession(snapshot, sessionId)
-						: null;
-				if (!target)
-					return (
-						<div
-							className="oqto-compositor-unavailable"
-							data-kind={content.kind}
-						/>
-					);
-				return (
-					<ChatWorkspace
-						platform={platform}
-						context={{
-							directory: target.directory,
-							session: target.session,
-							tasks: target.session.tasks ?? [],
-						}}
-						workArea={snapshot.workArea}
-						workAreaTab={workAreaTab}
-						galleryPane={<GalleryPane resources={snapshot.gallery} />}
-						previewState={previewState}
-						onNavigate={navigate}
-					/>
-				);
-			}
-			if (content.kind === "files") return <FilesPane files={snapshot.files} />;
-			return (
-				<div className="oqto-compositor-unavailable" data-kind={content.kind} />
-			);
-		},
-		[
-			snapshot,
-			platform,
-			context,
-			workAreaTab,
-			schemeId,
-			navigate,
-			previewState,
-		],
-	);
-	const contentLabel: ContentLabel = useCallback(
-		(content) => {
-			if (content.kind === "sessions") return t("oqtoUi.navigation.sessions");
-			if (content.kind === "files") return t("oqtoUi.files.label");
-			if (content.kind === "chat") {
-				const sessionId = content.extensions?.sessionId;
-				const target =
-					typeof sessionId === "string"
-						? findSession(snapshot, sessionId)
-						: null;
-				return target?.session.name ?? content.id;
-			}
-			return content.kind;
-		},
-		[snapshot, t],
-	);
-	const keyBindings = useMemo(
-		() => bindingsFromConfig(configuredBindings),
-		[configuredBindings],
-	);
-	const labels = useMemo(() => {
-		const actions: { [id: string]: string } = {};
-		for (const binding of DEFAULT_KEY_BINDINGS) {
-			const id = actionId(binding.action);
-			actions[id] = t(
-				`oqtoUi.compositor.actions.${ACTION_LABEL_KEYS[id] ?? id}`,
-			);
-		}
-		return {
-			closeTab: t("common.close"),
-			resizeColumns: t("oqtoUi.compositor.resizeColumns"),
-			resizeRows: t("oqtoUi.compositor.resizeRows"),
-			dropTop: t("oqtoUi.compositor.dropTop"),
-			dropBottom: t("oqtoUi.compositor.dropBottom"),
-			dropStart: t("oqtoUi.compositor.dropStart"),
-			dropEnd: t("oqtoUi.compositor.dropEnd"),
-			palette: {
-				title: t("oqtoUi.compositor.palette.title"),
-				searchPlaceholder: t("oqtoUi.compositor.palette.search"),
-				noMatches: t("oqtoUi.compositor.palette.noMatches"),
-				actions,
-			},
-		};
-	}, [t]);
-	return (
-		<CompositorHost
-			store={store}
-			viewport={viewport}
-			renderContent={renderContent}
-			contentLabel={contentLabel}
-			labels={labels}
+		<LoadedCompositorShell
+			snapshot={snapshot}
+			platform={platform}
+			context={{ directory, session }}
+			navigation={{ mobileView, workAreaTab }}
+			storage={storage}
+			theme={{
+				schemeId,
+				rootRef,
+				rootEl,
+				userTheme,
+				onUserTheme: setUserTheme,
+			}}
+			resolvedConfig={resolvedConfig}
+			onNavigate={onNavigate}
 		/>
 	);
 }
