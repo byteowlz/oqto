@@ -10,6 +10,7 @@
 import {
 	type CSSProperties,
 	type DragEvent,
+	type KeyboardEvent,
 	type PointerEvent,
 	useCallback,
 	useRef,
@@ -40,6 +41,12 @@ import {
 	scrollByColumns,
 } from "./gestures";
 import { gridLines, gridTemplateFromSizes } from "./grid-template";
+import {
+	DEFAULT_KEY_BINDINGS,
+	type KeyBinding,
+	matchBinding,
+	resolveAction,
+} from "./keybindings";
 import type { CompositorStore } from "./store";
 import "./compositor.css";
 
@@ -49,6 +56,8 @@ interface CompositorHostProps {
 	readonly renderContent: RenderContent;
 	readonly contentLabel: ContentLabel;
 	readonly labels: CompositorChromeLabels;
+	/** ADR-0040-shaped Binding -> Action data; defaults to the Alt chords. */
+	readonly keyBindings?: readonly KeyBinding[];
 }
 
 interface CellProps {
@@ -136,6 +145,7 @@ export function CompositorHost({
 	renderContent,
 	contentLabel,
 	labels,
+	keyBindings = DEFAULT_KEY_BINDINGS,
 }: CompositorHostProps) {
 	const snapshot = useSyncExternalStore(
 		store.subscribe,
@@ -261,11 +271,23 @@ export function CompositorHost({
 					))}
 			</>
 		);
+	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+		const action = matchBinding(event, keyBindings);
+		if (!action) return;
+		event.preventDefault();
+		if (action.type === "undo") {
+			store.undo();
+			return;
+		}
+		const commands = resolveAction(snapshot, geometry, action);
+		if (commands.length > 0) commit(commands);
+	};
 	return (
 		<div
 			className="oqto-compositor"
 			data-merges={projected.merges.length || undefined}
 			data-dragging={dragging || undefined}
+			onKeyDown={onKeyDown}
 			onDragOver={() => {
 				if (!dragging) setDragging(true);
 			}}

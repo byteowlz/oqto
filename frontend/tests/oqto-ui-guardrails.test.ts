@@ -105,8 +105,10 @@ describe("OqtoUI architecture guardrails", () => {
 				'import { initialRevision, type LayoutRevision } from "./model";\nexport const encode = (revision: LayoutRevision) => JSON.stringify({ revision, initialRevision });\n',
 			"compositor/index.ts":
 				'export { initialRevision } from "./kernel/model";\nexport { encode } from "./kernel/persistence";\n',
+			"compositor/navigation.ts":
+				'export { initialRevision as navigationRevision } from "./kernel/model";\n',
 			"compositor/react/host.ts":
-				'import { initialRevision } from "../index";\nexport const host = () => initialRevision;\n',
+				'import { initialRevision } from "../index";\nimport { navigationRevision } from "../navigation";\nexport const host = () => initialRevision + navigationRevision;\n',
 		});
 		expect(() =>
 			execFileSync(process.execPath, [SCRIPT, "--source-root", root]),

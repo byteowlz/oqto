@@ -2,8 +2,8 @@
  * A compositor store backed by a device-local layout document store:
  * recovers primary -> last-known-good -> preset on creation, promotes a
  * healthy primary to last-known-good, and writes the encoded document after
- * every accepted transaction. Storage stays disposable and never a second
- * authority (ADR-0037).
+ * every accepted transaction (undo included). Storage stays disposable and
+ * never a second authority (ADR-0037).
  */
 
 import type { LayoutDocumentStore } from "../../platform/layout-storage";
@@ -39,23 +39,8 @@ export function createPersistedCompositorStore(
 			encodeLayoutDocument(recovery.snapshot),
 		);
 	}
-	const inner = createCompositorStore(recovery.snapshot);
-	const dispatch: CompositorStore["dispatch"] = (transaction) => {
-		const result = inner.dispatch(transaction);
-		if (result.ok)
-			options.storage.write(options.key, encodeLayoutDocument(result.snapshot));
-		return result;
-	};
-	return {
-		getSnapshot: inner.getSnapshot,
-		subscribe: inner.subscribe,
-		dispatch,
-		commit: (commands, viewport) =>
-			dispatch({
-				expectedRevision: inner.getSnapshot().revision,
-				commands,
-				...(viewport ? { viewport } : {}),
-			}),
-		recovery,
-	};
+	const store = createCompositorStore(recovery.snapshot, (snapshot) => {
+		options.storage.write(options.key, encodeLayoutDocument(snapshot));
+	});
+	return { ...store, recovery };
 }

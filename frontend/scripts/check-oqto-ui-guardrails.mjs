@@ -209,7 +209,10 @@ function moduleArea(root, file) {
 // ADR-0041: the compositor kernel is a framework-independent deep module and
 // the compositor's persistence codec is the only serialization site.
 const COMPOSITOR_KERNEL_PREFIX = "compositor/kernel/";
-const COMPOSITOR_SEAM_FILES = new Set(["compositor/index.ts"]);
+const COMPOSITOR_SEAM_FILES = new Set([
+	"compositor/index.ts",
+	"compositor/navigation.ts",
+]);
 const COMPOSITOR_SERIALIZATION_PATTERN =
 	/^compositor\/kernel\/persistence(\/|\.)/;
 const KERNEL_FORBIDDEN_GLOBALS = new Set([
@@ -860,7 +863,7 @@ function inspectFile(
 							relative,
 							node,
 							sourceFile,
-							"Compositor kernel internals are reachable only through compositor/index.ts",
+							"Compositor kernel internals are reachable only through the explicit seam files (compositor/index.ts, compositor/navigation.ts)",
 						),
 					);
 				}
