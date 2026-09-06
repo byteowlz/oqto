@@ -42,6 +42,24 @@ impl Default for OqtoUiConfigV1 {
             bindings: vec![
                 KeyBinding::new("ctrl+shift+p", "shell.openCommandPalette"),
                 KeyBinding::new("ctrl+shift+f", "view.openFiles"),
+                // ADR-0041/0042 compositor actions (see frontend compositor keybindings).
+                KeyBinding::new("alt+b", "compositor.toggleNavigation"),
+                KeyBinding::new("alt+left", "compositor.focus.start"),
+                KeyBinding::new("alt+right", "compositor.focus.end"),
+                KeyBinding::new("alt+up", "compositor.focus.up"),
+                KeyBinding::new("alt+down", "compositor.focus.down"),
+                KeyBinding::new("alt+shift+left", "compositor.move.start"),
+                KeyBinding::new("alt+shift+right", "compositor.move.end"),
+                KeyBinding::new("alt+shift+up", "compositor.move.up"),
+                KeyBinding::new("alt+shift+down", "compositor.move.down"),
+                KeyBinding::new("alt+-", "compositor.shrink"),
+                KeyBinding::new("alt+=", "compositor.grow"),
+                KeyBinding::new("alt+[", "compositor.prevTab"),
+                KeyBinding::new("alt+]", "compositor.nextTab"),
+                KeyBinding::new("alt+w", "compositor.closeFocused"),
+                KeyBinding::new("alt+shift+,", "compositor.scrollStart"),
+                KeyBinding::new("alt+shift+.", "compositor.scrollEnd"),
+                KeyBinding::new("alt+z", "compositor.undo"),
             ],
             status_line: StatusLineConfig::default(),
             mobile: MobileConfig::default(),
@@ -502,6 +520,46 @@ mod tests {
     fn stops_unbounded_execution() {
         let error = evaluate("while true do end").expect_err("instruction budget must stop loop");
         assert!(error.to_string().contains("instruction budget exceeded"));
+    }
+
+    #[test]
+    fn dist_default_bindings_validate_and_cover_compositor_actions() {
+        let config = OqtoUiConfigV1::default();
+        validate(&config).expect("dist default must validate");
+        let actions: Vec<&str> = config
+            .bindings
+            .iter()
+            .map(|binding| binding.action.as_str())
+            .collect();
+        for expected in [
+            "shell.openCommandPalette",
+            "compositor.toggleNavigation",
+            "compositor.focus.start",
+            "compositor.focus.end",
+            "compositor.focus.up",
+            "compositor.focus.down",
+            "compositor.move.start",
+            "compositor.move.end",
+            "compositor.move.up",
+            "compositor.move.down",
+            "compositor.shrink",
+            "compositor.grow",
+            "compositor.prevTab",
+            "compositor.nextTab",
+            "compositor.closeFocused",
+            "compositor.scrollStart",
+            "compositor.scrollEnd",
+            "compositor.undo",
+        ] {
+            assert!(
+                actions.contains(&expected),
+                "missing dist binding for {expected}"
+            );
+        }
+        let mut keys: Vec<&str> = config.bindings.iter().map(|b| b.keys.as_str()).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), config.bindings.len(), "chords must be unique");
     }
 
     #[test]

@@ -10,6 +10,7 @@ import {
 	actionId,
 } from "@/src/oqto-ui/compositor/react/keybindings";
 import { createCompositorStore } from "@/src/oqto-ui/compositor/react/store";
+import { DEFAULT_OQTO_UI_CONFIG } from "@/src/oqto-ui/platform/contracts";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
@@ -71,6 +72,19 @@ describe("config-layer bindings (ADR-0040 data)", () => {
 			direction: "inline-end",
 		});
 		expect(actionFromId("nope")).toBeNull();
+	});
+
+	it("the dist default config is the readable source of the same bindings", () => {
+		// ADR-0040: the shipped preset must express what the adapter does by
+		// default, so merging it over the defaults changes nothing.
+		const merged = bindingsFromConfig(DEFAULT_OQTO_UI_CONFIG.config.bindings);
+		const asMap = (bindings: readonly { chord: string; action: object }[]) =>
+			new Map(bindings.map((b) => [actionId(b.action as never), b.chord]));
+		expect(asMap(merged)).toEqual(asMap(DEFAULT_KEY_BINDINGS));
+		const compositorEntries = DEFAULT_OQTO_UI_CONFIG.config.bindings.filter(
+			(b) => actionFromId(b.action) !== null,
+		);
+		expect(compositorEntries).toHaveLength(DEFAULT_KEY_BINDINGS.length);
 	});
 
 	it("every default action has a stable id that round-trips", () => {
