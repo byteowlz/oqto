@@ -654,6 +654,31 @@
 	},
 	"oqtoUi": {
 		"compositor": {
+			"palette": {
+				"title": "Command palette",
+				"search": "Search commands",
+				"noMatches": "No matching commands"
+			},
+			"actions": {
+				"toggleNavigation": "Toggle navigation sidebar",
+				"focusStart": "Focus the container to the left",
+				"focusEnd": "Focus the container to the right",
+				"focusUp": "Focus the container above",
+				"focusDown": "Focus the container below",
+				"moveStart": "Move focused content left",
+				"moveEnd": "Move focused content right",
+				"moveUp": "Move focused content up",
+				"moveDown": "Move focused content down",
+				"shrink": "Shrink focused column",
+				"grow": "Grow focused column",
+				"prevTab": "Previous tab",
+				"nextTab": "Next tab",
+				"closeFocused": "Close focused content",
+				"scrollStart": "Scroll one column left",
+				"scrollEnd": "Scroll one column right",
+				"undo": "Undo layout change",
+				"openPalette": "Open command palette"
+			},
 			"resizeColumns": "Resize columns",
 			"resizeRows": "Resize rows",
 			"dropTop": "Drop here to create a lane at the top",

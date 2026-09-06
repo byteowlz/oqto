@@ -184,3 +184,76 @@
 	inset-inline-end: 0;
 	inline-size: 24px;
 }
+
+.oqto-compositor[data-previewing] .oqto-compositor-grid {
+	transition: none;
+}
+
+.oqto-compositor-palette-backdrop {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding-block-start: 10vh;
+	background: var(--background);
+	opacity: 0.98;
+}
+
+.oqto-compositor-palette {
+	inline-size: min(40rem, 90%);
+	max-block-size: 70vh;
+	display: flex;
+	flex-direction: column;
+	background: var(--popover);
+	color: var(--foreground);
+	border: 1px solid var(--border);
+}
+
+.oqto-compositor-palette-search {
+	flex: none;
+	padding: 0.75rem 1rem;
+	border: 0;
+	border-block-end: 1px solid var(--border);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.oqto-compositor-palette-list {
+	flex: 1;
+	min-block-size: 0;
+	overflow: auto;
+	margin: 0;
+	padding: 0.25rem 0;
+	list-style: none;
+}
+
+.oqto-compositor-palette-item button {
+	display: flex;
+	inline-size: 100%;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.5rem 1rem;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: start;
+}
+
+.oqto-compositor-palette-item[data-active] button {
+	background: var(--muted);
+	color: var(--primary);
+}
+
+.oqto-compositor-palette-item kbd {
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+}
+
+.oqto-compositor-palette-empty {
+	padding: 0.5rem 1rem;
+	color: var(--muted-foreground);
+}

@@ -3,32 +3,34 @@
  * kernel's responsive projection and solved tracks become grid-template
  * custom properties; flush Lanes sit outside the horizontally scrolled
  * body; DOM geometry is never read back into layout state. All
- * interaction — tabs, drops, edge drops, resize gutters, wheel scrolling —
- * dispatches semantic commands through the store.
+ * interaction — tabs, drops, edge drops, resize gutters, wheel scrolling,
+ * keyboard chords, the command palette — dispatches semantic commands
+ * through the store. A gutter drag previews by applying the would-be
+ * transaction without committing it (ADR-0041 preview).
  */
 
 import {
 	type CSSProperties,
 	type DragEvent,
 	type KeyboardEvent,
-	type PointerEvent,
 	useCallback,
 	useRef,
 	useState,
 	useSyncExternalStore,
 } from "react";
 import {
-	type Arrangement,
 	type Container,
 	type GridPlacement,
 	type LayoutCommand,
-	type SolvedLayout,
+	type LayoutSnapshot,
 	type SplitEdge,
 	type ViewportClass,
+	applyTransaction,
 	contentIdFrom,
 	projectLayout,
 } from "../index";
-import { ContainerView } from "./ContainerView";
+import { CommandPalette } from "./CommandPalette";
+import { Cell, EDGE_ZONES, Gutter, type ResizeAxisName } from "./chrome";
 import type {
 	CompositorChromeLabels,
 	ContentLabel,
@@ -40,8 +42,9 @@ import {
 	resizeCommands,
 	scrollByColumns,
 } from "./gestures";
-import { gridLines, gridTemplateFromSizes } from "./grid-template";
+import { gridTemplateFromSizes } from "./grid-template";
 import {
+	type CompositorAction,
 	DEFAULT_KEY_BINDINGS,
 	type KeyBinding,
 	matchBinding,
@@ -60,84 +63,46 @@ interface CompositorHostProps {
 	readonly keyBindings?: readonly KeyBinding[];
 }
 
-interface CellProps {
-	readonly container: Container;
-	readonly placement: GridPlacement;
-	readonly rowOffset: number;
-	readonly focusedContentId: Container["activeContentId"];
-	readonly renderContent: RenderContent;
-	readonly contentLabel: ContentLabel;
-	readonly labels: CompositorChromeLabels;
-	readonly commit: (commands: readonly LayoutCommand[]) => void;
-}
-
-function Cell({ container, placement, rowOffset, ...view }: CellProps) {
-	const lines = gridLines(placement, rowOffset);
-	return (
-		<div
-			className="oqto-compositor-cell"
-			style={
-				{
-					"--oqto-cell-row": lines.row,
-					"--oqto-cell-column": lines.column,
-				} as CSSProperties
-			}
-		>
-			<ContainerView container={container} {...view} />
-		</div>
-	);
-}
-
-interface GutterProps {
-	readonly axis: "inline" | "block";
+interface ResizePreview {
+	readonly axis: ResizeAxisName;
 	readonly index: number;
-	readonly label: string;
-	readonly onResize: (
-		axis: "inline" | "block",
-		index: number,
-		deltaPx: number,
-	) => void;
+	readonly deltaPx: number;
 }
-
-/** Pointer-captured drag between two adjacent tracks; commits on release. */
-function Gutter({ axis, index, label, onResize }: GutterProps) {
-	const origin = useRef<number | null>(null);
-	const read = (event: PointerEvent<HTMLElement>) =>
-		axis === "inline" ? event.clientX : event.clientY;
-	return (
-		<div
-			role="separator"
-			aria-orientation={axis === "inline" ? "vertical" : "horizontal"}
-			aria-label={label}
-			className="oqto-compositor-gutter"
-			data-axis={axis}
-			style={{ "--oqto-gutter-line": `${index + 2}` } as CSSProperties}
-			onPointerDown={(event) => {
-				origin.current = read(event);
-				event.currentTarget.setPointerCapture(event.pointerId);
-			}}
-			onPointerUp={(event) => {
-				if (origin.current === null) return;
-				const delta = read(event) - origin.current;
-				origin.current = null;
-				if (delta !== 0) onResize(axis, index, delta);
-			}}
-		/>
-	);
-}
-
-const EDGES: readonly {
-	edge: SplitEdge;
-	labelKey: keyof CompositorChromeLabels;
-}[] = [
-	{ edge: "block-start", labelKey: "dropTop" },
-	{ edge: "block-end", labelKey: "dropBottom" },
-	{ edge: "inline-start", labelKey: "dropStart" },
-	{ edge: "inline-end", labelKey: "dropEnd" },
-];
 
 const WHEEL_STEP_PX = 40;
 const WHEEL_DEBOUNCE_MS = 250;
+
+function activeOf(snapshot: LayoutSnapshot) {
+	return (
+		snapshot.arrangements.find(
+			(candidate) => candidate.id === snapshot.activeArrangementId,
+		) ?? snapshot.arrangements[0]
+	);
+}
+
+/** The snapshot a pending gutter drag would produce — applied, never committed. */
+function previewed(
+	snapshot: LayoutSnapshot,
+	viewport: ViewportClass,
+	preview: ResizePreview | null,
+): LayoutSnapshot {
+	const arrangement = activeOf(snapshot);
+	if (!preview || !arrangement) return snapshot;
+	const geometry = projectLayout(snapshot, viewport).geometry;
+	const commands = resizeCommands(
+		arrangement,
+		geometry,
+		preview.axis,
+		preview.index,
+		preview.deltaPx,
+	);
+	if (commands.length === 0) return snapshot;
+	const result = applyTransaction(snapshot, {
+		expectedRevision: snapshot.revision,
+		commands,
+	});
+	return result.ok ? result.snapshot : snapshot;
+}
 
 export function CompositorHost({
 	store,
@@ -153,6 +118,8 @@ export function CompositorHost({
 		store.getSnapshot,
 	);
 	const [dragging, setDragging] = useState(false);
+	const [preview, setPreview] = useState<ResizePreview | null>(null);
+	const [paletteOpen, setPaletteOpen] = useState(false);
 	const lastWheel = useRef(0);
 	const commit = useCallback(
 		(commands: readonly LayoutCommand[]) => {
@@ -160,17 +127,15 @@ export function CompositorHost({
 		},
 		[store, viewport],
 	);
-	const projected = projectLayout(snapshot, viewport);
-	const arrangement: Arrangement | undefined =
-		projected.snapshot.arrangements.find(
-			(candidate) => candidate.id === projected.snapshot.activeArrangementId,
-		) ?? projected.snapshot.arrangements[0];
-	const canonicalArrangement =
-		snapshot.arrangements.find(
-			(candidate) => candidate.id === snapshot.activeArrangementId,
-		) ?? snapshot.arrangements[0];
+	const shown = previewed(snapshot, viewport, preview);
+	const projected = projectLayout(shown, viewport);
+	const arrangement = activeOf(projected.snapshot);
+	const canonicalArrangement = activeOf(snapshot);
 	if (!arrangement || !canonicalArrangement) return null;
-	const geometry: SolvedLayout = projected.geometry;
+	const geometry = projected.geometry;
+	const canonicalGeometry = preview
+		? projectLayout(snapshot, viewport).geometry
+		: geometry;
 	const containersById = new Map(
 		projected.snapshot.containers.map((container) => [container.id, container]),
 	);
@@ -191,16 +156,33 @@ export function CompositorHost({
 		)
 			? projected.snapshot.focusedContentId
 			: null;
-	const onResize = (
-		axis: "inline" | "block",
+	const runAction = (action: CompositorAction) => {
+		if (action.type === "undo") {
+			store.undo();
+			return;
+		}
+		if (action.type === "open-palette") {
+			setPaletteOpen(true);
+			return;
+		}
+		const commands = resolveAction(snapshot, canonicalGeometry, action);
+		if (commands.length > 0) commit(commands);
+	};
+	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+		const action = matchBinding(event, keyBindings);
+		if (!action) return;
+		event.preventDefault();
+		runAction(action);
+	};
+	const onPreview = (
+		axis: ResizeAxisName,
 		index: number,
-		deltaPx: number,
-	) => {
-		// Gutters address canonical tracks; resizing while merged is disabled by
-		// the projection not rendering gutters for merged-away columns.
+		deltaPx: number | null,
+	) => setPreview(deltaPx === null ? null : { axis, index, deltaPx });
+	const onResize = (axis: ResizeAxisName, index: number, deltaPx: number) => {
 		const commands = resizeCommands(
 			canonicalArrangement,
-			geometry,
+			canonicalGeometry,
 			axis,
 			index,
 			deltaPx,
@@ -254,6 +236,7 @@ export function CompositorHost({
 						axis="inline"
 						index={index}
 						label={labels.resizeColumns}
+						onPreview={onPreview}
 						onResize={onResize}
 					/>
 				))}
@@ -266,27 +249,18 @@ export function CompositorHost({
 							axis="block"
 							index={index}
 							label={labels.resizeRows}
+							onPreview={onPreview}
 							onResize={onResize}
 						/>
 					))}
 			</>
 		);
-	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-		const action = matchBinding(event, keyBindings);
-		if (!action) return;
-		event.preventDefault();
-		if (action.type === "undo") {
-			store.undo();
-			return;
-		}
-		const commands = resolveAction(snapshot, geometry, action);
-		if (commands.length > 0) commit(commands);
-	};
 	return (
 		<div
 			className="oqto-compositor"
 			data-merges={projected.merges.length || undefined}
 			data-dragging={dragging || undefined}
+			data-previewing={preview ? true : undefined}
 			onKeyDown={onKeyDown}
 			onDragOver={() => {
 				if (!dragging) setDragging(true);
@@ -294,7 +268,7 @@ export function CompositorHost({
 			onDragEnd={() => setDragging(false)}
 			onDrop={() => setDragging(false)}
 		>
-			{EDGES.map(({ edge, labelKey }) => (
+			{EDGE_ZONES.map(({ edge, labelKey }) => (
 				<div
 					key={edge}
 					className="oqto-compositor-edge"
@@ -343,6 +317,14 @@ export function CompositorHost({
 				</div>
 			</div>
 			{lane(flushBottom)}
+			{paletteOpen ? (
+				<CommandPalette
+					bindings={keyBindings}
+					labels={labels.palette}
+					onRun={runAction}
+					onClose={() => setPaletteOpen(false)}
+				/>
+			) : null}
 		</div>
 	);
 }

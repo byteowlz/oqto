@@ -2,6 +2,8 @@
  * Keyboard bindings as data (ADR-0040 Binding -> Action shape) resolved to
  * semantic compositor commands. Pure: no DOM, no store; the adapter matches
  * a key event against the binding list and commits the resolved commands.
+ * Actions have stable string ids (`compositor.*`) so configuration layers
+ * and the command palette can address them.
  */
 
 import type {
@@ -22,7 +24,8 @@ export type CompositorAction =
 	| { readonly type: "cycle-tab"; readonly delta: 1 | -1 }
 	| { readonly type: "close-focused" }
 	| { readonly type: "scroll"; readonly delta: 1 | -1 }
-	| { readonly type: "undo" };
+	| { readonly type: "undo" }
+	| { readonly type: "open-palette" };
 
 /** Chord syntax: modifiers joined by "+", then the DOM `key` value. */
 export interface KeyBinding {
@@ -36,6 +39,39 @@ export interface KeyChord {
 	readonly ctrlKey: boolean;
 	readonly metaKey: boolean;
 	readonly shiftKey: boolean;
+}
+
+const DIRECTION_IDS: Record<SplitEdge, string> = {
+	"inline-start": "start",
+	"inline-end": "end",
+	"block-start": "up",
+	"block-end": "down",
+};
+
+/** Stable configuration/palette id for an action. */
+export function actionId(action: CompositorAction): string {
+	switch (action.type) {
+		case "toggle-navigation":
+			return "compositor.toggleNavigation";
+		case "focus-neighbor":
+			return `compositor.focus.${DIRECTION_IDS[action.direction]}`;
+		case "move-to-neighbor":
+			return `compositor.move.${DIRECTION_IDS[action.direction]}`;
+		case "resize-focused":
+			return action.deltaPx < 0 ? "compositor.shrink" : "compositor.grow";
+		case "cycle-tab":
+			return action.delta < 0 ? "compositor.prevTab" : "compositor.nextTab";
+		case "close-focused":
+			return "compositor.closeFocused";
+		case "scroll":
+			return action.delta < 0
+				? "compositor.scrollStart"
+				: "compositor.scrollEnd";
+		case "undo":
+			return "compositor.undo";
+		case "open-palette":
+			return "shell.openCommandPalette";
+	}
 }
 
 /** Alt-based defaults: Super collides with the OS, Ctrl with the browser. */
@@ -81,7 +117,16 @@ export const DEFAULT_KEY_BINDINGS: readonly KeyBinding[] = [
 	{ chord: "Alt+z", action: { type: "undo" } },
 	{ chord: "Alt+Shift+,", action: { type: "scroll", delta: -1 } },
 	{ chord: "Alt+Shift+.", action: { type: "scroll", delta: 1 } },
+	{ chord: "Ctrl+Shift+p", action: { type: "open-palette" } },
 ];
+
+/** Resolves a stable id back to its action; null for unknown ids (fail closed). */
+export function actionFromId(id: string): CompositorAction | null {
+	return (
+		DEFAULT_KEY_BINDINGS.find((binding) => actionId(binding.action) === id)
+			?.action ?? null
+	);
+}
 
 function chordOf(event: KeyChord): string {
 	const parts = [];
@@ -119,8 +164,8 @@ function focusedContainer(snapshot: LayoutSnapshot): Container | null {
 /**
  * Resolves an action to commands against the canonical snapshot and the
  * currently solved geometry. Returns [] when the action does not apply
- * (nothing focused, no neighbor, at a bound); `undo` is store-level and
- * yields no commands here.
+ * (nothing focused, no neighbor, at a bound); `undo` and `open-palette`
+ * are host-level and yield no commands here.
  */
 export function resolveAction(
 	snapshot: LayoutSnapshot,
@@ -236,6 +281,7 @@ export function resolveAction(
 			return command ? [command] : [];
 		}
 		case "undo":
+		case "open-palette":
 			return [];
 	}
 }

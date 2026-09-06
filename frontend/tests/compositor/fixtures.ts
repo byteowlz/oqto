@@ -61,4 +61,13 @@ export const LABELS = {
 	dropBottom: "drop-bottom",
 	dropStart: "drop-start",
 	dropEnd: "drop-end",
+	palette: {
+		title: "palette",
+		searchPlaceholder: "search-commands",
+		noMatches: "no-matches",
+		actions: {
+			"compositor.toggleNavigation": "Toggle navigation",
+			"compositor.undo": "Undo layout change",
+		},
+	},
 };

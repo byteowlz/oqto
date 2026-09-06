@@ -651,6 +651,31 @@
 	},
 	"oqtoUi": {
 		"compositor": {
+			"palette": {
+				"title": "Befehlspalette",
+				"search": "Befehle suchen",
+				"noMatches": "Keine passenden Befehle"
+			},
+			"actions": {
+				"toggleNavigation": "Navigationsleiste ein-/ausblenden",
+				"focusStart": "Container links fokussieren",
+				"focusEnd": "Container rechts fokussieren",
+				"focusUp": "Container darüber fokussieren",
+				"focusDown": "Container darunter fokussieren",
+				"moveStart": "Fokussierten Inhalt nach links verschieben",
+				"moveEnd": "Fokussierten Inhalt nach rechts verschieben",
+				"moveUp": "Fokussierten Inhalt nach oben verschieben",
+				"moveDown": "Fokussierten Inhalt nach unten verschieben",
+				"shrink": "Fokussierte Spalte verkleinern",
+				"grow": "Fokussierte Spalte vergrößern",
+				"prevTab": "Vorheriger Tab",
+				"nextTab": "Nächster Tab",
+				"closeFocused": "Fokussierten Inhalt schließen",
+				"scrollStart": "Eine Spalte nach links scrollen",
+				"scrollEnd": "Eine Spalte nach rechts scrollen",
+				"undo": "Layoutänderung rückgängig machen",
+				"openPalette": "Befehlspalette öffnen"
+			},
 			"resizeColumns": "Spalten anpassen",
 			"resizeRows": "Zeilen anpassen",
 			"dropTop": "Hier ablegen, um oben eine Lane zu erstellen",

@@ -16,10 +16,15 @@ import {
 	createClassicPresetLayout,
 } from "../compositor/index";
 import { CompositorHost } from "../compositor/react/CompositorHost";
+import { bindingsFromConfig } from "../compositor/react/config-bindings";
 import type {
 	ContentLabel,
 	RenderContent,
 } from "../compositor/react/contracts";
+import {
+	DEFAULT_KEY_BINDINGS,
+	actionId,
+} from "../compositor/react/keybindings";
 import {
 	type PersistedCompositorStore,
 	createPersistedCompositorStore,
@@ -27,6 +32,7 @@ import {
 import { useViewportClass } from "../compositor/react/useViewportClass";
 import { FilesPane } from "../files/FilesPane";
 import { GalleryPane } from "../gallery/GalleryPane";
+import { DEFAULT_OQTO_UI_CONFIG } from "../platform/contracts";
 import type {
 	OqtoUiPlatform,
 	OqtoUiSnapshot,
@@ -51,6 +57,28 @@ type CompositorShellProps = {
 	workAreaTab: string;
 	storage: LayoutDocumentStore;
 	onNavigate: (next: UiNavigation) => void;
+};
+
+/** Action id -> i18n key suffix under oqtoUi.compositor.actions. */
+const ACTION_LABEL_KEYS: { [id: string]: string } = {
+	"compositor.toggleNavigation": "toggleNavigation",
+	"compositor.focus.start": "focusStart",
+	"compositor.focus.end": "focusEnd",
+	"compositor.focus.up": "focusUp",
+	"compositor.focus.down": "focusDown",
+	"compositor.move.start": "moveStart",
+	"compositor.move.end": "moveEnd",
+	"compositor.move.up": "moveUp",
+	"compositor.move.down": "moveDown",
+	"compositor.shrink": "shrink",
+	"compositor.grow": "grow",
+	"compositor.prevTab": "prevTab",
+	"compositor.nextTab": "nextTab",
+	"compositor.closeFocused": "closeFocused",
+	"compositor.scrollStart": "scrollStart",
+	"compositor.scrollEnd": "scrollEnd",
+	"compositor.undo": "undo",
+	"shell.openCommandPalette": "openPalette",
 };
 
 const SESSIONS_CONTENT: ContentRef = {
@@ -112,6 +140,14 @@ export function CompositorShell({
 		requestedSchemeId ?? "oqto-dark",
 		{},
 	);
+	const configQuery = useQuery({
+		queryKey: ["oqto-ui-config", platform.id],
+		queryFn: () => platform.loadUiConfig(),
+		staleTime: 30_000,
+		retry: false,
+	});
+	const configuredBindings = (configQuery.data ?? DEFAULT_OQTO_UI_CONFIG).config
+		.bindings;
 	const snapshotQuery = useQuery({
 		queryKey: ["oqto-ui-compositor", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
@@ -159,6 +195,7 @@ export function CompositorShell({
 				workAreaTab={workAreaTab}
 				storage={storage}
 				schemeId={schemeId}
+				configuredBindings={configuredBindings}
 				onNavigate={onNavigate}
 			/>
 		</div>
@@ -172,6 +209,7 @@ type LoadedCompositorShellProps = {
 	workAreaTab: string;
 	storage: LayoutDocumentStore;
 	schemeId: string;
+	configuredBindings: readonly { keys: string; action: string }[];
 	onNavigate: (next: UiNavigation) => void;
 };
 
@@ -182,6 +220,7 @@ function LoadedCompositorShell({
 	workAreaTab,
 	storage,
 	schemeId,
+	configuredBindings,
 	onNavigate,
 }: LoadedCompositorShellProps) {
 	const { t } = useTranslation();
@@ -288,8 +327,19 @@ function LoadedCompositorShell({
 		},
 		[snapshot, t],
 	);
-	const labels = useMemo(
-		() => ({
+	const keyBindings = useMemo(
+		() => bindingsFromConfig(configuredBindings),
+		[configuredBindings],
+	);
+	const labels = useMemo(() => {
+		const actions: { [id: string]: string } = {};
+		for (const binding of DEFAULT_KEY_BINDINGS) {
+			const id = actionId(binding.action);
+			actions[id] = t(
+				`oqtoUi.compositor.actions.${ACTION_LABEL_KEYS[id] ?? id}`,
+			);
+		}
+		return {
 			closeTab: t("common.close"),
 			resizeColumns: t("oqtoUi.compositor.resizeColumns"),
 			resizeRows: t("oqtoUi.compositor.resizeRows"),
@@ -297,9 +347,14 @@ function LoadedCompositorShell({
 			dropBottom: t("oqtoUi.compositor.dropBottom"),
 			dropStart: t("oqtoUi.compositor.dropStart"),
 			dropEnd: t("oqtoUi.compositor.dropEnd"),
-		}),
-		[t],
-	);
+			palette: {
+				title: t("oqtoUi.compositor.palette.title"),
+				searchPlaceholder: t("oqtoUi.compositor.palette.search"),
+				noMatches: t("oqtoUi.compositor.palette.noMatches"),
+				actions,
+			},
+		};
+	}, [t]);
 	return (
 		<CompositorHost
 			store={store}

@@ -20,6 +20,14 @@ export type RenderContent = (
 
 export type ContentLabel = (content: ContentRef) => string;
 
+/** Command palette strings; `actions` maps action ids to labels. */
+export interface PaletteLabels {
+	readonly title: string;
+	readonly searchPlaceholder: string;
+	readonly noMatches: string;
+	readonly actions: { readonly [id: string]: string };
+}
+
 /** Translated chrome strings, injected by the composing host. */
 export interface CompositorChromeLabels {
 	readonly closeTab: string;
@@ -29,6 +37,7 @@ export interface CompositorChromeLabels {
 	readonly dropBottom: string;
 	readonly dropStart: string;
 	readonly dropEnd: string;
+	readonly palette: PaletteLabels;
 }
 
 export type CommitCommands = (commands: readonly LayoutCommand[]) => void;
