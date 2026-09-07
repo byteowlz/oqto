@@ -2791,3 +2791,88 @@
 	width: 180px;
 	flex-shrink: 0;
 }
+
+/* Files pane: a dense, virtualized listing. Rows are absolutely placed by
+   the virtualizer, so only what fits on screen exists in the DOM. */
+.wb-files {
+	overflow: hidden;
+}
+
+.wb-files-crumb-group {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.wb-files-crumb {
+	max-width: 160px;
+	padding: 2px 4px;
+	overflow: hidden;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-crumb:last-of-type,
+.wb-files-crumb:hover {
+	color: var(--foreground);
+}
+
+.wb-files-filter {
+	flex: none;
+	padding: 6px 12px;
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: transparent;
+	color: var(--foreground);
+	font: inherit;
+	font-size: 12px;
+}
+
+.wb-files-rows {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	outline: none;
+}
+
+.wb-files-viewport {
+	position: relative;
+	height: var(--wb-files-height);
+	width: 100%;
+}
+
+.wb-files-row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	transform: translateY(var(--wb-files-offset));
+}
+
+.wb-files-note {
+	padding: 12px;
+	color: var(--muted-foreground);
+	font-size: 12px;
+}
+
+.wb-tree__row[data-cursor] {
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+	box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.wb-tree__row[data-selected] {
+	background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.wb-files-status {
+	display: flex;
+	flex: none;
+	gap: 12px;
+	padding: 4px 12px;
+	border-top: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+}

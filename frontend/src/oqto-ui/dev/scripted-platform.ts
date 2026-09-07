@@ -8,6 +8,7 @@ import type {
 } from "../platform/contracts";
 import { scriptedFixture, scriptedTimeline } from "./fixture";
 import { ScriptedChatServer } from "./scripted-chat-server";
+import { scriptedFileSystem } from "./scripted-files";
 
 const SCRIPTED_PAGE_SIZE = 40;
 
@@ -124,6 +125,7 @@ const scriptedConfig: OqtoUiConfigResolution = {
 
 export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
+	files: scriptedFileSystem,
 	chat: scriptedChat,
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return scriptedConfig;

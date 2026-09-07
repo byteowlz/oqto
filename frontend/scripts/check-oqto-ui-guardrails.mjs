@@ -57,7 +57,7 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/lib/message-part",
 		"@/lib/workspace-resource",
 	],
-	files: [],
+	files: ["@/hooks/use-mount-effect"],
 	gallery: [],
 	theme: [],
 	platform: ["@/src/generated"],

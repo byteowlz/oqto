@@ -1,6 +1,8 @@
 import type { JsonValue } from "../engine/projection";
 import type { ChatEngineHandle } from "./chat-contract";
 
+import type { FileSystem } from "./files-contract";
+
 export type SessionStatus = "working" | "blocked" | "done" | "idle" | "unknown";
 
 export type SessionTask = {
@@ -236,6 +238,8 @@ export type MessagePage = {
 export type OqtoUiPlatform = {
 	/** Stable adapter identity, part of every query key. */
 	readonly id: string;
+	/** Lazy, single-level work-directory file access for the Files pane. */
+	files: FileSystem;
 	/** Writable chat engine; scripted adapters provide a deterministic fake. */
 	chat: ChatEngineHandle;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;

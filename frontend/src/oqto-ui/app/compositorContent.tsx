@@ -11,7 +11,7 @@ import type {
 	ContentLabel,
 	RenderContent,
 } from "../compositor/react/contracts";
-import { FilesPane } from "../files/FilesPane";
+import { WorkDirectoryFiles } from "../files/WorkDirectoryFiles";
 import { GalleryPane } from "../gallery/GalleryPane";
 import type {
 	OqtoUiConfigResolution,
@@ -111,7 +111,14 @@ export function createContentRenderer(
 				/>
 			);
 		}
-		if (content.kind === "files") return <FilesPane files={snapshot.files} />;
+		if (content.kind === "files") {
+			return (
+				<WorkDirectoryFiles
+					fileSystem={platform.files}
+					workspacePath={context.directory.path}
+				/>
+			);
+		}
 		if (content.kind === "status") {
 			return (
 				<SessionStatusBar

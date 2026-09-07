@@ -14,6 +14,8 @@ import type {
 } from "./contracts";
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 import { liveChatTransport } from "./live-chat-transport";
+import { type MuxSocket, createMuxFileSystem } from "./mux-files";
+import { muxWebSocketUrl } from "./mux-url";
 
 type JsonRecord = {
 	id?: unknown;
@@ -475,8 +477,13 @@ async function loadStatusBar(): Promise<StatusBarData | null> {
 	return { runningSessions: "", onlineUsers, runnerLoad, version };
 }
 
+const liveFiles = createMuxFileSystem(
+	() => new WebSocket(muxWebSocketUrl()) as unknown as MuxSocket,
+);
+
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
+	files: liveFiles,
 	chat: createSessionEngine(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return parseUiConfig(await readJson("/api/oqto-ui/config"));

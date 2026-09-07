@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import type { PreviewSelection } from "../chat/ResourcePreviewPane";
 import { TaskProgress } from "../chat/TaskProgress";
-import { FilesPane } from "../files/FilesPane";
+import { WorkDirectoryFiles } from "../files/WorkDirectoryFiles";
 import { GalleryPane } from "../gallery/GalleryPane";
 import { CornerModeChrome } from "../layout/CornerModeChrome";
 import { MobileTopBar } from "../layout/MobileTopBar";
@@ -255,7 +255,10 @@ function LoadedShell({
 								onClose={() => setSettingsOpen(false)}
 							/>
 						) : (
-							<FilesPane files={snapshot.files} />
+							<WorkDirectoryFiles
+								fileSystem={platform.files}
+								workspacePath={directory.path}
+							/>
 						)}
 					</div>
 				</CornerModeChrome>
