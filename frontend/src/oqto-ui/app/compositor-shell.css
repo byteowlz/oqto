@@ -11,7 +11,17 @@
 }
 
 .wb-shell[data-compositor="classic"] .oqto-compositor-grid {
-	gap: 16px;
+	column-gap: 24px;
+	row-gap: 16px;
+}
+
+/* Panes beside an inline-start edge Container start below its top, as the
+   OG workarea does; the edge Container itself is flush to the frame. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="block-start"]:not(
+		[data-edges~="inline-start"]
+	) {
+	margin-block-start: 24px;
 }
 
 .wb-shell[data-compositor="classic"] .oqto-compositor-lane {
@@ -30,23 +40,6 @@
 	.oqto-compositor-container[data-role="navigation"] {
 	background: var(--sidebar);
 	border-color: var(--sidebar-border, var(--border));
-}
-
-/* A full-height Container on the inline-start edge IS the edge: it extends
-   through the shell inset and is flush on top, left, and bottom. */
-.wb-shell[data-compositor="classic"]
-	.oqto-compositor-cell[data-full-height][data-edges~="inline-start"] {
-	margin-block: -16px;
-	margin-inline-start: -16px;
-}
-
-.wb-shell[data-compositor="classic"]
-	.oqto-compositor-cell[data-full-height][data-edges~="inline-start"]
-	> .oqto-compositor-container {
-	border-start-start-radius: 0;
-	border-end-start-radius: 0;
-	border-inline-start: 0;
-	border-block: 0;
 }
 
 /* The status row is chrome-like Content: no card, no tabs, just the bar. */
