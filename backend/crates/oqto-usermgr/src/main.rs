@@ -190,6 +190,60 @@ mod password_aging_tests {
     }
 }
 
+#[cfg(test)]
+mod template_deploy_tests {
+    use super::deploy_template_dir;
+    use std::{fs, path::PathBuf};
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oqto-usermgr-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is valid")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("creates test root");
+        root
+    }
+
+    #[test]
+    fn merges_template_trees_and_preserves_existing_user_files() {
+        let root = temp_root("template-merge");
+        let src = root.join("src");
+        fs::create_dir_all(src.join("nested")).expect("creates template tree");
+        fs::write(src.join("nested/skill.md"), "template").expect("writes template");
+
+        let dest = root.join("dest");
+        fs::create_dir_all(dest.join("nested")).expect("creates user tree");
+        fs::write(dest.join("nested/user-file.txt"), "keep me").expect("writes user file");
+
+        deploy_template_dir(&src, &dest);
+
+        assert_eq!(
+            fs::read_to_string(dest.join("nested/skill.md")).expect("template copied"),
+            "template"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("nested/user-file.txt")).expect("user file preserved"),
+            "keep me"
+        );
+        fs::remove_dir_all(&root).expect("cleans test root");
+    }
+
+    #[test]
+    fn missing_template_source_is_a_no_op() {
+        let root = temp_root("template-missing");
+        let dest = root.join("dest");
+
+        deploy_template_dir(&root.join("does-not-exist"), &dest);
+
+        assert!(!dest.exists(), "must not create the destination");
+        fs::remove_dir_all(&root).expect("cleans test root");
+    }
+}
+
 /// Allowed path prefixes for mkdir/chown/chmod operations.
 const ALLOWED_PATH_PREFIXES: &[&str] = &[
     "/run/oqto/runner-sockets/",
@@ -2103,19 +2157,41 @@ fn write_user_dotfiles(home: &str, username: &str, group: &str) {
     }
 
     // Deploy global skills from the templates skills pool to ~/.pi/agent/skills/
-    let skills_src = std::path::Path::new("/usr/share/oqto/oqto-templates/skills");
-    let skills_dest = std::path::Path::new(home).join(".pi/agent/skills");
-    if skills_src.is_dir() {
-        if let Err(e) = std::fs::create_dir_all(&skills_dest) {
-            eprintln!("warning: creating skills dir: {e}");
-        } else if let Err(e) = copy_dir_recursive(skills_src, &skills_dest) {
-            eprintln!("warning: copying skills from templates: {e}");
-        }
-    }
+    deploy_template_dir(
+        Path::new("/usr/share/oqto/oqto-templates/skills"),
+        &PathBuf::from(home).join(".pi/agent/skills"),
+    );
+
+    // Deploy the offline Oqto App SDK store so `oqto-app-init` and App builds
+    // resolve @byteowlz/oqto-app-sdk without network egress.
+    deploy_template_dir(
+        Path::new("/usr/share/oqto/oqto-templates/app-sdk"),
+        &PathBuf::from(home).join(".local/share/oqto/app-sdk"),
+    );
 
     // chown the entire home to the user
     let owner = format!("{username}:{group}");
     let _ = run_cmd("/usr/bin/chown", &["-R", &owner, home]);
+}
+
+/// Copy a shared templates subtree into a user's home, merging with whatever
+/// already exists. Best-effort: provisioning failures here degrade to a
+/// warning because they never affect authorization or runtime correctness.
+fn deploy_template_dir(src: &Path, dest: &Path) {
+    if !src.is_dir() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(dest) {
+        eprintln!("warning: creating {}: {error}", dest.display());
+        return;
+    }
+    if let Err(error) = copy_dir_recursive(src, dest) {
+        eprintln!(
+            "warning: copying templates from {} to {}: {error}",
+            src.display(),
+            dest.display()
+        );
+    }
 }
 
 /// Recursively copy all files from src into dst, merging with existing directories.
@@ -2174,6 +2250,9 @@ alias grep='grep --color=auto'
 
 # PATH
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
+# Offline Oqto App SDK store (provisioned from the oqto-templates pool)
+export OQTO_APP_SDK_HOME="$HOME/.local/share/oqto/app-sdk"
 
 # Starship prompt
 if command -v starship &>/dev/null; then
