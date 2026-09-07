@@ -86,6 +86,13 @@
 	overflow: visible;
 }
 
+/* Content stretches to its Container: a pane shorter than its row would
+   otherwise leave dead space below it. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > * {
+	flex: 1 1 auto;
+	min-block-size: 0;
+}
+
 /* Content fills its Container; scrolling belongs to the pane itself. The
    wrapper is the positioned ancestor so pane-internal popovers and
    tooltips anchor inside their own card, never to the compositor root. */

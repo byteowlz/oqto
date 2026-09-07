@@ -22,6 +22,9 @@ import type {
 } from "./model";
 import { LAYOUT_SCHEMA_VERSION } from "./model";
 
+/** The classic status row is exactly as tall as the shell status bar. */
+const STATUS_ROW_HEIGHT = 24;
+
 export interface ClassicPresetContent {
 	readonly navigation: readonly ContentRef[];
 	readonly primary: readonly ContentRef[];
@@ -115,7 +118,10 @@ export function createClassicPresetLayout(
 	const rows: GridTrack[] = [row];
 	let idSeed = 8;
 	if (content.status) {
-		rows.push({ id: trackIdFrom(8), size: { unit: "fixed", value: 40 } });
+		rows.push({
+			id: trackIdFrom(8),
+			size: { unit: "fixed", value: STATUS_ROW_HEIGHT },
+		});
 		const statusId = containerIdFrom(9);
 		placements[0] = { ...placements[0], rowSpan: 2 };
 		placements.push({

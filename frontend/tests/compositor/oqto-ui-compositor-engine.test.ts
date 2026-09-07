@@ -617,7 +617,7 @@ describe("classic preset status row", () => {
 		expect(checkLayoutInvariants(layout)).toEqual([]);
 		const grid = activeArrangementOf(layout).grid;
 		expect(grid.rows).toHaveLength(2);
-		expect(grid.rows[1].size).toEqual({ unit: "fixed", value: 40 });
+		expect(grid.rows[1].size).toEqual({ unit: "fixed", value: 24 });
 		const navigation = grid.placements.find(
 			(p) => p.containerId === containerByRole(layout, "navigation").id,
 		);
