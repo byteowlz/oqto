@@ -176,6 +176,15 @@ impl LinuxUsersConfig {
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating project user '{}'", username))?;
 
+        // Disable password aging: an expired shadow password later makes PAM
+        // refuse user@{uid}.service (224/PAM) and breaks the user runtime.
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/bin/chage",
+            &["-M", "-1", "-E", "-1", username.as_str()],
+        )
+        .with_context(|| format!("disabling password aging for '{username}'"))?;
+
         if self.create_home {
             self.claim_home_for_service_group(&username)?;
         }
@@ -499,6 +508,15 @@ impl LinuxUsersConfig {
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
+
+        // Disable password aging: an expired shadow password later makes PAM
+        // refuse user@{uid}.service (224/PAM) and breaks the user runtime.
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/bin/chage",
+            &["-M", "-1", "-E", "-1", username],
+        )
+        .with_context(|| format!("disabling password aging for '{username}'"))?;
 
         if self.create_home {
             self.claim_home_for_service_group(username)?;
@@ -1145,6 +1163,18 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
             Some(usermgr_request(
                 "delete-user",
                 serde_json::json!({ "username": username }),
+            ))
+        }
+        "/usr/bin/chage"
+            if args.first() == Some(&"-M")
+                && args.get(1) == Some(&"-1")
+                && args.get(2) == Some(&"-E")
+                && args.get(3) == Some(&"-1")
+                && args.len() == 5 =>
+        {
+            Some(usermgr_request(
+                "disable-password-aging",
+                serde_json::json!({ "username": args[4] }),
             ))
         }
         "mkdir" | "/bin/mkdir" if args.first() == Some(&"-p") => {

@@ -173,6 +173,23 @@ mod config_path_tests {
     }
 }
 
+#[cfg(test)]
+mod password_aging_tests {
+    use super::disable_password_aging;
+
+    #[test]
+    fn rejects_invalid_usernames_before_exec() {
+        // Must fail closed on validation and never reach chage with an
+        // unvalidated name (defense in depth: callers validate too).
+        for bad in ["", "wismut", "oqto_ bad", "oqto_;rm", "oqto_\n"] {
+            assert!(
+                disable_password_aging(bad).is_err(),
+                "must reject invalid username {bad:?}"
+            );
+        }
+    }
+}
+
 /// Allowed path prefixes for mkdir/chown/chmod operations.
 const ALLOWED_PATH_PREFIXES: &[&str] = &[
     "/run/oqto/runner-sockets/",
@@ -365,6 +382,7 @@ fn dispatch(req: &Request) -> Response {
         "chown" => cmd_chown(&req.args),
         "chmod" => cmd_chmod(&req.args),
         "enable-linger" => cmd_enable_linger(&req.args),
+        "disable-password-aging" => cmd_disable_password_aging(&req.args),
         "start-user-service" => cmd_start_user_service(&req.args),
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "create-workspace" => cmd_create_workspace(&req.args),
@@ -552,6 +570,11 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
         ],
     ) {
         Ok(_) => {
+            // Newly created users must never inherit PASS_MAX_DAYS aging: an
+            // expired shadow password later breaks user@{uid}.service via PAM.
+            if let Err(e) = disable_password_aging(username) {
+                return Response::error(format!("disable password aging: {e}"));
+            }
             let home = format!("/home/{username}");
             if create_home && let Err(e) = claim_home_for_service_group(&home, username, group) {
                 return Response::error(e);
@@ -944,6 +967,30 @@ fn cmd_enable_linger(args: &serde_json::Value) -> Response {
     }
 }
 
+fn cmd_disable_password_aging(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    match disable_password_aging(username) {
+        Ok(_) => Response::success(),
+        Err(e) => Response::error(e),
+    }
+}
+
+/// Disable shadow password aging for a platform user.
+///
+/// `useradd` inherits `PASS_MAX_DAYS` from `/etc/login.defs` (commonly 90).
+/// Once that window passes, the expired shadow password makes PAM refuse to
+/// open `user@{uid}.service` (status 224/PAM, "Authentication token is no
+/// longer valid"), which takes down the whole user runtime. Platform accounts
+/// never authenticate with a password (the field stays locked `!`), so aging
+/// only ever causes harm; `-M -1 -E -1` is idempotent and safe to re-run.
+fn disable_password_aging(username: &str) -> Result<(), String> {
+    validate_username(username)?;
+    run_cmd("/usr/bin/chage", &["-M", "-1", "-E", "-1", username]).map(|_| ())
+}
+
 fn cmd_start_user_service(args: &serde_json::Value) -> Response {
     let uid = match get_u32(args, "uid") {
         Ok(u) => u,
@@ -1145,6 +1192,14 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     // 5. Enable linger
     if let Err(e) = run_cmd("/usr/bin/loginctl", &["enable-linger", username]) {
         return Response::error(format!("enable-linger: {e}"));
+    }
+
+    // Self-heal users created before password aging was disabled at creation:
+    // an expired shadow password makes PAM fail user@{uid}.service below. The
+    // fast path above only succeeds while the user manager is already up, so
+    // reaching this point means a (re)start is imminent and healing is needed.
+    if let Err(e) = disable_password_aging(username) {
+        return Response::error(format!("disable password aging: {e}"));
     }
 
     // 5. Start user systemd instance
