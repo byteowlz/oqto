@@ -31,8 +31,11 @@
 	border-color: var(--sidebar-border, var(--border));
 }
 
-/* Content fills its Container; scrolling belongs to the pane itself. */
+/* Content fills its Container; scrolling belongs to the pane itself. The
+   wrapper is the positioned ancestor so pane-internal popovers and
+   tooltips anchor inside their own card, never to the compositor root. */
 .wb-shell[data-compositor="classic"] .oqto-compositor-content {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;

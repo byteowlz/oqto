@@ -87,6 +87,7 @@
 }
 
 .oqto-compositor-content {
+	position: relative;
 	flex: 1;
 	min-block-size: 0;
 	overflow: auto;
