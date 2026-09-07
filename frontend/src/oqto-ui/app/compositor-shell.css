@@ -32,7 +32,16 @@
 	.oqto-compositor-cell[data-edges~="block-end"]:not(
 		[data-edges~="inline-start"]
 	):not([data-full-height]) {
-	margin-inline-start: -24px;
+	margin-inline-start: -16px;
+}
+
+/* The workarea keeps the OG 24px distance from the sidebar while panes sit
+   16px apart: the first pane after the edge Container adds the difference. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-column="1"][data-edges~="block-start"]:not(
+		[data-full-height]
+	) {
+	margin-inline-start: 8px;
 }
 
 /* Panes beside an inline-start edge Container start below its top, as the

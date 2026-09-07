@@ -46,7 +46,7 @@ import {
 /** Below this inline size the mobile Screen Mode projection applies (OG breakpoint). */
 export const MOBILE_SCREEN_MODE_BELOW = 1024;
 
-const CLASSIC_GAPS = { inline: 24, block: 16 };
+const CLASSIC_GAPS = { inline: 16, block: 16 };
 
 /** Idempotent: reveals the Session's Chat, opening it into primary if absent. */
 function ensureSessionChat(

@@ -53,6 +53,7 @@ export function Cell({ container, placement, grid, ...view }: CellProps) {
 		<div
 			className="oqto-compositor-cell"
 			data-edges={edgesOf(placement, grid)}
+			data-column={placement.column}
 			data-full-height={placement.rowSpan >= grid.rows || undefined}
 			style={
 				{
