@@ -10,10 +10,17 @@ import { applyChange, navigate } from "./navigation";
 import { type FilesState, applyListing, initialState } from "./navigator";
 
 export interface FilesStore {
+	/** The host the pane acts on, for operations and previews. */
+	readonly context: {
+		readonly fileSystem: FileSystem;
+		readonly workspacePath: string;
+	};
 	getSnapshot(): FilesState;
 	subscribe(listener: () => void): () => void;
 	/** Applies a pure transition and refetches the directory when needed. */
 	update(next: (state: FilesState) => FilesState): void;
+	/** Refetches one directory, after an operation changed it. */
+	reload(path: string): void;
 	/** Enters a directory, loading it if the cache has no listing yet. */
 	open(path: string): void;
 	/** Releases the host watch; the store is unusable afterwards. */
@@ -64,12 +71,14 @@ export function createFilesStore(
 	load("");
 
 	return {
+		context: { fileSystem, workspacePath },
 		getSnapshot: () => state,
 		subscribe: (listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
 		update: (next) => emit(next(state)),
+		reload: (path) => load(path),
 		open: (path) => {
 			emit(navigate(state, path));
 			const listing = state.listings[path];

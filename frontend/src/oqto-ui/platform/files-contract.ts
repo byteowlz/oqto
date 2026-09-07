@@ -30,4 +30,13 @@ export interface FileSystem {
 		workspacePath: string,
 		onChange: (change: FileChange) => void,
 	): () => void;
+	/** File contents for preview; hosts may truncate large files. */
+	read(workspacePath: string, path: string): Promise<string>;
+	rename(workspacePath: string, from: string, to: string): Promise<void>;
+	createDirectory(workspacePath: string, path: string): Promise<void>;
+	remove(
+		workspacePath: string,
+		path: string,
+		recursive: boolean,
+	): Promise<void>;
 }

@@ -20,12 +20,15 @@ import {
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../platform/files-contract";
 import { FileRow } from "./FileRow";
+import { FilesPreview } from "./FilesPreview";
 import { breadcrumb } from "./entries";
 import { formatModified, formatSize } from "./format";
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
-import { moveCursor, select, setFilter, visibleEntries } from "./navigator";
+import { moveCursor, select, visibleEntries } from "./navigator";
 import type { FilesStore } from "./store";
+import { useFileActions } from "./useFileActions";
 import { useFilesState } from "./useFilesStore";
+import { usePreview } from "./usePreview";
 
 const ROW_HEIGHT = 26;
 
@@ -38,11 +41,17 @@ interface FilesPaneProps {
 export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 	const { t, i18n } = useTranslation();
 	const state = useFilesState(store);
-	const [filtering, setFiltering] = useState(false);
 	const [details, setDetails] = useState(true);
+	const [previewOpen, setPreviewOpen] = useState(false);
+	const actions = useFileActions(store);
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const entries = visibleEntries(state);
 	const listing = state.listings[state.cwd];
+	const focused = entries.find((entry) => entry.path === state.cursor) ?? null;
+	const preview = usePreview(
+		store.context.fileSystem,
+		store.context.workspacePath,
+	);
 	const selection = useMemo(() => new Set(state.selection), [state.selection]);
 	const changed = useMemo(() => new Set(state.changed), [state.changed]);
 
@@ -89,8 +98,14 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 						? "range"
 						: "replace";
 			store.update((current) => select(current, path, mode));
+			if (previewOpen) {
+				const snapshot = store.getSnapshot();
+				preview.show(
+					visibleEntries(snapshot).find((entry) => entry.path === path) ?? null,
+				);
+			}
 		},
-		[store],
+		[store, previewOpen, preview],
 	);
 
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -110,17 +125,22 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 		} else if (key === "ArrowRight" || key === "l" || key === "Enter") {
 			const target = cursorEntry(state);
 			if (target) open(target);
-		} else if (key === "/") setFiltering(true);
+		} else if (key === "/") actions.begin("filter");
+		else if (key === " ") {
+			const opening = !previewOpen;
+			setPreviewOpen(opening);
+			preview.show(opening ? focused : null);
+		} else if (key === "r" || key === "F2") actions.begin("rename");
+		else if (key === "n" && (event.ctrlKey || event.metaKey))
+			actions.begin("create");
+		else if (key === "Delete") actions.begin("confirmDelete");
+		else if (key === "u") actions.undo();
 		else if (key === "Escape") {
-			setFiltering(false);
-			store.update((current) => setFilter(current, ""));
+			setPreviewOpen(false);
+			actions.cancel();
 		} else return;
 		event.preventDefault();
 	};
-
-	const cursorIndex = entries.findIndex((entry) => entry.path === state.cursor);
-	if (cursorIndex >= 0)
-		virtualizer.scrollToIndex(cursorIndex, { align: "auto" });
 
 	return (
 		<aside className="wb-panel wb-files" aria-label={t("oqtoUi.files.label")}>
@@ -157,24 +177,51 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				</button>
 			</div>
 
-			{filtering || state.filter !== "" ? (
+			{actions.mode === null ? null : actions.mode === "confirmDelete" ? (
+				<div className="wb-files-filter wb-files-confirm">
+					<span>
+						{t("oqtoUi.files.deleteConfirm", { name: focused?.name ?? "" })}
+					</span>
+					<button type="button" onClick={actions.submit}>
+						{t("oqtoUi.files.delete")}
+					</button>
+					<button type="button" onClick={actions.cancel}>
+						{t("common.cancel")}
+					</button>
+				</div>
+			) : (
+				// biome-ignore lint/a11y/noAutofocus: the action line is opened by a key and must receive it.
 				<input
 					className="wb-files-filter"
-					type="search"
-					value={state.filter}
-					placeholder={t("oqtoUi.files.filter")}
-					aria-label={t("oqtoUi.files.filter")}
-					onChange={(event) =>
-						store.update((current) => setFilter(current, event.target.value))
-					}
+					type="text"
+					autoFocus
+					value={actions.draft}
+					placeholder={t(
+						actions.mode === "rename"
+							? "oqtoUi.files.rename"
+							: actions.mode === "create"
+								? "oqtoUi.files.newFolderPrompt"
+								: "oqtoUi.files.filter",
+					)}
+					aria-label={t(
+						actions.mode === "rename"
+							? "oqtoUi.files.rename"
+							: actions.mode === "create"
+								? "oqtoUi.files.newFolderPrompt"
+								: "oqtoUi.files.filter",
+					)}
+					onChange={(event) => actions.change(event.target.value)}
 					onKeyDown={(event) => {
-						if (event.key === "Escape") {
-							setFiltering(false);
-							store.update((current) => setFilter(current, ""));
+						if (event.key === "Enter") {
+							event.preventDefault();
+							actions.submit();
+						} else if (event.key === "Escape") {
+							event.preventDefault();
+							actions.cancel();
 						}
 					}}
 				/>
-			) : null}
+			)}
 
 			<div
 				className="wb-files-rows"
@@ -232,12 +279,34 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				)}
 			</div>
 
+			{previewOpen && focused ? (
+				<FilesPreview
+					entry={focused}
+					preview={preview.state}
+					{...facts(focused)}
+				/>
+			) : null}
+
 			<footer className="wb-files-status">
 				<span>{t("oqtoUi.files.entryCount", { count: entries.length })}</span>
 				{state.selection.length > 0 ? (
 					<span>
 						{t("oqtoUi.files.selectedCount", { count: state.selection.length })}
 					</span>
+				) : null}
+				<span className="wb-files-status__spacer" />
+				{actions.outcome ? (
+					<span>
+						{t(`oqtoUi.files.${actions.outcome.key}`, {
+							name: actions.outcome.name,
+							message: actions.outcome.name,
+						})}
+					</span>
+				) : null}
+				{actions.canUndo ? (
+					<button type="button" onClick={actions.undo}>
+						{t("oqtoUi.files.undo")}
+					</button>
 				) : null}
 			</footer>
 		</aside>

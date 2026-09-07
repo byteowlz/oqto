@@ -50,6 +50,15 @@ beforeAll(() => {
 	};
 });
 
+const NO_OPS = {
+	async read() {
+		return "";
+	},
+	async rename() {},
+	async createDirectory() {},
+	async remove() {},
+};
+
 function fileSystem(overrides: Partial<FileSystem> = {}): FileSystem & {
 	calls: string[];
 	emit: (path: string) => void;
@@ -105,6 +114,7 @@ function fileSystem(overrides: Partial<FileSystem> = {}): FileSystem & {
 			}
 			return [];
 		},
+		...NO_OPS,
 		watch(_workspace, onChange) {
 			notify = onChange;
 			return () => {
@@ -221,6 +231,7 @@ describe("Files pane", () => {
 
 	it("reports a failed listing instead of rendering an empty folder", async () => {
 		const fs: FileSystem = {
+			...NO_OPS,
 			async list() {
 				throw new Error("permission denied");
 			},
@@ -229,6 +240,152 @@ describe("Files pane", () => {
 		render(<WorkDirectoryFiles fileSystem={fs} workspacePath="/work/repo" />);
 		expect(
 			await screen.findByText("Could not read this folder"),
+		).toBeInTheDocument();
+	});
+});
+
+describe("Quick Look and operations", () => {
+	function actionFs() {
+		const ops: string[] = [];
+		const fs: FileSystem = {
+			async list(_workspace, path) {
+				if (path !== "") return [];
+				return [
+					{
+						path: "notes.md",
+						name: "notes.md",
+						directory: false,
+						symlink: false,
+						size: 12,
+						modifiedAt: 0,
+					},
+					{
+						path: "pics",
+						name: "pics",
+						directory: true,
+						symlink: false,
+						size: 0,
+						modifiedAt: 0,
+					},
+				];
+			},
+			watch: () => () => {},
+			async read(_workspace, path) {
+				ops.push(`read:${path}`);
+				return "# notes\nbody";
+			},
+			async rename(_workspace, from, to) {
+				ops.push(`rename:${from}->${to}`);
+			},
+			async createDirectory(_workspace, path) {
+				ops.push(`mkdir:${path}`);
+			},
+			async remove(_workspace, path, recursive) {
+				ops.push(`remove:${path}:${recursive}`);
+			},
+		};
+		return { fs, ops };
+	}
+
+	it("previews a text file on Space and closes it again", async () => {
+		const { fs, ops } = actionFs();
+		const view = render(
+			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+		);
+		await screen.findByText("notes.md");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		// Directories sort first, so step onto the file before previewing.
+		fireEvent.keyDown(rows, { key: "j" });
+		fireEvent.keyDown(rows, { key: " " });
+		await screen.findByText(/# notes/);
+		expect(ops).toContain("read:notes.md");
+		fireEvent.keyDown(rows, { key: " " });
+		expect(screen.queryByText(/# notes/)).toBeNull();
+	});
+
+	it("says so instead of previewing a directory", async () => {
+		const { fs } = actionFs();
+		const view = render(
+			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+		);
+		await screen.findByText("pics");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		fireEvent.keyDown(rows, { key: " " });
+		expect(
+			await screen.findByText("No preview for this kind"),
+		).toBeInTheDocument();
+	});
+
+	it("renames from the action line and offers an undo that reverses it", async () => {
+		const { fs, ops } = actionFs();
+		const view = render(
+			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+		);
+		await screen.findByText("notes.md");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		fireEvent.keyDown(rows, { key: "j" });
+		fireEvent.keyDown(rows, { key: "r" });
+		const input = screen.getByLabelText("Rename");
+		expect((input as HTMLInputElement).value).toBe("notes.md");
+		fireEvent.change(input, { target: { value: "todo.md" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+		await waitFor(() => expect(ops).toContain("rename:notes.md->todo.md"));
+		const undo = await screen.findByRole("button", { name: "Undo" });
+		fireEvent.click(undo);
+		await waitFor(() => expect(ops).toContain("rename:todo.md->notes.md"));
+	});
+
+	it("creates a folder in the current directory", async () => {
+		const { fs, ops } = actionFs();
+		const view = render(
+			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+		);
+		await screen.findByText("notes.md");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		fireEvent.keyDown(rows, { key: "n", ctrlKey: true });
+		const input = screen.getByLabelText("Folder name");
+		fireEvent.change(input, { target: { value: "drafts" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+		await waitFor(() => expect(ops).toContain("mkdir:drafts"));
+	});
+
+	it("asks before deleting and does nothing when cancelled", async () => {
+		const { fs, ops } = actionFs();
+		const view = render(
+			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+		);
+		await screen.findByText("notes.md");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		fireEvent.keyDown(rows, { key: "j" });
+		fireEvent.keyDown(rows, { key: "Delete" });
+		expect(await screen.findByText("Delete notes.md?")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(ops.some((op) => op.startsWith("remove:"))).toBe(false);
+		fireEvent.keyDown(rows, { key: "Delete" });
+		fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+		await waitFor(() => expect(ops).toContain("remove:notes.md:false"));
+		// Deletion is not reversible through the host contract.
+		expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+	});
+
+	it("reports a failed operation instead of pretending it worked", async () => {
+		const { fs } = actionFs();
+		const failing: FileSystem = {
+			...fs,
+			async rename() {
+				throw new Error("read-only file system");
+			},
+		};
+		const view = render(
+			<WorkDirectoryFiles fileSystem={failing} workspacePath="/w" />,
+		);
+		await screen.findByText("notes.md");
+		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		fireEvent.keyDown(rows, { key: "j" });
+		fireEvent.keyDown(rows, { key: "r" });
+		fireEvent.keyDown(screen.getByLabelText("Rename"), { key: "Enter" });
+		expect(
+			await screen.findByText("read-only file system"),
 		).toBeInTheDocument();
 	});
 });

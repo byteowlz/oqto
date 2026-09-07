@@ -1,11 +1,39 @@
 /**
- * One directory row. Memoized on its entry and flags so scrolling a large
- * directory never rerenders rows that did not change.
+ * One directory row: icon, name, and optional facts. Memoized on its entry
+ * and flags so scrolling a large directory never rerenders a row that did
+ * not change. Colour comes from the entry kind's palette role, never from
+ * a per-extension hex.
  */
 
-import { File, Folder, Link2 } from "lucide-react";
+import {
+	Archive,
+	Binary,
+	Braces,
+	FileCode2,
+	FileImage,
+	FileText,
+	FileType2,
+	Film,
+	Folder,
+	Link2,
+	File as Plain,
+} from "lucide-react";
 import { memo } from "react";
 import type { FileEntry } from "../platform/files-contract";
+import { type EntryKind, entryKind } from "./kinds";
+
+const ICONS: { readonly [kind in EntryKind]: typeof Folder } = {
+	folder: Folder,
+	code: FileCode2,
+	markup: FileType2,
+	data: Braces,
+	document: FileText,
+	image: FileImage,
+	media: Film,
+	archive: Archive,
+	binary: Binary,
+	file: Plain,
+};
 
 interface FileRowProps {
 	readonly entry: FileEntry;
@@ -29,6 +57,8 @@ export const FileRow = memo(function FileRow({
 	onSelect,
 	onOpen,
 }: FileRowProps) {
+	const kind = entryKind(entry.name, entry.directory);
+	const Icon = ICONS[kind];
 	return (
 		<button
 			type="button"
@@ -36,18 +66,15 @@ export const FileRow = memo(function FileRow({
 			data-cursor={cursor || undefined}
 			data-selected={selected || undefined}
 			data-changed={changed || undefined}
-			data-kind={entry.directory ? "folder" : "file"}
+			data-kind={kind}
 			onClick={(event) => onSelect(entry.path, event)}
 			onDoubleClick={() => onOpen(entry)}
 		>
-			{entry.directory ? (
-				<Folder aria-hidden="true" />
-			) : entry.symlink ? (
-				<Link2 aria-hidden="true" />
-			) : (
-				<File aria-hidden="true" />
-			)}
+			<Icon aria-hidden="true" />
 			<span className="wb-tree__name">{entry.name}</span>
+			{entry.symlink ? (
+				<Link2 className="wb-tree__link" aria-hidden="true" />
+			) : null}
 			{modified === "" ? null : (
 				<span className="wb-tree__meta">{modified}</span>
 			)}

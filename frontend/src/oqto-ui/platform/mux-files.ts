@@ -19,6 +19,8 @@ interface FilesEvent {
 		modified_at?: number;
 	}[];
 	readonly path?: string;
+	readonly content?: string;
+	readonly success?: boolean;
 	readonly event_type?: string;
 	readonly entry_type?: string;
 	readonly workspace_path?: string;
@@ -33,13 +35,25 @@ const CHANGE_KINDS: { readonly [event: string]: FileChange["kind"] } = {
 };
 
 /** A files-channel command; the channel tag is added when framing. */
-interface FilesCommand {
+interface PathCommand {
 	readonly type: string;
 	readonly id?: string;
 	readonly path?: string;
+	readonly recursive?: boolean;
+	readonly create_parents?: boolean;
 	readonly include_hidden?: boolean;
 	readonly workspace_path?: string;
 }
+
+interface MoveCommand {
+	readonly type: string;
+	readonly id?: string;
+	readonly from: string;
+	readonly to: string;
+	readonly workspace_path?: string;
+}
+
+type FilesCommand = PathCommand | MoveCommand;
 
 /** The subset of WebSocket the adapter uses; a fake socket satisfies it. */
 export interface MuxSocket {
@@ -52,9 +66,13 @@ export interface MuxSocket {
 
 export type SocketFactory = () => MuxSocket;
 
+type PendingValue = readonly FileEntry[] | string | undefined;
+
 interface Pending {
-	readonly resolve: (entries: readonly FileEntry[]) => void;
+	readonly resolve: (value: PendingValue) => void;
 	readonly reject: (error: Error) => void;
+	/** The event type that settles this request. */
+	readonly expect: string;
 }
 
 function toEntry(
@@ -130,14 +148,24 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileSystem {
 			}
 			const waiting = message.id ? pending.get(message.id) : undefined;
 			if (!waiting || !message.id) return;
-			pending.delete(message.id);
-			if (message.type === "error")
+			if (message.type === "error") {
+				pending.delete(message.id);
 				waiting.reject(new Error(message.error ?? "files error"));
-			else if (message.type === "list_result") {
+				return;
+			}
+			if (message.type !== waiting.expect) return;
+			pending.delete(message.id);
+			if (message.type === "list_result") {
 				const directory = message.path ?? "";
 				waiting.resolve(
 					(message.entries ?? []).map((raw) => toEntry(directory, raw)),
 				);
+			} else if (message.type === "read_result") {
+				waiting.resolve(message.content ?? "");
+			} else if (message.success === false) {
+				waiting.reject(new Error(message.type));
+			} else {
+				waiting.resolve(undefined);
 			}
 		};
 		created.onclose = () => {
@@ -151,19 +179,60 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileSystem {
 		};
 	}
 
+	function request<Value extends PendingValue>(
+		expect: string,
+		command: FilesCommand,
+	): Promise<Value> {
+		nextId += 1;
+		const id = `files-${nextId}`;
+		return new Promise<Value>((resolve, reject) => {
+			pending.set(id, {
+				resolve: resolve as (value: PendingValue) => void,
+				reject,
+				expect,
+			});
+			send({ ...command, id });
+		});
+	}
+
 	return {
 		list(workspacePath, path) {
-			nextId += 1;
-			const id = `files-${nextId}`;
-			return new Promise<readonly FileEntry[]>((resolve, reject) => {
-				pending.set(id, { resolve, reject });
-				send({
-					type: "list",
-					id,
-					path,
-					include_hidden: false,
-					workspace_path: workspacePath,
-				});
+			return request<readonly FileEntry[]>("list_result", {
+				type: "list",
+				path,
+				include_hidden: false,
+				workspace_path: workspacePath,
+			});
+		},
+		read(workspacePath, path) {
+			return request<string>("read_result", {
+				type: "read",
+				path,
+				workspace_path: workspacePath,
+			});
+		},
+		rename(workspacePath, from, to) {
+			return request<undefined>("rename_result", {
+				type: "rename",
+				from,
+				to,
+				workspace_path: workspacePath,
+			});
+		},
+		createDirectory(workspacePath, path) {
+			return request<undefined>("create_directory_result", {
+				type: "create_directory",
+				path,
+				create_parents: true,
+				workspace_path: workspacePath,
+			});
+		},
+		remove(workspacePath, path, recursive) {
+			return request<undefined>("delete_result", {
+				type: "delete",
+				path,
+				recursive,
+				workspace_path: workspacePath,
 			});
 		},
 		watch(workspacePath, onChange) {

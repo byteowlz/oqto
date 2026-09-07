@@ -48,4 +48,10 @@ export const scriptedFileSystem: FileSystem = {
 	watch() {
 		return () => {};
 	},
+	async read(_workspacePath, path) {
+		return `scripted contents of ${path}\n`;
+	},
+	async rename() {},
+	async createDirectory() {},
+	async remove() {},
 };

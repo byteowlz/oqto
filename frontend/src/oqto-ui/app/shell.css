@@ -2793,41 +2793,63 @@
 }
 
 /* Files pane: a dense, virtualized listing. Rows are absolutely placed by
-   the virtualizer, so only what fits on screen exists in the DOM. */
+   the virtualizer, so only what fits on screen exists in the DOM. Colour
+   comes from palette roles keyed by entry kind, never per-extension hexes. */
 .wb-files {
 	overflow: hidden;
+}
+
+.wb-files .wb-files-toolbar {
+	gap: 2px;
+	padding: 6px 8px;
 }
 
 .wb-files-crumb-group {
 	display: inline-flex;
 	align-items: center;
 	min-width: 0;
+	color: var(--muted-foreground);
+}
+
+.wb-files-crumb-group svg {
+	width: 12px;
+	height: 12px;
+	opacity: 0.6;
 }
 
 .wb-files-crumb {
 	max-width: 160px;
-	padding: 2px 4px;
+	padding: 3px 6px;
 	overflow: hidden;
 	color: var(--muted-foreground);
 	font-size: 12px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	transition: color 90ms ease-out;
 }
 
-.wb-files-crumb:last-of-type,
-.wb-files-crumb:hover {
+.wb-files-crumb:last-of-type {
 	color: var(--foreground);
+}
+
+.wb-files-crumb:hover {
+	color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 10%, transparent);
 }
 
 .wb-files-filter {
 	flex: none;
-	padding: 6px 12px;
+	padding: 7px 12px;
 	border: 0;
 	border-bottom: 1px solid var(--border);
-	background: transparent;
+	background: color-mix(in srgb, var(--muted) 22%, transparent);
 	color: var(--foreground);
 	font: inherit;
 	font-size: 12px;
+}
+
+.wb-files-filter::placeholder {
+	color: var(--muted-foreground);
 }
 
 .wb-files-rows {
@@ -2836,6 +2858,10 @@
 	min-height: 0;
 	overflow-y: auto;
 	outline: none;
+}
+
+.wb-files-rows:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--ring);
 }
 
 .wb-files-viewport {
@@ -2853,42 +2879,202 @@
 }
 
 .wb-files-note {
-	padding: 12px;
+	padding: 16px 12px;
 	color: var(--muted-foreground);
 	font-size: 12px;
 }
 
-.wb-tree__row[data-cursor] {
-	background: color-mix(in srgb, var(--primary) 12%, transparent);
-	box-shadow: inset 2px 0 0 var(--primary);
+/* Rows: tight, scannable, with the kind's colour on the icon only. */
+.wb-files .wb-tree__row {
+	gap: 8px;
+	padding: 4px 10px;
+	border-left: 2px solid transparent;
+	color: var(--foreground);
+	font-size: 12px;
+	line-height: 18px;
+	transition: background 80ms ease-out;
 }
 
-.wb-tree__row[data-selected] {
-	background: color-mix(in srgb, var(--primary) 22%, transparent);
-}
-
-.wb-files-status {
-	display: flex;
+.wb-files .wb-tree__row svg {
 	flex: none;
-	gap: 12px;
-	padding: 4px 12px;
-	border-top: 1px solid var(--border);
+	width: 14px;
+	height: 14px;
 	color: var(--muted-foreground);
-	font-size: 11px;
+}
+
+.wb-files .wb-tree__row[data-kind="folder"] svg {
+	color: var(--primary);
+}
+
+.wb-files .wb-tree__row[data-kind="code"] svg {
+	color: var(--chart-1);
+}
+
+.wb-files .wb-tree__row[data-kind="markup"] svg,
+.wb-files .wb-tree__row[data-kind="document"] svg {
+	color: var(--chart-2);
+}
+
+.wb-files .wb-tree__row[data-kind="data"] svg {
+	color: var(--chart-3);
+}
+
+.wb-files .wb-tree__row[data-kind="image"] svg,
+.wb-files .wb-tree__row[data-kind="media"] svg {
+	color: var(--chart-4);
+}
+
+.wb-files .wb-tree__row[data-kind="archive"] svg,
+.wb-files .wb-tree__row[data-kind="binary"] svg {
+	color: var(--chart-5);
+}
+
+.wb-files .wb-tree__row[data-kind="folder"] .wb-tree__name {
+	font-weight: 500;
+}
+
+.wb-files .wb-tree__row:hover {
+	background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.wb-files .wb-tree__row[data-selected] {
+	background: color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.wb-files .wb-tree__row[data-cursor] {
+	border-left-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.wb-files .wb-tree__row[data-changed] .wb-tree__name::after {
+	content: "";
+	display: inline-block;
+	width: 5px;
+	height: 5px;
+	margin-left: 6px;
+	vertical-align: middle;
+	border-radius: 50%;
+	background: var(--chart-4);
+}
+
+.wb-files .wb-tree__name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-tree__link {
+	opacity: 0.7;
 }
 
 .wb-tree__meta {
 	flex: none;
-	margin-left: auto;
-	padding-left: 12px;
+	padding-left: 10px;
 	color: var(--muted-foreground);
 	font-size: 11px;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 
-.wb-tree__meta + .wb-tree__meta {
-	margin-left: 0;
-	min-width: 56px;
+.wb-tree__meta:last-of-type {
+	min-width: 62px;
 	text-align: right;
+}
+
+/* Quick Look: facts and a lightweight preview of the cursor row. */
+.wb-files-preview {
+	flex: none;
+	max-height: 45%;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 12px;
+	border-top: 1px solid var(--border);
+	background: color-mix(in srgb, var(--muted) 25%, transparent);
+	overflow: hidden;
+}
+
+.wb-files-preview__name {
+	color: var(--foreground);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-preview__facts {
+	display: flex;
+	gap: 10px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-files-preview__body {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	overflow: auto;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.wb-files-preview__image {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+	align-self: flex-start;
+}
+
+.wb-files-status {
+	display: flex;
+	flex: none;
+	gap: 12px;
+	padding: 5px 12px;
+	border-top: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.wb-files-status__spacer {
+	flex: 1;
+}
+
+.wb-files-confirm {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--foreground);
+}
+
+.wb-files-confirm span {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-confirm button,
+.wb-files-status button {
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-files-confirm button:first-of-type {
+	border-color: var(--destructive);
+	color: var(--destructive);
+}
+
+.wb-files-status button:hover,
+.wb-files-confirm button:hover {
+	color: var(--foreground);
+	border-color: var(--primary);
 }
