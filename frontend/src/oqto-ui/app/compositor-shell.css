@@ -117,3 +117,65 @@
 		display: none;
 	}
 }
+
+/* An inline-start edge Container is a surface, not a card: no border, no
+   radius — the OG sidebar look. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="inline-start"][data-edges~="block-start"]
+	> .oqto-compositor-container {
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+/* Compositor tab strip styled like the OG work-area tabs. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-tabs {
+	align-items: center;
+	gap: 6px;
+	min-block-size: 46px;
+	padding: 8px 12px;
+	background: color-mix(in srgb, var(--muted) 30%, transparent);
+	scrollbar-width: none;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab {
+	gap: 4px;
+	min-inline-size: 0;
+	max-inline-size: 260px;
+	border: 1px solid transparent;
+	color: var(--muted-foreground);
+	font-size: 12px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab > [role="tab"] {
+	min-inline-size: 0;
+	padding: 7px 4px 7px 12px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab[data-active] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px 8px 4px 2px;
+	border: 0;
+	background: transparent;
+	color: var(--muted-foreground);
+	font: inherit;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab-close:hover {
+	color: var(--foreground);
+}
