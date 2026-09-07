@@ -572,6 +572,7 @@ const GET_INSTANCE: &str = r#"
         ad.version,
         ad.title_json,
         ad.content_digest,
+        ad.web_entry_path,
         ains.owner_kind AS installation_owner_kind,
         ai.binding_kind,
         ai.status
@@ -590,6 +591,7 @@ const GET_INSTANCE_FOR_WORK_DIRECTORY: &str = r#"
         ad.version,
         ad.title_json,
         ad.content_digest,
+        ad.web_entry_path,
         ains.owner_kind AS installation_owner_kind,
         ai.binding_kind,
         ai.status
@@ -608,6 +610,7 @@ const INSTANCE_SELECT: &str = r#"
         ad.version,
         ad.title_json,
         ad.content_digest,
+        ad.web_entry_path,
         ains.owner_kind AS installation_owner_kind,
         ai.binding_kind,
         ai.status

@@ -29,6 +29,25 @@ versioned = false
 max_bytes = 100000
 "#;
 
+const HEADLESS_MANIFEST: &str = r#"
+schema = "oqto-app/v0"
+id = "headless"
+version = "0.1.0"
+title = { en = "Headless" }
+description = "Actions-only acceptance App"
+presentations = []
+requested_capabilities = ["operations"]
+bindings = ["work-directory"]
+default_binding = "work-directory"
+
+[capability.operations]
+table = "operations/table.toml"
+ids = ["demo.echo"]
+
+[instance_state]
+versioned = false
+"#;
+
 #[derive(Debug, Clone)]
 enum Node {
     Directory { modified_at: i64 },
@@ -241,6 +260,50 @@ async fn snapshots_immutable_roots_only_and_has_deterministic_digest()
     );
     let tampered = snapshot_bundle(&source, "hello-oqto.oqtoapp", BundleLimits::default()).await?;
     assert_ne!(first.digest, tampered.digest);
+    Ok(())
+}
+
+#[tokio::test]
+async fn snapshots_headless_operations_only_package() -> Result<(), Box<dyn std::error::Error>> {
+    let source = FakeSource::default();
+    source.insert_dir("oqto-apps");
+    source.insert_dir("oqto-apps/headless.oqtoapp");
+    source.insert_file(
+        "oqto-apps/headless.oqtoapp/oqto-app.toml",
+        HEADLESS_MANIFEST.as_bytes(),
+    );
+    source.insert_dir("oqto-apps/headless.oqtoapp/operations");
+    source.insert_file(
+        "oqto-apps/headless.oqtoapp/operations/table.toml",
+        br#"
+schema = "oqto-app-operations/v0-draft"
+
+[[operation]]
+id = "demo.echo"
+summary = "Echo the submitted message back"
+exec = ["operations/echo"]
+stdin = "json"
+stdout = "json"
+timeout_seconds = 15
+"#
+        .as_slice(),
+    );
+    source.insert_file(
+        "oqto-apps/headless.oqtoapp/operations/echo",
+        b"#!/bin/sh\n".as_slice(),
+    );
+
+    let snapshot = snapshot_bundle(&source, "headless.oqtoapp", BundleLimits::default()).await?;
+    assert_eq!(snapshot.manifest.entry, None);
+    assert!(snapshot.manifest.bundle_root.is_none());
+    assert!(
+        snapshot
+            .files
+            .iter()
+            .all(|file| file.relative_path.starts_with("operations"))
+    );
+    assert_eq!(snapshot.operations.len(), 1);
+    assert_eq!(snapshot.operations[0].id, "demo.echo");
     Ok(())
 }
 

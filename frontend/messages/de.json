@@ -935,6 +935,7 @@
 		"reviewAndOpen": "Prüfen & öffnen",
 		"loadFailed": "Apps konnten nicht geladen werden",
 		"openFailed": "App konnte nicht geöffnet werden",
+		"headlessNotice": "Diese App stellt nur gepinnte Aktionen bereit — sie hat keine eigene Oberfläche.",
 		"publishFailed": "App konnte nicht veröffentlicht werden",
 		"needsPermission": "Zugriff prüfen",
 		"permissions": {

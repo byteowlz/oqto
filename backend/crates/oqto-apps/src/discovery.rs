@@ -274,19 +274,21 @@ pub async fn snapshot_bundle(
         ));
     }
 
-    let bundle_source_root = package_path.join(&manifest.bundle_root);
-    require_directory(source, &bundle_source_root, "bundle root").await?;
-
     let mut inventory = BTreeMap::<PathBuf, AppFileStat>::new();
-    collect_inventory(
-        source,
-        &package_path,
-        &manifest.bundle_root,
-        0,
-        limits,
-        &mut inventory,
-    )
-    .await?;
+    if let Some(bundle_root) = manifest.bundle_root.as_ref() {
+        let bundle_source_root = package_path.join(bundle_root);
+        require_directory(source, &bundle_source_root, "bundle root").await?;
+
+        collect_inventory(
+            source,
+            &package_path,
+            bundle_root,
+            0,
+            limits,
+            &mut inventory,
+        )
+        .await?;
+    }
 
     // `operations/` is content-addressed whenever it exists, not only when the
     // capability is requested: the digest must cover every file the runner
@@ -364,19 +366,21 @@ pub async fn snapshot_bundle(
             ),
         ));
     }
-    let entry_stat = inventory.get(&manifest.entry).ok_or_else(|| {
-        AppPackageError::new(
-            AppPackageErrorCode::EntryMissing,
-            "sandboxed-web entry is not a regular bundle file",
-        )
-        .at(&manifest.entry)
-    })?;
-    if !entry_stat.is_file {
-        return Err(AppPackageError::new(
-            AppPackageErrorCode::EntryMissing,
-            "sandboxed-web entry must be a regular file",
-        )
-        .at(&manifest.entry));
+    if let Some(entry) = manifest.entry.as_ref() {
+        let entry_stat = inventory.get(entry).ok_or_else(|| {
+            AppPackageError::new(
+                AppPackageErrorCode::EntryMissing,
+                "sandboxed-web entry is not a regular bundle file",
+            )
+            .at(entry)
+        })?;
+        if !entry_stat.is_file {
+            return Err(AppPackageError::new(
+                AppPackageErrorCode::EntryMissing,
+                "sandboxed-web entry must be a regular file",
+            )
+            .at(entry));
+        }
     }
 
     let mut total_bytes = 0_u64;

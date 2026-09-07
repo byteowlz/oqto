@@ -18,6 +18,7 @@ import type { AppCandidateSummary } from "@/src/generated/AppCandidateSummary";
 import type { AppInstanceSummary } from "@/src/generated/AppInstanceSummary";
 import type { AppPermissionRequest } from "@/src/generated/AppPermissionRequest";
 import type { AppPresentationDocument } from "@/src/generated/AppPresentationDocument";
+import type { AppPresentationSummary } from "@/src/generated/AppPresentationSummary";
 import { AppWindow, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -46,12 +47,25 @@ export interface OqtoAppTab {
 	installationId: string;
 	definitionId: string;
 	title: string;
-	/** Self-contained inlined document fetched over the authenticated API. */
-	html: string;
+	/**
+	 * Self-contained inlined document fetched over the authenticated API.
+	 * Null for headless (actions-only) Apps that ship no presentation.
+	 */
+	html: string | null;
 	pinned: boolean;
 }
 
 export type AppTab = LegacyHtmlAppTab | OqtoAppTab;
+
+/**
+ * Headless (actions-only) Apps ship no sandboxed-web presentation: they
+ * contribute pinned semantic operations without an interface of their own.
+ */
+function isHeadlessInstance(instance: {
+	presentations: ReadonlyArray<AppPresentationSummary>;
+}): boolean {
+	return instance.presentations.length === 0;
+}
 
 interface AppViewProps {
 	workspacePath?: string | null;
@@ -63,7 +77,7 @@ interface AppViewProps {
 	onUpdateTab: (id: string, patch: Partial<AppTab>) => void;
 	onOpenOqtoApp: (
 		instance: AppInstanceSummary,
-		presentation: AppPresentationDocument,
+		presentation: AppPresentationDocument | null,
 	) => void;
 	className?: string;
 	onExpand?: () => void;
@@ -314,10 +328,9 @@ function RuntimeAppCatalog({
 					setPermissionRequest(status.request);
 					return;
 				}
-				const presentation = await fetchAppPresentation(
-					workspacePath,
-					instance.instance_id,
-				);
+				const presentation = isHeadlessInstance(instance)
+					? null
+					: await fetchAppPresentation(workspacePath, instance.instance_id);
 				onOpen(instance, presentation);
 			} catch (openError) {
 				setError(
@@ -348,10 +361,12 @@ function RuntimeAppCatalog({
 				if (result.status !== "instance_ready" || !result.instance) {
 					throw new Error(result.rejection?.message ?? t("apps.publishFailed"));
 				}
-				const presentation = await fetchAppPresentation(
-					workspacePath,
-					result.instance.instance_id,
-				);
+				const presentation = isHeadlessInstance(result.instance)
+					? null
+					: await fetchAppPresentation(
+							workspacePath,
+							result.instance.instance_id,
+						);
 				onOpen(result.instance, presentation);
 				await load();
 			} catch (publishError) {
@@ -388,10 +403,9 @@ function RuntimeAppCatalog({
 						(instance) => instance.instance_id === status.request.instance_id,
 					);
 					if (!refreshed) throw new Error(t("apps.openFailed"));
-					const presentation = await fetchAppPresentation(
-						workspacePath,
-						refreshed.instance_id,
-					);
+					const presentation = isHeadlessInstance(refreshed)
+						? null
+						: await fetchAppPresentation(workspacePath, refreshed.instance_id);
 					onOpen(refreshed, presentation);
 				}
 			} catch (decisionError) {
@@ -851,7 +865,14 @@ export const AppView = memo(function AppView({
 						<RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
 					</div>
 				)}
-				{activeTab?.kind === "oqto-app" && (
+				{activeTab?.kind === "oqto-app" && activeTab.html === null && (
+					<div className="h-full flex items-center justify-center p-6">
+						<div className="max-w-sm text-center text-xs leading-relaxed text-muted-foreground">
+							{t("apps.headlessNotice")}
+						</div>
+					</div>
+				)}
+				{activeTab?.kind === "oqto-app" && activeTab.html !== null && (
 					<RuntimeOqtoAppFrame
 						key={activeTab.id}
 						instanceId={activeTab.instanceId}

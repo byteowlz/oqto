@@ -201,7 +201,14 @@ impl AppRuntimeService {
                     },
                     description: manifest.manifest.description.clone(),
                     version: manifest.manifest.version.clone(),
-                    presentations: vec![AppPresentationKind::SandboxedWeb],
+                    // Validation admits only sandboxed-web presentations;
+                    // headless (actions-only) packages map to an empty list.
+                    presentations: manifest
+                        .manifest
+                        .presentations
+                        .iter()
+                        .map(|_| AppPresentationKind::SandboxedWeb)
+                        .collect(),
                     // Pre-publication browsing shows the request without
                     // operation summaries; those live in the immutable
                     // operations table resolved at publication.
@@ -327,7 +334,12 @@ impl AppRuntimeService {
             .collect::<Vec<_>>();
         let file_index_json =
             serde_json::to_string(&file_index).context("serializing App file index")?;
-        let web_entry_path = portable_path(&snapshot.manifest.entry);
+        let web_entry_path = snapshot
+            .manifest
+            .entry
+            .as_ref()
+            .map(|entry| portable_path(entry))
+            .unwrap_or_default();
         let total_bytes = i64::try_from(snapshot.total_bytes)
             .context("App bundle size exceeds durable integer range")?;
 
@@ -1062,6 +1074,11 @@ impl AppRuntimeService {
         else {
             return Ok(None);
         };
+        // Headless (actions-only) Apps ship no presentation document; the
+        // empty entry path is the durable marker for that.
+        if definition.web_entry_path.is_empty() {
+            return Ok(None);
+        };
         let document = super::inline::render_inlined_document(&self.artifacts, &definition)
             .await
             .context("rendering inlined App presentation document")?;
@@ -1256,10 +1273,16 @@ fn instance_summary(row: super::models::AppInstanceRow) -> Result<AppInstanceSum
             "unavailable" => AppInstanceStatus::Unavailable,
             other => return Err(anyhow!("unknown stored App Instance status {other:?}")),
         },
-        presentations: vec![AppPresentationSummary {
-            presentation_id: "main".to_owned(),
-            kind: AppPresentationKind::SandboxedWeb,
-        }],
+        // Headless (actions-only) Apps store an empty web entry path and
+        // surface no presentation summaries.
+        presentations: if row.web_entry_path.is_empty() {
+            Vec::new()
+        } else {
+            vec![AppPresentationSummary {
+                presentation_id: "main".to_owned(),
+                kind: AppPresentationKind::SandboxedWeb,
+            }]
+        },
     })
 }
 

@@ -3,7 +3,10 @@ import type { AppTab } from "@/features/sessions/components/AppView";
 import type { AppInstanceSummary } from "@/src/generated/AppInstanceSummary";
 import { describe, expect, it } from "vitest";
 
-function instance(id: string): AppInstanceSummary {
+function instance(
+	id: string,
+	overrides: Partial<AppInstanceSummary> = {},
+): AppInstanceSummary {
 	return {
 		instance_id: id,
 		definition_id: `definition-${id}`,
@@ -16,10 +19,51 @@ function instance(id: string): AppInstanceSummary {
 		binding_kind: "work_directory",
 		status: "active",
 		presentations: [],
+		...overrides,
 	};
 }
 
 describe("Oqto App tabs", () => {
+	it("opens headless (actions-only) Instances with a null presentation", () => {
+		const opened = openOqtoAppTab([], instance("headless"), null);
+
+		expect(opened.tabs).toHaveLength(1);
+		expect(opened.tabs[0]).toMatchObject({
+			kind: "oqto-app",
+			instanceId: "headless",
+			html: null,
+		});
+		expect(opened.activeTabId).toBe(opened.tabs[0]?.id);
+	});
+
+	it("upgrades an existing headless tab when a presentation arrives", () => {
+		const headless: AppTab = {
+			kind: "oqto-app",
+			id: "oqto-app:headless",
+			appId: "comfy-studio",
+			instanceId: "headless",
+			installationId: "installation-headless",
+			definitionId: "definition-headless",
+			title: "Comfy Studio",
+			html: null,
+			pinned: false,
+		};
+
+		const opened = openOqtoAppTab([headless], instance("headless"), {
+			instance_id: "headless",
+			presentation_id: "main",
+			definition_id: "definition-headless",
+			content_digest: "b".repeat(64),
+			html: "presentation",
+		});
+
+		expect(opened.tabs).toHaveLength(1);
+		expect(opened.tabs[0]).toMatchObject({
+			id: headless.id,
+			html: "presentation",
+		});
+	});
+
 	it("replaces a superseded Instance without opening a duplicate tab", () => {
 		const original: AppTab = {
 			kind: "oqto-app",

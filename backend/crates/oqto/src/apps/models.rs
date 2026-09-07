@@ -76,6 +76,9 @@ pub struct AppInstanceRow {
     pub installation_owner_kind: String,
     pub binding_kind: String,
     pub status: String,
+    /// Sandboxed-web entry path stored with the Definition. Empty for
+    /// headless (actions-only) Apps that ship no presentation.
+    pub web_entry_path: String,
 }
 
 #[derive(Debug, Clone, FromRow)]

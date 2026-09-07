@@ -11,7 +11,7 @@ export interface OpenedAppTabs {
 export function openOqtoAppTab(
 	tabs: AppTab[],
 	instance: AppInstanceSummary,
-	presentation: AppPresentationDocument,
+	presentation: AppPresentationDocument | null,
 ): OpenedAppTabs {
 	const existing = tabs.find(
 		(tab) => tab.kind === "oqto-app" && tab.appId === instance.app_id,
@@ -27,7 +27,7 @@ export function openOqtoAppTab(
 							installationId: instance.installation_id,
 							definitionId: instance.definition_id,
 							title: instance.title.en,
-							html: presentation.html,
+							html: presentation?.html ?? null,
 						}
 					: tab,
 			),
@@ -47,7 +47,7 @@ export function openOqtoAppTab(
 				installationId: instance.installation_id,
 				definitionId: instance.definition_id,
 				title: instance.title.en,
-				html: presentation.html,
+				html: presentation?.html ?? null,
 				pinned: false,
 			},
 		],

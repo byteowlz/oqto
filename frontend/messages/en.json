@@ -935,6 +935,7 @@
 		"reviewAndOpen": "Review & open",
 		"loadFailed": "Failed to load Apps",
 		"openFailed": "Failed to open App",
+		"headlessNotice": "This App contributes pinned actions only — it has no interface of its own.",
 		"publishFailed": "Failed to publish App",
 		"needsPermission": "Review access",
 		"permissions": {

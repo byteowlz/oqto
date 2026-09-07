@@ -114,8 +114,10 @@ pub struct ValidatedManifest {
     pub manifest: AppManifestV0,
     pub raw: toml::Value,
     pub package_dir_name: String,
-    pub entry: PathBuf,
-    pub bundle_root: PathBuf,
+    /// Sandboxed-web entry beneath `bundle/`, present only when the manifest
+    /// declares the presentation. Headless (actions-only) Apps ship none.
+    pub entry: Option<PathBuf>,
+    pub bundle_root: Option<PathBuf>,
     /// Requested capabilities in canonical kind order.
     pub capabilities: Vec<AppCapabilityRequest>,
 }
@@ -257,44 +259,69 @@ fn validate_manifest(
             "the first runtime slice requires a work-directory binding",
         ));
     }
-    if !manifest
+    if manifest
         .presentations
         .iter()
-        .any(|kind| kind == "sandboxed-web")
+        .any(|kind| kind != "sandboxed-web")
     {
         return Err(AppPackageError::new(
             AppPackageErrorCode::UnsupportedPresentation,
-            "a sandboxed-web presentation is required",
+            "only sandboxed-web presentations are supported",
+        ));
+    }
+    let has_web_presentation = manifest
+        .presentations
+        .iter()
+        .any(|kind| kind == "sandboxed-web");
+    // A headless App ships no interface of its own: its value is pinned
+    // semantic operations and/or Agent Context content (the file-manager
+    // action and agent-surface story). A package with neither a presentation
+    // nor pinned executable content could never do anything.
+    let has_pinned_content = capabilities.iter().any(|capability| {
+        matches!(
+            capability,
+            AppCapabilityRequest::Operations(_) | AppCapabilityRequest::AgentContext(_)
+        )
+    });
+    if !has_web_presentation && !has_pinned_content {
+        return Err(AppPackageError::new(
+            AppPackageErrorCode::UnsupportedPresentation,
+            "an App must ship a sandboxed-web presentation or pinned operations",
         ));
     }
 
-    let web = manifest
-        .presentation
-        .sandboxed_web
-        .as_ref()
-        .ok_or_else(|| {
-            AppPackageError::new(
+    let (entry, bundle_root) = if has_web_presentation {
+        let web = manifest
+            .presentation
+            .sandboxed_web
+            .as_ref()
+            .ok_or_else(|| {
+                AppPackageError::new(
+                    AppPackageErrorCode::InvalidPresentation,
+                    "presentation.sandboxed-web is required",
+                )
+            })?;
+        let entry = portable_relative_path(&web.entry)?;
+        let mut components = entry.components();
+        if components.next() != Some(Component::Normal("bundle".as_ref()))
+            || components.next().is_none()
+        {
+            return Err(AppPackageError::new(
                 AppPackageErrorCode::InvalidPresentation,
-                "presentation.sandboxed-web is required",
-            )
-        })?;
-    let entry = portable_relative_path(&web.entry)?;
-    let mut components = entry.components();
-    if components.next() != Some(Component::Normal("bundle".as_ref()))
-        || components.next().is_none()
-    {
-        return Err(AppPackageError::new(
-            AppPackageErrorCode::InvalidPresentation,
-            "sandboxed-web entry must be a file beneath bundle/",
-        ));
-    }
+                "sandboxed-web entry must be a file beneath bundle/",
+            ));
+        }
+        (Some(entry), Some(PathBuf::from("bundle")))
+    } else {
+        (None, None)
+    };
 
     Ok(ValidatedManifest {
         manifest,
         raw,
         package_dir_name: package_dir_name.to_owned(),
         entry,
-        bundle_root: PathBuf::from("bundle"),
+        bundle_root,
         capabilities,
     })
 }
@@ -363,7 +390,7 @@ max_bytes = 100000
                 .as_ref()
                 .is_some_and(|web| web.extra.contains_key("future"))
         );
-        assert_eq!(parsed.entry, PathBuf::from("bundle/index.html"));
+        assert_eq!(parsed.entry, Some(PathBuf::from("bundle/index.html")));
         Ok(())
     }
 
@@ -372,6 +399,52 @@ max_bytes = 100000
         let error = parse_manifest("other.oqtoapp", VALID.as_bytes(), 65_536)
             .expect_err("mismatch must fail");
         assert_eq!(error.code, AppPackageErrorCode::PackageIdMismatch);
+    }
+
+    #[test]
+    fn parses_headless_operations_only_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let input = format!(
+            "{}\n[capability.operations]\ntable = \"operations/table.toml\"\nids = [\"demo.echo\"]\n",
+            VALID
+                .replace("presentations = [\"sandboxed-web\"]", "presentations = []")
+                .replace(
+                    "requested_capabilities = []",
+                    "requested_capabilities = [\"operations\"]"
+                )
+                .replace(
+                    "[presentation.sandboxed-web]\nentry = \"bundle/index.html\"\n",
+                    ""
+                )
+        );
+        let parsed = parse_manifest("hello-oqto.oqtoapp", input.as_bytes(), 65_536)?;
+        assert_eq!(parsed.entry, None);
+        assert_eq!(parsed.bundle_root, None);
+        assert!(parsed.operations_request().is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_headless_manifest_without_pinned_content() {
+        let input = VALID
+            .replace("presentations = [\"sandboxed-web\"]", "presentations = []")
+            .replace(
+                "[presentation.sandboxed-web]\nentry = \"bundle/index.html\"\n",
+                "",
+            );
+        let error = parse_manifest("hello-oqto.oqtoapp", input.as_bytes(), 65_536)
+            .expect_err("contentless headless package must fail");
+        assert_eq!(error.code, AppPackageErrorCode::UnsupportedPresentation);
+    }
+
+    #[test]
+    fn rejects_unknown_presentation_kind() {
+        let input = VALID.replace(
+            "presentations = [\"sandboxed-web\"]",
+            "presentations = [\"sandboxed-web\", \"native-window\"]",
+        );
+        let error = parse_manifest("hello-oqto.oqtoapp", input.as_bytes(), 65_536)
+            .expect_err("unknown presentation kind must fail");
+        assert_eq!(error.code, AppPackageErrorCode::UnsupportedPresentation);
     }
 
     #[test]
