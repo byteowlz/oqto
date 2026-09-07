@@ -24,10 +24,17 @@ export interface SafeAreaInsets {
 	readonly left: number;
 }
 
+/** Host gutter between adjacent tracks; consumed before tracks are solved. */
+export interface TrackGaps {
+	readonly inline: number;
+	readonly block: number;
+}
+
 export interface ViewportConstraints {
 	readonly inlineSize: number;
 	readonly blockSize: number;
 	readonly safeArea?: SafeAreaInsets;
+	readonly gaps?: TrackGaps;
 	/** Column overflow policy; rows always fit. Defaults to "scroll". */
 	readonly overflow?: "scroll" | "fit";
 }
@@ -168,9 +175,13 @@ function trackRequests(
 	});
 }
 
-function prefixSums(sizes: readonly number[]): number[] {
+function prefixSums(sizes: readonly number[], gap = 0): number[] {
 	const starts = [0];
-	for (const size of sizes) starts.push(starts[starts.length - 1] + size);
+	sizes.forEach((size, index) => {
+		starts.push(
+			starts[starts.length - 1] + size + (index < sizes.length - 1 ? gap : 0),
+		);
+	});
 	return starts;
 }
 
@@ -266,13 +277,22 @@ export function solveLayoutGeometry(
 			(candidate) => candidate.id === state.activeArrangementId,
 		) ?? state.arrangements[0];
 	const safe = safeInsets(viewport);
+	const gaps = viewport.gaps ?? { inline: 0, block: 0 };
+	const columnCount = arrangement?.grid.columns.length ?? 0;
+	const rowCount = arrangement?.grid.rows.length ?? 0;
 	const availableInline = Math.max(
 		0,
-		viewport.inlineSize - safe.left - safe.right,
+		viewport.inlineSize -
+			safe.left -
+			safe.right -
+			gaps.inline * Math.max(0, columnCount - 1),
 	);
 	const availableBlock = Math.max(
 		0,
-		viewport.blockSize - safe.top - safe.bottom,
+		viewport.blockSize -
+			safe.top -
+			safe.bottom -
+			gaps.block * Math.max(0, rowCount - 1),
 	);
 	const mode = viewport.overflow ?? "scroll";
 	if (!arrangement) {
@@ -325,8 +345,8 @@ export function solveLayoutGeometry(
 			deficit: rows.deficit,
 		});
 	}
-	const colStarts = prefixSums(columns.sizes);
-	const rowStarts = prefixSums(rows.sizes);
+	const colStarts = prefixSums(columns.sizes, gaps.inline);
+	const rowStarts = prefixSums(rows.sizes, gaps.block);
 	const scrollOffset =
 		mode === "scroll"
 			? anchorOffset(
@@ -341,12 +361,29 @@ export function solveLayoutGeometry(
 		.map((placement) => {
 			const isCollapsed = collapsed.has(placement.containerId);
 			const flush = arrangement.grid.rows[placement.row]?.flush === true;
+			const spanLength = (
+				starts: readonly number[],
+				start: number,
+				span: number,
+				gap: number,
+			) =>
+				starts[start + span] -
+				starts[start] -
+				(start + span < starts.length - 1 ? gap : 0);
 			const inlineSize = flush
-				? availableInline
-				: colStarts[placement.column + placement.colSpan] -
-					colStarts[placement.column];
-			const blockSize =
-				rowStarts[placement.row + placement.rowSpan] - rowStarts[placement.row];
+				? availableInline + gaps.inline * Math.max(0, columnCount - 1)
+				: spanLength(
+						colStarts,
+						placement.column,
+						placement.colSpan,
+						gaps.inline,
+					);
+			const blockSize = spanLength(
+				rowStarts,
+				placement.row,
+				placement.rowSpan,
+				gaps.block,
+			);
 			return {
 				containerId: placement.containerId,
 				x: flush

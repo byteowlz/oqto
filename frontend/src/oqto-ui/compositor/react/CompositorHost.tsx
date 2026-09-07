@@ -51,6 +51,7 @@ import {
 	resolveAction,
 } from "./keybindings";
 import type { CompositorStore } from "./store";
+import { useMeasuredViewport } from "./useMeasuredViewport";
 import "./compositor.css";
 
 interface CompositorHostProps {
@@ -120,21 +121,23 @@ export function CompositorHost({
 	const [dragging, setDragging] = useState(false);
 	const [preview, setPreview] = useState<ResizePreview | null>(null);
 	const [paletteOpen, setPaletteOpen] = useState(false);
+	const [body, setBody] = useState<HTMLDivElement | null>(null);
+	const solveViewport = useMeasuredViewport(body, viewport);
 	const lastWheel = useRef(0);
 	const commit = useCallback(
 		(commands: readonly LayoutCommand[]) => {
-			store.commit(commands, viewport);
+			store.commit(commands, solveViewport);
 		},
-		[store, viewport],
+		[store, solveViewport],
 	);
-	const shown = previewed(snapshot, viewport, preview);
-	const projected = projectLayout(shown, viewport);
+	const shown = previewed(snapshot, solveViewport, preview);
+	const projected = projectLayout(shown, solveViewport);
 	const arrangement = activeOf(projected.snapshot);
 	const canonicalArrangement = activeOf(snapshot);
 	if (!arrangement || !canonicalArrangement) return null;
 	const geometry = projected.geometry;
 	const canonicalGeometry = preview
-		? projectLayout(snapshot, viewport).geometry
+		? projectLayout(snapshot, solveViewport).geometry
 		: geometry;
 	const containersById = new Map(
 		projected.snapshot.containers.map((container) => [container.id, container]),
@@ -286,6 +289,7 @@ export function CompositorHost({
 			{lane(flushTop)}
 			<div
 				className="oqto-compositor-body"
+				ref={setBody}
 				onWheel={(event) => {
 					if (
 						Math.abs(event.deltaX) < WHEEL_STEP_PX ||
@@ -312,6 +316,8 @@ export function CompositorHost({
 							),
 							"--oqto-compositor-rows": gridTemplateFromSizes(bodyRowSizes),
 							"--oqto-compositor-scroll": `${geometry.scrollOffset}px`,
+							"--oqto-compositor-column-gap": `${solveViewport.gaps?.inline ?? 0}px`,
+							"--oqto-compositor-row-gap": `${solveViewport.gaps?.block ?? 0}px`,
 						} as CSSProperties
 					}
 				>

@@ -10,11 +10,6 @@
 	background: var(--background);
 }
 
-.wb-shell[data-compositor="classic"] .oqto-compositor-grid {
-	column-gap: 24px;
-	row-gap: 16px;
-}
-
 /* Panes beside an inline-start edge Container start below its top, as the
    OG workarea does; the edge Container itself is flush to the frame. */
 .wb-shell[data-compositor="classic"]

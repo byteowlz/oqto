@@ -215,3 +215,28 @@ describe("semantic grid geometry (v2)", () => {
 		expect(solved.scrollOffset).toBe(Math.max(0, solved.inlineExtent - 1600));
 	});
 });
+
+describe("host track gaps", () => {
+	it("consumes gaps before solving and offsets rects by them", () => {
+		const layout = classicLayout();
+		const gapless = solveLayoutGeometry(layout, VIEWPORT);
+		const gapped = solveLayoutGeometry(layout, {
+			...VIEWPORT,
+			gaps: { inline: 24, block: 16 },
+		});
+		// Two gaps of 24px come out of the fraction tracks, never the fixed nav.
+		expect(gapped.columnSizes[0]).toBe(320);
+		expect(gapped.columnSizes[1] + gapped.columnSizes[2]).toBeCloseTo(
+			1600 - 320 - 48,
+			6,
+		);
+		const primary = rectOf(gapped.rects, containerByRole(layout, "primary").id);
+		const nav = rectOf(gapped.rects, containerByRole(layout, "navigation").id);
+		expect(primary.x).toBe(nav.x + nav.inlineSize + 24);
+		const last = rectOf(gapped.rects, containerByRole(layout, "auxiliary").id);
+		expect(last.x + last.inlineSize).toBeCloseTo(1600, 6);
+		assertSane(gapped.rects);
+		// Without gaps the solver is unchanged (corpus stability).
+		expect(gapless.columnSizes[1]).toBeCloseTo((1600 - 320) * (2 / 3), 6);
+	});
+});

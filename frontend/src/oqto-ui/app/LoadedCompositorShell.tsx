@@ -46,6 +46,8 @@ import {
 /** Below this inline size the mobile Screen Mode projection applies (OG breakpoint). */
 export const MOBILE_SCREEN_MODE_BELOW = 1024;
 
+const CLASSIC_GAPS = { inline: 24, block: 16 };
+
 /** Idempotent: reveals the Session's Chat, opening it into primary if absent. */
 function ensureSessionChat(
 	store: PersistedCompositorStore,
@@ -88,7 +90,12 @@ export function LoadedCompositorShell({
 	onNavigate,
 }: LoadedCompositorShellProps) {
 	const { t } = useTranslation();
-	const viewport = useViewportClass();
+	const hostViewport = useViewportClass();
+	// Classic frame gutters: the solver and the CSS grid share these numbers.
+	const viewport = useMemo(
+		() => ({ ...hostViewport, gaps: CLASSIC_GAPS }),
+		[hostViewport],
+	);
 	const mobile = viewport.inlineSize < MOBILE_SCREEN_MODE_BELOW;
 	const [sessionsOpen, setSessionsOpen] = useState(false);
 	const [preview, setPreview] = useState<PreviewSelection | null>(null);

@@ -29,7 +29,8 @@
 	grid-template-columns: var(--oqto-compositor-columns);
 	grid-template-rows: var(--oqto-compositor-rows);
 	block-size: 100%;
-	gap: 1px;
+	column-gap: var(--oqto-compositor-column-gap, 0px);
+	row-gap: var(--oqto-compositor-row-gap, 0px);
 	transform: translateX(calc(-1 * var(--oqto-compositor-scroll)));
 	transition: transform 160ms ease-out;
 }
