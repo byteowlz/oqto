@@ -268,3 +268,23 @@ describe("OG shell parity chrome", () => {
 		);
 	});
 });
+
+describe("collapse controls", () => {
+	it("collapses the sidebar from its button, re-expands from the edge strip, and toggles the right Container", async () => {
+		setViewportWidth(1600);
+		const view = renderShell(memoryLayoutStorage());
+		await screen.findByRole("main", { name: "Session conversation" });
+		fireEvent.click(
+			screen.getByRole("button", { name: "Collapse navigation" }),
+		);
+		const navigation = view.container.querySelector('[data-role="navigation"]');
+		expect(navigation).toHaveAttribute("hidden");
+		fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+		expect(navigation).not.toHaveAttribute("hidden");
+		fireEvent.click(screen.getByRole("button", { name: "Toggle side panel" }));
+		const auxiliary = view.container.querySelector('[data-role="auxiliary"]');
+		expect(auxiliary).toHaveAttribute("hidden");
+		fireEvent.click(screen.getByRole("button", { name: "Toggle side panel" }));
+		expect(auxiliary).not.toHaveAttribute("hidden");
+	});
+});

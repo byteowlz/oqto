@@ -22,12 +22,16 @@
    edge Container beside it and the end inset. The status bar always
    spans from the sidebar to the screen edge. */
 .wb-shell[data-compositor="classic"]
-	.oqto-compositor-cell[data-edges~="block-end"][data-edges~="inline-end"]:not([data-full-height]) {
+	.oqto-compositor-cell[data-edges~="block-end"][data-edges~="inline-end"]:not(
+		[data-full-height]
+	) {
 	margin-inline-end: -24px;
 }
 
 .wb-shell[data-compositor="classic"]
-	.oqto-compositor-cell[data-edges~="block-end"]:not([data-edges~="inline-start"]):not([data-full-height]) {
+	.oqto-compositor-cell[data-edges~="block-end"]:not(
+		[data-edges~="inline-start"]
+	):not([data-full-height]) {
 	margin-inline-start: -24px;
 }
 

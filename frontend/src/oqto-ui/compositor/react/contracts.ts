@@ -37,6 +37,7 @@ export interface CompositorChromeLabels {
 	readonly dropBottom: string;
 	readonly dropStart: string;
 	readonly dropEnd: string;
+	readonly expandStart: string;
 	readonly palette: PaletteLabels;
 }
 

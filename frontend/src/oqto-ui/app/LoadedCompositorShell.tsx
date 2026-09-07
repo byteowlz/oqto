@@ -143,6 +143,25 @@ export function LoadedCompositorShell({
 				},
 			]);
 	}, [settingsOpen, closeSettings, store]);
+	const chrome = useMemo(() => {
+		const toggleRole = (role: string, collapsed?: boolean) => {
+			const container = store
+				.getSnapshot()
+				.containers.find((candidate) => candidate.role === role);
+			if (!container) return;
+			store.commit([
+				{
+					type: "collapse",
+					containerId: container.id,
+					collapsed: collapsed ?? !container.collapsed,
+				},
+			]);
+		};
+		return {
+			collapseNavigation: () => toggleRole("navigation", true),
+			toggleAuxiliary: () => toggleRole("auxiliary"),
+		};
+	}, [store]);
 	const settings = useMemo(
 		() => ({
 			open: settingsOpen,
@@ -171,6 +190,7 @@ export function LoadedCompositorShell({
 				previewState,
 				navigate,
 				settings,
+				chrome,
 			}),
 		[
 			snapshot,
@@ -182,6 +202,7 @@ export function LoadedCompositorShell({
 			previewState,
 			navigate,
 			settings,
+			chrome,
 		],
 	);
 	const contentLabel = useMemo(

@@ -259,3 +259,19 @@
 	padding: 0.5rem 1rem;
 	color: var(--muted-foreground);
 }
+
+.oqto-compositor-expand {
+	position: absolute;
+	z-index: 2;
+	inset-block: 0;
+	inset-inline-start: 0;
+	inline-size: 12px;
+	border: 0;
+	border-inline-end: 1px solid var(--border);
+	background: var(--sidebar, var(--card));
+	cursor: pointer;
+}
+
+.oqto-compositor-expand:hover {
+	background: var(--muted);
+}

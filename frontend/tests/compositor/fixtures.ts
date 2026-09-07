@@ -61,6 +61,7 @@ export const LABELS = {
 	dropBottom: "drop-bottom",
 	dropStart: "drop-start",
 	dropEnd: "drop-end",
+	expandStart: "expand-start",
 	palette: {
 		title: "palette",
 		searchPlaceholder: "search-commands",

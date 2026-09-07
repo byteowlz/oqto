@@ -19,6 +19,8 @@ type WorkAreaTabsProps = {
 	chatLabel: string;
 	chatMeta: string;
 	onNavigate: (next: UiNavigation) => void;
+	/** Toggles the side panel Container; absent when the host cannot. */
+	onTogglePanel?: () => void;
 };
 
 function tabIcon(id: WorkAreaTab["id"]) {
@@ -34,6 +36,7 @@ export function WorkAreaTabs({
 	chatLabel,
 	chatMeta,
 	onNavigate,
+	onTogglePanel,
 }: WorkAreaTabsProps) {
 	const { t } = useTranslation();
 	return (
@@ -104,6 +107,7 @@ export function WorkAreaTabs({
 				className="wb-icon-button"
 				type="button"
 				aria-label={t("oqtoUi.chat.togglePanel")}
+				onClick={onTogglePanel}
 			>
 				<PanelRightClose aria-hidden="true" />
 			</button>

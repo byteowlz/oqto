@@ -23,6 +23,8 @@ type NavigationRailProps = {
 	sessionId: string;
 	schemeId: string;
 	onNavigate: (next: UiNavigation) => void;
+	/** Collapses the hosting Container; absent when the host cannot collapse. */
+	onCollapse?: () => void;
 };
 
 export function NavigationRail({
@@ -31,6 +33,7 @@ export function NavigationRail({
 	sessionId,
 	schemeId,
 	onNavigate,
+	onCollapse,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
 	const [disclosedIds, setDisclosedIds] = useState<ReadonlySet<string>>(
@@ -66,6 +69,7 @@ export function NavigationRail({
 					className="wb-icon-button"
 					type="button"
 					aria-label={t("oqtoUi.navigation.collapse")}
+					onClick={onCollapse}
 				>
 					<PanelLeftClose aria-hidden="true" />
 				</button>

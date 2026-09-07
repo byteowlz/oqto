@@ -49,6 +49,10 @@ export interface ContentRendererDeps {
 		readonly toggle: () => void;
 		readonly close: () => void;
 	};
+	readonly chrome: {
+		readonly collapseNavigation: () => void;
+		readonly toggleAuxiliary: () => void;
+	};
 }
 
 export function createContentRenderer(
@@ -64,6 +68,7 @@ export function createContentRenderer(
 		previewState,
 		navigate,
 		settings,
+		chrome,
 	} = deps;
 	return (content) => {
 		if (content.kind === "sessions") {
@@ -74,6 +79,7 @@ export function createContentRenderer(
 					sessionId={context.session.id}
 					schemeId={theme.schemeId}
 					onNavigate={navigate}
+					onCollapse={chrome.collapseNavigation}
 				/>
 			);
 		}
@@ -101,6 +107,7 @@ export function createContentRenderer(
 					galleryPane={<GalleryPane resources={snapshot.gallery} />}
 					previewState={previewState}
 					onNavigate={navigate}
+					onTogglePanel={chrome.toggleAuxiliary}
 				/>
 			);
 		}

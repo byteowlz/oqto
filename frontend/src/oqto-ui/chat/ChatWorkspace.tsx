@@ -36,6 +36,7 @@ type ChatWorkspaceProps = {
 	galleryPane: ReactNode;
 	previewState: PreviewState;
 	onNavigate: (next: UiNavigation) => void;
+	onTogglePanel?: () => void;
 };
 
 export function ChatWorkspace({
@@ -46,6 +47,7 @@ export function ChatWorkspace({
 	galleryPane,
 	previewState,
 	onNavigate,
+	onTogglePanel,
 }: ChatWorkspaceProps) {
 	const { directory, session, tasks } = context;
 	const {
@@ -65,6 +67,7 @@ export function ChatWorkspace({
 					chatLabel={session.name}
 					chatMeta={`${directory.name} [${readableRef}] | ${session.updated}`}
 					onNavigate={onNavigate}
+					onTogglePanel={onTogglePanel}
 				/>
 				{preview ? (
 					<ResourcePreviewPane

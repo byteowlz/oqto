@@ -235,6 +235,18 @@ export function CompositorHost({
 		event.preventDefault();
 		commit(edgeDropCommands(contentIdFrom(id), edge));
 	};
+	const collapsedEdge = canonicalArrangement.grid.placements.find(
+		(placement) => {
+			const container =
+				containersById.get(placement.containerId) ??
+				snapshot.containers.find((c) => c.id === placement.containerId);
+			return (
+				placement.column === 0 &&
+				placement.rowSpan >= canonicalArrangement.grid.rows.length &&
+				container?.collapsed === true
+			);
+		},
+	);
 	const gutters =
 		projected.merges.length > 0 ? null : (
 			<>
@@ -286,6 +298,22 @@ export function CompositorHost({
 					onDrop={onEdgeDrop(edge)}
 				/>
 			))}
+			{collapsedEdge ? (
+				<button
+					type="button"
+					className="oqto-compositor-expand"
+					aria-label={labels.expandStart}
+					onClick={() =>
+						commit([
+							{
+								type: "collapse",
+								containerId: collapsedEdge.containerId,
+								collapsed: false,
+							},
+						])
+					}
+				/>
+			) : null}
 			{lane(flushTop)}
 			<div
 				className="oqto-compositor-body"

@@ -46,6 +46,7 @@ export function createChromeLabels(t: TFunction): CompositorChromeLabels {
 		dropBottom: t("oqtoUi.compositor.dropBottom"),
 		dropStart: t("oqtoUi.compositor.dropStart"),
 		dropEnd: t("oqtoUi.compositor.dropEnd"),
+		expandStart: t("oqtoUi.compositor.expandStart"),
 		palette: {
 			title: t("oqtoUi.compositor.palette.title"),
 			searchPlaceholder: t("oqtoUi.compositor.palette.search"),
