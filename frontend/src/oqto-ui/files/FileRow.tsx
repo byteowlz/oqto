@@ -9,6 +9,9 @@ import type { FileEntry } from "../platform/files-contract";
 
 interface FileRowProps {
 	readonly entry: FileEntry;
+	/** Pre-formatted facts; empty strings hide the column. */
+	readonly size: string;
+	readonly modified: string;
 	readonly cursor: boolean;
 	readonly selected: boolean;
 	readonly changed: boolean;
@@ -18,6 +21,8 @@ interface FileRowProps {
 
 export const FileRow = memo(function FileRow({
 	entry,
+	size,
+	modified,
 	cursor,
 	selected,
 	changed,
@@ -43,6 +48,10 @@ export const FileRow = memo(function FileRow({
 				<File aria-hidden="true" />
 			)}
 			<span className="wb-tree__name">{entry.name}</span>
+			{modified === "" ? null : (
+				<span className="wb-tree__meta">{modified}</span>
+			)}
+			{size === "" ? null : <span className="wb-tree__meta">{size}</span>}
 		</button>
 	);
 });

@@ -9,7 +9,7 @@
  */
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Columns3 } from "lucide-react";
 import {
 	type KeyboardEvent,
 	useCallback,
@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../platform/files-contract";
 import { FileRow } from "./FileRow";
 import { breadcrumb } from "./entries";
+import { formatModified, formatSize } from "./format";
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
 import { moveCursor, select, setFilter, visibleEntries } from "./navigator";
 import type { FilesStore } from "./store";
@@ -35,14 +36,31 @@ interface FilesPaneProps {
 }
 
 export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const state = useFilesState(store);
 	const [filtering, setFiltering] = useState(false);
+	const [details, setDetails] = useState(true);
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const entries = visibleEntries(state);
 	const listing = state.listings[state.cwd];
 	const selection = useMemo(() => new Set(state.selection), [state.selection]);
 	const changed = useMemo(() => new Set(state.changed), [state.changed]);
+
+	const facts = useMemo(() => {
+		const labels = {
+			bytes: (count: number) => t("oqtoUi.files.sizeBytes", { count }),
+			kilo: (value: string) => t("oqtoUi.files.sizeKilo", { value }),
+			mega: (value: string) => t("oqtoUi.files.sizeMega", { value }),
+			giga: (value: string) => t("oqtoUi.files.sizeGiga", { value }),
+		};
+		const now = Date.now();
+		return (entry: FileEntry) => ({
+			size: !details || entry.directory ? "" : formatSize(entry.size, labels),
+			modified: details
+				? formatModified(entry.modifiedAt, i18n.language, now)
+				: "",
+		});
+	}, [details, t, i18n.language]);
 
 	const virtualizer = useVirtualizer({
 		count: entries.length,
@@ -126,6 +144,17 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 						</button>
 					</span>
 				))}
+				<span className="wb-files-toolbar__spacer" />
+				<button
+					className="wb-icon-button"
+					type="button"
+					data-active={details || undefined}
+					aria-label={t("oqtoUi.files.details")}
+					aria-pressed={details}
+					onClick={() => setDetails((shown) => !shown)}
+				>
+					<Columns3 aria-hidden="true" />
+				</button>
 			</div>
 
 			{filtering || state.filter !== "" ? (
@@ -189,6 +218,7 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 								>
 									<FileRow
 										entry={entry}
+										{...facts(entry)}
 										cursor={entry.path === state.cursor}
 										selected={selection.has(entry.path)}
 										changed={changed.has(entry.path)}

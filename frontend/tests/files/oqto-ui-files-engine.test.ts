@@ -5,6 +5,7 @@ import {
 	parentPath,
 	sortEntries,
 } from "@/src/oqto-ui/files/entries";
+import { formatModified, formatSize } from "@/src/oqto-ui/files/format";
 import {
 	applyChange,
 	cursorEntry,
@@ -185,5 +186,38 @@ describe("navigation", () => {
 		const elsewhere = applyChange(state, "src/deep/file.ts");
 		expect(elsewhere.refetch).toBeNull();
 		expect(elsewhere.state.listings).toBe(state.listings);
+	});
+});
+
+describe("entry facts", () => {
+	const labels = {
+		bytes: (count: number) => `${count} B`,
+		kilo: (value: string) => `${value} KB`,
+		mega: (value: string) => `${value} MB`,
+		giga: (value: string) => `${value} GB`,
+	};
+
+	it("scales sizes to the unit a human reads", () => {
+		expect(formatSize(0, labels)).toBe("0 B");
+		expect(formatSize(999, labels)).toBe("999 B");
+		expect(formatSize(2048, labels)).toBe("2.0 KB");
+		expect(formatSize(20_480, labels)).toBe("20 KB");
+		expect(formatSize(5_242_880, labels)).toBe("5.0 MB");
+		expect(formatSize(3 * 1024 ** 3, labels)).toBe("3.0 GB");
+	});
+
+	it("shortens timestamps by distance and hides unknown ones", () => {
+		// Local-time constructors keep the expectations timezone-independent.
+		const now = new Date(2026, 8, 7, 22, 30).getTime();
+		expect(formatModified(0, "en-GB", now)).toBe("");
+		expect(
+			formatModified(new Date(2026, 8, 7, 9, 15).getTime(), "en-GB", now),
+		).toMatch(/\d{2}:\d{2}/);
+		expect(
+			formatModified(new Date(2026, 2, 2, 9, 15).getTime(), "en-GB", now),
+		).toMatch(/Mar/);
+		expect(
+			formatModified(new Date(2024, 2, 2, 9, 15).getTime(), "en-GB", now),
+		).toMatch(/2024/);
 	});
 });

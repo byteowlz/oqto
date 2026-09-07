@@ -2876,3 +2876,19 @@
 	color: var(--muted-foreground);
 	font-size: 11px;
 }
+
+.wb-tree__meta {
+	flex: none;
+	margin-left: auto;
+	padding-left: 12px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.wb-tree__meta + .wb-tree__meta {
+	margin-left: 0;
+	min-width: 56px;
+	text-align: right;
+}
