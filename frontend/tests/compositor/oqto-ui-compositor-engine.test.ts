@@ -4,6 +4,7 @@ import {
 	type LayoutSnapshot,
 	applyTransaction,
 	contentIdFrom,
+	createClassicPresetLayout,
 } from "@/src/oqto-ui/compositor/index";
 import { checkLayoutInvariants } from "@/src/oqto-ui/compositor/kernel/invariants";
 import { createEmptyLayout } from "@/src/oqto-ui/compositor/kernel/preset";
@@ -598,6 +599,38 @@ describe("close, empty behavior, undo", () => {
 			reject(layout, { type: "close", contentId: contentIdFrom("ghost") })
 				.reason,
 		).toBe("unknown-content");
+	});
+});
+
+describe("classic preset status row", () => {
+	it("places a status row under primary+auxiliary while navigation spans both rows", () => {
+		const status: ContentRef = {
+			id: contentIdFrom("status:session"),
+			kind: "status",
+		};
+		const layout = createClassicPresetLayout({
+			navigation: [sessionsContent],
+			primary: [chatContent],
+			auxiliary: [filesContent],
+			status: [status],
+		});
+		expect(checkLayoutInvariants(layout)).toEqual([]);
+		const grid = activeArrangementOf(layout).grid;
+		expect(grid.rows).toHaveLength(2);
+		expect(grid.rows[1].size).toEqual({ unit: "fixed", value: 40 });
+		expect(
+			grid.placements.find(
+				(p) => p.containerId === containerByRole(layout, "navigation").id,
+			)?.rowSpan,
+		).toBe(2);
+		expect(
+			grid.placements.find(
+				(p) => p.containerId === containerByRole(layout, "status").id,
+			),
+		).toMatchObject({ row: 1, column: 1, colSpan: 2 });
+		expect(layout.focusedContentId).toBe(chatContent.id);
+		// Without a status region the preset is unchanged (corpus stability).
+		expect(activeArrangementOf(classicLayout()).grid.rows).toHaveLength(1);
 	});
 });
 

@@ -22,6 +22,7 @@ import type {
 	WorkDirectory,
 } from "../platform/contracts";
 import { NavigationRail } from "../sessions/NavigationRail";
+import { SessionStatusBar } from "../sessions/SessionStatusBar";
 import { SettingsPane } from "../theme/SettingsPane";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
 import { findSession } from "./compositorRefs";
@@ -43,7 +44,11 @@ export interface ContentRendererDeps {
 	readonly resolvedConfig: OqtoUiConfigResolution;
 	readonly previewState: PreviewState;
 	readonly navigate: (next: UiNavigation) => void;
-	readonly closeSettings: () => void;
+	readonly settings: {
+		readonly open: boolean;
+		readonly toggle: () => void;
+		readonly close: () => void;
+	};
 }
 
 export function createContentRenderer(
@@ -58,7 +63,7 @@ export function createContentRenderer(
 		resolvedConfig,
 		previewState,
 		navigate,
-		closeSettings,
+		settings,
 	} = deps;
 	return (content) => {
 		if (content.kind === "sessions") {
@@ -100,6 +105,17 @@ export function createContentRenderer(
 			);
 		}
 		if (content.kind === "files") return <FilesPane files={snapshot.files} />;
+		if (content.kind === "status") {
+			return (
+				<SessionStatusBar
+					status={snapshot.environment.statusBar}
+					session={context.session}
+					models={snapshot.environment.models}
+					settingsOpen={settings.open}
+					onToggleSettings={settings.toggle}
+				/>
+			);
+		}
 		if (content.kind === "settings") {
 			return (
 				<SettingsPane
@@ -109,7 +125,7 @@ export function createContentRenderer(
 					resolution={resolvedConfig}
 					onChange={theme.onUserTheme}
 					onNavigate={navigate}
-					onClose={closeSettings}
+					onClose={settings.close}
 				/>
 			);
 		}
@@ -127,6 +143,8 @@ export function createContentLabel(
 		if (content.kind === "sessions") return t("oqtoUi.navigation.sessions");
 		if (content.kind === "files") return t("oqtoUi.files.label");
 		if (content.kind === "settings") return t("oqtoUi.settings.label");
+		if (content.kind === "status")
+			return t("oqtoUi.statusBar.label", { defaultValue: "Status" });
 		if (content.kind === "chat") {
 			const sessionId = content.extensions?.sessionId;
 			const target =

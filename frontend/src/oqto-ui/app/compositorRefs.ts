@@ -7,14 +7,13 @@
 import { type ContentRef, contentIdFrom } from "../compositor/index";
 import type { OqtoUiSnapshot } from "../platform/contracts";
 
-export const SESSIONS_CONTENT: ContentRef = {
-	id: contentIdFrom("sessions:catalog"),
-	kind: "sessions",
-};
-export const SETTINGS_CONTENT: ContentRef = {
-	id: contentIdFrom("settings:ui"),
-	kind: "settings",
-};
+function staticContent(identity: string, kind: string): ContentRef {
+	return { id: contentIdFrom(identity), kind };
+}
+
+export const SESSIONS_CONTENT = staticContent("sessions:catalog", "sessions");
+export const STATUS_CONTENT = staticContent("status:session", "status");
+export const SETTINGS_CONTENT = staticContent("settings:ui", "settings");
 
 export function chatContent(sessionId: string): ContentRef {
 	return {

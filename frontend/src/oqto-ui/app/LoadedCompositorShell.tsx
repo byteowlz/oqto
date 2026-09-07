@@ -4,7 +4,7 @@
  * device-locally; every change is a semantic transaction.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { PreviewSelection } from "../chat/ResourcePreviewPane";
 import { TaskProgress } from "../chat/TaskProgress";
@@ -38,6 +38,7 @@ import { createChromeLabels } from "./compositorLabels";
 import {
 	SESSIONS_CONTENT,
 	SETTINGS_CONTENT,
+	STATUS_CONTENT,
 	chatContent,
 	filesContent,
 } from "./compositorRefs";
@@ -94,21 +95,25 @@ export function LoadedCompositorShell({
 	const [store] = useState(() => {
 		const created = createPersistedCompositorStore({
 			storage,
-			key: layoutStorageKey(platform.id, "desktop"),
+			key: layoutStorageKey(platform.id, "desktop-classic-2"),
 			fallback: createClassicPresetLayout({
 				navigation: [SESSIONS_CONTENT],
 				primary: [chatContent(context.session.id)],
 				auxiliary: [filesContent(context.directory.id)],
+				status: [STATUS_CONTENT],
 			}),
 		});
 		ensureSessionChat(created, context.session.id);
 		return created;
 	});
-	const settingsOpen = store
-		.getSnapshot()
-		.containers.some((c) =>
-			c.stack.some((item) => item.id === SETTINGS_CONTENT.id),
-		);
+	const layout = useSyncExternalStore(
+		store.subscribe,
+		store.getSnapshot,
+		store.getSnapshot,
+	);
+	const settingsOpen = layout.containers.some((c) =>
+		c.stack.some((item) => item.id === SETTINGS_CONTENT.id),
+	);
 	const navigate = useCallback(
 		(next: UiNavigation) => {
 			setSessionsOpen(false);
@@ -120,7 +125,7 @@ export function LoadedCompositorShell({
 	const closeSettings = useCallback(() => {
 		store.commit([{ type: "close", contentId: SETTINGS_CONTENT.id }]);
 	}, [store]);
-	const toggleSettings = () => {
+	const toggleSettings = useCallback(() => {
 		if (settingsOpen) closeSettings();
 		else
 			store.commit([
@@ -130,7 +135,15 @@ export function LoadedCompositorShell({
 					target: { role: "auxiliary" },
 				},
 			]);
-	};
+	}, [settingsOpen, closeSettings, store]);
+	const settings = useMemo(
+		() => ({
+			open: settingsOpen,
+			toggle: toggleSettings,
+			close: closeSettings,
+		}),
+		[settingsOpen, toggleSettings, closeSettings],
+	);
 	const previewState = useMemo(
 		() => ({
 			selection: preview,
@@ -150,7 +163,7 @@ export function LoadedCompositorShell({
 				resolvedConfig,
 				previewState,
 				navigate,
-				closeSettings,
+				settings,
 			}),
 		[
 			snapshot,
@@ -161,7 +174,7 @@ export function LoadedCompositorShell({
 			resolvedConfig,
 			previewState,
 			navigate,
-			closeSettings,
+			settings,
 		],
 	);
 	const contentLabel = useMemo(
@@ -231,13 +244,15 @@ export function LoadedCompositorShell({
 						/>
 					)}
 				</CornerModeChrome>
-				<SessionStatusBar
-					status={snapshot.environment.statusBar}
-					session={context.session}
-					models={snapshot.environment.models}
-					settingsOpen={settingsOpen}
-					onToggleSettings={toggleSettings}
-				/>
+				{mobile ? (
+					<SessionStatusBar
+						status={snapshot.environment.statusBar}
+						session={context.session}
+						models={snapshot.environment.models}
+						settingsOpen={settingsOpen}
+						onToggleSettings={toggleSettings}
+					/>
+				) : null}
 			</div>
 		</div>
 	);

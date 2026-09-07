@@ -122,7 +122,7 @@ describe("CompositorShell with the real panes", () => {
 			screen.getByRole("complementary", { name: "Files" }),
 		).toBeInTheDocument();
 		const cells = view.container.querySelectorAll(".oqto-compositor-cell");
-		expect(cells.length).toBe(3);
+		expect(cells.length).toBe(4);
 		expect(
 			view.container.querySelector(".oqto-compositor-grid"),
 		).not.toBeNull();
@@ -133,7 +133,10 @@ describe("CompositorShell with the real panes", () => {
 
 	it("restores a persisted Arrangement across remounts", async () => {
 		const storage = memoryLayoutStorage();
-		const key = layoutStorageKey(scriptedOqtoUiPlatform.id, "desktop");
+		const key = layoutStorageKey(
+			scriptedOqtoUiPlatform.id,
+			"desktop-classic-2",
+		);
 		const seed = createPersistedCompositorStore({
 			storage,
 			key,
@@ -192,7 +195,13 @@ describe("OG shell parity chrome", () => {
 		setViewportWidth(1600);
 		const view = renderShell(memoryLayoutStorage());
 		await screen.findByRole("main", { name: "Session conversation" });
-		expect(view.container.querySelector(".wb-statusbar")).not.toBeNull();
+		// The status bar is preset Content in its own row, not chrome below the grid.
+		expect(
+			view.container.querySelector('[data-role="status"] .wb-statusbar'),
+		).not.toBeNull();
+		expect(
+			view.container.querySelectorAll(".oqto-compositor-cell"),
+		).toHaveLength(4);
 		fireEvent.click(
 			screen.getByRole("button", { name: "Open interface settings" }),
 		);

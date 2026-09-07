@@ -6,7 +6,7 @@
 .wb-shell[data-compositor="classic"] .oqto-compositor {
 	flex: 1;
 	min-block-size: 0;
-	padding: 24px;
+	padding: 16px;
 	background: var(--background);
 }
 
@@ -26,9 +26,25 @@
 	box-shadow: var(--shadow-sm, none);
 }
 
-.wb-shell[data-compositor="classic"] .oqto-compositor-container[data-role="navigation"] {
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="navigation"] {
 	background: var(--sidebar);
 	border-color: var(--sidebar-border, var(--border));
+}
+
+/* The status row is chrome-like Content: no card, no tabs, just the bar. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="status"] {
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="status"]
+	.oqto-compositor-content {
+	overflow: visible;
 }
 
 /* Content fills its Container; scrolling belongs to the pane itself. The
@@ -68,12 +84,14 @@
 	border-start-end-radius: var(--radius-lg, 0);
 }
 
-.wb-shell[data-compositor="classic"] .oqto-compositor-gutter[data-axis="inline"] {
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-gutter[data-axis="inline"] {
 	inline-size: 16px;
 	margin-inline-start: -16px;
 }
 
-.wb-shell[data-compositor="classic"] .oqto-compositor-gutter[data-axis="block"] {
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-gutter[data-axis="block"] {
 	block-size: 16px;
 	margin-block-start: -16px;
 }
@@ -89,7 +107,8 @@
 		inset-inline-end: 0;
 	}
 
-	.wb-shell[data-compositor="mobile"][data-sessions-open="true"] .wb-sessions-backdrop {
+	.wb-shell[data-compositor="mobile"][data-sessions-open="true"]
+		.wb-sessions-backdrop {
 		display: none;
 	}
 }

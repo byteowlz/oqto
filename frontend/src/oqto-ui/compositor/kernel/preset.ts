@@ -26,6 +26,8 @@ export interface ClassicPresetContent {
 	readonly navigation: readonly ContentRef[];
 	readonly primary: readonly ContentRef[];
 	readonly auxiliary: readonly ContentRef[];
+	/** Optional status row under primary+auxiliary; navigation spans both rows. */
+	readonly status?: readonly ContentRef[];
 }
 
 interface PresetRegion {
@@ -56,7 +58,11 @@ export function createEmptyLayout(): LayoutSnapshot {
 	};
 }
 
-/** arrangement-0, row track-1, columns track-2..4, containers 5..7. */
+/**
+ * arrangement-0, row track-1, columns track-2..4, containers 5..7. With a
+ * status region: row track-8 (fixed) holding container-9 across the
+ * primary and auxiliary columns while navigation spans both rows.
+ */
 export function createClassicPresetLayout(
 	content: ClassicPresetContent,
 ): LayoutSnapshot {
@@ -106,6 +112,29 @@ export function createClassicPresetLayout(
 			collapsed: false,
 		});
 	});
+	const rows: GridTrack[] = [row];
+	let idSeed = 8;
+	if (content.status) {
+		rows.push({ id: trackIdFrom(8), size: { unit: "fixed", value: 40 } });
+		const statusId = containerIdFrom(9);
+		placements[0] = { ...placements[0], rowSpan: 2 };
+		placements.push({
+			containerId: statusId,
+			row: 1,
+			column: 1,
+			rowSpan: 1,
+			colSpan: 2,
+		});
+		containers.push({
+			id: statusId,
+			role: "status",
+			emptyBehavior: "retain",
+			stack: content.status,
+			activeContentId: content.status[0]?.id ?? null,
+			collapsed: false,
+		});
+		idSeed = 10;
+	}
 	const focusedContentId: ContentId | null =
 		containers.find((container) => container.role === "primary")
 			?.activeContentId ??
@@ -115,14 +144,14 @@ export function createClassicPresetLayout(
 	return {
 		schemaVersion: LAYOUT_SCHEMA_VERSION,
 		revision: 0,
-		idSeed: 8,
+		idSeed,
 		strategy: "grid",
 		activeArrangementId: arrangementIdFrom(0),
 		activeWorkspace: { kind: "all" },
 		arrangements: [
 			{
 				id: arrangementIdFrom(0),
-				grid: { rows: [row], columns, placements },
+				grid: { rows, columns, placements },
 				scrollAnchorColumnId: null,
 				lastFocusedContentId: focusedContentId,
 			},
