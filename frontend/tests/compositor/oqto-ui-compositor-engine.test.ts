@@ -603,7 +603,7 @@ describe("close, empty behavior, undo", () => {
 });
 
 describe("classic preset status row", () => {
-	it("places a full-width status row beneath the three preset Containers", () => {
+	it("places a status row under primary+auxiliary while navigation spans both rows", () => {
 		const status: ContentRef = {
 			id: contentIdFrom("status:session"),
 			kind: "status",
@@ -621,11 +621,11 @@ describe("classic preset status row", () => {
 		const navigation = grid.placements.find(
 			(p) => p.containerId === containerByRole(layout, "navigation").id,
 		);
-		expect(navigation?.rowSpan).toBe(1);
+		expect(navigation?.rowSpan).toBe(2);
 		const statusPlacement = grid.placements.find(
 			(p) => p.containerId === containerByRole(layout, "status").id,
 		);
-		expect(statusPlacement).toMatchObject({ row: 1, column: 0, colSpan: 3 });
+		expect(statusPlacement).toMatchObject({ row: 1, column: 1, colSpan: 2 });
 		expect(layout.focusedContentId).toBe(chatContent.id);
 		// Without a status region the preset is unchanged (corpus stability).
 		expect(activeArrangementOf(classicLayout()).grid.rows).toHaveLength(1);

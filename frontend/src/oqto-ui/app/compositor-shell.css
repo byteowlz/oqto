@@ -3,11 +3,24 @@
    as a card — while the grid decides placement. Panes own their scrolling;
    the compositor never adds a scroller around Content. */
 
+/* The workarea is inset on the top, end, and bottom; the inline-start edge
+   is left for a full-height edge Container (the sidebar) to fill. */
 .wb-shell[data-compositor="classic"] .oqto-compositor {
 	flex: 1;
 	min-block-size: 0;
-	padding: 16px;
+	padding: 0 24px 16px 0;
+	overflow: hidden;
 	background: var(--background);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-body {
+	overflow: visible;
+}
+
+/* A full-height inline-start edge Container reaches the shell's bottom edge. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-full-height][data-edges~="inline-start"] {
+	margin-block-end: -16px;
 }
 
 /* Panes beside an inline-start edge Container start below its top, as the

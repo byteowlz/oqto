@@ -123,6 +123,19 @@ describe("CompositorShell with the real panes", () => {
 		).toBeInTheDocument();
 		const cells = view.container.querySelectorAll(".oqto-compositor-cell");
 		expect(cells.length).toBe(4);
+		// The sidebar is a full-height inline-start edge Container (flush
+		// top/left/bottom); the status row sits under the content column only.
+		const navigationCell = view.container.querySelector(
+			'.oqto-compositor-cell:has([data-role="navigation"])',
+		);
+		expect(navigationCell).toHaveAttribute("data-full-height");
+		expect(navigationCell?.getAttribute("data-edges")).toBe(
+			"inline-start block-start block-end",
+		);
+		const statusCell = view.container.querySelector(
+			'.oqto-compositor-cell:has([data-role="status"])',
+		);
+		expect(statusCell?.getAttribute("data-edges")).toBe("inline-end block-end");
 		expect(
 			view.container.querySelector(".oqto-compositor-grid"),
 		).not.toBeNull();
@@ -135,7 +148,7 @@ describe("CompositorShell with the real panes", () => {
 		const storage = memoryLayoutStorage();
 		const key = layoutStorageKey(
 			scriptedOqtoUiPlatform.id,
-			"desktop-classic-2",
+			"desktop-classic-3",
 		);
 		const seed = createPersistedCompositorStore({
 			storage,

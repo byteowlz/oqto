@@ -102,7 +102,7 @@ export function LoadedCompositorShell({
 	const [store] = useState(() => {
 		const created = createPersistedCompositorStore({
 			storage,
-			key: layoutStorageKey(platform.id, "desktop-classic-2"),
+			key: layoutStorageKey(platform.id, "desktop-classic-3"),
 			fallback: createClassicPresetLayout({
 				navigation: [SESSIONS_CONTENT],
 				primary: [chatContent(context.session.id)],

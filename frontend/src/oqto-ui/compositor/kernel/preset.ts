@@ -26,7 +26,7 @@ export interface ClassicPresetContent {
 	readonly navigation: readonly ContentRef[];
 	readonly primary: readonly ContentRef[];
 	readonly auxiliary: readonly ContentRef[];
-	/** Optional full-width status row beneath all columns. */
+	/** Optional status row beneath primary+auxiliary; navigation spans both rows. */
 	readonly status?: readonly ContentRef[];
 }
 
@@ -60,8 +60,8 @@ export function createEmptyLayout(): LayoutSnapshot {
 
 /**
  * arrangement-0, row track-1, columns track-2..4, containers 5..7. With a
- * status region: row track-8 (fixed) holding container-9 across every
- * column beneath the three preset Containers.
+ * status region: row track-8 (fixed) holding container-9 across the
+ * primary and auxiliary columns while navigation spans both rows.
  */
 export function createClassicPresetLayout(
 	content: ClassicPresetContent,
@@ -117,12 +117,13 @@ export function createClassicPresetLayout(
 	if (content.status) {
 		rows.push({ id: trackIdFrom(8), size: { unit: "fixed", value: 40 } });
 		const statusId = containerIdFrom(9);
+		placements[0] = { ...placements[0], rowSpan: 2 };
 		placements.push({
 			containerId: statusId,
 			row: 1,
-			column: 0,
+			column: 1,
 			rowSpan: 1,
-			colSpan: columns.length,
+			colSpan: 2,
 		});
 		containers.push({
 			id: statusId,
