@@ -27,13 +27,19 @@ beforeAll(() => {
 		Object.defineProperty(HTMLElement.prototype, property, {
 			configurable: true,
 			get() {
-				return this.classList?.contains("wb-files-rows") ? value : 0;
+				return this.classList?.contains("wb-files-rows") ||
+					this.classList?.contains("wb-files")
+					? value
+					: 0;
 			},
 		});
 	}
 	const original = HTMLElement.prototype.getBoundingClientRect;
 	HTMLElement.prototype.getBoundingClientRect = function boundingRect() {
-		if (this.classList?.contains("wb-files-rows")) {
+		if (
+			this.classList?.contains("wb-files-rows") ||
+			this.classList?.contains("wb-files")
+		) {
 			return {
 				x: 0,
 				y: 0,
@@ -130,7 +136,7 @@ async function renderPane(fs = fileSystem()) {
 		<WorkDirectoryFiles fileSystem={fs} workspacePath="/work/repo" />,
 	);
 	await screen.findByText("readme.md");
-	const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+	const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 	return { view, rows, fs };
 }
 
@@ -293,7 +299,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		// Directories sort first, so step onto the file before previewing.
 		fireEvent.keyDown(rows, { key: "j" });
 		fireEvent.keyDown(rows, { key: " " });
@@ -309,7 +315,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("pics");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		fireEvent.keyDown(rows, { key: " " });
 		expect(
 			await screen.findByText("No preview for this kind"),
@@ -322,7 +328,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		fireEvent.keyDown(rows, { key: "j" });
 		fireEvent.keyDown(rows, { key: "r" });
 		const input = screen.getByLabelText("Rename");
@@ -341,7 +347,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		fireEvent.keyDown(rows, { key: "n", ctrlKey: true });
 		const input = screen.getByLabelText("Folder name");
 		fireEvent.change(input, { target: { value: "drafts" } });
@@ -355,7 +361,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		fireEvent.keyDown(rows, { key: "j" });
 		fireEvent.keyDown(rows, { key: "Delete" });
 		expect(await screen.findByText("Delete notes.md?")).toBeInTheDocument();
@@ -380,7 +386,7 @@ describe("Quick Look and operations", () => {
 			<WorkDirectoryFiles fileSystem={failing} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
-		const rows = view.container.querySelector(".wb-files-rows") as HTMLElement;
+		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
 		fireEvent.keyDown(rows, { key: "j" });
 		fireEvent.keyDown(rows, { key: "r" });
 		fireEvent.keyDown(screen.getByLabelText("Rename"), { key: "Enter" });

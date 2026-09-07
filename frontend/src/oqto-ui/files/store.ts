@@ -19,8 +19,11 @@ export interface FilesStore {
 	subscribe(listener: () => void): () => void;
 	/** Applies a pure transition and refetches the directory when needed. */
 	update(next: (state: FilesState) => FilesState): void;
-	/** Refetches one directory, after an operation changed it. */
-	reload(path: string): void;
+	/**
+	 * Fetches one directory: `force` refetches after an operation changed
+	 * it, otherwise a cached listing is kept.
+	 */
+	load(path: string, force?: boolean): void;
 	/** Enters a directory, loading it if the cache has no listing yet. */
 	open(path: string): void;
 	/** Releases the host watch; the store is unusable afterwards. */
@@ -41,7 +44,7 @@ export function createFilesStore(
 		for (const listener of listeners) listener();
 	};
 
-	function load(path: string): void {
+	function fetchListing(path: string): void {
 		if (inFlight.has(path)) return;
 		inFlight.add(path);
 		emit(applyListing(state, path, { status: "loading" }));
@@ -65,10 +68,10 @@ export function createFilesStore(
 	const unwatch = fileSystem.watch(workspacePath, (change) => {
 		const result = applyChange(state, change.path);
 		emit(result.state);
-		if (result.refetch !== null) load(result.refetch);
+		if (result.refetch !== null) fetchListing(result.refetch);
 	});
 
-	load("");
+	fetchListing("");
 
 	return {
 		context: { fileSystem, workspacePath },
@@ -78,11 +81,13 @@ export function createFilesStore(
 			return () => listeners.delete(listener);
 		},
 		update: (next) => emit(next(state)),
-		reload: (path) => load(path),
+		load: (path, force = false) => {
+			if (force || !state.listings[path]) fetchListing(path);
+		},
 		open: (path) => {
 			emit(navigate(state, path));
 			const listing = state.listings[path];
-			if (!listing || listing.status === "error") load(path);
+			if (!listing || listing.status === "error") fetchListing(path);
 		},
 		dispose: () => {
 			unwatch();

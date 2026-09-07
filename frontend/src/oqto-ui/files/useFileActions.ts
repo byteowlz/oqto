@@ -54,7 +54,7 @@ export function useFileActions(store: FilesStore): FileActions {
 						canUndo: result.undo !== null,
 					});
 					setUndoStep(() => result.undo);
-					store.reload(directory);
+					store.load(directory, true);
 				},
 				(error: Error) => {
 					setState({
@@ -136,7 +136,7 @@ export function useFileActions(store: FilesStore): FileActions {
 		undoStep().then(
 			() => {
 				setState({ ...IDLE, outcome: { key: "undone", name: "" } });
-				store.reload(directory);
+				store.load(directory, true);
 			},
 			(error: Error) =>
 				setState({

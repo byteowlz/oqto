@@ -3078,3 +3078,54 @@
 	color: var(--foreground);
 	border-color: var(--primary);
 }
+
+/* Fidelity: the pane earns Miller columns only when its Container is wide
+   enough (ADR-0037). Both layouts render the same rows. */
+.wb-files-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	outline: none;
+}
+
+.wb-files-body:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.wb-files-body > .wb-files-rows {
+	flex: 1;
+}
+
+.wb-files-columns {
+	display: grid;
+	flex: 1;
+	min-height: 0;
+	grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.4fr);
+}
+
+.wb-files-column {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	flex-direction: column;
+	border-left: 1px solid var(--border);
+}
+
+.wb-files-column:first-child {
+	border-left: 0;
+}
+
+.wb-files-column[data-role="parent"] .wb-tree__row {
+	color: var(--muted-foreground);
+}
+
+.wb-files-column[data-role="preview"] .wb-files-preview {
+	flex: 1;
+	max-height: none;
+	border-top: 0;
+	background: transparent;
+}
+
+.wb-files[data-fidelity="compact"] .wb-tree__meta {
+	display: none;
+}
