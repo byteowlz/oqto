@@ -8,7 +8,7 @@
 .wb-shell[data-compositor="classic"] .oqto-compositor {
 	flex: 1;
 	min-block-size: 0;
-	padding: 0 24px 16px 0;
+	padding: 0 24px 0 0;
 	overflow: hidden;
 	background: var(--background);
 }
@@ -17,10 +17,18 @@
 	overflow: visible;
 }
 
-/* A full-height inline-start edge Container reaches the shell's bottom edge. */
+/* A bottom-edge row that is not a full-height column sticks to the shell's
+   bottom and uses the full available width: it swallows the gutter to the
+   edge Container beside it and the end inset. The status bar always
+   spans from the sidebar to the screen edge. */
 .wb-shell[data-compositor="classic"]
-	.oqto-compositor-cell[data-full-height][data-edges~="inline-start"] {
-	margin-block-end: -16px;
+	.oqto-compositor-cell[data-edges~="block-end"][data-edges~="inline-end"]:not([data-full-height]) {
+	margin-inline-end: -24px;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="block-end"]:not([data-edges~="inline-start"]):not([data-full-height]) {
+	margin-inline-start: -24px;
 }
 
 /* Panes beside an inline-start edge Container start below its top, as the
