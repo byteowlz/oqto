@@ -8,7 +8,7 @@
 	inline-size: 100%;
 	block-size: 100%;
 	min-block-size: 0;
-	background: var(--border);
+	background: var(--background);
 }
 
 .oqto-compositor-lane {

@@ -1,11 +1,83 @@
-/* Compositor shell parity chrome on top of shell.css. Desktop renders the
-   Container grid directly inside the content column; the mobile Screen
-   Mode reuses the OG drawer and workarea rules, with the navigation drawer
-   filling the whole screen. */
+/* Compositor shell parity chrome on top of shell.css. The classic Screen
+   Mode reproduces the OG frame — inset workarea, gaps, every region drawn
+   as a card — while the grid decides placement. Panes own their scrolling;
+   the compositor never adds a scroller around Content. */
 
 .wb-shell[data-compositor="classic"] .oqto-compositor {
 	flex: 1;
 	min-block-size: 0;
+	padding: 24px;
+	background: var(--background);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-grid {
+	gap: 16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-lane {
+	margin-block-start: 16px;
+	gap: 16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-container {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg, 0);
+	box-shadow: var(--shadow-sm, none);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-container[data-role="navigation"] {
+	background: var(--sidebar);
+	border-color: var(--sidebar-border, var(--border));
+}
+
+/* Content fills its Container; scrolling belongs to the pane itself. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-content {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-sidebar {
+	flex: 1 1 auto;
+	inline-size: auto;
+	min-inline-size: 0;
+	max-inline-size: none;
+	background: transparent;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-panel {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-main {
+	flex: 1 1 auto;
+	min-block-size: 0;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tabs {
+	border-start-start-radius: var(--radius-lg, 0);
+	border-start-end-radius: var(--radius-lg, 0);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-gutter[data-axis="inline"] {
+	inline-size: 16px;
+	margin-inline-start: -16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-gutter[data-axis="block"] {
+	block-size: 16px;
+	margin-block-start: -16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-gutter:hover {
+	background: transparent;
+	box-shadow: inset 0 0 0 2px var(--primary);
 }
 
 @media (max-width: 1023px) {
@@ -14,8 +86,7 @@
 		inset-inline-end: 0;
 	}
 
-	.wb-shell[data-compositor="mobile"][data-sessions-open="true"]
-		.wb-sessions-backdrop {
+	.wb-shell[data-compositor="mobile"][data-sessions-open="true"] .wb-sessions-backdrop {
 		display: none;
 	}
 }
