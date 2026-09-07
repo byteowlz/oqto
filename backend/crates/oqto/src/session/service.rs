@@ -616,6 +616,11 @@ impl SessionService {
         self.config.agent_browser.enabled
     }
 
+    /// Which daemon engine backs agent-browser sessions.
+    pub fn agent_browser_engine(&self) -> crate::agent_browser::BrowserEngine {
+        self.config.agent_browser.engine
+    }
+
     /// Get the agent-browser stream port for a session.
     pub fn agent_browser_stream_port(&self, session_id: &str) -> Result<Option<u16>> {
         if !self.config.agent_browser.enabled {

@@ -308,6 +308,21 @@ struct ResponsePayload {
 }
 
 fn main() -> Result<()> {
+    // Engine selection: by default the octo-browser CLI is a pass-through shim
+    // over the upstream agent-browser binary (oqto-5ey4). The legacy
+    // oqto-browserd socket protocol remains available for rollback via
+    // OQTO_BROWSER_ENGINE=legacy. The AGENT_BROWSER_SESSION env (injected by
+    // Octo per chat session) is honored by both engines.
+    if std::env::var("OQTO_BROWSER_ENGINE").as_deref() != Ok("legacy") {
+        let upstream = std::env::var("OQTO_BROWSER_UPSTREAM_BIN")
+            .unwrap_or_else(|_| "agent-browser".to_string());
+        let status = std::process::Command::new(upstream)
+            .args(std::env::args_os().skip(1))
+            .status()
+            .context("executing upstream agent-browser (OQTO_BROWSER_ENGINE not set to legacy)?")?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
     let cli = Cli::parse();
     let timeout = Duration::from_secs(cli.timeout_secs);
     let output_json = cli.json;
