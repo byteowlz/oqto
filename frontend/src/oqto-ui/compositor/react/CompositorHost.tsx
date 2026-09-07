@@ -190,13 +190,18 @@ export function CompositorHost({
 		if (commands.length > 0) commit(commands);
 	};
 	const cell = (placement: GridPlacement, offset: number) => {
+		const gridContext = {
+			rowOffset: offset,
+			rows: rows.length,
+			columns: arrangement.grid.columns.length,
+		};
 		const container = containersById.get(placement.containerId);
 		return container ? (
 			<Cell
 				key={container.id}
 				container={container}
 				placement={placement}
-				rowOffset={offset}
+				grid={gridContext}
 				focusedContentId={focusOf(container)}
 				renderContent={renderContent}
 				contentLabel={contentLabel}

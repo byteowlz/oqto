@@ -19,10 +19,16 @@ import type {
 } from "./contracts";
 import { gridLines } from "./grid-template";
 
+export interface CellGridContext {
+	readonly rowOffset: number;
+	readonly rows: number;
+	readonly columns: number;
+}
+
 export interface CellProps {
 	readonly container: Container;
 	readonly placement: GridPlacement;
-	readonly rowOffset: number;
+	readonly grid: CellGridContext;
 	readonly focusedContentId: Container["activeContentId"];
 	readonly renderContent: RenderContent;
 	readonly contentLabel: ContentLabel;
@@ -30,11 +36,24 @@ export interface CellProps {
 	readonly commit: (commands: readonly LayoutCommand[]) => void;
 }
 
-export function Cell({ container, placement, rowOffset, ...view }: CellProps) {
-	const lines = gridLines(placement, rowOffset);
+/** Which Arrangement edges a placement touches, as a space-separated token list. */
+function edgesOf(placement: GridPlacement, grid: CellGridContext): string {
+	const edges: string[] = [];
+	if (placement.column === 0) edges.push("inline-start");
+	if (placement.column + placement.colSpan >= grid.columns)
+		edges.push("inline-end");
+	if (placement.row === 0) edges.push("block-start");
+	if (placement.row + placement.rowSpan >= grid.rows) edges.push("block-end");
+	return edges.join(" ");
+}
+
+export function Cell({ container, placement, grid, ...view }: CellProps) {
+	const lines = gridLines(placement, grid.rowOffset);
 	return (
 		<div
 			className="oqto-compositor-cell"
+			data-edges={edgesOf(placement, grid)}
+			data-full-height={placement.rowSpan >= grid.rows || undefined}
 			style={
 				{
 					"--oqto-cell-row": lines.row,
