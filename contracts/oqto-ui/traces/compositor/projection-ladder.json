@@ -8281,9 +8281,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 297.6744186046512,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 1302.3255813953488,
+									"inlineSize": 1400,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -8298,18 +8298,12 @@
 									"flush": true
 								}
 							],
-							"degradations": [
-								{
-									"kind": "minima-unsatisfiable",
-									"axis": "inline",
-									"deficit": 120
-								}
-							],
+							"degradations": [],
 							"scrollOffset": 0,
-							"inlineExtent": 1600,
+							"inlineExtent": 1400,
 							"columnSizes": [
-								297.6744186046512,
-								1302.3255813953488
+								0,
+								1400
 							],
 							"rowSizes": [
 								560,
@@ -8689,9 +8683,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 204.6511627906977,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 895.3488372093022,
+									"inlineSize": 1100,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -8710,14 +8704,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 620
+									"deficit": 300
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 1100,
 							"columnSizes": [
-								204.6511627906977,
-								895.3488372093024
+								0,
+								1100
 							],
 							"rowSizes": [
 								560,
@@ -9097,9 +9091,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 167.4418604651163,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 732.5581395348838,
+									"inlineSize": 900.0000000000001,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -9118,14 +9112,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 820
+									"deficit": 500
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 900.0000000000001,
 							"columnSizes": [
-								167.4418604651163,
-								732.5581395348838
+								0,
+								900.0000000000001
 							],
 							"rowSizes": [
 								560,
@@ -9505,9 +9499,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 130.2325581395349,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 569.7674418604652,
+									"inlineSize": 700,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -9526,14 +9520,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 1020
+									"deficit": 700
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 700,
 							"columnSizes": [
-								130.2325581395349,
-								569.7674418604652
+								0,
+								700
 							],
 							"rowSizes": [
 								560,
@@ -9913,9 +9907,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 111.62790697674419,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 488.37209302325584,
+									"inlineSize": 600,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -9934,14 +9928,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 1120
+									"deficit": 800
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 600,
 							"columnSizes": [
-								111.62790697674419,
-								488.37209302325584
+								0,
+								600
 							],
 							"rowSizes": [
 								560,
@@ -10321,9 +10315,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 78.13953488372093,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 341.8604651162791,
+									"inlineSize": 420,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -10342,14 +10336,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 1300
+									"deficit": 980
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 420,
 							"columnSizes": [
-								78.13953488372093,
-								341.86046511627904
+								0,
+								420
 							],
 							"rowSizes": [
 								560,
@@ -10729,9 +10723,9 @@
 								},
 								{
 									"containerId": "container-6",
-									"x": 37.2093023255814,
+									"x": 0,
 									"y": 0,
-									"inlineSize": 162.7906976744186,
+									"inlineSize": 200,
 									"blockSize": 560,
 									"collapsed": false,
 									"flush": false
@@ -10750,14 +10744,14 @@
 								{
 									"kind": "minima-unsatisfiable",
 									"axis": "inline",
-									"deficit": 1520
+									"deficit": 1200
 								}
 							],
 							"scrollOffset": 0,
 							"inlineExtent": 200,
 							"columnSizes": [
-								37.2093023255814,
-								162.7906976744186
+								0,
+								200
 							],
 							"rowSizes": [
 								560,

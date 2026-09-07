@@ -161,16 +161,17 @@ function trackRequests(
 ): TrackRequest[] {
 	const spanKey = axis === "row" ? "rowSpan" : "colSpan";
 	return tracks.map((track, index) => {
-		const covering = placements.filter(
-			(placement) =>
-				placement[axis] <= index &&
-				index < placement[axis] + placement[spanKey],
+		// Only placements confined to this track decide its collapse; a
+		// placement spanning several tracks (a full-width status row, a
+		// full-height sidebar) follows the tracks it crosses instead.
+		const confined = placements.filter(
+			(placement) => placement[axis] === index && placement[spanKey] === 1,
 		);
 		return {
 			track,
 			collapsed:
-				covering.length > 0 &&
-				covering.every((placement) => collapsed.has(placement.containerId)),
+				confined.length > 0 &&
+				confined.every((placement) => collapsed.has(placement.containerId)),
 		};
 	});
 }

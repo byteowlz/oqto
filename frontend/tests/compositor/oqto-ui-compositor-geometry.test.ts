@@ -4,6 +4,7 @@ import {
 	type SolvedRect,
 	applyTransaction,
 	contentIdFrom,
+	createClassicPresetLayout,
 	solveLayoutGeometry,
 } from "@/src/oqto-ui/compositor/index";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import {
 	classicLayout,
 	containerByRole,
 	filesContent,
+	sessionsContent,
 	terminalContent,
 } from "./fixtures";
 
@@ -238,5 +240,32 @@ describe("host track gaps", () => {
 		assertSane(gapped.rects);
 		// Without gaps the solver is unchanged (corpus stability).
 		expect(gapless.columnSizes[1]).toBeCloseTo((1600 - 320) * (2 / 3), 6);
+	});
+});
+
+describe("collapse with spanning placements", () => {
+	it("frees a column whose only confined Container collapsed, even under a spanning status row", () => {
+		const status = { id: contentIdFrom("status:session"), kind: "status" };
+		const layout = createClassicPresetLayout({
+			navigation: [sessionsContent],
+			primary: [chatContent],
+			auxiliary: [filesContent],
+			status: [status],
+		});
+		const collapsed = step(layout, {
+			type: "collapse",
+			containerId: containerByRole(layout, "auxiliary").id,
+			collapsed: true,
+		});
+		const solved = solveLayoutGeometry(collapsed, VIEWPORT);
+		expect(solved.columnSizes[2]).toBe(0);
+		expect(solved.columnSizes[1]).toBeCloseTo(1600 - 320, 6);
+		// The status row still spans to the end; the sidebar row span keeps its height.
+		expect(
+			rectOf(solved.rects, containerByRole(layout, "status").id).inlineSize,
+		).toBeCloseTo(1600 - 320, 6);
+		expect(
+			rectOf(solved.rects, containerByRole(layout, "navigation").id).blockSize,
+		).toBe(900);
 	});
 });
