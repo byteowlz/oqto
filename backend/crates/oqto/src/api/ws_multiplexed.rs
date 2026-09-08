@@ -65,6 +65,7 @@ static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, ClientIdEntry
 
 mod agent;
 mod files;
+mod git;
 mod history;
 mod terminal;
 
@@ -194,6 +195,7 @@ pub enum Channel {
     Files,
     Terminal,
     Trx,
+    Git,
     Session,
     System,
 }
@@ -210,7 +212,57 @@ pub enum WsCommand {
     Files(FilesWsCommand),
     Terminal(TerminalWsCommand),
     Trx(TrxWsCommand),
+    Git(GitWsCommand),
     Session(SessionWsCommand),
+}
+
+/// Git channel commands. Every one names the work directory it acts on; the
+/// handler validates that the caller owns it before any process runs.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GitWsCommand {
+    /// Branch, upstream distance, and the working tree's changed entries.
+    Status {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    /// Unified diff for one path, staged or in the working tree.
+    Diff {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        path: String,
+        #[serde(default)]
+        staged: bool,
+    },
+    /// Most recent commits, newest first.
+    Log {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    Stage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        paths: Vec<String>,
+    },
+    Unstage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        paths: Vec<String>,
+    },
+    /// Commits what is staged; never stages on the caller's behalf.
+    Commit {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        message: String,
+    },
 }
 
 /// Files channel commands.
@@ -464,6 +516,7 @@ pub enum WsEvent {
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Trx(TrxWsEvent),
+    Git(GitWsEvent),
     System(SystemWsEvent),
 }
 
@@ -699,6 +752,81 @@ impl TreeTraversalContext {
         self.visited_nodes
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+}
+
+/// Git channel events. Every result carries the id of the command it answers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GitWsEvent {
+    StatusResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Current branch, or the detached HEAD's short commit.
+        branch: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        upstream: Option<String>,
+        ahead: usize,
+        behind: usize,
+        entries: Vec<GitStatusEntry>,
+        /// True when the listing was capped; the counts still describe the tree.
+        truncated: bool,
+    },
+    DiffResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        path: String,
+        staged: bool,
+        patch: String,
+        truncated: bool,
+    },
+    LogResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        commits: Vec<GitCommitSummary>,
+    },
+    StageResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        success: bool,
+    },
+    UnstageResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        success: bool,
+    },
+    CommitResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        commit: String,
+        success: bool,
+    },
+    Error {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        error: String,
+    },
+}
+
+/// One changed path, with git's own two status codes kept distinct.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitStatusEntry {
+    pub path: String,
+    /// Status in the index ("M", "A", "D", "R", "?" for untracked, " " for none).
+    pub index: String,
+    /// Status in the working tree, same alphabet.
+    pub worktree: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitCommitSummary {
+    pub id: String,
+    pub short_id: String,
+    pub summary: String,
+    pub author: String,
+    /// Unix seconds.
+    pub timestamp: i64,
 }
 
 /// TRX channel events.
@@ -1428,6 +1556,7 @@ async fn handle_ws_command(
             terminal::handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
+        WsCommand::Git(git_cmd) => git::handle_git_command(git_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await
         }
@@ -1490,6 +1619,14 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | TrxWsCommand::Update { id, .. }
             | TrxWsCommand::Close { id, .. }
             | TrxWsCommand::Sync { id, .. } => id.clone(),
+        },
+        WsCommand::Git(git_cmd) => match git_cmd {
+            GitWsCommand::Status { id, .. }
+            | GitWsCommand::Diff { id, .. }
+            | GitWsCommand::Log { id, .. }
+            | GitWsCommand::Stage { id, .. }
+            | GitWsCommand::Unstage { id, .. }
+            | GitWsCommand::Commit { id, .. } => id.clone(),
         },
         WsCommand::Session(_) => None,
     }
@@ -1619,6 +1756,25 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 | TrxWsCommand::Update { workspace_path, .. }
                 | TrxWsCommand::Close { workspace_path, .. }
                 | TrxWsCommand::Sync { workspace_path, .. } => Some(workspace_path.clone()),
+            };
+            (label.to_string(), None, workspace_path)
+        }
+        WsCommand::Git(git_cmd) => {
+            let label = match git_cmd {
+                GitWsCommand::Status { .. } => "git.status",
+                GitWsCommand::Diff { .. } => "git.diff",
+                GitWsCommand::Log { .. } => "git.log",
+                GitWsCommand::Stage { .. } => "git.stage",
+                GitWsCommand::Unstage { .. } => "git.unstage",
+                GitWsCommand::Commit { .. } => "git.commit",
+            };
+            let workspace_path = match git_cmd {
+                GitWsCommand::Status { workspace_path, .. }
+                | GitWsCommand::Diff { workspace_path, .. }
+                | GitWsCommand::Log { workspace_path, .. }
+                | GitWsCommand::Stage { workspace_path, .. }
+                | GitWsCommand::Unstage { workspace_path, .. }
+                | GitWsCommand::Commit { workspace_path, .. } => Some(workspace_path.clone()),
             };
             (label.to_string(), None, workspace_path)
         }
