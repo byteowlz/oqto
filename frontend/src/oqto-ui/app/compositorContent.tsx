@@ -17,6 +17,7 @@ import type {
 import { FilePane } from "../files/FilePane";
 import { WorkDirectoryFiles } from "../files/WorkDirectoryFiles";
 import { GalleryPane } from "../gallery/GalleryPane";
+import { GitPane } from "../git/GitPane";
 import { IssuesPane } from "../issues/IssuesPane";
 import type {
 	OqtoUiConfigResolution,
@@ -77,6 +78,7 @@ const PLACES_OWN_CHROME = new Set([
 	"files",
 	"file",
 	"issues",
+	"git",
 ]);
 
 function inCorner(pane: ReactNode, chrome: ReactNode): ReactNode {
@@ -193,6 +195,15 @@ export function createContentRenderer(
 				/>
 			);
 		}
+		if (content.kind === "git") {
+			return (
+				<GitPane
+					gitHost={platform.git}
+					workspacePath={context.directory.path}
+					chrome={presentation.chrome}
+				/>
+			);
+		}
 		if (content.kind === "issues") {
 			return (
 				<IssuesPane
@@ -255,6 +266,7 @@ export function createContentLabel(
 		if (content.kind === "settings") return t("oqtoUi.settings.label");
 		if (content.kind === "todos") return t("oqtoUi.todos.label");
 		if (content.kind === "issues") return t("oqtoUi.issues.label");
+		if (content.kind === "git") return t("oqtoUi.git.label");
 		if (content.kind === "terminal") return t("oqtoUi.terminal.label");
 		if (content.kind === "file") {
 			const path = content.extensions?.path;

@@ -9,6 +9,7 @@ import { useCallback, useMemo } from "react";
 import type { PersistedCompositorStore } from "../compositor/react/persisted-store";
 import {
 	GALLERY_CONTENT,
+	GIT_CONTENT,
 	ISSUES_CONTENT,
 	SESSIONS_CONTENT,
 	SETTINGS_CONTENT,
@@ -101,6 +102,7 @@ export function useShellActions(input: ShellActionsInput) {
 			filesContent(input.workDirectoryId),
 			TODOS_CONTENT,
 			TERMINAL_CONTENT,
+			GIT_CONTENT,
 			ISSUES_CONTENT,
 			GALLERY_CONTENT,
 			SESSIONS_CONTENT,

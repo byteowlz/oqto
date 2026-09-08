@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 import { liveChatTransport } from "./live-chat-transport";
 import { type MuxSocket, createMuxFileSystem } from "./mux-files";
+import { createMuxGitHost } from "./mux-git";
 import { createMuxIssueHost } from "./mux-issues";
 import { createMuxTerminalHost } from "./mux-terminal";
 import { muxWebSocketUrl } from "./mux-url";
@@ -486,6 +487,7 @@ const openMuxSocket = () =>
 
 const liveFiles = createMuxFileSystem(openMuxSocket);
 const liveIssues = createMuxIssueHost(openMuxSocket);
+const liveGit = createMuxGitHost(openMuxSocket);
 const liveTerminal = createMuxTerminalHost(openMuxSocket);
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
@@ -496,6 +498,7 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	},
 	files: liveFiles,
 	issues: liveIssues,
+	git: liveGit,
 	// ADR-0045's Action Broker is not implemented yet; the menu projects the
 	// host's own commands until it is.
 	actions: createEmptyActionHost(),

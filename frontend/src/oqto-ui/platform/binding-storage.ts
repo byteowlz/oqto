@@ -20,7 +20,9 @@ export function bindingStorageKey(platformId: string): string {
 function isOverride(value: unknown): value is BindingOverride {
 	if (typeof value !== "object" || value === null) return false;
 	const candidate = value as { keys?: unknown; action?: unknown };
-	return typeof candidate.keys === "string" && typeof candidate.action === "string";
+	return (
+		typeof candidate.keys === "string" && typeof candidate.action === "string"
+	);
 }
 
 /** Unreadable or malformed storage reads as "nothing overridden". */

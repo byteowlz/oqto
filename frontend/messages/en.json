@@ -816,6 +816,25 @@
 			"discard": "Discard changes",
 			"edit": "Edit file"
 		},
+		"git": {
+			"label": "Git",
+			"reload": "Reload status",
+			"clean": "Nothing changed.",
+			"staged": "Staged",
+			"changed": "Changed",
+			"stageAll": "stage all",
+			"unstageAll": "unstage all",
+			"stage": "Stage {{path}}",
+			"unstage": "Unstage {{path}}",
+			"message": "Commit message",
+			"truncated": "More changes than shown.",
+			"ahead_one": "{{count}} ahead",
+			"ahead_other": "{{count}} ahead",
+			"behind_one": "{{count}} behind",
+			"behind_other": "{{count}} behind",
+			"commit_one": "Commit {{count}} file",
+			"commit_other": "Commit {{count}} files"
+		},
 		"issues": {
 			"showClosed": "Show closed issues",
 			"more": "+{{count}} more",

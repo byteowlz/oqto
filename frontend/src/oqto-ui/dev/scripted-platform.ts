@@ -10,6 +10,7 @@ import type {
 import { scriptedFixture, scriptedTimeline } from "./fixture";
 import { ScriptedChatServer } from "./scripted-chat-server";
 import { createScriptedFileHost } from "./scripted-files";
+import { createScriptedGitHost } from "./scripted-git";
 import { createScriptedIssueHost } from "./scripted-issues";
 import { createScriptedTerminalHost } from "./scripted-terminal";
 
@@ -130,6 +131,7 @@ export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
 	files: createScriptedFileHost(),
 	issues: createScriptedIssueHost(),
+	git: createScriptedGitHost(),
 	actions: createEmptyActionHost(),
 	terminal: createScriptedTerminalHost(),
 	chat: scriptedChat,

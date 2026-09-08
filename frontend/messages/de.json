@@ -816,6 +816,25 @@
 			"discard": "Änderungen verwerfen",
 			"edit": "Datei bearbeiten"
 		},
+		"git": {
+			"label": "Git",
+			"reload": "Status neu laden",
+			"clean": "Keine Änderungen.",
+			"staged": "Vorgemerkt",
+			"changed": "Geändert",
+			"stageAll": "alle vormerken",
+			"unstageAll": "alle zurücknehmen",
+			"stage": "{{path}} vormerken",
+			"unstage": "{{path}} zurücknehmen",
+			"message": "Commit-Nachricht",
+			"truncated": "Mehr Änderungen als angezeigt.",
+			"ahead_one": "{{count}} voraus",
+			"ahead_other": "{{count}} voraus",
+			"behind_one": "{{count}} zurück",
+			"behind_other": "{{count}} zurück",
+			"commit_one": "{{count}} Datei committen",
+			"commit_other": "{{count}} Dateien committen"
+		},
 		"issues": {
 			"showClosed": "Geschlossene Issues zeigen",
 			"more": "+{{count}} weitere",

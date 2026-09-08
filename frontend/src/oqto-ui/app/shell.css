@@ -3640,3 +3640,176 @@
 	background: none !important;
 	color: var(--muted-foreground) !important;
 }
+
+/* -------------------------------------------------------------------- git */
+
+.wb-git {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-git__bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+}
+
+.wb-git__branch {
+	color: var(--primary);
+	font-weight: 600;
+}
+
+.wb-git__bar small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	margin-inline-end: auto;
+}
+
+.wb-git__body {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow-y: auto;
+	padding: 8px;
+}
+
+.wb-git__note {
+	margin: 4px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-git__group h3 {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: 8px 0 4px;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-git__group h3 button {
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	text-transform: none;
+	letter-spacing: 0;
+	cursor: pointer;
+}
+
+.wb-git__group h3 button:hover {
+	color: var(--foreground);
+}
+
+.wb-git__group ul {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-git__group li {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 1fr) 20px;
+	align-items: center;
+	gap: 6px;
+}
+
+.wb-git__code {
+	color: var(--muted-foreground);
+	text-align: center;
+}
+
+.wb-git__code[data-code="M"] {
+	color: var(--primary);
+}
+
+.wb-git__code[data-code="D"] {
+	color: var(--destructive, var(--primary));
+}
+
+.wb-git__path {
+	min-inline-size: 0;
+	padding: 3px 4px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	cursor: pointer;
+}
+
+.wb-git__path:hover {
+	background: var(--muted);
+}
+
+.wb-git__move {
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.wb-git__move:hover {
+	color: var(--foreground);
+}
+
+.wb-git__diff {
+	margin: 8px 0 0;
+	padding: 8px;
+	background: var(--card);
+	color: var(--foreground);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: pre;
+	overflow-x: auto;
+}
+
+.wb-git__commit {
+	display: flex;
+	gap: 6px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-start: 1px solid var(--border);
+}
+
+.wb-git__commit input {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	padding: 4px 6px;
+	border: 1px solid var(--border);
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-git__commit button {
+	flex: none;
+	padding: 4px 8px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.wb-git__commit button:disabled {
+	color: var(--muted-foreground);
+	cursor: default;
+}
