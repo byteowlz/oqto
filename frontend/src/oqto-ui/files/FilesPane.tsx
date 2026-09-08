@@ -305,8 +305,9 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				{actions.outcome ? (
 					<span>
 						{t(`oqtoUi.files.${actions.outcome.key}`, {
-							name: actions.outcome.name,
-							message: actions.outcome.name,
+							name: actions.outcome.name ?? "",
+							message: actions.outcome.name ?? "",
+							count: actions.outcome.count ?? 0,
 						})}
 					</span>
 				) : null}

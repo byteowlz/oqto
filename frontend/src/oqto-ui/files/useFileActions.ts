@@ -9,6 +9,7 @@ import { actionTargets, clearClipboard } from "./clipboard";
 import { cursorEntry } from "./navigation";
 import { setFilter } from "./navigator";
 import {
+	type OperationMessage,
 	type OperationResult,
 	createFolder,
 	pasteEntries,
@@ -22,8 +23,8 @@ export type ActionMode = "filter" | "rename" | "create" | "confirmDelete";
 export interface ActionState {
 	readonly mode: ActionMode | null;
 	readonly draft: string;
-	/** Message key under oqtoUi.files plus its name value, or null. */
-	readonly outcome: { readonly key: string; readonly name: string } | null;
+	/** The last operation's message, or null when nothing has run. */
+	readonly outcome: OperationMessage | null;
 	readonly canUndo: boolean;
 }
 
@@ -139,7 +140,7 @@ export function useFileActions(store: FilesStore): FileActions {
 		setUndoStep(null);
 		undoStep().then(
 			() => {
-				setState({ ...IDLE, outcome: { key: "undone", name: "" } });
+				setState({ ...IDLE, outcome: { key: "undone" } });
 				store.load(directory, true);
 			},
 			(error: Error) =>

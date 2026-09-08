@@ -378,6 +378,8 @@ describe("Quick Look and operations", () => {
 		fireEvent.keyDown(rows, { key: "Delete" });
 		fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 		await waitFor(() => expect(ops).toContain("remove:notes.md:true"));
+		// The count is interpolated, not left as a raw placeholder.
+		expect(await screen.findByText("Deleted 1")).toBeInTheDocument();
 		// Deletion is not reversible through the host contract.
 		expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 	});

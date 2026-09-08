@@ -8,9 +8,15 @@
 import type { FileHost } from "../platform/files-contract";
 import { childPath, parentPath } from "./entries";
 
+/** What the status line says: a message key plus its interpolations. */
+export interface OperationMessage {
+	readonly key: string;
+	readonly name?: string;
+	readonly count?: number;
+}
+
 export interface OperationResult {
-	/** Message key and values for the status line. */
-	readonly message: { readonly key: string; readonly name: string };
+	readonly message: OperationMessage;
 	/** Reverses the operation, or null when it cannot be reversed. */
 	readonly undo: (() => Promise<void>) | null;
 }
@@ -87,7 +93,7 @@ export async function removeEntries(
 		await context.fileHost.remove(context.workspacePath, path, true);
 	}
 	return {
-		message: { key: "deletedCount", name: String(paths.length) },
+		message: { key: "deletedCount", count: paths.length },
 		undo: null,
 	};
 }
