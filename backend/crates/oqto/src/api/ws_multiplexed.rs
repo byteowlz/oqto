@@ -850,22 +850,17 @@ async fn runner_client_for_path(
     state: &AppState,
     user_id: &str,
     workspace_path: Option<&str>,
-) -> Option<(RunnerClient, ExecutionTarget)> {
-    let path = workspace_path?;
-    match resolve_target_for_workspace_path(state, user_id, path).await {
-        Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
-            Ok(Some(client)) => Some((client, target)),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::warn!(path = %path, error = %e, "runner client resolution failed for workspace path target");
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!(path = %path, error = %e, "runner target resolution failed for workspace path");
-            None
-        }
-    }
+) -> anyhow::Result<Option<(RunnerClient, ExecutionTarget)>> {
+    let Some(path) = workspace_path else {
+        return Ok(None);
+    };
+    // None means no requested workspace, never denied access or a failed dial.
+    // Those failures must reach the caller before any personal-runner fallback.
+    let target = resolve_target_for_workspace_path(state, user_id, path).await?;
+    let client = resolve_runner_for_target(state, user_id, &target)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace runner is unavailable"))?;
+    Ok(Some((client, target)))
 }
 
 /// State for a WebSocket connection, shared between command handler and event forwarder.
@@ -892,11 +887,6 @@ struct WsConnectionState {
     /// Active file watchers keyed by workspace_path.
     /// The JoinHandle is aborted when the watcher is replaced or the connection closes.
     file_watchers: HashMap<String, tokio::task::JoinHandle<()>>,
-    /// Runner overrides for sessions in shared workspaces.
-    /// When a session is created with a cwd inside a shared workspace, the runner
-    /// for that workspace's Linux user is stored here so subsequent commands
-    /// (prompt, get_state, etc.) route to the correct runner.
-    session_runner_overrides: HashMap<String, RunnerClient>,
     /// Whether the authenticated principal may open interactive terminals.
     /// Decided once at connect from the JWT role; terminals bypass the agent
     /// seam, so ordinary users never get one.
@@ -956,7 +946,6 @@ async fn handle_multiplexed_ws(
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
-        session_runner_overrides: HashMap::new(),
         terminal_allowed,
     }));
 
@@ -2581,6 +2570,9 @@ async fn handle_unwatch_files(
 }
 
 #[cfg(test)]
+mod admission_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2824,7 +2816,6 @@ mod tests {
             pi_session_meta: HashMap::new(),
             terminal_sessions: HashMap::new(),
             file_watchers: HashMap::new(),
-            session_runner_overrides: HashMap::new(),
             terminal_allowed: true,
         }));
 

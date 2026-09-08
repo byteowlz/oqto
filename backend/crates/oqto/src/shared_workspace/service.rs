@@ -640,7 +640,7 @@ impl SharedWorkspaceService {
         let member = self.repo.get_member(&ws.id, user_id).await?;
         match member {
             Some(m) => Ok(Some((ws, m.role))),
-            None => Ok(None), // Not a member
+            None => bail!("shared workspace access denied"),
         }
     }
 

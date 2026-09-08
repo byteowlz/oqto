@@ -53,6 +53,7 @@ pub async fn resolve_service_target(
     target: &ExecutionTarget,
     port: u16,
 ) -> Result<ServiceTarget> {
+    authorize_target(state, user_id, target).await?;
     let localhost = ServiceTarget::Tcp {
         host: "localhost".to_string(),
         port,
@@ -121,6 +122,20 @@ fn translate_exposed_socket(
     Ok(dir.join(name))
 }
 
+async fn authorize_target(state: &AppState, user_id: &str, target: &ExecutionTarget) -> Result<()> {
+    if let ExecutionTarget::SharedWorkspace { workspace_id } = target {
+        let service = state
+            .shared_workspaces
+            .as_ref()
+            .context("shared workspaces not configured")?;
+        service
+            .get(workspace_id, user_id)
+            .await?
+            .context("shared workspace not found or access denied")?;
+    }
+    Ok(())
+}
+
 /// Resolve a concrete runner client from an execution target.
 ///
 /// This is the single place where target -> runner mapping should live.
@@ -129,6 +144,8 @@ pub async fn resolve_runner_for_target(
     user_id: &str,
     target: &ExecutionTarget,
 ) -> Result<Option<RunnerClient>> {
+    // Placement reachability never substitutes for Workspace authorization.
+    authorize_target(state, user_id, target).await?;
     if let Some(store) = &state.placement_store {
         let workspace_id = match target {
             ExecutionTarget::Personal => user_id,

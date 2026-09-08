@@ -24,29 +24,94 @@ pub(super) async fn handle_agent_command(
         };
 
     // Resolve the effective runner for this command.
-    // Priority:
-    // 1. Per-session override (for sessions in shared workspaces, stored on session.create)
-    // 2. For session.create: resolve from cwd path (may route to shared workspace runner)
-    // 3. Personal runner (default)
+    // Durable Session binding is authoritative and reauthorized per command.
+    // New sessions resolve their requested workspace; failures never select
+    // a different runner. Personal default applies only without a workspace.
     let mut resolved_target_for_command: Option<ExecutionTarget> = None;
     let resolved_runner: RunnerClient = {
-        // Check stored override first
-        let override_runner = {
-            let state_guard = conn_state.lock().await;
-            state_guard
-                .session_runner_overrides
-                .get(&session_id)
-                .cloned()
+        // Durable identity precedes connection caches and caller-supplied cwd.
+        // Reauthorize every command so a cached client cannot survive revocation.
+        let binding = match state.session_targets.get(&session_id).await {
+            Ok(binding) => binding,
+            Err(error) => {
+                tracing::warn!(%error, "session binding lookup failed");
+                return Some(agent_response(
+                    &session_id,
+                    id,
+                    "error",
+                    Err("Session routing unavailable".into()),
+                ));
+            }
         };
-
-        if let Some(ovr) = override_runner {
-            tracing::debug!(session_id = %session_id, endpoint = %ovr.endpoint_description(), "using stored runner override");
-            ovr
+        if let Some(binding) = binding {
+            let target = match binding.scope {
+                SessionTargetScope::Personal
+                    if binding.owner_user_id.as_deref() == Some(user_id) =>
+                {
+                    ExecutionTarget::Personal
+                }
+                SessionTargetScope::SharedWorkspace => match binding.workspace_id {
+                    Some(workspace_id) => ExecutionTarget::SharedWorkspace { workspace_id },
+                    None => {
+                        return Some(agent_response(
+                            &session_id,
+                            id,
+                            "error",
+                            Err("Session workspace binding missing".into()),
+                        ));
+                    }
+                },
+                SessionTargetScope::Personal => {
+                    return Some(agent_response(
+                        &session_id,
+                        id,
+                        "error",
+                        Err("Session access denied".into()),
+                    ));
+                }
+            };
+            if let CommandPayload::SessionCreate { ref config } = cmd.payload
+                && let (Some(requested), Some(bound)) = (&config.cwd, &binding.workspace_path)
+                && std::path::Path::new(requested) != std::path::Path::new(bound)
+            {
+                return Some(agent_response(
+                    &session_id,
+                    id,
+                    "error",
+                    Err("Session workspace cannot be changed by session.create".into()),
+                ));
+            }
+            resolved_target_for_command = Some(target.clone());
+            match resolve_runner_for_target(state, user_id, &target).await {
+                Ok(Some(client)) => client,
+                Ok(None) | Err(_) => {
+                    return Some(agent_response(
+                        &session_id,
+                        id,
+                        "error",
+                        Err("Session workspace unavailable or access denied".into()),
+                    ));
+                }
+            }
         } else if let CommandPayload::SessionCreate { ref config } = cmd.payload {
             // For session.create, check if cwd is inside a shared workspace
             tracing::info!(session_id = %session_id, cwd = ?config.cwd, "session.create: checking cwd for shared workspace routing");
             let sw_runner = if let Some(ref cwd) = config.cwd {
-                runner_client_for_path(state, user_id, Some(cwd.as_str())).await
+                match runner_client_for_path(state, user_id, Some(cwd.as_str())).await {
+                    Ok(runner) => runner,
+                    Err(error) => {
+                        tracing::warn!(%error, "workspace admission failed");
+                        return Some(agent_response(
+                            &session_id,
+                            id,
+                            "error",
+                            Err(
+                                "Workspace unavailable or access denied; no execution started"
+                                    .into(),
+                            ),
+                        ));
+                    }
+                }
             } else {
                 None
             };
@@ -54,28 +119,12 @@ pub(super) async fn handle_agent_command(
             if let Some((sw, target)) = sw_runner {
                 tracing::info!(session_id = %session_id, endpoint = %sw.endpoint_description(), "routing session to shared workspace runner");
                 resolved_target_for_command = Some(target.clone());
-                // Store override for subsequent commands on this session
-                let is_different = runner_client.is_none_or(|runner| {
-                    runner.endpoint_description() != sw.endpoint_description()
-                });
-                if is_different {
-                    let mut state_guard = conn_state.lock().await;
-                    state_guard
-                        .session_runner_overrides
-                        .insert(session_id.clone(), sw.clone());
-                }
                 sw
             } else {
                 let target = ExecutionTarget::Personal;
                 resolved_target_for_command = Some(target.clone());
                 match resolve_runner_for_target(state, user_id, &target).await {
-                    Ok(Some(client)) => {
-                        let mut state_guard = conn_state.lock().await;
-                        state_guard
-                            .session_runner_overrides
-                            .insert(session_id.clone(), client.clone());
-                        client
-                    }
+                    Ok(Some(client)) => client,
                     Ok(None) => match runner_client {
                         Some(r) => r.clone(),
                         None => {
@@ -136,98 +185,28 @@ pub(super) async fn handle_agent_command(
                 };
 
                 if let Some(cwd) = meta_cwd {
-                    if let Some((client, target)) =
-                        runner_client_for_path(state, user_id, Some(cwd.as_str())).await
-                    {
-                        let mut state_guard = conn_state.lock().await;
-                        state_guard
-                            .session_runner_overrides
-                            .insert(session_id.clone(), client.clone());
-                        let _ = target;
-                        client
-                    } else {
-                        match &cmd.payload {
-                            CommandPayload::GetState => {
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_state",
-                                    Ok(None),
-                                ));
-                            }
-                            CommandPayload::GetMessages => {
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_messages",
-                                    Ok(Some(serde_json::json!([]))),
-                                ));
-                            }
-                            CommandPayload::GetStats => {
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_stats",
-                                    Ok(None),
-                                ));
-                            }
-                            CommandPayload::GetForkPoints => {
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_fork_points",
-                                    Ok(Some(serde_json::json!([]))),
-                                ));
-                            }
-                            CommandPayload::GetCommands => {
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_commands",
-                                    Ok(Some(serde_json::json!([]))),
-                                ));
-                            }
-                            CommandPayload::GetModels { workdir } => {
-                                if let Some(personal_runner) = runner_client {
-                                    let fallback_workdir = workdir.as_deref().or(Some(&cwd));
-                                    if let Ok(resp) = personal_runner
-                                        .agent_get_available_models("_system", fallback_workdir)
-                                        .await
-                                    {
-                                        return Some(agent_response(
-                                            &session_id,
-                                            id,
-                                            "get_models",
-                                            Ok(Some(
-                                                serde_json::to_value(&resp.models)
-                                                    .unwrap_or_default(),
-                                            )),
-                                        ));
-                                    }
-                                }
-                                return Some(agent_response(
-                                    &session_id,
-                                    id,
-                                    "get_models",
-                                    Ok(Some(serde_json::json!([]))),
-                                ));
-                            }
-                            CommandPayload::SetModel { .. }
-                            | CommandPayload::SetThinkingLevel { .. }
-                            | CommandPayload::CycleModel
-                            | CommandPayload::CycleThinkingLevel
-                            | CommandPayload::SetAutoCompaction { .. }
-                            | CommandPayload::SetAutoRetry { .. } => {
-                                return Some(agent_response(&session_id, id, "ok", Ok(None)));
-                            }
-                            _ => {
+                    let admitted =
+                        match runner_client_for_path(state, user_id, Some(cwd.as_str())).await {
+                            Ok(runner) => runner,
+                            Err(error) => {
+                                tracing::warn!(%error, "session workspace admission failed");
                                 return Some(agent_response(
                                     &session_id,
                                     id,
                                     "error",
-                                    Err("Session target unknown; reload session metadata".into()),
+                                    Err("Workspace unavailable or access denied".into()),
                                 ));
                             }
+                        };
+                    match admitted {
+                        Some((client, _target)) => client,
+                        None => {
+                            return Some(agent_response(
+                                &session_id,
+                                id,
+                                "error",
+                                Err("Session workspace binding missing".into()),
+                            ));
                         }
                     }
                 } else {
@@ -278,9 +257,6 @@ pub(super) async fn handle_agent_command(
                         match resolve_runner_for_target(state, user_id, &target).await {
                             Ok(Some(client)) => {
                                 let mut state_guard = conn_state.lock().await;
-                                state_guard
-                                    .session_runner_overrides
-                                    .insert(session_id.clone(), client.clone());
                                 if let Ok(Some(record)) =
                                     state.session_targets.get(&session_id).await
                                     && let Some(workspace_path) = record.workspace_path
@@ -488,16 +464,6 @@ pub(super) async fn handle_agent_command(
                     // assign a different real ID -- the runner re-keys
                     // its map in the background, and the frontend learns
                     // about it via the get_state response.
-
-                    // Pin this session to the runner that successfully created it.
-                    // Without this, a prompt sent immediately after session.create can
-                    // race target persistence and fail with "Session target unknown".
-                    {
-                        let mut state_guard = conn_state.lock().await;
-                        state_guard
-                            .session_runner_overrides
-                            .insert(session_id.clone(), runner.clone());
-                    }
 
                     // Auto-subscribe to events for the session.
                     // We MUST wait for the subscription to be established
@@ -1633,13 +1599,10 @@ pub(super) async fn handle_agent_command(
                     {
                         match sw_runner.agent_list_sessions().await {
                             Ok(sessions) => {
-                                // Store runner overrides for all discovered shared sessions
+                                // Cache display metadata, never authorization or runner clients.
                                 if !sessions.is_empty() {
                                     let mut state_guard = conn_state.lock().await;
                                     for s in &sessions {
-                                        state_guard
-                                            .session_runner_overrides
-                                            .insert(s.session_id.clone(), sw_runner.clone());
                                         // Pre-populate session meta with cwd so
                                         // prompt/steer handlers can resolve the
                                         // shared workspace for username tagging
