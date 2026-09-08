@@ -1,5 +1,6 @@
 import type { JsonValue } from "../engine/projection";
 import { createSessionEngine } from "../engine/session-engine";
+import { createEmptyActionHost } from "./actions-contract";
 import type {
 	ChatMessage,
 	ChatMessagePart,
@@ -495,6 +496,9 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	},
 	files: liveFiles,
 	issues: liveIssues,
+	// ADR-0045's Action Broker is not implemented yet; the menu projects the
+	// host's own commands until it is.
+	actions: createEmptyActionHost(),
 	terminal: liveTerminal,
 	chat: createSessionEngine(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {

@@ -70,6 +70,7 @@ export const FileRow = memo(function FileRow({
 		<button
 			type="button"
 			className="wb-tree__row"
+			data-path={entry.path}
 			data-cursor={cursor || undefined}
 			data-selected={selected || undefined}
 			data-changed={changed || undefined}

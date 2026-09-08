@@ -862,6 +862,12 @@
 			}
 		},
 		"files": {
+			"paste": "Paste",
+			"newFolder": "New folder",
+			"menu": "File actions",
+			"open": "Open",
+			"copy": "Copy",
+			"cut": "Cut",
 			"label": "Files",
 			"expand": "Expand",
 			"collapse": "Collapse",

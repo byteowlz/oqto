@@ -862,6 +862,12 @@
 			}
 		},
 		"files": {
+			"paste": "Einfügen",
+			"newFolder": "Neuer Ordner",
+			"menu": "Dateiaktionen",
+			"open": "Öffnen",
+			"copy": "Kopieren",
+			"cut": "Ausschneiden",
 			"label": "Dateien",
 			"expand": "Ausklappen",
 			"collapse": "Einklappen",

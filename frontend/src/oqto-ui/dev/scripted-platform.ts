@@ -1,5 +1,6 @@
 import { createSessionEngine } from "../engine/session-engine";
 import { createChatTransport } from "../engine/transport";
+import { createEmptyActionHost } from "../platform/actions-contract";
 import type { ChatMessage, MessagePage } from "../platform/contracts";
 import type {
 	OqtoUiConfigResolution,
@@ -129,6 +130,7 @@ export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
 	files: createScriptedFileHost(),
 	issues: createScriptedIssueHost(),
+	actions: createEmptyActionHost(),
 	terminal: createScriptedTerminalHost(),
 	chat: scriptedChat,
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {

@@ -3461,3 +3461,64 @@
 	min-block-size: 0;
 	overflow: hidden;
 }
+
+/* ------------------------------------------------------ files menu */
+
+/*
+ * The host-owned resource menu. It is positioned from the pointer through
+ * custom properties so the surface itself carries no measured layout.
+ */
+.wb-files-menu {
+	position: fixed;
+	z-index: 40;
+	/* Clamped to the viewport: a menu opened near an edge stays whole. */
+	inset-block-start: min(var(--wb-menu-y), calc(100dvh - 16rem));
+	inset-inline-start: min(var(--wb-menu-x), calc(100dvw - 17rem));
+	min-inline-size: 180px;
+	max-inline-size: 260px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	/* Card and popover are the same token in several schemes, and shadows can
+	   be off; the surface lifts itself so the menu never blends into the pane. */
+	background: color-mix(in srgb, var(--popover, var(--card)) 88%, var(--foreground));
+	box-shadow: var(--shadow-md, none);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-files-menu__group + .wb-files-menu__group {
+	margin-block-start: 4px;
+	padding-block-start: 4px;
+	border-block-start: 1px solid var(--border);
+}
+
+.wb-files-menu button {
+	display: block;
+	inline-size: 100%;
+	padding: 6px 8px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.wb-files-menu button:hover,
+.wb-files-menu button:focus-visible {
+	background: var(--muted);
+}
+
+.wb-files-menu button[data-danger] {
+	color: var(--destructive, var(--primary));
+}
+
+.wb-files-menu__backdrop {
+	position: fixed;
+	z-index: 39;
+	inset: 0;
+	border: 0;
+	background: none;
+}

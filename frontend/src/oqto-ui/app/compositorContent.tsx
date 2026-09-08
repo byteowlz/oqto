@@ -151,6 +151,7 @@ export function createContentRenderer(
 					fileHost={platform.files}
 					workspacePath={context.directory.path}
 					chrome={presentation.chrome}
+					actionHost={platform.actions}
 					onOpenFile={chrome.openFile}
 				/>
 			);

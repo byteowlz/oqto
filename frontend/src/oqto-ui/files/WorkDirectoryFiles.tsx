@@ -5,6 +5,11 @@
  */
 
 import type { ReactNode } from "react";
+import { useState } from "react";
+import {
+	type ActionHost,
+	createEmptyActionHost,
+} from "../platform/actions-contract";
 import type { FileHost } from "../platform/files-contract";
 import { FilesPane } from "./FilesPane";
 import { useFilesStore } from "./useFilesStore";
@@ -17,6 +22,11 @@ interface WorkDirectoryFilesProps {
 	readonly onOpenFile?: (path: string) => void;
 	/** The Container's own controls, placed in this pane's toolbar. */
 	readonly chrome?: ReactNode;
+	/**
+	 * Projects eligible Actions into the resource menu (ADR-0045). Without
+	 * one the menu still opens, offering only the pane's own commands.
+	 */
+	readonly actionHost?: ActionHost;
 }
 
 export function WorkDirectoryFiles({
@@ -24,12 +34,15 @@ export function WorkDirectoryFiles({
 	workspacePath,
 	onOpenFile,
 	chrome,
+	actionHost,
 }: WorkDirectoryFilesProps) {
 	const store = useFilesStore(fileHost, workspacePath);
+	const [offered] = useState(() => actionHost ?? createEmptyActionHost());
 	return (
 		<FilesPane
 			store={store}
 			chrome={chrome}
+			actionHost={offered}
 			onOpenFile={onOpenFile ? (entry) => onOpenFile(entry.path) : undefined}
 		/>
 	);

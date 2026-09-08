@@ -368,7 +368,11 @@
 	z-index: 4;
 	inline-size: 220px;
 	border: 1px solid var(--border);
-	background: var(--popover, var(--card));
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
 }
 
 .oqto-compositor-add-where {

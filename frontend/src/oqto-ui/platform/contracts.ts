@@ -1,6 +1,7 @@
 import type { JsonValue } from "../engine/projection";
 import type { ChatEngineHandle } from "./chat-contract";
 
+import type { ActionHost } from "./actions-contract";
 import type { FileHost } from "./files-contract";
 import type { IssueHost } from "./issues-contract";
 import type { TerminalHost } from "./terminal-contract";
@@ -245,6 +246,7 @@ export type OqtoUiPlatform = {
 	/** Lazy, single-level work-directory file access for the Files pane. */
 	files: FileHost;
 	issues: IssueHost;
+	actions: ActionHost;
 	terminal: TerminalHost;
 	/** Writable chat engine; scripted adapters provide a deterministic fake. */
 	chat: ChatEngineHandle;

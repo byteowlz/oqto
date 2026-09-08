@@ -10,6 +10,7 @@
 
 import {
 	type KeyboardEvent,
+	type MouseEvent,
 	type ReactNode,
 	useCallback,
 	useMemo,
@@ -17,22 +18,27 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { ActionHost } from "../platform/actions-contract";
 import type { FileEntry } from "../platform/files-contract";
 import { FilesActionLine } from "./FilesActionLine";
 import { FilesList } from "./FilesList";
+import { FilesMenuSurface } from "./FilesMenu";
 import { FilesPreview } from "./FilesPreview";
 import { FilesToolbar } from "./FilesToolbar";
 import { type ColumnRendering, MillerColumns } from "./MillerColumns";
 import { yank } from "./clipboard";
 import { paneFidelity, showsColumns, showsFacts } from "./fidelity";
 import { formatModified, formatSize } from "./format";
+
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
-import { moveCursor, select, visibleEntries } from "./navigator";
+import { moveCursor, placeCursor, select, visibleEntries } from "./navigator";
 import type { FilesStore } from "./store";
 import { toggleExpanded, treeRows } from "./tree";
 import { useElementSize } from "./useElementSize";
 import { useFileActions } from "./useFileActions";
+import { useFilesMenu } from "./useFilesMenu";
 import { useFilesState } from "./useFilesStore";
+import { useMenuCommands } from "./useMenuCommands";
 import { usePreview } from "./usePreview";
 
 const ROW_HEIGHT = 26;
@@ -43,9 +49,16 @@ interface FilesPaneProps {
 	readonly onOpenFile?: (entry: FileEntry) => void;
 	/** The Container's own controls, placed in the toolbar. */
 	readonly chrome?: ReactNode;
+	/** Projects eligible Actions into the resource menu (ADR-0045). */
+	readonly actionHost: ActionHost;
 }
 
-export function FilesPane({ store, onOpenFile, chrome }: FilesPaneProps) {
+export function FilesPane({
+	store,
+	onOpenFile,
+	chrome,
+	actionHost,
+}: FilesPaneProps) {
 	const { t, i18n } = useTranslation();
 	const state = useFilesState(store);
 	const [details, setDetails] = useState(true);
@@ -156,6 +169,15 @@ export function FilesPane({ store, onOpenFile, chrome }: FilesPaneProps) {
 		if (previewOpen || columns) preview.show(next);
 	};
 
+	const menu = useFilesMenu(actionHost);
+	const commands = useMenuCommands({ store, actions, menu, open });
+	const body = useRef<HTMLDivElement | null>(null);
+	/** Dismissing a menu returns focus to the listing it was opened from. */
+	const closeMenu = () => {
+		menu.close();
+		body.current?.focus();
+	};
+
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
 		const key = event.key;
 		const step = (delta: number) => {
@@ -192,8 +214,11 @@ export function FilesPane({ store, onOpenFile, chrome }: FilesPaneProps) {
 		else if (key === "y") store.update((current) => yank(current, "copy"));
 		else if (key === "x") store.update((current) => yank(current, "move"));
 		else if (key === "p") actions.paste();
+		else if (key === "m" || key === "ContextMenu")
+			commands.openAtCursor(event.currentTarget);
 		else if (key === "Escape") {
 			setPreviewOpen(false);
+			menu.close();
 			actions.cancel();
 		} else return;
 		event.preventDefault();
@@ -219,15 +244,28 @@ export function FilesPane({ store, onOpenFile, chrome }: FilesPaneProps) {
 			/>
 
 			<FilesActionLine actions={actions} target={focused?.name ?? ""} />
+			<FilesMenuSurface
+				menu={menu}
+				state={state}
+				onRun={commands.run}
+				onClose={closeMenu}
+			/>
 
 			<div
 				className="wb-files-body"
+				ref={body}
 				data-fidelity={fidelity}
 				// biome-ignore lint/a11y/noNoninteractiveTabindex: the listing is keyboard-navigated.
 				tabIndex={0}
 				role="listbox"
 				aria-label={t("oqtoUi.files.tree")}
 				onKeyDown={onKeyDown}
+				onContextMenu={(event) => {
+					const row = (event.target as HTMLElement).closest<HTMLElement>(
+						"[data-path]",
+					);
+					commands.openMenu(event, row?.dataset.path ?? null);
+				}}
 			>
 				{listing?.status === "error" ? (
 					<p className="wb-files-note">{t("oqtoUi.files.failed")}</p>

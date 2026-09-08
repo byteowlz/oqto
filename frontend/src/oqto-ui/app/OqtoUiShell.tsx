@@ -259,6 +259,7 @@ function LoadedShell({
 							<WorkDirectoryFiles
 								fileHost={platform.files}
 								workspacePath={directory.path}
+								actionHost={platform.actions}
 							/>
 						)}
 					</div>
