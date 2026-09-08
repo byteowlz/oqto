@@ -72,6 +72,8 @@ export type ResizeAxisName = "inline" | "block";
 export interface GutterProps {
 	readonly axis: ResizeAxisName;
 	readonly index: number;
+	/** Inclusive cross-axis track range the handle covers, in body-grid indices. */
+	readonly span: { readonly start: number; readonly end: number };
 	readonly label: string;
 	/** Provisional delta while dragging; null when the drag ends. */
 	readonly onPreview: (
@@ -90,6 +92,7 @@ export interface GutterProps {
 export function Gutter({
 	axis,
 	index,
+	span,
 	label,
 	onPreview,
 	onResize,
@@ -104,7 +107,13 @@ export function Gutter({
 			aria-label={label}
 			className="oqto-compositor-gutter"
 			data-axis={axis}
-			style={{ "--oqto-gutter-line": `${index + 2}` } as CSSProperties}
+			style={
+				{
+					"--oqto-gutter-line": `${index + 2}`,
+					"--oqto-gutter-from": `${span.start + 1}`,
+					"--oqto-gutter-to": `${span.end + 2}`,
+				} as CSSProperties
+			}
 			onPointerDown={(event) => {
 				origin.current = read(event);
 				event.currentTarget.setPointerCapture(event.pointerId);

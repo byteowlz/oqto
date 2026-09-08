@@ -212,6 +212,7 @@ const COMPOSITOR_KERNEL_PREFIX = "compositor/kernel/";
 const COMPOSITOR_SEAM_FILES = new Set([
 	"compositor/index.ts",
 	"compositor/navigation.ts",
+	"compositor/queries.ts",
 ]);
 const COMPOSITOR_SERIALIZATION_PATTERN =
 	/^compositor\/kernel\/persistence(\/|\.)/;

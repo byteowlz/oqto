@@ -30,6 +30,7 @@ import {
 	contentIdFrom,
 	projectLayout,
 } from "../index";
+import { type BoundarySegment, resizeBoundaries } from "../queries";
 import { CommandPalette } from "./CommandPalette";
 import { Cell, EDGE_ZONES, Gutter, type ResizeAxisName } from "./chrome";
 import type {
@@ -248,32 +249,37 @@ export function CompositorHost({
 			);
 		},
 	);
+	// A handle exists only where two resizable Containers actually meet, and
+	// only across the tracks where they do: never beside a full-height
+	// sidebar, never along the status Lane.
+	const inBody = (row: number) =>
+		row >= rowOffset && (flushBottom === null || row < flushBottom);
+	const gutter = (axis: ResizeAxisName, segment: BoundarySegment) => {
+		const crossOffset = axis === "inline" ? rowOffset : 0;
+		return (
+			<Gutter
+				key={`${axis}-${segment.index}-${segment.start}`}
+				axis={axis}
+				index={segment.index}
+				span={{
+					start: segment.start - crossOffset,
+					end: segment.end - crossOffset,
+				}}
+				label={axis === "inline" ? labels.resizeColumns : labels.resizeRows}
+				onPreview={onPreview}
+				onResize={onResize}
+			/>
+		);
+	};
 	const gutters =
 		projected.merges.length > 0 ? null : (
 			<>
-				{arrangement.grid.columns.slice(0, -1).map((column, index) => (
-					<Gutter
-						key={column.id}
-						axis="inline"
-						index={index}
-						label={labels.resizeColumns}
-						onPreview={onPreview}
-						onResize={onResize}
-					/>
-				))}
-				{rows
-					.slice(rowOffset, flushBottom ?? rows.length)
-					.slice(0, -1)
-					.map((row, index) => (
-						<Gutter
-							key={row.id}
-							axis="block"
-							index={index}
-							label={labels.resizeRows}
-							onPreview={onPreview}
-							onResize={onResize}
-						/>
-					))}
+				{resizeBoundaries(arrangement, projected.snapshot.containers, "inline")
+					.filter((segment) => inBody(segment.start))
+					.map((segment) => gutter("inline", segment))}
+				{resizeBoundaries(arrangement, projected.snapshot.containers, "block")
+					.filter((segment) => inBody(segment.index))
+					.map((segment) => gutter("block", segment))}
 			</>
 		);
 	return (

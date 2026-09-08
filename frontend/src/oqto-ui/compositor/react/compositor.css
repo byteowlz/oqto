@@ -109,7 +109,7 @@
 }
 
 .oqto-compositor-gutter[data-axis="inline"] {
-	grid-row: 1 / -1;
+	grid-row: var(--oqto-gutter-from) / var(--oqto-gutter-to);
 	grid-column: var(--oqto-gutter-line);
 	justify-self: start;
 	inline-size: 7px;
@@ -118,7 +118,7 @@
 }
 
 .oqto-compositor-gutter[data-axis="block"] {
-	grid-column: 1 / -1;
+	grid-column: var(--oqto-gutter-from) / var(--oqto-gutter-to);
 	grid-row: var(--oqto-gutter-line);
 	align-self: start;
 	block-size: 7px;
