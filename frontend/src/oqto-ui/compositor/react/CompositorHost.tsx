@@ -9,6 +9,7 @@
  * transaction without committing it (ADR-0041 preview).
  */
 
+import { PanelLeftOpen } from "lucide-react";
 import {
 	type CSSProperties,
 	type DragEvent,
@@ -303,6 +304,7 @@ export function CompositorHost({
 					type="button"
 					className="oqto-compositor-expand"
 					aria-label={labels.expandStart}
+					title={labels.expandStart}
 					onClick={() =>
 						commit([
 							{
@@ -312,7 +314,9 @@ export function CompositorHost({
 							},
 						])
 					}
-				/>
+				>
+					<PanelLeftOpen aria-hidden="true" />
+				</button>
 			) : null}
 			{lane(flushTop)}
 			<div

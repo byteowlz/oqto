@@ -270,6 +270,42 @@ describe("OG shell parity chrome", () => {
 });
 
 describe("collapse controls", () => {
+	it("closes the mobile drawer without collapsing the desktop Container", async () => {
+		setViewportWidth(600);
+		const view = renderShell(memoryLayoutStorage());
+		await screen.findByRole("main", { name: "Session conversation" });
+		const shell = view.container.querySelector(".wb-shell") as HTMLElement;
+		fireEvent.click(
+			screen.getByRole("button", { name: "Switch workspace or session" }),
+		);
+		expect(shell).toHaveAttribute("data-sessions-open", "true");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Collapse navigation" }),
+		);
+		expect(shell).toHaveAttribute("data-sessions-open", "false");
+		// The drawer is view state: the sidebar must still be there on desktop.
+		act(() => setViewportWidth(1600));
+		expect(
+			view.container.querySelector('[data-role="navigation"]'),
+		).not.toHaveAttribute("hidden");
+		expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
+	});
+
+	it("gives the collapsed sidebar a visible way back", async () => {
+		setViewportWidth(1600);
+		const view = renderShell(memoryLayoutStorage());
+		await screen.findByRole("main", { name: "Session conversation" });
+		fireEvent.click(
+			screen.getByRole("button", { name: "Collapse navigation" }),
+		);
+		const rail = screen.getByRole("button", { name: "Expand sidebar" });
+		expect(rail).toHaveAttribute("title", "Expand sidebar");
+		expect(rail.querySelector("svg")).not.toBeNull();
+		expect(
+			view.container.querySelector('[data-role="navigation"]'),
+		).toHaveAttribute("hidden");
+	});
+
 	it("collapses the sidebar from its button, re-expands from the edge strip, and toggles the right Container", async () => {
 		setViewportWidth(1600);
 		const view = renderShell(memoryLayoutStorage());

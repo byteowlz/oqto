@@ -1712,13 +1712,19 @@
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1023px) {
+	/*
+	 * The mobile navigation is a full-screen drawer, not a side panel: the
+	 * base rail sizing is fixed at 260px, so every one of those three width
+	 * declarations has to be released here for the drawer to fill the screen.
+	 */
 	.wb-sidebar {
 		position: fixed;
 		z-index: 20;
-		top: 0;
-		bottom: 0;
-		left: 0;
-		width: min(300px, 86vw);
+		inset: 0;
+		flex: 1 1 auto;
+		width: 100%;
+		min-width: 0;
+		max-width: none;
 		visibility: hidden;
 	}
 

@@ -260,18 +260,33 @@
 	color: var(--muted-foreground);
 }
 
+/*
+ * The collapsed edge Container's only way back. A bare strip reads as part of
+ * the frame, so the rail carries a visible control.
+ */
 .oqto-compositor-expand {
 	position: absolute;
 	z-index: 2;
 	inset-block: 0;
 	inset-inline-start: 0;
-	inline-size: 12px;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding-block-start: 12px;
+	inline-size: 28px;
 	border: 0;
 	border-inline-end: 1px solid var(--border);
 	background: var(--sidebar, var(--card));
+	color: var(--muted-foreground);
 	cursor: pointer;
+}
+
+.oqto-compositor-expand svg {
+	inline-size: 16px;
+	block-size: 16px;
 }
 
 .oqto-compositor-expand:hover {
 	background: var(--muted);
+	color: var(--foreground);
 }

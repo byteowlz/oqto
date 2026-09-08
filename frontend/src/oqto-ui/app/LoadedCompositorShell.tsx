@@ -158,10 +158,19 @@ export function LoadedCompositorShell({
 			]);
 		};
 		return {
-			collapseNavigation: () => toggleRole("navigation", true),
+			collapseNavigation: () => {
+				// On mobile the navigation is a drawer, so dismissing it is drawer
+				// state. Committing a layout collapse there would follow the user
+				// back to the desktop and hide the sidebar behind its expand rail.
+				if (mobile) {
+					setSessionsOpen(false);
+					return;
+				}
+				toggleRole("navigation", true);
+			},
 			toggleAuxiliary: () => toggleRole("auxiliary"),
 		};
-	}, [store]);
+	}, [store, mobile]);
 	const settings = useMemo(
 		() => ({
 			open: settingsOpen,
