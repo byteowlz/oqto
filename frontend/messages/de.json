@@ -863,6 +863,10 @@
 			}
 		},
 		"files": {
+			"copyToName": "{{name}}",
+			"copyTo": "Kopieren nach…",
+			"copiedTo_one": "{{count}} Datei nach {{name}} kopiert",
+			"copiedTo_other": "{{count}} Dateien nach {{name}} kopiert",
 			"paste": "Einfügen",
 			"newFolder": "Neuer Ordner",
 			"menu": "Dateiaktionen",

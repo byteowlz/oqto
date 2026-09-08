@@ -12,6 +12,7 @@ import {
 } from "../platform/actions-contract";
 import type { FileHost } from "../platform/files-contract";
 import { FilesPane } from "./FilesPane";
+import type { CopyDestination } from "./menu";
 import { useFilesStore } from "./useFilesStore";
 
 interface WorkDirectoryFilesProps {
@@ -27,6 +28,8 @@ interface WorkDirectoryFilesProps {
 	 * one the menu still opens, offering only the pane's own commands.
 	 */
 	readonly actionHost?: ActionHost;
+	/** Other work directories the selection can be copied into. */
+	readonly destinations?: readonly CopyDestination[];
 }
 
 export function WorkDirectoryFiles({
@@ -35,6 +38,7 @@ export function WorkDirectoryFiles({
 	onOpenFile,
 	chrome,
 	actionHost,
+	destinations = [],
 }: WorkDirectoryFilesProps) {
 	const store = useFilesStore(fileHost, workspacePath);
 	const [offered] = useState(() => actionHost ?? createEmptyActionHost());
@@ -43,6 +47,7 @@ export function WorkDirectoryFiles({
 			store={store}
 			chrome={chrome}
 			actionHost={offered}
+			destinations={destinations}
 			onOpenFile={onOpenFile ? (entry) => onOpenFile(entry.path) : undefined}
 		/>
 	);

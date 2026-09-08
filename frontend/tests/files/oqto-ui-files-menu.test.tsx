@@ -137,6 +137,35 @@ describe("resource menu model", () => {
 		expect(commands).toContain("paste");
 	});
 
+	it("offers a copy into each other work directory, on an entry only", () => {
+		const destinations = [
+			{ path: "/work/other", name: "other" },
+			{ path: "/work/third", name: "third" },
+		];
+		// One opener, not one item per work directory.
+		const onEntry = fileMenu(state(), "notes.md", [], destinations);
+		const copyTo = onEntry.find((group) => group.id === "copyTo");
+		expect(copyTo?.items).toHaveLength(1);
+		expect(copyTo?.items[0].destination).toBeUndefined();
+		const picking = fileMenu(
+			state(),
+			"notes.md",
+			[],
+			destinations,
+			"destinations",
+		);
+		expect(picking[0].items.map((item) => item.destination?.name)).toEqual([
+			"other",
+			"third",
+		]);
+		// Empty space has nothing selected to copy.
+		expect(
+			fileMenu(state(), null, [], destinations).some(
+				(group) => group.id === "copyTo",
+			),
+		).toBe(false);
+	});
+
 	it("keeps contributed Actions in their own group, after the host's", () => {
 		const groups = fileMenu(state(), "notes.md", [
 			{ id: "canvas.image.annotate", title: "Annotate in Canvas" },
@@ -241,6 +270,31 @@ describe("resource menu surface", () => {
 		expect(screen.getByRole("menu")).toBeInTheDocument();
 		fireEvent.keyDown(body, { key: "Escape" });
 		expect(screen.queryByRole("menu")).toBeNull();
+	});
+
+	it("copies the selection into another work directory and reports it", async () => {
+		const copyToWorkspace = vi.fn(async () => 3);
+		render(
+			<WorkDirectoryFiles
+				fileHost={{ ...fileHost(), copyToWorkspace }}
+				workspacePath="/work"
+				destinations={[{ path: "/work/other", name: "other" }]}
+			/>,
+		);
+		fireEvent.contextMenu(await screen.findByText("notes.md"));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Copy to…" }));
+		fireEvent.click(await screen.findByRole("menuitem", { name: "other" }));
+		await waitFor(() =>
+			expect(copyToWorkspace).toHaveBeenCalledWith(
+				"/work",
+				"notes.md",
+				"/work/other",
+				"notes.md",
+			),
+		);
+		expect(
+			await screen.findByText("Copied 3 files to other"),
+		).toBeInTheDocument();
 	});
 
 	it("runs a host command through the pane's own engine", async () => {

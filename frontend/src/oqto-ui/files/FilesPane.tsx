@@ -29,6 +29,7 @@ import { type ColumnRendering, MillerColumns } from "./MillerColumns";
 import { yank } from "./clipboard";
 import { paneFidelity, showsColumns, showsFacts } from "./fidelity";
 import { formatModified, formatSize } from "./format";
+import type { CopyDestination } from "./menu";
 
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
 import { moveCursor, placeCursor, select, visibleEntries } from "./navigator";
@@ -36,7 +37,7 @@ import type { FilesStore } from "./store";
 import { toggleExpanded, treeRows } from "./tree";
 import { useElementSize } from "./useElementSize";
 import { useFileActions } from "./useFileActions";
-import { useFilesMenu } from "./useFilesMenu";
+import { useFilesMenu, useMenuFocus } from "./useFilesMenu";
 import { useFilesState } from "./useFilesStore";
 import { useMenuCommands } from "./useMenuCommands";
 import { usePreview } from "./usePreview";
@@ -51,6 +52,8 @@ interface FilesPaneProps {
 	readonly chrome?: ReactNode;
 	/** Projects eligible Actions into the resource menu (ADR-0045). */
 	readonly actionHost: ActionHost;
+	/** Other work directories the selection can be copied into. */
+	readonly destinations: readonly CopyDestination[];
 }
 
 export function FilesPane({
@@ -58,6 +61,7 @@ export function FilesPane({
 	onOpenFile,
 	chrome,
 	actionHost,
+	destinations,
 }: FilesPaneProps) {
 	const { t, i18n } = useTranslation();
 	const state = useFilesState(store);
@@ -171,12 +175,7 @@ export function FilesPane({
 
 	const menu = useFilesMenu(actionHost);
 	const commands = useMenuCommands({ store, actions, menu, open });
-	const body = useRef<HTMLDivElement | null>(null);
-	/** Dismissing a menu returns focus to the listing it was opened from. */
-	const closeMenu = () => {
-		menu.close();
-		body.current?.focus();
-	};
+	const focus = useMenuFocus(menu);
 
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
 		const key = event.key;
@@ -213,7 +212,7 @@ export function FilesPane({
 		else if (key === "u") actions.undo();
 		else if (key === "y") store.update((current) => yank(current, "copy"));
 		else if (key === "x") store.update((current) => yank(current, "move"));
-		else if (key === "p") actions.paste();
+		else if (key === "p") actions.transfer.paste();
 		else if (key === "m" || key === "ContextMenu")
 			commands.openAtCursor(event.currentTarget);
 		else if (key === "Escape") {
@@ -247,13 +246,14 @@ export function FilesPane({
 			<FilesMenuSurface
 				menu={menu}
 				state={state}
+				destinations={destinations}
 				onRun={commands.run}
-				onClose={closeMenu}
+				onClose={focus.close}
 			/>
 
 			<div
 				className="wb-files-body"
-				ref={body}
+				ref={focus.ref}
 				data-fidelity={fidelity}
 				// biome-ignore lint/a11y/noNoninteractiveTabindex: the listing is keyboard-navigated.
 				tabIndex={0}

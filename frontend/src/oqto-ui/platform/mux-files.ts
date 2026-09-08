@@ -20,6 +20,7 @@ interface FilesEvent {
 	}[];
 	readonly path?: string;
 	readonly content?: string;
+	readonly files_copied?: number;
 	readonly success?: boolean;
 	readonly event_type?: string;
 	readonly entry_type?: string;
@@ -70,6 +71,15 @@ interface PathCommand {
 	readonly workspace_path?: string;
 }
 
+interface CrossWorkspaceCommand {
+	readonly type: string;
+	readonly id?: string;
+	readonly source_workspace_path: string;
+	readonly source_path: string;
+	readonly target_workspace_path: string;
+	readonly target_path: string;
+}
+
 interface MoveCommand {
 	readonly type: string;
 	readonly id?: string;
@@ -78,7 +88,7 @@ interface MoveCommand {
 	readonly workspace_path?: string;
 }
 
-type FilesCommand = PathCommand | MoveCommand;
+type FilesCommand = PathCommand | MoveCommand | CrossWorkspaceCommand;
 
 /** The subset of WebSocket the adapter uses; a fake socket satisfies it. */
 export interface MuxSocket {
@@ -91,7 +101,7 @@ export interface MuxSocket {
 
 export type SocketFactory = () => MuxSocket;
 
-type PendingValue = readonly FileEntry[] | string | undefined;
+type PendingValue = readonly FileEntry[] | string | number | undefined;
 
 interface Pending {
 	readonly resolve: (value: PendingValue) => void;
@@ -185,6 +195,8 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileHost {
 				waiting.resolve(
 					(message.entries ?? []).map((raw) => toEntry(directory, raw)),
 				);
+			} else if (message.type === "copy_to_workspace_result") {
+				waiting.resolve(message.files_copied ?? 0);
 			} else if (message.type === "read_result") {
 				waiting.resolve(decodeContent(message.content ?? ""));
 			} else if (message.success === false) {
@@ -259,6 +271,20 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileHost {
 				path,
 				create_parents: true,
 				workspace_path: workspacePath,
+			});
+		},
+		copyToWorkspace(
+			sourceWorkspacePath,
+			sourcePath,
+			targetWorkspacePath,
+			targetPath,
+		) {
+			return request<number>("copy_to_workspace_result", {
+				type: "copy_to_workspace",
+				source_workspace_path: sourceWorkspacePath,
+				source_path: sourcePath,
+				target_workspace_path: targetWorkspacePath,
+				target_path: targetPath,
 			});
 		},
 		copy(workspacePath, from, to) {

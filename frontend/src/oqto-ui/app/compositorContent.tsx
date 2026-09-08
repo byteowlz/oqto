@@ -152,6 +152,12 @@ export function createContentRenderer(
 					workspacePath={context.directory.path}
 					chrome={presentation.chrome}
 					actionHost={platform.actions}
+					destinations={snapshot.workDirectories
+						.filter((candidate) => candidate.path !== context.directory.path)
+						.map((candidate) => ({
+							path: candidate.path,
+							name: candidate.name,
+						}))}
 					onOpenFile={chrome.openFile}
 				/>
 			);

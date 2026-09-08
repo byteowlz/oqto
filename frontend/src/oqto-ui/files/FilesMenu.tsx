@@ -7,17 +7,24 @@
 
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { type FileCommand, type MenuGroup, fileMenu } from "./menu";
+import {
+	type CopyDestination,
+	type MenuGroup,
+	type MenuItem,
+	fileMenu,
+} from "./menu";
 import type { FilesState } from "./navigator";
 import type { FilesMenuState } from "./useFilesMenu";
+
+/** Running one menu item: it carries whatever it references. */
+export type MenuRun = (item: MenuItem) => void;
 
 interface SurfaceProps {
 	readonly menu: FilesMenuState;
 	readonly state: FilesState;
-	readonly onRun: (
-		command: FileCommand | null,
-		actionId: string | null,
-	) => void;
+	/** Other work directories the selection can be copied into. */
+	readonly destinations: readonly CopyDestination[];
+	readonly onRun: MenuRun;
 	readonly onClose: () => void;
 }
 
@@ -25,6 +32,7 @@ interface SurfaceProps {
 export function FilesMenuSurface({
 	menu,
 	state,
+	destinations,
 	onRun,
 	onClose,
 }: SurfaceProps) {
@@ -32,7 +40,13 @@ export function FilesMenuSurface({
 	if (!anchor) return null;
 	return (
 		<FilesMenu
-			groups={fileMenu(state, anchor.targetPath, anchor.offers)}
+			groups={fileMenu(
+				state,
+				anchor.targetPath,
+				anchor.offers,
+				destinations,
+				anchor.mode,
+			)}
 			at={anchor}
 			onRun={onRun}
 			onClose={onClose}
@@ -43,10 +57,7 @@ export function FilesMenuSurface({
 interface FilesMenuProps {
 	readonly groups: readonly MenuGroup[];
 	readonly at: { readonly x: number; readonly y: number };
-	readonly onRun: (
-		command: FileCommand | null,
-		actionId: string | null,
-	) => void;
+	readonly onRun: MenuRun;
 	readonly onClose: () => void;
 }
 
@@ -83,13 +94,17 @@ function FilesMenu({ groups, at, onRun, onClose }: FilesMenuProps) {
 					<div className="wb-files-menu__group" key={group.id}>
 						{group.items.map((item) => (
 							<button
-								key={item.actionId ?? item.command ?? item.labelKey}
+								key={
+									item.actionId ?? item.destination?.path ?? item.command ?? ""
+								}
 								type="button"
 								role="menuitem"
 								data-danger={item.danger || undefined}
-								onClick={() => onRun(item.command, item.actionId)}
+								onClick={() => onRun(item)}
 							>
-								{item.labelKey ? t(item.labelKey) : item.title}
+								{item.labelKey
+									? t(item.labelKey, { name: item.destination?.name ?? "" })
+									: item.title}
 							</button>
 						))}
 					</div>

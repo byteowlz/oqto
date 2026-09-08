@@ -10,6 +10,7 @@ import type {
 	ActionOffer,
 	ResourceSubject,
 } from "../platform/actions-contract";
+import type { MenuMode } from "./menu";
 
 /** Viewport point the menu opens at. */
 export interface MenuPoint {
@@ -18,6 +19,7 @@ export interface MenuPoint {
 }
 
 export interface MenuAnchor extends MenuPoint {
+	readonly mode: MenuMode;
 	/** Entry the menu was opened on; null for the directory itself. */
 	readonly targetPath: string | null;
 	readonly subjects: readonly ResourceSubject[];
@@ -32,6 +34,8 @@ export interface FilesMenuState {
 		subjects: readonly ResourceSubject[],
 	): void;
 	close(): void;
+	/** Switches the open menu to picking a copy destination. */
+	showDestinations(): void;
 	/** Runs a contributed Action on the subjects the menu was opened for. */
 	run(actionId: string): void;
 }
@@ -48,7 +52,7 @@ export function useFilesMenu(actionHost: ActionHost): FilesMenuState {
 		) => {
 			opened.current += 1;
 			const generation = opened.current;
-			setAnchor({ ...at, targetPath, subjects, offers: [] });
+			setAnchor({ ...at, mode: "commands", targetPath, subjects, offers: [] });
 			actionHost.offers("resource-menu", subjects).then(
 				(offers) => {
 					// A menu opened since this request must not be overwritten.
@@ -68,6 +72,12 @@ export function useFilesMenu(actionHost: ActionHost): FilesMenuState {
 		setAnchor(null);
 	}, []);
 
+	const showDestinations = useCallback(() => {
+		setAnchor((current) =>
+			current === null ? current : { ...current, mode: "destinations" },
+		);
+	}, []);
+
 	const run = useCallback(
 		(actionId: string) => {
 			const subjects = anchor?.subjects ?? [];
@@ -77,5 +87,20 @@ export function useFilesMenu(actionHost: ActionHost): FilesMenuState {
 		[actionHost, anchor, close],
 	);
 
-	return { anchor, open, close, run };
+	return { anchor, open, close, showDestinations, run };
+}
+
+/**
+ * Keeps the listing's focus across a menu: the element the menu was opened
+ * from takes focus back when it closes, so the keyboard never lands nowhere.
+ */
+export function useMenuFocus(menu: FilesMenuState) {
+	const ref = useRef<HTMLDivElement | null>(null);
+	return {
+		ref,
+		close: () => {
+			menu.close();
+			ref.current?.focus();
+		},
+	};
 }

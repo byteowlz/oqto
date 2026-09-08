@@ -3476,11 +3476,18 @@
 	inset-inline-start: min(var(--wb-menu-x), calc(100dvw - 17rem));
 	min-inline-size: 180px;
 	max-inline-size: 260px;
+	/* A long destination list scrolls rather than running off the screen. */
+	max-block-size: 15rem;
+	overflow-y: auto;
 	padding: 4px;
 	border: 1px solid var(--border);
 	/* Card and popover are the same token in several schemes, and shadows can
 	   be off; the surface lifts itself so the menu never blends into the pane. */
-	background: color-mix(in srgb, var(--popover, var(--card)) 88%, var(--foreground));
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
 	box-shadow: var(--shadow-md, none);
 	font-family: var(--font-mono);
 	font-size: 12px;

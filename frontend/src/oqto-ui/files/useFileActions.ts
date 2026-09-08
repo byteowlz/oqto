@@ -4,13 +4,15 @@
  * explicit modes so the pane never guesses what Enter means.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { actionTargets, clearClipboard } from "./clipboard";
+import type { CopyDestination } from "./menu";
 import { cursorEntry } from "./navigation";
 import { setFilter } from "./navigator";
 import {
 	type OperationMessage,
 	type OperationResult,
+	copyToWorkspace,
 	createFolder,
 	pasteEntries,
 	removeEntries,
@@ -34,8 +36,12 @@ export interface FileActions extends ActionState {
 	submit(): void;
 	cancel(): void;
 	undo(): void;
-	/** Pastes the clipboard into the current directory. */
-	paste(): void;
+	/** Moving entries: into this directory, or into another work directory. */
+	readonly transfer: {
+		/** Pastes the clipboard into the current directory. */
+		paste(): void;
+		copyTo(destination: CopyDestination): void;
+	};
 }
 
 const IDLE: ActionState = {
@@ -167,5 +173,20 @@ export function useFileActions(store: FilesStore): FileActions {
 		);
 	}, [store, settle]);
 
-	return { ...state, begin, change, submit, cancel, undo, paste };
+	const copyTo = useCallback(
+		(destination: CopyDestination) => {
+			const snapshot = store.getSnapshot();
+			const targets = actionTargets(snapshot);
+			if (targets.length === 0) return;
+			settle(
+				copyToWorkspace(store.context, targets, destination),
+				snapshot.cwd,
+			);
+		},
+		[store, settle],
+	);
+
+	const transfer = useMemo(() => ({ paste, copyTo }), [paste, copyTo]);
+
+	return { ...state, begin, change, submit, cancel, undo, transfer };
 }

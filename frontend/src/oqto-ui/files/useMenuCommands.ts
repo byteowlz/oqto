@@ -7,7 +7,7 @@
 import type { MouseEvent } from "react";
 import { yank } from "./clipboard";
 import type { FileEntry } from "./entries";
-import type { FileCommand } from "./menu";
+import type { MenuItem } from "./menu";
 import { menuSubjects } from "./menu";
 import { cursorEntry } from "./navigation";
 import { placeCursor } from "./navigator";
@@ -27,7 +27,7 @@ export interface MenuCommands {
 	openMenu(event: MouseEvent<HTMLElement>, targetPath: string | null): void;
 	/** Opens the menu from the keyboard, anchored to the cursor's own row. */
 	openAtCursor(surface: HTMLElement): void;
-	run(command: FileCommand | null, actionId: string | null): void;
+	run(item: MenuItem): void;
 }
 
 export function useMenuCommands(input: MenuCommandsInput): MenuCommands {
@@ -64,12 +64,21 @@ export function useMenuCommands(input: MenuCommandsInput): MenuCommands {
 				menuSubjects(state, store.context.workspacePath, target),
 			);
 		},
-		run(command, actionId) {
-			if (actionId !== null) {
-				menu.run(actionId);
+		run(item) {
+			if (item.actionId !== null) {
+				menu.run(item.actionId);
+				return;
+			}
+			const command = item.command;
+			if (command === "copyTo" && !item.destination) {
+				menu.showDestinations();
 				return;
 			}
 			menu.close();
+			if (command === "copyTo" && item.destination) {
+				actions.transfer.copyTo(item.destination);
+				return;
+			}
 			if (command === "open") {
 				const target = cursorEntry(store.getSnapshot());
 				if (target) open(target);
@@ -80,7 +89,7 @@ export function useMenuCommands(input: MenuCommandsInput): MenuCommands {
 				store.update((current) => yank(current, "copy"));
 			else if (command === "cut")
 				store.update((current) => yank(current, "move"));
-			else if (command === "paste") actions.paste();
+			else if (command === "paste") actions.transfer.paste();
 		},
 	};
 }

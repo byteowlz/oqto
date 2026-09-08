@@ -14,5 +14,16 @@ export interface FileOperations {
 		recursive: boolean,
 	): Promise<void>;
 	copy(workspacePath: string, from: string, to: string): Promise<void>;
+	/**
+	 * Copies into another work directory, recursively, overwriting what is
+	 * already there. Resolves with the number of files copied. Both work
+	 * directories must be the caller's own.
+	 */
+	copyToWorkspace(
+		sourceWorkspacePath: string,
+		sourcePath: string,
+		targetWorkspacePath: string,
+		targetPath: string,
+	): Promise<number>;
 	move(workspacePath: string, from: string, to: string): Promise<void>;
 }

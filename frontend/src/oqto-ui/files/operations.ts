@@ -7,6 +7,7 @@
 
 import type { FileHost } from "../platform/files-contract";
 import { childPath, parentPath } from "./entries";
+import type { CopyDestination } from "./menu";
 
 /** What the status line says: a message key plus its interpolations. */
 export interface OperationMessage {
@@ -49,6 +50,31 @@ export async function createFolder(
 	return {
 		message: { key: "created", name },
 		undo: () => context.fileHost.remove(context.workspacePath, target, true),
+	};
+}
+
+/**
+ * Copies entries into another work directory's root, keeping their names.
+ * The host overwrites what is already there, so this is not reversible and
+ * says so rather than offering an undo that could delete someone's file.
+ */
+export async function copyToWorkspace(
+	context: OperationContext,
+	paths: readonly string[],
+	destination: CopyDestination,
+): Promise<OperationResult> {
+	let copied = 0;
+	for (const path of paths) {
+		copied += await context.fileHost.copyToWorkspace(
+			context.workspacePath,
+			path,
+			destination.path,
+			path.split("/").pop() ?? path,
+		);
+	}
+	return {
+		message: { key: "copiedTo", name: destination.name, count: copied },
+		undo: null,
 	};
 }
 

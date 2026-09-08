@@ -19,12 +19,21 @@ export type FileCommand =
 	| "copy"
 	| "cut"
 	| "paste"
+	| "copyTo"
 	| "delete";
+
+/** Another work directory the selection can be copied into. */
+export interface CopyDestination {
+	readonly path: string;
+	readonly name: string;
+}
 
 export interface MenuItem {
 	/** A host command, or an Action id the Broker will run. */
 	readonly command: FileCommand | null;
 	readonly actionId: string | null;
+	/** Where a "copy to" item copies; null for every other item. */
+	readonly destination?: CopyDestination;
 	/** i18n key for a host command; contributed Actions carry their own title. */
 	readonly labelKey: string | null;
 	readonly title: string | null;
@@ -32,7 +41,13 @@ export interface MenuItem {
 }
 
 export interface MenuGroup {
-	readonly id: "open" | "edit" | "clipboard" | "danger" | "contributed";
+	readonly id:
+		| "open"
+		| "edit"
+		| "clipboard"
+		| "copyTo"
+		| "danger"
+		| "contributed";
 	readonly items: readonly MenuItem[];
 }
 
@@ -90,11 +105,30 @@ export function menuSubjects(
  * and clearly their own group. Empty space offers only what applies to the
  * directory.
  */
+/** A menu shows its commands, or the work directories a copy can go to. */
+export type MenuMode = "commands" | "destinations";
+
 export function fileMenu(
 	state: FilesState,
 	targetPath: string | null,
 	offers: readonly ActionOffer[],
+	destinations: readonly CopyDestination[] = [],
+	mode: MenuMode = "commands",
 ): readonly MenuGroup[] {
+	if (mode === "destinations") {
+		return [
+			{
+				id: "copyTo",
+				items: destinations.map((destination) => ({
+					command: "copyTo" as const,
+					actionId: null,
+					labelKey: "oqtoUi.files.copyToName",
+					title: null,
+					destination,
+				})),
+			},
+		];
+	}
 	const groups: MenuGroup[] = [];
 	if (targetPath !== null) {
 		groups.push({ id: "open", items: [host("open", "oqtoUi.files.open")] });
@@ -112,6 +146,14 @@ export function fileMenu(
 		clipboard.push(host("paste", "oqtoUi.files.paste"));
 	clipboard.push(host("createFolder", "oqtoUi.files.newFolder"));
 	groups.push({ id: "clipboard", items: clipboard });
+	if (targetPath !== null && destinations.length > 0) {
+		// One opener: a workspace can have dozens of work directories, and a
+		// menu that lists them all is no longer a menu.
+		groups.push({
+			id: "copyTo",
+			items: [host("copyTo", "oqtoUi.files.copyTo")],
+		});
+	}
 	if (offers.length > 0) {
 		groups.push({
 			id: "contributed",

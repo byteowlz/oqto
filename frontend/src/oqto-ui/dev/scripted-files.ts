@@ -56,6 +56,9 @@ export function createScriptedFileHost(): FileHost {
 		async write(_workspacePath, path, text) {
 			written.set(path, text);
 		},
+		async copyToWorkspace() {
+			return 1;
+		},
 		async rename() {},
 		async createDirectory() {},
 		async remove() {},
