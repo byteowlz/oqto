@@ -652,6 +652,12 @@
 	"oqtoUi": {
 		"compositor": {
 			"expandStart": "Seitenleiste ausklappen",
+			"add": {
+				"inlineStart": "Container links hinzufügen",
+				"inlineEnd": "Container rechts hinzufügen",
+				"blockStart": "Container oberhalb hinzufügen",
+				"blockEnd": "Container unterhalb hinzufügen"
+			},
 			"palette": {
 				"title": "Befehlspalette",
 				"search": "Befehle suchen",

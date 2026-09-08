@@ -17,6 +17,14 @@ const CHROME_ROLES = new Set(["status"]);
 export type BoundaryAxis = "inline" | "block";
 
 /**
+ * True for a Container the Preset places as frame chrome. Chrome is never
+ * resized against its neighbours and never gains Containers beside it.
+ */
+export function isFrameChrome(container: Container): boolean {
+	return CHROME_ROLES.has(container.role ?? "");
+}
+
+/**
  * One draggable run of a track boundary. `index` is the track before the
  * boundary on its own axis; `start`/`end` are inclusive track indices on the
  * cross axis.
@@ -59,7 +67,7 @@ function resizable(
 	const container = containers.find(
 		(candidate) => candidate.id === containerId,
 	);
-	return container !== undefined && !CHROME_ROLES.has(container.role ?? "");
+	return container !== undefined && !isFrameChrome(container);
 }
 
 /**

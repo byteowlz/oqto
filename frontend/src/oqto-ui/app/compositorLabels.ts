@@ -47,6 +47,14 @@ export function createChromeLabels(t: TFunction): CompositorChromeLabels {
 		dropStart: t("oqtoUi.compositor.dropStart"),
 		dropEnd: t("oqtoUi.compositor.dropEnd"),
 		expandStart: t("oqtoUi.compositor.expandStart"),
+		add: {
+			edges: {
+				"inline-start": t("oqtoUi.compositor.add.inlineStart"),
+				"inline-end": t("oqtoUi.compositor.add.inlineEnd"),
+				"block-start": t("oqtoUi.compositor.add.blockStart"),
+				"block-end": t("oqtoUi.compositor.add.blockEnd"),
+			},
+		},
 		palette: {
 			title: t("oqtoUi.compositor.palette.title"),
 			searchPlaceholder: t("oqtoUi.compositor.palette.search"),

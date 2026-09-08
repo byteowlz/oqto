@@ -655,6 +655,12 @@
 	"oqtoUi": {
 		"compositor": {
 			"expandStart": "Expand sidebar",
+			"add": {
+				"inlineStart": "Add a container to the left",
+				"inlineEnd": "Add a container to the right",
+				"blockStart": "Add a container above",
+				"blockEnd": "Add a container below"
+			},
 			"palette": {
 				"title": "Command palette",
 				"search": "Search commands",

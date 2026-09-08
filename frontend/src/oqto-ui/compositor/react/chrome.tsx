@@ -12,11 +12,7 @@ import type {
 	SplitEdge,
 } from "../index";
 import { ContainerView } from "./ContainerView";
-import type {
-	CompositorChromeLabels,
-	ContentLabel,
-	RenderContent,
-} from "./contracts";
+import type { CompositorChromeLabels, ContentServices } from "./contracts";
 import { gridLines } from "./grid-template";
 
 export interface CellGridContext {
@@ -30,8 +26,7 @@ export interface CellProps {
 	readonly placement: GridPlacement;
 	readonly grid: CellGridContext;
 	readonly focusedContentId: Container["activeContentId"];
-	readonly renderContent: RenderContent;
-	readonly contentLabel: ContentLabel;
+	readonly content: ContentServices;
 	readonly labels: CompositorChromeLabels;
 	readonly commit: (commands: readonly LayoutCommand[]) => void;
 }

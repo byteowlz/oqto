@@ -8,6 +8,7 @@ import type {
 	Arrangement,
 	ContainerId,
 	ContentId,
+	ContentRef,
 	LayoutCommand,
 	SolvedLayout,
 	SplitEdge,
@@ -63,6 +64,22 @@ export function edgeDropCommands(
 	edge: SplitEdge,
 ): LayoutCommand[] {
 	return [{ type: "split", contentId, edge }];
+}
+
+/**
+ * Adding Content beside a Container: place it there, then split it out to
+ * the chosen edge, so a new Container appears in that direction whether or
+ * not the Content was already placed somewhere else.
+ */
+export function addCommands(
+	content: ContentRef,
+	containerId: ContainerId,
+	edge: SplitEdge,
+): LayoutCommand[] {
+	return [
+		{ type: "open", content, target: { containerId } },
+		{ type: "split", contentId: content.id, relativeTo: containerId, edge },
+	];
 }
 
 function containerInTrack(

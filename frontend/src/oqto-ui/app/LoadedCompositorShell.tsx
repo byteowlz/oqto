@@ -214,6 +214,17 @@ export function LoadedCompositorShell({
 			chrome,
 		],
 	);
+	// What the add control offers: the Session's Chat, this work directory's
+	// Files, the sessions catalog, and interface settings.
+	const addable = useMemo(
+		() => [
+			chatContent(context.session.id),
+			filesContent(context.directory.id),
+			SESSIONS_CONTENT,
+			SETTINGS_CONTENT,
+		],
+		[context.session.id, context.directory.id],
+	);
 	const contentLabel = useMemo(
 		() => createContentLabel(snapshot, t),
 		[snapshot, t],
@@ -277,6 +288,7 @@ export function LoadedCompositorShell({
 							renderContent={renderContent}
 							contentLabel={contentLabel}
 							labels={labels}
+							addable={addable}
 							keyBindings={keyBindings}
 						/>
 					)}

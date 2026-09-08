@@ -19,7 +19,7 @@ import {
 
 const DESKTOP = { ...VIEWPORT, responsive: "scroll" as const };
 
-function probeSetup(viewport = DESKTOP) {
+function probeSetup(viewport = DESKTOP, addable: readonly ContentRef[] = []) {
 	const store = createCompositorStore(classicLayout());
 	const renderCounts = new Map<string, number>();
 	const renderContent = (
@@ -44,10 +44,61 @@ function probeSetup(viewport = DESKTOP) {
 			renderContent={renderContent}
 			contentLabel={contentLabel}
 			labels={LABELS}
+			addable={addable}
 		/>,
 	);
 	return { store, renderCounts, view };
 }
+
+describe("adding a Container", () => {
+	it("places the chosen Content beside the Container the control belongs to", () => {
+		const { store, view } = probeSetup(DESKTOP, [terminalContent]);
+		const primary = containerByRole(store.getSnapshot(), "primary");
+		const container = view.container.querySelector(
+			`[data-container-id="${primary.id}"]`,
+		) as HTMLElement;
+		const controls = container.querySelectorAll(
+			":scope > .oqto-compositor-add > .oqto-compositor-add-open",
+		);
+		expect(controls).toHaveLength(4);
+		const below = container.querySelector(
+			'.oqto-compositor-add[data-edge="block-end"] .oqto-compositor-add-open',
+		) as HTMLElement;
+		act(() => {
+			fireEvent.click(below);
+		});
+		act(() => {
+			fireEvent.click(
+				container.querySelector(
+					".oqto-compositor-add-menu button",
+				) as HTMLElement,
+			);
+		});
+		const snapshot = store.getSnapshot();
+		const arrangement = activeArrangementOf(snapshot);
+		const placed = snapshot.containers.find((candidate) =>
+			candidate.stack.some((item) => item.id === terminalContent.id),
+		);
+		expect(placed).toBeDefined();
+		expect(placed?.id).not.toBe(primary.id);
+		const target = arrangement.grid.placements.find(
+			(placement) => placement.containerId === placed?.id,
+		);
+		const source = arrangement.grid.placements.find(
+			(placement) => placement.containerId === primary.id,
+		);
+		// Below means below: same column band, the next row down.
+		expect(target?.column).toBe(source?.column);
+		expect(target?.row).toBe((source?.row ?? 0) + 1);
+	});
+
+	it("offers nothing on frame chrome and nothing when the host offers no Content", () => {
+		const { view } = probeSetup();
+		expect(
+			view.container.querySelectorAll(".oqto-compositor-add"),
+		).toHaveLength(0);
+	});
+});
 
 describe("CompositorHost React adapter (v2)", () => {
 	it("projects solved tracks onto CSS Grid custom properties", () => {

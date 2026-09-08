@@ -290,3 +290,98 @@
 	background: var(--muted);
 	color: var(--foreground);
 }
+
+/* ------------------------------------------------------- add a Container */
+
+/*
+ * One control per edge, quiet until the Container is hovered or holds focus.
+ * The Container is the positioning context, so the controls sit on its own
+ * edges rather than on the grid line.
+ */
+.oqto-compositor-add {
+	position: absolute;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 120ms ease-out;
+}
+
+.oqto-compositor-container:hover .oqto-compositor-add,
+.oqto-compositor-container:focus-within .oqto-compositor-add,
+.oqto-compositor-add:focus-within {
+	opacity: 1;
+}
+
+.oqto-compositor-add[data-edge="inline-start"] {
+	inset-inline-start: 0;
+	inset-block-start: 50%;
+	translate: -50% -50%;
+}
+
+.oqto-compositor-add[data-edge="inline-end"] {
+	inset-inline-end: 0;
+	inset-block-start: 50%;
+	translate: 50% -50%;
+}
+
+.oqto-compositor-add[data-edge="block-start"] {
+	inset-block-start: 0;
+	inset-inline-start: 50%;
+	translate: -50% -50%;
+}
+
+.oqto-compositor-add[data-edge="block-end"] {
+	inset-block-end: 0;
+	inset-inline-start: 50%;
+	translate: -50% 50%;
+}
+
+.oqto-compositor-add-open {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	inline-size: 20px;
+	block-size: 20px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--muted-foreground);
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-open:hover,
+.oqto-compositor-add-open[aria-expanded="true"] {
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-menu {
+	position: absolute;
+	inset-block-start: 24px;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	min-inline-size: 160px;
+	margin: 0;
+	padding: 4px;
+	border: 1px solid var(--border);
+	background: var(--popover, var(--card));
+	list-style: none;
+}
+
+.oqto-compositor-add-menu button {
+	inline-size: 100%;
+	padding: 6px 8px;
+	background: none;
+	border: 0;
+	color: var(--foreground);
+	text-align: start;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-menu button:hover {
+	background: var(--muted);
+}

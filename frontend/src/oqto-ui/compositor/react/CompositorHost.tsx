@@ -15,12 +15,14 @@ import {
 	type DragEvent,
 	type KeyboardEvent,
 	useCallback,
+	useMemo,
 	useRef,
 	useState,
 	useSyncExternalStore,
 } from "react";
 import {
 	type Container,
+	type ContentRef,
 	type GridPlacement,
 	type LayoutCommand,
 	type LayoutSnapshot,
@@ -62,9 +64,14 @@ interface CompositorHostProps {
 	readonly renderContent: RenderContent;
 	readonly contentLabel: ContentLabel;
 	readonly labels: CompositorChromeLabels;
+	/** Content the host offers when a Container's add control is used. */
+	readonly addable?: readonly ContentRef[];
 	/** ADR-0040-shaped Binding -> Action data; defaults to the Alt chords. */
 	readonly keyBindings?: readonly KeyBinding[];
 }
+
+/** Stable empty default: a fresh array would break Container memoization. */
+const NO_ADDABLE_CONTENT: readonly ContentRef[] = [];
 
 interface ResizePreview {
 	readonly axis: ResizeAxisName;
@@ -113,8 +120,13 @@ export function CompositorHost({
 	renderContent,
 	contentLabel,
 	labels,
+	addable = NO_ADDABLE_CONTENT,
 	keyBindings = DEFAULT_KEY_BINDINGS,
 }: CompositorHostProps) {
+	const services = useMemo(
+		() => ({ render: renderContent, label: contentLabel, addable }),
+		[renderContent, contentLabel, addable],
+	);
 	const snapshot = useSyncExternalStore(
 		store.subscribe,
 		store.getSnapshot,
@@ -208,8 +220,7 @@ export function CompositorHost({
 				placement={placement}
 				grid={gridContext}
 				focusedContentId={focusOf(container)}
-				renderContent={renderContent}
-				contentLabel={contentLabel}
+				content={services}
 				labels={labels}
 				commit={commit}
 			/>

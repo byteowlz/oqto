@@ -5,7 +5,12 @@
  */
 
 import type { ReactNode } from "react";
-import type { ContainerId, ContentRef, LayoutCommand } from "../index";
+import type {
+	ContainerId,
+	ContentRef,
+	LayoutCommand,
+	SplitEdge,
+} from "../index";
 
 export interface ContentRenderContext {
 	readonly containerId: ContainerId;
@@ -19,6 +24,19 @@ export type RenderContent = (
 ) => ReactNode;
 
 export type ContentLabel = (content: ContentRef) => string;
+
+/** What a Container needs to show Content and to offer more beside it. */
+export interface ContentServices {
+	readonly render: RenderContent;
+	readonly label: ContentLabel;
+	/** Content the host offers when adding a Container beside this one. */
+	readonly addable: readonly ContentRef[];
+}
+
+/** Strings for the add affordance; `edges` is keyed by the direction. */
+export interface AddLabels {
+	readonly edges: { readonly [edge in SplitEdge]: string };
+}
 
 /** Command palette strings; `actions` maps action ids to labels. */
 export interface PaletteLabels {
@@ -38,6 +56,7 @@ export interface CompositorChromeLabels {
 	readonly dropStart: string;
 	readonly dropEnd: string;
 	readonly expandStart: string;
+	readonly add: AddLabels;
 	readonly palette: PaletteLabels;
 }
 

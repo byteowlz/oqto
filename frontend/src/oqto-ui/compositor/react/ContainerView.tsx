@@ -9,15 +9,17 @@
 
 import { type DragEvent, memo, useState } from "react";
 import { type Container, type ContentId, contentIdFrom } from "../index";
+import { isFrameChrome } from "../queries";
+import { AddContainer } from "./AddContainer";
 import type {
 	CommitCommands,
 	CompositorChromeLabels,
-	ContentLabel,
-	RenderContent,
+	ContentServices,
 } from "./contracts";
 import {
 	CONTENT_DRAG_TYPE,
 	type DropZone,
+	addCommands,
 	dropCommands,
 	dropZoneAt,
 } from "./gestures";
@@ -26,8 +28,7 @@ interface ContainerViewProps {
 	readonly container: Container;
 	/** Focused Content id when it lives in this Container, else null. */
 	readonly focusedContentId: ContentId | null;
-	readonly renderContent: RenderContent;
-	readonly contentLabel: ContentLabel;
+	readonly content: ContentServices;
 	readonly labels: CompositorChromeLabels;
 	readonly commit: CommitCommands;
 }
@@ -47,8 +48,7 @@ function carriesContent(event: DragEvent): boolean {
 export const ContainerView = memo(function ContainerView({
 	container,
 	focusedContentId,
-	renderContent,
-	contentLabel,
+	content: services,
 	labels,
 	commit,
 }: ContainerViewProps) {
@@ -109,7 +109,7 @@ export const ContainerView = memo(function ContainerView({
 									commit([{ type: "activate", contentId: content.id }])
 								}
 							>
-								{contentLabel(content)}
+								{services.label(content)}
 							</button>
 							<button
 								type="button"
@@ -134,7 +134,7 @@ export const ContainerView = memo(function ContainerView({
 				}}
 			>
 				{active ? (
-					renderContent(active, {
+					services.render(active, {
 						containerId: container.id,
 						active: true,
 						focused: focusedContentId === active.id,
@@ -143,6 +143,16 @@ export const ContainerView = memo(function ContainerView({
 					<div className="oqto-compositor-empty" />
 				)}
 			</div>
+			{isFrameChrome(container) ? null : (
+				<AddContainer
+					options={services.addable}
+					label={services.label}
+					labels={labels.add}
+					onAdd={(content, edge) =>
+						commit(addCommands(content, container.id, edge))
+					}
+				/>
+			)}
 		</section>
 	);
 });

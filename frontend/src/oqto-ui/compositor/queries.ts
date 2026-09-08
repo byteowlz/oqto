@@ -5,7 +5,7 @@
  * navigation.ts and this file are the only legal entries to the kernel.
  */
 
-export { resizeBoundaries } from "./kernel/boundaries";
+export { isFrameChrome, resizeBoundaries } from "./kernel/boundaries";
 export type {
 	BoundaryAxis,
 	BoundarySegment,

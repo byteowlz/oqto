@@ -62,6 +62,14 @@ export const LABELS = {
 	dropStart: "drop-start",
 	dropEnd: "drop-end",
 	expandStart: "expand-start",
+	add: {
+		edges: {
+			"inline-start": "add-left",
+			"inline-end": "add-right",
+			"block-start": "add-above",
+			"block-end": "add-below",
+		},
+	},
 	palette: {
 		title: "palette",
 		searchPlaceholder: "search-commands",
