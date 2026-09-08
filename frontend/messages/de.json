@@ -781,6 +781,17 @@
 			"edit": "Bearbeitet",
 			"test": "Testet"
 		},
+		"file": {
+			"unsaved": "Ungespeichert",
+			"save": "Datei speichern",
+			"discard": "Änderungen verwerfen",
+			"edit": "Datei bearbeiten"
+		},
+		"todos": {
+			"label": "Todos",
+			"empty": "Noch keine Todos.",
+			"summary": "{{open}} von {{total}} offen"
+		},
 		"taskProgress": {
 			"label": "Aufgaben",
 			"summary": "{{completed}} von {{total}} Aufgaben abgeschlossen",

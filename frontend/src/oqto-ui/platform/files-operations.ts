@@ -4,6 +4,8 @@
  */
 
 export interface FileOperations {
+	/** Replaces a file's contents, creating it when it does not exist. */
+	write(workspacePath: string, path: string, text: string): Promise<void>;
 	rename(workspacePath: string, from: string, to: string): Promise<void>;
 	createDirectory(workspacePath: string, path: string): Promise<void>;
 	remove(

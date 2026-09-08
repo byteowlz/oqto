@@ -42,6 +42,7 @@ function entriesOf(directory: string): FileEntry[] {
 }
 
 export function createScriptedFileHost(): FileHost {
+	const written = new Map<string, string>();
 	return {
 		async list(_workspacePath, path) {
 			return entriesOf(path);
@@ -50,7 +51,10 @@ export function createScriptedFileHost(): FileHost {
 			return () => {};
 		},
 		async read(_workspacePath, path) {
-			return `scripted contents of ${path}\n`;
+			return written.get(path) ?? `scripted contents of ${path}\n`;
+		},
+		async write(_workspacePath, path, text) {
+			written.set(path, text);
 		},
 		async rename() {},
 		async createDirectory() {},

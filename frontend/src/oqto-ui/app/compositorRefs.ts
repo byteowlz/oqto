@@ -14,12 +14,22 @@ function staticContent(identity: string, kind: string): ContentRef {
 export const SESSIONS_CONTENT = staticContent("sessions:catalog", "sessions");
 export const STATUS_CONTENT = staticContent("status:session", "status");
 export const SETTINGS_CONTENT = staticContent("settings:ui", "settings");
+export const TODOS_CONTENT = staticContent("todos:session", "todos");
+export const GALLERY_CONTENT = staticContent("gallery:workdir", "gallery");
 
 export function chatContent(sessionId: string): ContentRef {
 	return {
 		id: contentIdFrom(`chat:${sessionId}`),
 		kind: "chat",
 		extensions: { sessionId },
+	};
+}
+
+export function fileContent(path: string): ContentRef {
+	return {
+		id: contentIdFrom(`file:${path}`),
+		kind: "file",
+		extensions: { path },
 	};
 }
 

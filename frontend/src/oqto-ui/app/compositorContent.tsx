@@ -11,6 +11,7 @@ import type {
 	ContentLabel,
 	RenderContent,
 } from "../compositor/react/contracts";
+import { FilePane } from "../files/FilePane";
 import { WorkDirectoryFiles } from "../files/WorkDirectoryFiles";
 import { GalleryPane } from "../gallery/GalleryPane";
 import type {
@@ -23,6 +24,7 @@ import type {
 } from "../platform/contracts";
 import { NavigationRail } from "../sessions/NavigationRail";
 import { SessionStatusBar } from "../sessions/SessionStatusBar";
+import { TodosPane } from "../sessions/TodosPane";
 import { SettingsPane } from "../theme/SettingsPane";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
 import { findSession } from "./compositorRefs";
@@ -52,6 +54,8 @@ export interface ContentRendererDeps {
 	readonly chrome: {
 		readonly collapseNavigation: () => void;
 		readonly toggleAuxiliary: () => void;
+		/** Opens a file as its own Content. */
+		readonly openFile: (path: string) => void;
 	};
 }
 
@@ -117,8 +121,35 @@ export function createContentRenderer(
 				<WorkDirectoryFiles
 					fileHost={platform.files}
 					workspacePath={context.directory.path}
+					onOpenFile={chrome.openFile}
 				/>
 			);
+		}
+		if (content.kind === "file") {
+			const path = content.extensions?.path;
+			if (typeof path !== "string")
+				return (
+					<div
+						className="oqto-compositor-unavailable"
+						data-kind={content.kind}
+					/>
+				);
+			return (
+				// Keyed by path: activating another file must remount the pane, or
+				// the mount-time load leaves the previous file's text on screen.
+				<FilePane
+					key={path}
+					fileHost={platform.files}
+					workspacePath={context.directory.path}
+					path={path}
+				/>
+			);
+		}
+		if (content.kind === "todos") {
+			return <TodosPane tasks={context.session.tasks ?? []} />;
+		}
+		if (content.kind === "gallery") {
+			return <GalleryPane resources={snapshot.gallery} />;
 		}
 		if (content.kind === "status") {
 			return (
@@ -158,6 +189,14 @@ export function createContentLabel(
 		if (content.kind === "sessions") return t("oqtoUi.navigation.sessions");
 		if (content.kind === "files") return t("oqtoUi.files.label");
 		if (content.kind === "settings") return t("oqtoUi.settings.label");
+		if (content.kind === "todos") return t("oqtoUi.todos.label");
+		if (content.kind === "file") {
+			const path = content.extensions?.path;
+			return typeof path === "string"
+				? (path.split("/").pop() ?? path)
+				: t("oqtoUi.files.label");
+		}
+		if (content.kind === "gallery") return t("oqtoUi.gallery.label");
 		if (content.kind === "status")
 			return t("oqtoUi.statusBar.label", { defaultValue: "Status" });
 		if (content.kind === "chat") {

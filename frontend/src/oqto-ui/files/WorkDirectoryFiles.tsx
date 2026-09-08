@@ -12,12 +12,20 @@ interface WorkDirectoryFilesProps {
 	readonly fileHost: FileHost;
 	/** Host path of the work directory; the listing root. */
 	readonly workspacePath: string;
+	/** Opening a file; without one, files only preview inside the pane. */
+	readonly onOpenFile?: (path: string) => void;
 }
 
 export function WorkDirectoryFiles({
 	fileHost,
 	workspacePath,
+	onOpenFile,
 }: WorkDirectoryFilesProps) {
 	const store = useFilesStore(fileHost, workspacePath);
-	return <FilesPane store={store} />;
+	return (
+		<FilesPane
+			store={store}
+			onOpenFile={onOpenFile ? (entry) => onOpenFile(entry.path) : undefined}
+		/>
+	);
 }

@@ -781,6 +781,17 @@
 			"edit": "Editing",
 			"test": "Testing"
 		},
+		"file": {
+			"unsaved": "Unsaved",
+			"save": "Save file",
+			"discard": "Discard changes",
+			"edit": "Edit file"
+		},
+		"todos": {
+			"label": "Todos",
+			"empty": "No todos yet.",
+			"summary": "{{open}} open of {{total}}"
+		},
 		"taskProgress": {
 			"label": "Tasks",
 			"summary": "{{completed}} of {{total}} tasks completed",

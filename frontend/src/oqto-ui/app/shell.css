@@ -3198,3 +3198,136 @@
 .wb-tree__expander:hover {
 	color: var(--foreground);
 }
+
+/* ------------------------------------------------------------------ todos */
+
+.wb-todos {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-block-size: 0;
+	padding: 12px;
+	overflow-y: auto;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-todos__empty,
+.wb-todos__summary {
+	margin: 0;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-todos__list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-todos__list li {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--card);
+	color: var(--foreground);
+}
+
+.wb-todos__list li svg {
+	inline-size: 14px;
+	block-size: 14px;
+	color: var(--muted-foreground);
+}
+
+.wb-todos__list li[data-status="active"] svg {
+	color: var(--primary);
+}
+
+.wb-todos__list li[data-status="completed"] {
+	color: var(--muted-foreground);
+}
+
+.wb-todos__list li small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------- file pane */
+
+.wb-file {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	background: var(--card);
+}
+
+.wb-file__bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-file__name {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+	direction: rtl;
+	text-align: start;
+}
+
+.wb-file__dirty {
+	flex: none;
+	color: var(--primary);
+	text-transform: uppercase;
+	font-size: 10px;
+}
+
+.wb-file__body {
+	display: flex;
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow: auto;
+}
+
+.wb-file__note {
+	margin: 12px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-file__editor {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	padding: 12px;
+	border: 0;
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	resize: none;
+}
+
+.wb-file__editor:focus-visible {
+	outline: none;
+}
+
+.wb-file__body .wb-files-preview__body {
+	margin: 0;
+	padding: 12px;
+}

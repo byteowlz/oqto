@@ -36,12 +36,16 @@ import { MobileCompositor } from "./MobileCompositor";
 import { createContentLabel, createContentRenderer } from "./compositorContent";
 import { createChromeLabels } from "./compositorLabels";
 import {
+	GALLERY_CONTENT,
 	SESSIONS_CONTENT,
 	SETTINGS_CONTENT,
 	STATUS_CONTENT,
+	TODOS_CONTENT,
 	chatContent,
+	fileContent,
 	filesContent,
 } from "./compositorRefs";
+import { useShellActions } from "./useShellActions";
 
 /** Below this inline size the mobile Screen Mode projection applies (OG breakpoint). */
 export const MOBILE_SCREEN_MODE_BELOW = 1024;
@@ -129,56 +133,15 @@ export function LoadedCompositorShell({
 		},
 		[store, onNavigate],
 	);
-	const closeSettings = useCallback(() => {
-		store.commit([{ type: "close", contentId: SETTINGS_CONTENT.id }]);
-	}, [store]);
-	const toggleSettings = useCallback(() => {
-		if (settingsOpen) closeSettings();
-		else
-			store.commit([
-				{
-					type: "open",
-					content: SETTINGS_CONTENT,
-					target: { role: "auxiliary" },
-				},
-			]);
-	}, [settingsOpen, closeSettings, store]);
-	const chrome = useMemo(() => {
-		const toggleRole = (role: string, collapsed?: boolean) => {
-			const container = store
-				.getSnapshot()
-				.containers.find((candidate) => candidate.role === role);
-			if (!container) return;
-			store.commit([
-				{
-					type: "collapse",
-					containerId: container.id,
-					collapsed: collapsed ?? !container.collapsed,
-				},
-			]);
-		};
-		return {
-			collapseNavigation: () => {
-				// On mobile the navigation is a drawer, so dismissing it is drawer
-				// state. Committing a layout collapse there would follow the user
-				// back to the desktop and hide the sidebar behind its expand rail.
-				if (mobile) {
-					setSessionsOpen(false);
-					return;
-				}
-				toggleRole("navigation", true);
-			},
-			toggleAuxiliary: () => toggleRole("auxiliary"),
-		};
-	}, [store, mobile]);
-	const settings = useMemo(
-		() => ({
-			open: settingsOpen,
-			toggle: toggleSettings,
-			close: closeSettings,
-		}),
-		[settingsOpen, toggleSettings, closeSettings],
-	);
+	const closeDrawer = useCallback(() => setSessionsOpen(false), []);
+	const { settings, chrome, addable } = useShellActions({
+		store,
+		settingsOpen,
+		mobile,
+		closeDrawer,
+		sessionId: context.session.id,
+		workDirectoryId: context.directory.id,
+	});
 	const previewState = useMemo(
 		() => ({
 			selection: preview,
@@ -213,17 +176,6 @@ export function LoadedCompositorShell({
 			settings,
 			chrome,
 		],
-	);
-	// What the add control offers: the Session's Chat, this work directory's
-	// Files, the sessions catalog, and interface settings.
-	const addable = useMemo(
-		() => [
-			chatContent(context.session.id),
-			filesContent(context.directory.id),
-			SESSIONS_CONTENT,
-			SETTINGS_CONTENT,
-		],
-		[context.session.id, context.directory.id],
 	);
 	const contentLabel = useMemo(
 		() => createContentLabel(snapshot, t),
@@ -299,7 +251,7 @@ export function LoadedCompositorShell({
 						session={context.session}
 						models={snapshot.environment.models}
 						settingsOpen={settingsOpen}
-						onToggleSettings={toggleSettings}
+						onToggleSettings={settings.toggle}
 					/>
 				) : null}
 			</div>

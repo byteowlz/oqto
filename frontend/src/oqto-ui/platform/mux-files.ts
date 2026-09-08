@@ -42,6 +42,14 @@ function decodeContent(encoded: string): string {
 	}
 }
 
+/** The channel takes contents as base64 of the raw UTF-8 bytes. */
+function encodeContent(text: string): string {
+	const bytes = new TextEncoder().encode(text);
+	let binary = "";
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
+}
+
 const CHANGE_KINDS: { readonly [event: string]: FileChange["kind"] } = {
 	file_created: "created",
 	dir_created: "created",
@@ -55,6 +63,7 @@ interface PathCommand {
 	readonly type: string;
 	readonly id?: string;
 	readonly path?: string;
+	readonly content?: string;
 	readonly recursive?: boolean;
 	readonly create_parents?: boolean;
 	readonly include_hidden?: boolean;
@@ -224,6 +233,15 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileHost {
 			return request<string>("read_result", {
 				type: "read",
 				path,
+				workspace_path: workspacePath,
+			});
+		},
+		write(workspacePath, path, text) {
+			return request<undefined>("write_result", {
+				type: "write",
+				path,
+				content: encodeContent(text),
+				create_parents: true,
 				workspace_path: workspacePath,
 			});
 		},
