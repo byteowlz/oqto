@@ -151,7 +151,7 @@ export interface SidebarSessionsProps {
 	onSessionSearchChange?: (query: string) => void;
 	searchMode?: SearchMode;
 	onSearchModeChange?: (mode: SearchMode) => void;
-	/** Optional slot rendered between the search bar and the SESSIONS header */
+	/** Optional slot rendered between the search bar and the MACHINES header */
 	belowSearchSlot?: React.ReactNode;
 }
 
@@ -457,7 +457,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 				externalScroll ? "w-full" : "flex-1 min-h-0 flex flex-col",
 			)}
 		>
-			<SidebarMachines />
 			<DeleteConfirmDialog
 				open={deleteDialogOpen}
 				onOpenChange={(open) => {
@@ -616,7 +615,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 					</div>
 				)}
 				{belowSearchSlot}
-				{/* Sessions header - between search and chat list */}
+				<h2
+					className={cn(
+						"uppercase tracking-wide text-muted-foreground py-1.5 px-1",
+						sizeClasses.headerText,
+					)}
+				>
+					{t("oqtoUi.runnerTargets.title")}
+				</h2>
+				<SidebarMachines />
+				{/* Local machine actions and its session list; remote rows are peers. */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
 						{onToggleSessionsExpanded && (
@@ -624,7 +632,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								type="button"
 								onClick={onToggleSessionsExpanded}
 								className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded p-0.5"
-								aria-label={t("sessions.title")}
+								aria-label={t("oqtoUi.runnerTargets.thisMachine")}
 							>
 								{sessionsExpanded ? (
 									<ChevronDown className={sizeClasses.iconSize} />
@@ -634,12 +642,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 							</button>
 						)}
 						<span
-							className={cn(
-								"uppercase tracking-wide text-muted-foreground",
-								sizeClasses.headerText,
-							)}
+							className={cn("text-muted-foreground", sizeClasses.headerText)}
 						>
-							{t("sessions.title")}
+							{t("oqtoUi.runnerTargets.thisMachine")}
 						</span>
 						<span
 							className={cn(

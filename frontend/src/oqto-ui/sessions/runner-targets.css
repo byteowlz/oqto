@@ -4,6 +4,11 @@
 	border-bottom: 1px solid var(--sidebar-border);
 	font-size: 11px;
 }
+.wb-runner-targets--rows {
+	margin: 0 4px;
+	padding-bottom: 0;
+	border-bottom: 0;
+}
 .wb-runner-targets summary {
 	padding: 5px 0;
 	cursor: pointer;

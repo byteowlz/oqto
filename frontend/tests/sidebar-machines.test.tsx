@@ -48,6 +48,8 @@ describe("original-shell machine inventory", () => {
 		render(shell(new QueryClient()));
 		expect(await screen.findByText("Mac")).toBeVisible();
 		expect(screen.getByText("Online")).toBeVisible();
+		expect(screen.queryByText("Machines")).toBeNull();
+		expect(document.querySelector("details.wb-runner-targets")).toBeNull();
 		expect(fetcher).toHaveBeenCalledWith(
 			"https://control.example/api/runner-targets",
 			{

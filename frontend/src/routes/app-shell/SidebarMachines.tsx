@@ -22,6 +22,7 @@ function AccountMachines({ scope }: { scope: string }) {
 	return (
 		<>
 			<RunnerTargets
+				presentation="rows"
 				source={{
 					id: scope,
 					list: async () => {

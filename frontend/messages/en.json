@@ -738,6 +738,7 @@
 		},
 		"runnerTargets": {
 			"title": "Machines",
+			"thisMachine": "This machine",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update needed",

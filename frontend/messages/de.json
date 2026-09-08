@@ -735,6 +735,7 @@
 		},
 		"runnerTargets": {
 			"title": "Rechner",
+			"thisMachine": "Dieser Rechner",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update erforderlich",

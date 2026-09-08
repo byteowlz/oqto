@@ -11,9 +11,14 @@ import "./runner-targets.css";
 type RunnerTargetsProps = {
 	source: RunnerTargetsPort;
 	actions?: (target: RunnerTarget) => ReactNode;
+	presentation?: "section" | "rows";
 };
 
-export function RunnerTargets({ source, actions }: RunnerTargetsProps) {
+export function RunnerTargets({
+	source,
+	actions,
+	presentation = "section",
+}: RunnerTargetsProps) {
 	const { t } = useTranslation();
 	const query = useQuery({
 		queryKey: ["oqto-runner-targets", source.id],
@@ -26,9 +31,8 @@ export function RunnerTargets({ source, actions }: RunnerTargetsProps) {
 	});
 	if (query.isPending) return null;
 	if (!query.isError && !query.data?.length) return null;
-	return (
-		<details className="wb-runner-targets" open>
-			<summary>{t("oqtoUi.runnerTargets.title")}</summary>
+	const contents = (
+		<>
 			{query.isError ? (
 				<output>{t("oqtoUi.runnerTargets.refreshFailed")}</output>
 			) : (
@@ -53,6 +57,19 @@ export function RunnerTargets({ source, actions }: RunnerTargetsProps) {
 					))}
 				</ul>
 			)}
+		</>
+	);
+	if (presentation === "rows") {
+		return (
+			<div className="wb-runner-targets wb-runner-targets--rows">
+				{contents}
+			</div>
+		);
+	}
+	return (
+		<details className="wb-runner-targets" open>
+			<summary>{t("oqtoUi.runnerTargets.title")}</summary>
+			{contents}
 		</details>
 	);
 }
