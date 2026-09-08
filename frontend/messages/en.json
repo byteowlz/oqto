@@ -862,6 +862,15 @@
 				"summarize": "Prepare approval evidence"
 			}
 		},
+		"chatDetail": {
+			"label": "Chat detail",
+			"answers": "Answers",
+			"answersHint": "What the agent said, with its work folded away",
+			"summary": "Summary",
+			"summaryHint": "Answers plus a line per step it took",
+			"everything": "Everything",
+			"everythingHint": "Every tool call and thought, expanded"
+		},
 		"files": {
 			"copyToName": "{{name}}",
 			"copyTo": "Copy to…",

@@ -3529,3 +3529,41 @@
 	border: 0;
 	background: none;
 }
+
+/* ----------------------------------------------------------- chat detail */
+
+.wb-chat-detail {
+	display: grid;
+	gap: 4px;
+}
+
+.wb-chat-detail button {
+	display: grid;
+	gap: 2px;
+	padding: 8px 10px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	text-align: start;
+	cursor: pointer;
+}
+
+.wb-chat-detail button:hover {
+	border-color: var(--primary);
+}
+
+.wb-chat-detail button[data-active] {
+	border-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.wb-chat-detail strong {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.wb-chat-detail small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	line-height: 1.4;
+}

@@ -36,7 +36,7 @@ const ALLOWED_DIRECT_IMPORTS = {
 	issues: new Set(["issues", "platform"]),
 	terminal: new Set(["terminal", "platform"]),
 	gallery: new Set(["gallery", "platform"]),
-	theme: new Set(["theme", "platform"]),
+	theme: new Set(["theme", "chat", "platform"]),
 	platform: new Set(["engine", "platform"]),
 	dev: new Set(["dev", "engine", "platform"]),
 };
@@ -55,6 +55,7 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/hooks/use-mobile",
 		"@/hooks/use-mount-effect",
 		"@/lib/chat-rendering/CanonicalMessageRenderer",
+		"@/lib/chat-verbosity",
 		"@/lib/chat-rendering/group-messages",
 		"@/lib/chat-render-types",
 		"@/lib/file-types",

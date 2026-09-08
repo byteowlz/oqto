@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { ChatDetail } from "../chat/ChatDetail";
 import type {
 	OqtoUiConfigResolution,
 	UiNavigation,
@@ -50,6 +51,7 @@ export function SettingsPane({
 				<h2>{t("oqtoUi.theme.label")}</h2>
 				<ThemePicker schemeId={schemeId} onNavigate={onNavigate} />
 			</section>
+			<ChatDetail />
 			<ThemeCustomizer
 				embedded
 				themeRoot={themeRoot}

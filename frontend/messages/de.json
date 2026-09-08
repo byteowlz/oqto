@@ -862,6 +862,15 @@
 				"summarize": "Freigabenachweise vorbereiten"
 			}
 		},
+		"chatDetail": {
+			"label": "Chat-Detailgrad",
+			"answers": "Antworten",
+			"answersHint": "Was der Agent gesagt hat, Arbeitsschritte eingeklappt",
+			"summary": "Zusammenfassung",
+			"summaryHint": "Antworten plus eine Zeile pro Schritt",
+			"everything": "Alles",
+			"everythingHint": "Jeder Tool-Aufruf und Gedanke, ausgeklappt"
+		},
 		"files": {
 			"copyToName": "{{name}}",
 			"copyTo": "Kopieren nach…",
