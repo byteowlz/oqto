@@ -1,5 +1,5 @@
 import { WorkDirectoryFiles } from "@/src/oqto-ui/files/WorkDirectoryFiles";
-import type { FileSystem } from "@/src/oqto-ui/platform/files-contract";
+import type { FileHost } from "@/src/oqto-ui/platform/files-contract";
 import {
 	act,
 	fireEvent,
@@ -63,9 +63,11 @@ const NO_OPS = {
 	async rename() {},
 	async createDirectory() {},
 	async remove() {},
+	async copy() {},
+	async move() {},
 };
 
-function fileSystem(overrides: Partial<FileSystem> = {}): FileSystem & {
+function fileSystem(overrides: Partial<FileHost> = {}): FileHost & {
 	calls: string[];
 	emit: (path: string) => void;
 } {
@@ -133,7 +135,7 @@ function fileSystem(overrides: Partial<FileSystem> = {}): FileSystem & {
 
 async function renderPane(fs = fileSystem()) {
 	const view = render(
-		<WorkDirectoryFiles fileSystem={fs} workspacePath="/work/repo" />,
+		<WorkDirectoryFiles fileHost={fs} workspacePath="/work/repo" />,
 	);
 	await screen.findByText("readme.md");
 	const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -219,14 +221,14 @@ describe("Files pane", () => {
 			size: 0,
 			modifiedAt: 0,
 		}));
-		const fs: FileSystem = {
+		const fs: FileHost = {
 			async list() {
 				return many;
 			},
 			watch: () => () => {},
 		};
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/work/repo" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/work/repo" />,
 		);
 		await screen.findByText("file-0.txt");
 		const rendered = view.container.querySelectorAll(".wb-tree__row").length;
@@ -236,14 +238,14 @@ describe("Files pane", () => {
 	});
 
 	it("reports a failed listing instead of rendering an empty folder", async () => {
-		const fs: FileSystem = {
+		const fs: FileHost = {
 			...NO_OPS,
 			async list() {
 				throw new Error("permission denied");
 			},
 			watch: () => () => {},
 		};
-		render(<WorkDirectoryFiles fileSystem={fs} workspacePath="/work/repo" />);
+		render(<WorkDirectoryFiles fileHost={fs} workspacePath="/work/repo" />);
 		expect(
 			await screen.findByText("Could not read this folder"),
 		).toBeInTheDocument();
@@ -253,7 +255,7 @@ describe("Files pane", () => {
 describe("Quick Look and operations", () => {
 	function actionFs() {
 		const ops: string[] = [];
-		const fs: FileSystem = {
+		const fs: FileHost = {
 			async list(_workspace, path) {
 				if (path !== "") return [];
 				return [
@@ -289,6 +291,12 @@ describe("Quick Look and operations", () => {
 			async remove(_workspace, path, recursive) {
 				ops.push(`remove:${path}:${recursive}`);
 			},
+			async copy(_workspace, from, to) {
+				ops.push(`copy:${from}->${to}`);
+			},
+			async move(_workspace, from, to) {
+				ops.push(`move:${from}->${to}`);
+			},
 		};
 		return { fs, ops };
 	}
@@ -296,7 +304,7 @@ describe("Quick Look and operations", () => {
 	it("previews a text file on Space and closes it again", async () => {
 		const { fs, ops } = actionFs();
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -312,7 +320,7 @@ describe("Quick Look and operations", () => {
 	it("says so instead of previewing a directory", async () => {
 		const { fs } = actionFs();
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("pics");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -325,7 +333,7 @@ describe("Quick Look and operations", () => {
 	it("renames from the action line and offers an undo that reverses it", async () => {
 		const { fs, ops } = actionFs();
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -344,7 +352,7 @@ describe("Quick Look and operations", () => {
 	it("creates a folder in the current directory", async () => {
 		const { fs, ops } = actionFs();
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -358,7 +366,7 @@ describe("Quick Look and operations", () => {
 	it("asks before deleting and does nothing when cancelled", async () => {
 		const { fs, ops } = actionFs();
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;
@@ -369,21 +377,21 @@ describe("Quick Look and operations", () => {
 		expect(ops.some((op) => op.startsWith("remove:"))).toBe(false);
 		fireEvent.keyDown(rows, { key: "Delete" });
 		fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-		await waitFor(() => expect(ops).toContain("remove:notes.md:false"));
+		await waitFor(() => expect(ops).toContain("remove:notes.md:true"));
 		// Deletion is not reversible through the host contract.
 		expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 	});
 
 	it("reports a failed operation instead of pretending it worked", async () => {
 		const { fs } = actionFs();
-		const failing: FileSystem = {
+		const failing: FileHost = {
 			...fs,
 			async rename() {
 				throw new Error("read-only file system");
 			},
 		};
 		const view = render(
-			<WorkDirectoryFiles fileSystem={failing} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={failing} workspacePath="/w" />,
 		);
 		await screen.findByText("notes.md");
 		const rows = view.container.querySelector(".wb-files-body") as HTMLElement;

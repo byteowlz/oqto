@@ -5,7 +5,7 @@
  * reversible and says so.
  */
 
-import type { FileSystem } from "../platform/files-contract";
+import type { FileHost } from "../platform/files-contract";
 import { childPath, parentPath } from "./entries";
 
 export interface OperationResult {
@@ -16,7 +16,7 @@ export interface OperationResult {
 }
 
 export interface OperationContext {
-	readonly fileSystem: FileSystem;
+	readonly fileHost: FileHost;
 	readonly workspacePath: string;
 }
 
@@ -26,10 +26,10 @@ export async function renameEntry(
 	name: string,
 ): Promise<OperationResult> {
 	const target = childPath(parentPath(path) ?? "", name);
-	await context.fileSystem.rename(context.workspacePath, path, target);
+	await context.fileHost.rename(context.workspacePath, path, target);
 	return {
 		message: { key: "renamed", name },
-		undo: () => context.fileSystem.rename(context.workspacePath, target, path),
+		undo: () => context.fileHost.rename(context.workspacePath, target, path),
 	};
 }
 
@@ -39,21 +39,55 @@ export async function createFolder(
 	name: string,
 ): Promise<OperationResult> {
 	const target = childPath(directory, name);
-	await context.fileSystem.createDirectory(context.workspacePath, target);
+	await context.fileHost.createDirectory(context.workspacePath, target);
 	return {
 		message: { key: "created", name },
-		undo: () => context.fileSystem.remove(context.workspacePath, target, true),
+		undo: () => context.fileHost.remove(context.workspacePath, target, true),
 	};
 }
 
-export async function removeEntry(
+/**
+ * Pastes yanked paths into a directory. A copy is reversed by removing
+ * what it created; a move is reversed by moving each entry back.
+ */
+export async function pasteEntries(
 	context: OperationContext,
-	path: string,
-	name: string,
-	recursive: boolean,
+	paths: readonly string[],
+	directory: string,
+	mode: "copy" | "move",
 ): Promise<OperationResult> {
-	await context.fileSystem.remove(context.workspacePath, path, recursive);
-	// Deletion is not reversible through the host contract; say so plainly
-	// rather than offering an undo that would silently do nothing.
-	return { message: { key: "deleted", name }, undo: null };
+	const pairs = paths.map((path) => ({
+		from: path,
+		to: childPath(directory, path.split("/").pop() ?? path),
+	}));
+	const host = context.fileHost;
+	for (const pair of pairs) {
+		if (mode === "copy")
+			await host.copy(context.workspacePath, pair.from, pair.to);
+		else await host.move(context.workspacePath, pair.from, pair.to);
+	}
+	return {
+		message: { key: "pasted", name: directory === "" ? "/" : directory },
+		undo: async () => {
+			for (const pair of pairs) {
+				if (mode === "copy")
+					await host.remove(context.workspacePath, pair.to, true);
+				else await host.move(context.workspacePath, pair.to, pair.from);
+			}
+		},
+	};
+}
+
+/** Removes several entries; like a single removal, this cannot be undone. */
+export async function removeEntries(
+	context: OperationContext,
+	paths: readonly string[],
+): Promise<OperationResult> {
+	for (const path of paths) {
+		await context.fileHost.remove(context.workspacePath, path, true);
+	}
+	return {
+		message: { key: "deletedCount", name: String(paths.length) },
+		undo: null,
+	};
 }

@@ -8,7 +8,6 @@
  * g/G jump to the ends, "/" filters in place, Escape clears.
  */
 
-import { ChevronRight, Columns3 } from "lucide-react";
 import {
 	type KeyboardEvent,
 	useCallback,
@@ -20,8 +19,9 @@ import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../platform/files-contract";
 import { FilesList } from "./FilesList";
 import { FilesPreview } from "./FilesPreview";
+import { FilesToolbar } from "./FilesToolbar";
 import { type ColumnRendering, MillerColumns } from "./MillerColumns";
-import { breadcrumb } from "./entries";
+import { yank } from "./clipboard";
 import { paneFidelity, showsColumns, showsFacts } from "./fidelity";
 import { formatModified, formatSize } from "./format";
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
@@ -59,7 +59,7 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 		if (focused?.directory) store.load(focused.path);
 	}
 	const preview = usePreview(
-		store.context.fileSystem,
+		store.context.fileHost,
 		store.context.workspacePath,
 	);
 	const selection = useMemo(() => new Set(state.selection), [state.selection]);
@@ -165,6 +165,9 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 			actions.begin("create");
 		else if (key === "Delete") actions.begin("confirmDelete");
 		else if (key === "u") actions.undo();
+		else if (key === "y") store.update((current) => yank(current, "copy"));
+		else if (key === "x") store.update((current) => yank(current, "move"));
+		else if (key === "p") actions.paste();
 		else if (key === "Escape") {
 			setPreviewOpen(false);
 			actions.cancel();
@@ -179,38 +182,12 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 			ref={measured.ref}
 			aria-label={t("oqtoUi.files.label")}
 		>
-			<div className="wb-files-toolbar">
-				<button
-					className="wb-files-crumb"
-					type="button"
-					onClick={() => store.open("")}
-				>
-					{t("oqtoUi.files.rootLabel")}
-				</button>
-				{breadcrumb(state.cwd).map((crumb) => (
-					<span className="wb-files-crumb-group" key={crumb.path}>
-						<ChevronRight aria-hidden="true" />
-						<button
-							className="wb-files-crumb"
-							type="button"
-							onClick={() => store.open(crumb.path)}
-						>
-							{crumb.name}
-						</button>
-					</span>
-				))}
-				<span className="wb-files-toolbar__spacer" />
-				<button
-					className="wb-icon-button"
-					type="button"
-					data-active={details || undefined}
-					aria-label={t("oqtoUi.files.details")}
-					aria-pressed={details}
-					onClick={() => setDetails((shown) => !shown)}
-				>
-					<Columns3 aria-hidden="true" />
-				</button>
-			</div>
+			<FilesToolbar
+				state={state}
+				store={store}
+				details={details}
+				onDetails={() => setDetails((shown) => !shown)}
+			/>
 
 			{actions.mode === null ? null : actions.mode === "confirmDelete" ? (
 				<div className="wb-files-filter wb-files-confirm">
@@ -312,6 +289,16 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				{state.selection.length > 0 ? (
 					<span>
 						{t("oqtoUi.files.selectedCount", { count: state.selection.length })}
+					</span>
+				) : null}
+				{state.clipboard ? (
+					<span>
+						{t(
+							state.clipboard.mode === "copy"
+								? "oqtoUi.files.yankCopy"
+								: "oqtoUi.files.yankMove",
+							{ count: state.clipboard.paths.length },
+						)}
 					</span>
 				) : null}
 				<span className="wb-files-status__spacer" />

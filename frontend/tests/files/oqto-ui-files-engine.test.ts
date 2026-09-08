@@ -1,9 +1,13 @@
 import {
+	actionTargets,
+	clearClipboard,
+	yank,
+} from "@/src/oqto-ui/files/clipboard";
+import {
 	breadcrumb,
 	compareNames,
 	matchesFilter,
 	parentPath,
-	sortEntries,
 } from "@/src/oqto-ui/files/entries";
 import { formatModified, formatSize } from "@/src/oqto-ui/files/format";
 import {
@@ -12,6 +16,7 @@ import {
 	cursorToEdge,
 	goUp,
 	navigate,
+	setSort,
 } from "@/src/oqto-ui/files/navigation";
 import {
 	applyListing,
@@ -21,6 +26,7 @@ import {
 	setFilter,
 	visibleEntries,
 } from "@/src/oqto-ui/files/navigator";
+import { sortEntries } from "@/src/oqto-ui/files/sorting";
 import type { FileEntry } from "@/src/oqto-ui/platform/files-contract";
 import { describe, expect, it } from "vitest";
 
@@ -219,5 +225,84 @@ describe("entry facts", () => {
 		expect(
 			formatModified(new Date(2024, 2, 2, 9, 15).getTime(), "en-GB", now),
 		).toMatch(/2024/);
+	});
+});
+
+describe("sorting, clipboard, and targets", () => {
+	const mixed: FileEntry[] = [
+		{
+			path: "b.txt",
+			name: "b.txt",
+			directory: false,
+			symlink: false,
+			size: 300,
+			modifiedAt: 30,
+		},
+		{
+			path: "a.txt",
+			name: "a.txt",
+			directory: false,
+			symlink: false,
+			size: 100,
+			modifiedAt: 20,
+		},
+		{
+			path: "dir",
+			name: "dir",
+			directory: true,
+			symlink: false,
+			size: 0,
+			modifiedAt: 10,
+		},
+	];
+
+	it("orders by the chosen key while directories stay first", () => {
+		const bySize = sortEntries(mixed, { key: "size", descending: false });
+		expect(bySize.map((item) => item.name)).toEqual(["dir", "a.txt", "b.txt"]);
+		const byNewest = sortEntries(mixed, { key: "modified", descending: true });
+		expect(byNewest.map((item) => item.name)).toEqual([
+			"dir",
+			"b.txt",
+			"a.txt",
+		]);
+	});
+
+	it("toggles direction when the same key is chosen twice and re-sorts the cache", () => {
+		let state = applyListing(initialState(), "", {
+			status: "ready",
+			entries: mixed,
+		});
+		state = setSort(state, "size");
+		expect(state.sort).toEqual({ key: "size", descending: false });
+		expect(visibleEntries(state).map((item) => item.name)).toEqual([
+			"dir",
+			"a.txt",
+			"b.txt",
+		]);
+		state = setSort(state, "size");
+		expect(state.sort.descending).toBe(true);
+		expect(visibleEntries(state).map((item) => item.name)).toEqual([
+			"dir",
+			"b.txt",
+			"a.txt",
+		]);
+	});
+
+	it("yanks the selection, or the cursor when nothing is selected", () => {
+		let state = applyListing(initialState(), "", {
+			status: "ready",
+			entries: mixed,
+		});
+		state = yank(state, "copy");
+		expect(state.clipboard).toEqual({ paths: ["dir"], mode: "copy" });
+		state = select(state, "a.txt", "replace");
+		state = select(state, "b.txt", "toggle");
+		state = yank(state, "move");
+		expect(state.clipboard).toEqual({
+			paths: ["a.txt", "b.txt"],
+			mode: "move",
+		});
+		expect(actionTargets(state)).toEqual(["a.txt", "b.txt"]);
+		expect(clearClipboard(state).clipboard).toBeNull();
 	});
 });

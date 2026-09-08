@@ -4,7 +4,7 @@
  * exercises one code path in both routes.
  */
 
-import type { FileEntry, FileSystem } from "../platform/files-contract";
+import type { FileEntry, FileHost } from "../platform/files-contract";
 
 const TREE: { readonly [directory: string]: readonly [string, boolean][] } = {
 	"": [
@@ -41,17 +41,21 @@ function entriesOf(directory: string): FileEntry[] {
 	}));
 }
 
-export const scriptedFileSystem: FileSystem = {
-	async list(_workspacePath, path) {
-		return entriesOf(path);
-	},
-	watch() {
-		return () => {};
-	},
-	async read(_workspacePath, path) {
-		return `scripted contents of ${path}\n`;
-	},
-	async rename() {},
-	async createDirectory() {},
-	async remove() {},
-};
+export function createScriptedFileHost(): FileHost {
+	return {
+		async list(_workspacePath, path) {
+			return entriesOf(path);
+		},
+		watch() {
+			return () => {};
+		},
+		async read(_workspacePath, path) {
+			return `scripted contents of ${path}\n`;
+		},
+		async rename() {},
+		async createDirectory() {},
+		async remove() {},
+		async copy() {},
+		async move() {},
+	};
+}

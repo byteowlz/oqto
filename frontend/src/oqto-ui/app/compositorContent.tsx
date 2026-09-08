@@ -114,7 +114,7 @@ export function createContentRenderer(
 		if (content.kind === "files") {
 			return (
 				<WorkDirectoryFiles
-					fileSystem={platform.files}
+					fileHost={platform.files}
 					workspacePath={context.directory.path}
 				/>
 			);

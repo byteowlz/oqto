@@ -3129,3 +3129,11 @@
 .wb-files[data-fidelity="compact"] .wb-tree__meta {
 	display: none;
 }
+
+.wb-files .wb-icon-button[data-active] {
+	color: var(--primary);
+}
+
+.wb-files .wb-icon-button[data-descending] svg {
+	transform: scaleY(-1);
+}

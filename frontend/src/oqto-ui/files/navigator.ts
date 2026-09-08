@@ -5,7 +5,8 @@
  * returns a new value.
  */
 
-import { type FileEntry, matchesFilter, sortEntries } from "./entries";
+import { type FileEntry, matchesFilter } from "./entries";
+import { DEFAULT_SORT, type SortOrder, sortEntries } from "./sorting";
 
 export type ListingState =
 	| { readonly status: "loading" }
@@ -23,6 +24,14 @@ export interface FilesState {
 	readonly filter: string;
 	/** Paths the host reported changed since load, for live markers. */
 	readonly changed: readonly string[];
+	readonly sort: SortOrder;
+	/** Hidden entries are excluded by the host, so this drives refetches. */
+	readonly showHidden: boolean;
+	/** Yanked paths awaiting a paste, with the mode they were yanked in. */
+	readonly clipboard: {
+		readonly paths: readonly string[];
+		readonly mode: "copy" | "move";
+	} | null;
 }
 
 export type SelectMode = "replace" | "toggle" | "range";
@@ -35,6 +44,9 @@ export function initialState(cwd = ""): FilesState {
 		selection: [],
 		filter: "",
 		changed: [],
+		sort: DEFAULT_SORT,
+		showHidden: false,
+		clipboard: null,
 	};
 }
 
@@ -70,7 +82,10 @@ export function applyListing(
 ): FilesState {
 	const normalized =
 		listing.status === "ready"
-			? { status: "ready" as const, entries: sortEntries(listing.entries) }
+			? {
+					status: "ready" as const,
+					entries: sortEntries(listing.entries, state.sort),
+				}
 			: listing;
 	return placeCursor({
 		...state,

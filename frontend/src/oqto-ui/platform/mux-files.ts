@@ -4,7 +4,7 @@
  * socket is opened lazily on first use.
  */
 
-import type { FileChange, FileEntry, FileSystem } from "./files-contract";
+import type { FileChange, FileEntry, FileHost } from "./files-contract";
 
 interface FilesEvent {
 	readonly channel?: string;
@@ -90,7 +90,7 @@ function toEntry(
 	};
 }
 
-export function createMuxFileSystem(openSocket: SocketFactory): FileSystem {
+export function createMuxFileSystem(openSocket: SocketFactory): FileHost {
 	let socket: MuxSocket | null = null;
 	let open = false;
 	const queue: string[] = [];
@@ -196,11 +196,11 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileSystem {
 	}
 
 	return {
-		list(workspacePath, path) {
+		list(workspacePath, path, includeHidden = false) {
 			return request<readonly FileEntry[]>("list_result", {
 				type: "list",
 				path,
-				include_hidden: false,
+				include_hidden: includeHidden,
 				workspace_path: workspacePath,
 			});
 		},
@@ -224,6 +224,22 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileSystem {
 				type: "create_directory",
 				path,
 				create_parents: true,
+				workspace_path: workspacePath,
+			});
+		},
+		copy(workspacePath, from, to) {
+			return request<undefined>("copy_result", {
+				type: "copy",
+				from,
+				to,
+				workspace_path: workspacePath,
+			});
+		},
+		move(workspacePath, from, to) {
+			return request<undefined>("move_result", {
+				type: "move",
+				from,
+				to,
 				workspace_path: workspacePath,
 			});
 		},

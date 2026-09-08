@@ -6,12 +6,12 @@
 
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import { useRef, useSyncExternalStore } from "react";
-import type { FileSystem } from "../platform/files-contract";
+import type { FileHost } from "../platform/files-contract";
 import type { FilesState } from "./navigator";
 import { type FilesStore, createFilesStore } from "./store";
 
 export function useFilesStore(
-	fileSystem: FileSystem,
+	fileHost: FileHost,
 	workspacePath: string,
 ): FilesStore {
 	const held = useRef<{ key: string; store: FilesStore } | null>(null);
@@ -19,7 +19,7 @@ export function useFilesStore(
 		held.current?.store.dispose();
 		held.current = {
 			key: workspacePath,
-			store: createFilesStore(fileSystem, workspacePath),
+			store: createFilesStore(fileHost, workspacePath),
 		};
 	}
 	useMountEffect(() => () => held.current?.store.dispose());

@@ -5,6 +5,7 @@
 
 import { type FileEntry, parentPath } from "./entries";
 import { type FilesState, placeCursor, visibleEntries } from "./navigator";
+import { type SortKey, sortEntries } from "./sorting";
 
 /** Navigates to a directory, keeping its cached listing when present. */
 export function navigate(state: FilesState, path: string): FilesState {
@@ -65,4 +66,21 @@ export function cursorToEdge(
 		state,
 		visible[edge === "first" ? 0 : visible.length - 1].path,
 	);
+}
+
+/**
+ * Changes the sort order, re-sorting every cached listing so a directory
+ * already in the cache never shows a stale order.
+ */
+export function setSort(state: FilesState, key: SortKey): FilesState {
+	const descending = state.sort.key === key ? !state.sort.descending : false;
+	const sort = { key, descending };
+	const listings: { [path: string]: FilesState["listings"][string] } = {};
+	for (const [path, listing] of Object.entries(state.listings)) {
+		listings[path] =
+			listing.status === "ready"
+				? { status: "ready", entries: sortEntries(listing.entries, sort) }
+				: listing;
+	}
+	return placeCursor({ ...state, sort, listings });
 }

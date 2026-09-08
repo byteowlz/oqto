@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { FileSystem } from "../platform/files-contract";
+import type { FileHost } from "../platform/files-contract";
 import { entryKind, isTextual } from "./kinds";
 
 export type PreviewState =
@@ -28,10 +28,7 @@ export interface Preview {
 
 const MAX_PREVIEW_CHARACTERS = 20_000;
 
-export function usePreview(
-	fileSystem: FileSystem,
-	workspacePath: string,
-): Preview {
+export function usePreview(fileHost: FileHost, workspacePath: string): Preview {
 	const [state, setState] = useState<PreviewState>({ status: "idle" });
 	const showing = useRef<string | null>(null);
 
@@ -53,7 +50,7 @@ export function usePreview(
 				return;
 			}
 			setState({ status: "loading" });
-			fileSystem.read(workspacePath, target.path).then(
+			fileHost.read(workspacePath, target.path).then(
 				(text) => {
 					if (showing.current !== key) return;
 					setState({
@@ -66,7 +63,7 @@ export function usePreview(
 				},
 			);
 		},
-		[fileSystem, workspacePath],
+		[fileHost, workspacePath],
 	);
 
 	return { state, show };

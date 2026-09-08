@@ -4,6 +4,8 @@
  * directory with a hundred thousand entries costs one request.
  */
 
+import type { FileOperations } from "./files-operations";
+
 export interface FileEntry {
 	/** Path relative to the work directory root; "" is the root itself. */
 	readonly path: string;
@@ -24,7 +26,11 @@ export interface FileChange {
 
 export interface FileSystem {
 	/** One directory level; `path` is "" for the work directory root. */
-	list(workspacePath: string, path: string): Promise<readonly FileEntry[]>;
+	list(
+		workspacePath: string,
+		path: string,
+		includeHidden?: boolean,
+	): Promise<readonly FileEntry[]>;
 	/** Streams host change events; returns an unsubscribe function. */
 	watch(
 		workspacePath: string,
@@ -32,11 +38,7 @@ export interface FileSystem {
 	): () => void;
 	/** File contents for preview; hosts may truncate large files. */
 	read(workspacePath: string, path: string): Promise<string>;
-	rename(workspacePath: string, from: string, to: string): Promise<void>;
-	createDirectory(workspacePath: string, path: string): Promise<void>;
-	remove(
-		workspacePath: string,
-		path: string,
-		recursive: boolean,
-	): Promise<void>;
 }
+
+/** Everything a Files pane needs: reading plus mutation. */
+export type FileHost = FileSystem & FileOperations;

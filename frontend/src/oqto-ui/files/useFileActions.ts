@@ -5,12 +5,14 @@
  */
 
 import { useCallback, useState } from "react";
+import { actionTargets, clearClipboard } from "./clipboard";
 import { cursorEntry } from "./navigation";
 import { setFilter } from "./navigator";
 import {
 	type OperationResult,
 	createFolder,
-	removeEntry,
+	pasteEntries,
+	removeEntries,
 	renameEntry,
 } from "./operations";
 import type { FilesStore } from "./store";
@@ -31,6 +33,8 @@ export interface FileActions extends ActionState {
 	submit(): void;
 	cancel(): void;
 	undo(): void;
+	/** Pastes the clipboard into the current directory. */
+	paste(): void;
 }
 
 const IDLE: ActionState = {
@@ -110,12 +114,12 @@ export function useFileActions(store: FilesStore): FileActions {
 			);
 			return;
 		}
-		if (state.mode === "confirmDelete" && entry) {
-			settle(
-				removeEntry(context, entry.path, entry.name, entry.directory),
-				snapshot.cwd,
-			);
-			return;
+		if (state.mode === "confirmDelete") {
+			const targets = actionTargets(snapshot);
+			if (targets.length > 0) {
+				settle(removeEntries(context, targets), snapshot.cwd);
+				return;
+			}
 		}
 		setState(IDLE);
 	}, [state.mode, state.draft, store, settle]);
@@ -146,5 +150,21 @@ export function useFileActions(store: FilesStore): FileActions {
 		);
 	}, [undoStep, store]);
 
-	return { ...state, begin, change, submit, cancel, undo };
+	const paste = useCallback(() => {
+		const snapshot = store.getSnapshot();
+		const clipboard = snapshot.clipboard;
+		if (!clipboard) return;
+		store.update(clearClipboard);
+		settle(
+			pasteEntries(
+				store.context,
+				clipboard.paths,
+				snapshot.cwd,
+				clipboard.mode,
+			),
+			snapshot.cwd,
+		);
+	}, [store, settle]);
+
+	return { ...state, begin, change, submit, cancel, undo, paste };
 }

@@ -4,20 +4,20 @@
  * pane itself stays transport-free.
  */
 
-import type { FileSystem } from "../platform/files-contract";
+import type { FileHost } from "../platform/files-contract";
 import { FilesPane } from "./FilesPane";
 import { useFilesStore } from "./useFilesStore";
 
 interface WorkDirectoryFilesProps {
-	readonly fileSystem: FileSystem;
+	readonly fileHost: FileHost;
 	/** Host path of the work directory; the listing root. */
 	readonly workspacePath: string;
 }
 
 export function WorkDirectoryFiles({
-	fileSystem,
+	fileHost,
 	workspacePath,
 }: WorkDirectoryFilesProps) {
-	const store = useFilesStore(fileSystem, workspacePath);
+	const store = useFilesStore(fileHost, workspacePath);
 	return <FilesPane store={store} />;
 }

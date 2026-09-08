@@ -4,7 +4,7 @@ import {
 	showsColumns,
 	showsFacts,
 } from "@/src/oqto-ui/files/fidelity";
-import type { FileSystem } from "@/src/oqto-ui/platform/files-contract";
+import type { FileHost } from "@/src/oqto-ui/platform/files-contract";
 import { render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initI18n } from "../../lib/i18n";
@@ -58,7 +58,7 @@ beforeAll(() => {
 	};
 });
 
-const fs: FileSystem = {
+const fs: FileHost = {
 	async list(_workspace, path) {
 		if (path === "") {
 			return [
@@ -98,6 +98,8 @@ const fs: FileSystem = {
 	async rename() {},
 	async createDirectory() {},
 	async remove() {},
+	async copy() {},
+	async move() {},
 };
 
 describe("files fidelity", () => {
@@ -114,7 +116,7 @@ describe("files fidelity", () => {
 	it("renders one column in a narrow Container", async () => {
 		paneWidth = 320;
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("readme.md");
 		expect(view.container.querySelector(".wb-files")).toHaveAttribute(
@@ -127,7 +129,7 @@ describe("files fidelity", () => {
 	it("earns Miller columns in a wide Container, showing parent, current, and preview", async () => {
 		paneWidth = 900;
 		const view = render(
-			<WorkDirectoryFiles fileSystem={fs} workspacePath="/w" />,
+			<WorkDirectoryFiles fileHost={fs} workspacePath="/w" />,
 		);
 		await screen.findByText("readme.md");
 		expect(view.container.querySelector(".wb-files")).toHaveAttribute(

@@ -5,14 +5,14 @@
  * useSyncExternalStore; the engine itself stays pure.
  */
 
-import type { FileSystem } from "../platform/files-contract";
+import type { FileHost } from "../platform/files-contract";
 import { applyChange, navigate } from "./navigation";
 import { type FilesState, applyListing, initialState } from "./navigator";
 
 export interface FilesStore {
 	/** The host the pane acts on, for operations and previews. */
 	readonly context: {
-		readonly fileSystem: FileSystem;
+		readonly fileHost: FileHost;
 		readonly workspacePath: string;
 	};
 	getSnapshot(): FilesState;
@@ -31,7 +31,7 @@ export interface FilesStore {
 }
 
 export function createFilesStore(
-	fileSystem: FileSystem,
+	fileHost: FileHost,
 	workspacePath: string,
 ): FilesStore {
 	let state = initialState();
@@ -48,7 +48,7 @@ export function createFilesStore(
 		if (inFlight.has(path)) return;
 		inFlight.add(path);
 		emit(applyListing(state, path, { status: "loading" }));
-		fileSystem.list(workspacePath, path).then(
+		fileHost.list(workspacePath, path, state.showHidden).then(
 			(entries) => {
 				inFlight.delete(path);
 				emit(applyListing(state, path, { status: "ready", entries }));
@@ -65,7 +65,7 @@ export function createFilesStore(
 		);
 	}
 
-	const unwatch = fileSystem.watch(workspacePath, (change) => {
+	const unwatch = fileHost.watch(workspacePath, (change) => {
 		const result = applyChange(state, change.path);
 		emit(result.state);
 		if (result.refetch !== null) fetchListing(result.refetch);
@@ -74,13 +74,21 @@ export function createFilesStore(
 	fetchListing("");
 
 	return {
-		context: { fileSystem, workspacePath },
+		context: { fileHost, workspacePath },
 		getSnapshot: () => state,
 		subscribe: (listener) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
-		update: (next) => emit(next(state)),
+		update: (next) => {
+			const before = state;
+			emit(next(state));
+			// Hidden entries are filtered by the host, so the flip needs a
+			// refetch of everything already listed.
+			if (state.showHidden !== before.showHidden) {
+				for (const path of Object.keys(state.listings)) fetchListing(path);
+			}
+		},
 		load: (path, force = false) => {
 			if (force || !state.listings[path]) fetchListing(path);
 		},

@@ -256,7 +256,7 @@ function LoadedShell({
 							/>
 						) : (
 							<WorkDirectoryFiles
-								fileSystem={platform.files}
+								fileHost={platform.files}
 								workspacePath={directory.path}
 							/>
 						)}

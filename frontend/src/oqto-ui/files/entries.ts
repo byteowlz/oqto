@@ -40,13 +40,6 @@ export function compareNames(left: string, right: string): number {
 	return left.localeCompare(right);
 }
 
-export function sortEntries(entries: readonly FileEntry[]): FileEntry[] {
-	return [...entries].sort((left, right) => {
-		if (left.directory !== right.directory) return left.directory ? -1 : 1;
-		return compareNames(left.name, right.name);
-	});
-}
-
 /** Case-insensitive subsequence match, the filter every fast pane uses. */
 export function matchesFilter(name: string, filter: string): boolean {
 	if (filter === "") return true;
