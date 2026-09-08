@@ -16,6 +16,7 @@ import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 import { liveChatTransport } from "./live-chat-transport";
 import { type MuxSocket, createMuxFileSystem } from "./mux-files";
 import { muxWebSocketUrl } from "./mux-url";
+import { parseRunnerTargets } from "./runner-targets";
 
 type JsonRecord = {
 	id?: unknown;
@@ -483,6 +484,10 @@ const liveFiles = createMuxFileSystem(
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
+	runnerTargets: {
+		id: "live",
+		list: async () => parseRunnerTargets(await readJson("/api/runner-targets")),
+	},
 	files: liveFiles,
 	chat: createSessionEngine(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {

@@ -236,6 +236,8 @@ export type MessagePage = {
 };
 
 export type OqtoUiPlatform = {
+	/** Optional host capability; inventory does not change Session routing. */
+	runnerTargets?: import("./runner-targets").RunnerTargetsPort;
 	/** Stable adapter identity, part of every query key. */
 	readonly id: string;
 	/** Lazy, single-level work-directory file access for the Files pane. */

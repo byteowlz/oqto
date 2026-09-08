@@ -646,6 +646,8 @@ struct RunnerConfig {
     /// Socket directory pattern for per-user runner sockets.
     /// Default: /run/user/{uid}/oqto-runner.sock
     socket_pattern: Option<String>,
+    /// Additional Account-authorized remote runner inventory. Does not rebind Workspaces.
+    targets: Vec<runner::targets::RunnerTargetConfig>,
 }
 
 impl AppConfig {
@@ -2544,6 +2546,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         max_proxy_body_bytes,
     );
     state = state.with_single_user(single_user);
+    state.runner_targets = Arc::new(
+        runner::targets::RunnerTargets::new(ctx.config.backend.runner.targets.clone())
+            .context("validating remote runner target configuration")?,
+    );
     state = state.with_feedback_config(ctx.config.feedback.clone());
     if ctx.config.apps.enabled {
         state = state.with_apps(apps::AppRuntimeService::new(

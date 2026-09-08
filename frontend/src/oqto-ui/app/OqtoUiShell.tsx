@@ -188,6 +188,7 @@ function LoadedShell({
 			ref={rootRef}
 		>
 			<NavigationRail
+				runnerTargets={platform.runnerTargets}
 				workDirectories={directories}
 				workDirectoryId={directory.id}
 				sessionId={session.id}

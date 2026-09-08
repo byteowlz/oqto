@@ -58,8 +58,36 @@ Guardrail debt is explicit: the branch-wide `just lint-rust-ai-guardrails` repor
 ## Not delivered
 
 - `oq` executable, terminal-host provisioning adapter, runner `pi-tui-rpc` transport, native-turn attribution or snapshot/replay convergence.
-- One central control plane connected to this Mac, runner enrollment/launchd installer, sleep/wake reconnection proof.
+- Remote chat/session admission, full audited runner enrollment/rotation, a general launchd installer, and physical sleep/wake proof. Read-only authenticated connectivity is now delivered below.
 - Discovery/reconnection to the user's real SSH agent or 1Password/Apple Keychain. SSH session inherited no `SSH_AUTH_SOCK`; the integration uses explicit fixture sockets only.
 - Destination-restricted SSH, Mac domain-filtered egress, container/multi-tenant isolation, temporary permission grants.
 
 The next slice remains one real Pi process attached through the runner to both TUI and rich frontend, with existing public-ID authority and oqto-log persistence. Do not substitute a standalone sandbox shell wrapper and call it `oq` before those contracts exist.
+
+## Connected Mac inventory (2026-09-08)
+
+[ADR-0047](../adr/0047-runner-inventory-is-not-session-placement.md) separates machine inventory from execution admission. The central backend can probe an explicitly Account-authorized Mac runner and expose it through `GET /api/runner-targets`. The collapsible sidebar roster reports connectivity; it does **not** offer remote chat creation or move existing Sessions.
+
+Operator setup checklist:
+
+1. Use a dedicated state root, synthetic HOME, explicit native Mac sandbox config, and an absolute Pi executable. The synthetic `HOME/.config/oqto/config.toml` must set `[local] single_user = true`, disable Linux users, and set `[runner] runner_id = "mac"`. Missing single-user configuration correctly fails closed on Mac; it is not a reason to disable sandboxing. Do not copy existing user Pi settings/JSONL or inherit the real SSH agent.
+2. Generate a dedicated CA and separate server/client leaf certificates with serverAuth/clientAuth EKUs. Require the server SAN `oqto-mac.runner`; store Linux private material under `~/.local/share/oqto/credentials/runner-targets/mac` (already denied by built-in sandbox profiles), mode 0700/0600. Copy only the server key/certificate and public CA to the Mac, and explicitly deny its credential/control/config directories in the Mac sandbox. A 0700 directory alone does not isolate same-UID agents.
+3. Start a dedicated launchd agent with `oqto-runner --listen-tls 127.0.0.1:39443 --tls-cert ... --tls-key ... --tls-client-ca ... --sandbox-config ...`. Set HOME/XDG_CONFIG_HOME/XDG_RUNTIME_DIR/TMPDIR explicitly. A dedicated working directory and logs prevent existing services, worktrees and user settings from being replaced.
+4. Supervise `ssh -N -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ForwardAgent=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:39443:127.0.0.1:39443 mac` in a separate Linux user service. SSH transports TLS; it does not replace certificate or Account authorization. Both listeners are loopback-only.
+5. Create endpoint JSON containing `transport: "tcp_tls"`, `address: "127.0.0.1:39443"`, `server_name: "oqto-mac.runner"`, and absolute `ca`, `certificate`, `key` paths. Run `python3 scripts/dev/register_runner_target.py --config "$HOME/.config/oqto/config.toml" --id mac --label Mac --account-id <Account-ID> --endpoint <endpoint.json> --dry-run`, review the addition, then omit `--dry-run`. The helper preserves original bytes, takes a private backup, validates the TOML round-trip, refuses conflicting IDs and checks for concurrent edits. Never hand-edit placement stores.
+6. Activate the tested backend using a reversible development service override rather than replacing an immutable release. Verify manifest structure, package version, tests, TLS rejection, Account filtering, unchanged placement registry and UI status. Keep the healthcheck startup-grace requirement below in mind.
+
+Current development installation:
+
+- Mac state: `~/.local/share/oqto/mac-runner`; launchd label `dev.oqto.mac-runner`, plist `~/Library/LaunchAgents/dev.oqto.mac-runner.plist`. This uses the already-proved staged native 0.5.0 runner and Pi 0.85.0, with no model credentials or original Pi-session writes.
+- Linux SSH service: `oqto-mac-tunnel.service`; Account grant: `wismut` only; target ID: `mac`.
+- Backend override: `~/.config/systemd/user/oqto.service.d/40-mac-runner-targets.conf`, referring to the separately installed root-owned `/usr/local/lib/oqto/dev/mac-runner-targets-20260908/oqto`. `/usr/local/bin/oqto` and the immutable release remain unchanged. This is a development activation, not a packaged release.
+- Leaf certificates expire after 90 days; CA after 365 days. No automatic renewal claim. Remove or rotate trust deliberately before expiry.
+
+Proof: mutual-TLS capability request returned wire version 1 and Pi support. Missing client certificate and wrong server identity were rejected. A sandboxed native shell wrote the dedicated workspace proof file while reading the TLS private key failed. The authenticated backend returns Mac online with `session_creation: false`; an unauthenticated request returns 401. Account isolation/no secret projection, protocol mismatch, UI error/cache behavior and preserving registration updates have regressions.
+
+Gates: backend binary tests 287 passed/one existing ignored; all-target Clippy and fmt clean; frontend focused tests 19 passed, OqtoUI typecheck and OqtoUI guardrails pass; four Python registration tests pass; dist manifest validates 32 assets. Focused production Rust scan has zero findings. Branch-wide Rust (11 existing findings) and legacy useEffect (two unchanged renderer findings) gates remain red under `oqto-msvq`; this is explicitly outside this additive inventory slice, not silently waived or described as a green release gate.
+
+Startup caveat discovered during activation (`oqto-n956`): the existing 30-second HTTP health timer can restart the backend during its synchronous target backfill. This installation processed 5,762 records in 56 seconds. A temporary pause of only that timer allowed readiness, after which monitoring was restored. Do not bypass session backfill or leave health monitoring disabled.
+
+Rollback: disable/stop only `oqto-mac-tunnel.service`; boot out only `gui/501/dev.oqto.mac-runner` on Mac; remove only the new backend drop-in and reload/restart that service. Remove only the exact added target stanza (or restore its backup **only if no later config edits exist**). Keep dedicated state and credentials until separately authorized cleanup. Never stop the personal Linux runner, rewrite placement/session stores, or replace a user's complete config as rollback.

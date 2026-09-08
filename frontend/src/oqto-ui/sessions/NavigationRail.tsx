@@ -16,6 +16,8 @@ import {
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiNavigation, WorkDirectory } from "../platform/contracts";
+import type { RunnerTargetsPort } from "../platform/runner-targets";
+import { RunnerTargets } from "./RunnerTargets";
 
 type NavigationRailProps = {
 	workDirectories: WorkDirectory[];
@@ -25,6 +27,7 @@ type NavigationRailProps = {
 	onNavigate: (next: UiNavigation) => void;
 	/** Collapses the hosting Container; absent when the host cannot collapse. */
 	onCollapse?: () => void;
+	runnerTargets?: RunnerTargetsPort;
 };
 
 export function NavigationRail({
@@ -34,6 +37,7 @@ export function NavigationRail({
 	schemeId,
 	onNavigate,
 	onCollapse,
+	runnerTargets,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
 	const [disclosedIds, setDisclosedIds] = useState<ReadonlySet<string>>(
@@ -75,6 +79,7 @@ export function NavigationRail({
 				</button>
 			</header>
 			<div className="wb-sidebar__rule" aria-hidden="true" />
+			{runnerTargets ? <RunnerTargets source={runnerTargets} /> : null}
 
 			<div className="wb-sidebar__search">
 				<button

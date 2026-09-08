@@ -283,6 +283,7 @@ fn create_router_with_config_and_auth(
                 .delete(proxy::proxy_mmry_memory_for_workspace),
         )
         // User profile routes (authenticated users)
+        .route("/runner-targets", get(super::runner_targets::list))
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
         .route("/auth/change-password", post(handlers::change_password))

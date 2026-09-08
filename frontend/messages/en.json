@@ -699,6 +699,15 @@
 		"person": {
 			"name": "You"
 		},
+		"runnerTargets": {
+			"title": "Machines",
+			"online": "Online",
+			"unavailable": "Offline",
+			"incompatible": "Update needed",
+			"connectionOnly": "Chat not enabled",
+			"refreshFailed": "Machine status unavailable",
+			"checkedAt": "Last checked {{time}}"
+		},
 		"navigation": {
 			"label": "Workspace and session navigation",
 			"collapse": "Collapse navigation",

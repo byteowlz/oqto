@@ -278,6 +278,8 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// Placement registry used to resolve workspaces to typed runner endpoints.
     pub placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
+    /// Inventory only; registration never changes Workspace routing.
+    pub runner_targets: Arc<crate::runner::targets::RunnerTargets>,
     /// Container placement lifecycle (provision/remove/reconcile). Present
     /// only when placement mode is `container`.
     pub placement_manager: Option<Arc<crate::runner::placement::PlacementManager>>,
@@ -367,6 +369,7 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             placement_store: None,
+            runner_targets: Arc::new(crate::runner::targets::RunnerTargets::default()),
             placement_manager: None,
             session_targets: Arc::new(session_targets),
             audit_logger: None,

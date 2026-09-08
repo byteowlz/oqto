@@ -696,6 +696,15 @@
 		"person": {
 			"name": "Du"
 		},
+		"runnerTargets": {
+			"title": "Rechner",
+			"online": "Online",
+			"unavailable": "Offline",
+			"incompatible": "Update erforderlich",
+			"connectionOnly": "Verbindungsziel · Chat noch nicht verfügbar",
+			"refreshFailed": "Rechnerstatus nicht verfügbar",
+			"checkedAt": "Zuletzt geprüft: {{time}}"
+		},
 		"navigation": {
 			"label": "Arbeitsbereichs- und Sitzungsnavigation",
 			"collapse": "Navigation einklappen",

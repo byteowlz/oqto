@@ -1,0 +1,57 @@
+.wb-runner-targets {
+	margin: 8px 14px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--sidebar-border);
+	font-size: 11px;
+}
+.wb-runner-targets summary {
+	padding: 5px 0;
+	cursor: pointer;
+	color: var(--muted-foreground);
+}
+.wb-runner-targets summary:focus-visible {
+	outline: 1px solid var(--ring);
+	outline-offset: 3px;
+}
+.wb-runner-targets ul {
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.wb-runner-targets li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 0;
+}
+.wb-runner-targets li > svg {
+	width: 15px;
+	height: 15px;
+	flex-shrink: 0;
+	color: var(--muted-foreground);
+}
+.wb-runner-targets__name {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 3px;
+}
+.wb-runner-targets__name strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 500;
+}
+.wb-runner-targets__name span,
+.wb-runner-targets output {
+	color: var(--muted-foreground);
+	font-size: 10px;
+}
+.wb-runner-targets__status {
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+.wb-runner-targets [data-connection="online"] .wb-runner-targets__status {
+	color: var(--success, var(--foreground));
+}

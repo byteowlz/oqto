@@ -74,6 +74,7 @@ export function createContentRenderer(
 		if (content.kind === "sessions") {
 			return (
 				<NavigationRail
+					runnerTargets={platform.runnerTargets}
 					workDirectories={snapshot.workDirectories}
 					workDirectoryId={context.directory.id}
 					sessionId={context.session.id}
