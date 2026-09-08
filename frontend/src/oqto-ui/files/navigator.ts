@@ -27,6 +27,8 @@ export interface FilesState {
 	readonly sort: SortOrder;
 	/** Hidden entries are excluded by the host, so this drives refetches. */
 	readonly showHidden: boolean;
+	/** Directories whose children are shown inline in the tree view. */
+	readonly expanded: readonly string[];
 	/** Yanked paths awaiting a paste, with the mode they were yanked in. */
 	readonly clipboard: {
 		readonly paths: readonly string[];
@@ -46,6 +48,7 @@ export function initialState(cwd = ""): FilesState {
 		changed: [],
 		sort: DEFAULT_SORT,
 		showHidden: false,
+		expanded: [],
 		clipboard: null,
 	};
 }

@@ -27,6 +27,7 @@ import {
 	visibleEntries,
 } from "@/src/oqto-ui/files/navigator";
 import { sortEntries } from "@/src/oqto-ui/files/sorting";
+import { toggleExpanded, treeRows } from "@/src/oqto-ui/files/tree";
 import type { FileEntry } from "@/src/oqto-ui/platform/files-contract";
 import { describe, expect, it } from "vitest";
 
@@ -304,5 +305,64 @@ describe("sorting, clipboard, and targets", () => {
 		});
 		expect(actionTargets(state)).toEqual(["a.txt", "b.txt"]);
 		expect(clearClipboard(state).clipboard).toBeNull();
+	});
+});
+
+describe("tree rows", () => {
+	function withChildren() {
+		let state = applyListing(initialState(), "", {
+			status: "ready",
+			entries: [entry("src", true), entry("readme.md")],
+		});
+		state = applyListing(state, "src", {
+			status: "ready",
+			entries: [entry("src/app.ts"), entry("src/lib", true)],
+		});
+		return state;
+	}
+
+	it("shows only the current level until a directory is expanded", () => {
+		const state = withChildren();
+		expect(treeRows(state).map((row) => row.entry.name)).toEqual([
+			"src",
+			"readme.md",
+		]);
+		const opened = toggleExpanded(state, "src");
+		expect(opened.load).toBeNull();
+		expect(
+			treeRows(opened.state).map((row) => [row.entry.name, row.depth]),
+		).toEqual([
+			["src", 0],
+			["lib", 1],
+			["app.ts", 1],
+			["readme.md", 0],
+		]);
+	});
+
+	it("asks for a listing the first time a directory is expanded", () => {
+		const state = applyListing(initialState(), "", {
+			status: "ready",
+			entries: [entry("docs", true)],
+		});
+		expect(toggleExpanded(state, "docs").load).toBe("docs");
+	});
+
+	it("collapsing a directory also collapses everything inside it", () => {
+		let state = toggleExpanded(withChildren(), "src").state;
+		state = toggleExpanded(state, "src/lib").state;
+		expect(state.expanded).toEqual(["src", "src/lib"]);
+		state = toggleExpanded(state, "src").state;
+		expect(state.expanded).toEqual([]);
+	});
+
+	it("keeps a directory whose descendant matches the filter", () => {
+		const state = setFilter(toggleExpanded(withChildren(), "src").state, "app");
+		expect(treeRows(state).map((row) => row.entry.name)).toEqual([
+			"src",
+			"app.ts",
+		]);
+		// A collapsed directory matches only by its own name.
+		const collapsed = setFilter(withChildren(), "app");
+		expect(treeRows(collapsed)).toEqual([]);
 	});
 });

@@ -11,6 +11,8 @@ import {
 	Columns3,
 	Eye,
 	EyeOff,
+	List,
+	ListTree,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { breadcrumb } from "./entries";
@@ -21,15 +23,15 @@ import type { FilesStore } from "./store";
 interface FilesToolbarProps {
 	readonly state: FilesState;
 	readonly store: FilesStore;
-	readonly details: boolean;
-	readonly onDetails: () => void;
+	readonly view: { readonly details: boolean; readonly tree: boolean };
+	readonly onToggle: (which: "details" | "tree") => void;
 }
 
 export function FilesToolbar({
 	state,
 	store,
-	details,
-	onDetails,
+	view,
+	onToggle,
 }: FilesToolbarProps) {
 	const { t } = useTranslation();
 	return (
@@ -102,10 +104,26 @@ export function FilesToolbar({
 			<button
 				className="wb-icon-button"
 				type="button"
-				data-active={details || undefined}
+				data-active={view.tree || undefined}
+				aria-label={t(
+					view.tree ? "oqtoUi.files.viewList" : "oqtoUi.files.viewTree",
+				)}
+				aria-pressed={view.tree}
+				onClick={() => onToggle("tree")}
+			>
+				{view.tree ? (
+					<List aria-hidden="true" />
+				) : (
+					<ListTree aria-hidden="true" />
+				)}
+			</button>
+			<button
+				className="wb-icon-button"
+				type="button"
+				data-active={view.details || undefined}
 				aria-label={t("oqtoUi.files.details")}
-				aria-pressed={details}
-				onClick={onDetails}
+				aria-pressed={view.details}
+				onClick={() => onToggle("details")}
 			>
 				<Columns3 aria-hidden="true" />
 			</button>

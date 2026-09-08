@@ -17,37 +17,45 @@ export interface EntryFacts {
 }
 
 interface FilesListProps {
-	readonly entries: readonly FileEntry[];
+	/** List rows, or tree rows when the pane is in tree view. */
+	readonly rows: readonly {
+		entry: FileEntry;
+		depth: number;
+		expanded: boolean;
+	}[];
 	readonly cursor: string | null;
-	readonly selection: ReadonlySet<string>;
-	readonly changed: ReadonlySet<string>;
+	readonly marks: {
+		readonly selection: ReadonlySet<string>;
+		readonly changed: ReadonlySet<string>;
+	};
 	readonly facts: (entry: FileEntry) => EntryFacts;
 	readonly onSelect: (path: string, event: React.MouseEvent) => void;
 	readonly onOpen: (entry: FileEntry) => void;
+	readonly onToggle?: (entry: FileEntry) => void;
 	/** Scrolls this column to its cursor; the pane calls it after a move. */
 	readonly scrollRef?: (scrollToCursor: () => void) => void;
 }
 
 export function FilesList({
-	entries,
+	rows,
 	cursor,
-	selection,
-	changed,
+	marks,
 	facts,
 	onSelect,
 	onOpen,
+	onToggle,
 	scrollRef,
 }: FilesListProps) {
 	const container = useRef<HTMLDivElement | null>(null);
 	const virtualizer = useVirtualizer({
-		count: entries.length,
+		count: rows.length,
 		getScrollElement: () => container.current,
 		estimateSize: () => ROW_HEIGHT,
 		overscan: 12,
 		initialRect: { width: 320, height: 640 },
 	});
 	scrollRef?.(() => {
-		const index = entries.findIndex((entry) => entry.path === cursor);
+		const index = rows.findIndex((row) => row.entry.path === cursor);
 		if (index >= 0) virtualizer.scrollToIndex(index, { align: "auto" });
 	});
 	return (
@@ -61,7 +69,7 @@ export function FilesList({
 				}
 			>
 				{virtualizer.getVirtualItems().map((item) => {
-					const entry = entries[item.index];
+					const { entry, depth, expanded } = rows[item.index];
 					return (
 						<div
 							className="wb-files-row"
@@ -72,12 +80,16 @@ export function FilesList({
 						>
 							<FileRow
 								entry={entry}
-								{...facts(entry)}
-								cursor={entry.path === cursor}
-								selected={selection.has(entry.path)}
-								changed={changed.has(entry.path)}
+								row={{
+									...facts(entry),
+									cursor: entry.path === cursor,
+									selected: marks.selection.has(entry.path),
+									changed: marks.changed.has(entry.path),
+									tree: onToggle ? { depth, expanded } : null,
+								}}
 								onSelect={onSelect}
 								onOpen={onOpen}
+								onToggle={onToggle ?? (() => {})}
 							/>
 						</div>
 					);

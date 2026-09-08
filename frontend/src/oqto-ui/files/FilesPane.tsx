@@ -17,6 +17,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../platform/files-contract";
+import { FilesActionLine } from "./FilesActionLine";
 import { FilesList } from "./FilesList";
 import { FilesPreview } from "./FilesPreview";
 import { FilesToolbar } from "./FilesToolbar";
@@ -27,6 +28,7 @@ import { formatModified, formatSize } from "./format";
 import { cursorEntry, cursorToEdge, goUp } from "./navigation";
 import { moveCursor, select, visibleEntries } from "./navigator";
 import type { FilesStore } from "./store";
+import { toggleExpanded, treeRows } from "./tree";
 import { useElementSize } from "./useElementSize";
 import { useFileActions } from "./useFileActions";
 import { useFilesState } from "./useFilesStore";
@@ -45,12 +47,16 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 	const state = useFilesState(store);
 	const [details, setDetails] = useState(true);
 	const [previewOpen, setPreviewOpen] = useState(false);
+	const [tree, setTree] = useState(false);
 	const actions = useFileActions(store);
 	const measured = useElementSize();
 	const fidelity = paneFidelity(measured.inlineSize);
-	const columns = showsColumns(fidelity);
+	const columns = showsColumns(fidelity) && !tree;
 	const entries = visibleEntries(state);
 	const listing = state.listings[state.cwd];
+	const rows = tree
+		? treeRows(state)
+		: entries.map((entry) => ({ entry, depth: 0, expanded: false }));
 	const focused = entries.find((entry) => entry.path === state.cursor) ?? null;
 	if (columns) {
 		const parent =
@@ -95,6 +101,19 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 		[store, onOpenFile],
 	);
 
+	const toggleTree = useCallback(
+		(entry: FileEntry) => {
+			let load: string | null = null;
+			store.update((current) => {
+				const result = toggleExpanded(current, entry.path);
+				load = result.load;
+				return result.state;
+			});
+			if (load) store.load(load);
+		},
+		[store],
+	);
+
 	const onSelect = useCallback(
 		(path: string, event: React.MouseEvent) => {
 			const mode =
@@ -114,9 +133,9 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 		[store, previewOpen, preview],
 	);
 
+	const marks = { selection, changed };
 	const rendering: ColumnRendering = {
-		selection,
-		changed,
+		marks,
 		facts,
 		onSelect,
 		onOpen: open,
@@ -154,7 +173,9 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 			store.update(goUp);
 		} else if (key === "ArrowRight" || key === "l" || key === "Enter") {
 			const target = cursorEntry(state);
-			if (target) open(target);
+			if (!target) return;
+			if (tree && target.directory && key !== "Enter") toggleTree(target);
+			else open(target);
 		} else if (key === "/") actions.begin("filter");
 		else if (key === " ") {
 			const opening = !previewOpen;
@@ -185,55 +206,15 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 			<FilesToolbar
 				state={state}
 				store={store}
-				details={details}
-				onDetails={() => setDetails((shown) => !shown)}
+				view={{ details, tree }}
+				onToggle={(which) =>
+					which === "details"
+						? setDetails((shown) => !shown)
+						: setTree((shown) => !shown)
+				}
 			/>
 
-			{actions.mode === null ? null : actions.mode === "confirmDelete" ? (
-				<div className="wb-files-filter wb-files-confirm">
-					<span>
-						{t("oqtoUi.files.deleteConfirm", { name: focused?.name ?? "" })}
-					</span>
-					<button type="button" onClick={actions.submit}>
-						{t("oqtoUi.files.delete")}
-					</button>
-					<button type="button" onClick={actions.cancel}>
-						{t("common.cancel")}
-					</button>
-				</div>
-			) : (
-				// biome-ignore lint/a11y/noAutofocus: the action line is opened by a key and must receive it.
-				<input
-					className="wb-files-filter"
-					type="text"
-					autoFocus
-					value={actions.draft}
-					placeholder={t(
-						actions.mode === "rename"
-							? "oqtoUi.files.rename"
-							: actions.mode === "create"
-								? "oqtoUi.files.newFolderPrompt"
-								: "oqtoUi.files.filter",
-					)}
-					aria-label={t(
-						actions.mode === "rename"
-							? "oqtoUi.files.rename"
-							: actions.mode === "create"
-								? "oqtoUi.files.newFolderPrompt"
-								: "oqtoUi.files.filter",
-					)}
-					onChange={(event) => actions.change(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter") {
-							event.preventDefault();
-							actions.submit();
-						} else if (event.key === "Escape") {
-							event.preventDefault();
-							actions.cancel();
-						}
-					}}
-				/>
-			)}
+			<FilesActionLine actions={actions} target={focused?.name ?? ""} />
 
 			<div
 				className="wb-files-body"
@@ -264,13 +245,13 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 					/>
 				) : (
 					<FilesList
-						entries={entries}
+						rows={rows}
 						cursor={state.cursor}
-						selection={selection}
-						changed={changed}
+						marks={marks}
 						facts={facts}
 						onSelect={onSelect}
 						onOpen={open}
+						onToggle={tree ? toggleTree : undefined}
 						scrollRef={holdScroll}
 					/>
 				)}

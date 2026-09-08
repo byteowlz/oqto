@@ -783,6 +783,8 @@
 		},
 		"files": {
 			"label": "Files",
+			"expand": "Expand",
+			"collapse": "Collapse",
 			"sortName": "Sort by name",
 			"sortSize": "Sort by size",
 			"sortModified": "Sort by date",

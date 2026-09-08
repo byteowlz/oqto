@@ -3137,3 +3137,35 @@
 .wb-files .wb-icon-button[data-descending] svg {
 	transform: scaleY(-1);
 }
+
+/* Tree view: depth as an indent, an expander that does not steal the row's
+   click, and the same row body as the list view. */
+.wb-files .wb-tree__row[data-depth="1"] {
+	padding-left: 24px;
+}
+.wb-files .wb-tree__row[data-depth="2"] {
+	padding-left: 38px;
+}
+.wb-files .wb-tree__row[data-depth="3"] {
+	padding-left: 52px;
+}
+.wb-files .wb-tree__row[data-depth="4"] {
+	padding-left: 66px;
+}
+.wb-files .wb-tree__row[data-depth="5"] {
+	padding-left: 80px;
+}
+
+.wb-tree__expander {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--muted-foreground);
+}
+
+.wb-tree__expander:hover {
+	color: var(--foreground);
+}

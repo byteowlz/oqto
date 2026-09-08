@@ -18,6 +18,7 @@ import {
 	Link2,
 	File as Plain,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo } from "react";
 import type { FileEntry } from "../platform/files-contract";
 import { type EntryKind, entryKind } from "./kinds";
@@ -35,28 +36,34 @@ const ICONS: { readonly [kind in EntryKind]: typeof Folder } = {
 	file: Plain,
 };
 
-interface FileRowProps {
-	readonly entry: FileEntry;
+/** How a row appears: its facts, its flags, and its tree placement. */
+export interface RowState {
 	/** Pre-formatted facts; empty strings hide the column. */
 	readonly size: string;
 	readonly modified: string;
 	readonly cursor: boolean;
 	readonly selected: boolean;
 	readonly changed: boolean;
+	/** Tree view only: nesting level and expansion, null in list view. */
+	readonly tree: { readonly depth: number; readonly expanded: boolean } | null;
+}
+
+interface FileRowProps {
+	readonly entry: FileEntry;
+	readonly row: RowState;
 	readonly onSelect: (path: string, event: React.MouseEvent) => void;
 	readonly onOpen: (entry: FileEntry) => void;
+	readonly onToggle: (entry: FileEntry) => void;
 }
 
 export const FileRow = memo(function FileRow({
 	entry,
-	size,
-	modified,
-	cursor,
-	selected,
-	changed,
+	row,
 	onSelect,
 	onOpen,
+	onToggle,
 }: FileRowProps) {
+	const { size, modified, cursor, selected, changed, tree } = row;
 	const kind = entryKind(entry.name, entry.directory);
 	const Icon = ICONS[kind];
 	return (
@@ -67,9 +74,30 @@ export const FileRow = memo(function FileRow({
 			data-selected={selected || undefined}
 			data-changed={changed || undefined}
 			data-kind={kind}
+			data-depth={tree ? tree.depth : undefined}
 			onClick={(event) => onSelect(entry.path, event)}
 			onDoubleClick={() => onOpen(entry)}
 		>
+			{tree ? (
+				entry.directory ? (
+					<span
+						className="wb-tree__expander"
+						onPointerDown={(event) => {
+							event.stopPropagation();
+							event.preventDefault();
+							onToggle(entry);
+						}}
+					>
+						{tree.expanded ? (
+							<ChevronDown aria-hidden="true" />
+						) : (
+							<ChevronRight aria-hidden="true" />
+						)}
+					</span>
+				) : (
+					<span className="wb-tree__expander" />
+				)
+			) : null}
 			<Icon aria-hidden="true" />
 			<span className="wb-tree__name">{entry.name}</span>
 			{entry.symlink ? (

@@ -15,8 +15,10 @@ import type { PreviewState } from "./usePreview";
 
 /** Row rendering shared by every column, passed as one value. */
 export interface ColumnRendering {
-	readonly selection: ReadonlySet<string>;
-	readonly changed: ReadonlySet<string>;
+	readonly marks: {
+		readonly selection: ReadonlySet<string>;
+		readonly changed: ReadonlySet<string>;
+	};
 	readonly facts: (entry: FileEntry) => EntryFacts;
 	readonly onSelect: (path: string, event: React.MouseEvent) => void;
 	readonly onOpen: (entry: FileEntry) => void;
@@ -43,7 +45,7 @@ export function MillerColumns({
 	rendering,
 }: MillerColumnsProps) {
 	const { t } = useTranslation();
-	const { selection, changed, facts, onSelect, onOpen, scrollRef } = rendering;
+	const { marks, facts, onSelect, onOpen, scrollRef } = rendering;
 	const parent = parentPath(state.cwd);
 	const noFacts = () => ({ size: "", modified: "" });
 	const childEntries = focused?.directory
@@ -54,10 +56,13 @@ export function MillerColumns({
 			{parent === null ? null : (
 				<div className="wb-files-column" data-role="parent">
 					<FilesList
-						entries={readyEntries(state.listings[parent])}
+						rows={readyEntries(state.listings[parent]).map((entry) => ({
+							entry,
+							depth: 0,
+							expanded: false,
+						}))}
 						cursor={state.cwd}
-						selection={selection}
-						changed={changed}
+						marks={marks}
 						facts={noFacts}
 						onSelect={(path) =>
 							onOpen({ ...(focused as FileEntry), path, directory: true })
@@ -68,10 +73,9 @@ export function MillerColumns({
 			)}
 			<div className="wb-files-column" data-role="current">
 				<FilesList
-					entries={entries}
+					rows={entries.map((entry) => ({ entry, depth: 0, expanded: false }))}
 					cursor={state.cursor}
-					selection={selection}
-					changed={changed}
+					marks={marks}
 					facts={facts}
 					onSelect={onSelect}
 					onOpen={onOpen}
@@ -81,10 +85,13 @@ export function MillerColumns({
 			<div className="wb-files-column" data-role="preview">
 				{focused?.directory ? (
 					<FilesList
-						entries={childEntries}
+						rows={childEntries.map((entry) => ({
+							entry,
+							depth: 0,
+							expanded: false,
+						}))}
 						cursor={null}
-						selection={selection}
-						changed={changed}
+						marks={marks}
 						facts={noFacts}
 						onSelect={() => {}}
 						onOpen={onOpen}
