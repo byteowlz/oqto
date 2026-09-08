@@ -10,7 +10,6 @@ import type { PreviewSelection } from "../chat/ResourcePreviewPane";
 import { TaskProgress } from "../chat/TaskProgress";
 import { createClassicPresetLayout } from "../compositor/index";
 import { CompositorHost } from "../compositor/react/CompositorHost";
-import { bindingsFromConfig } from "../compositor/react/config-bindings";
 import {
 	type PersistedCompositorStore,
 	createPersistedCompositorStore,
@@ -32,6 +31,7 @@ import {
 } from "../platform/layout-storage";
 import { SessionStatusBar } from "../sessions/SessionStatusBar";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
+import { KeyboardBindings } from "./KeyboardBindings";
 import { MobileCompositor } from "./MobileCompositor";
 import { createContentLabel, createContentRenderer } from "./compositorContent";
 import { createChromeLabels } from "./compositorLabels";
@@ -46,6 +46,7 @@ import {
 	filesContent,
 } from "./compositorRefs";
 import { useShellActions } from "./useShellActions";
+import { useShellBindings } from "./useShellBindings";
 
 /** Below this inline size the mobile Screen Mode projection applies (OG breakpoint). */
 export const MOBILE_SCREEN_MODE_BELOW = 1024;
@@ -150,6 +151,25 @@ export function LoadedCompositorShell({
 		}),
 		[preview],
 	);
+	const keys = useShellBindings({
+		storage,
+		platformId: platform.id,
+		configured: resolvedConfig.config.bindings,
+	});
+
+	const settingsWithKeyboard = useMemo(
+		() => ({
+			...settings,
+			keyboard: (
+				<KeyboardBindings
+					bindings={keys.bindings}
+					overrides={keys.overrides}
+					onChange={keys.save}
+				/>
+			),
+		}),
+		[settings, keys],
+	);
 	const renderContent = useMemo(
 		() =>
 			createContentRenderer({
@@ -161,7 +181,7 @@ export function LoadedCompositorShell({
 				resolvedConfig,
 				previewState,
 				navigate,
-				settings,
+				settings: settingsWithKeyboard,
 				chrome,
 			}),
 		[
@@ -173,7 +193,7 @@ export function LoadedCompositorShell({
 			resolvedConfig,
 			previewState,
 			navigate,
-			settings,
+			settingsWithKeyboard,
 			chrome,
 		],
 	);
@@ -182,10 +202,6 @@ export function LoadedCompositorShell({
 		[snapshot, t],
 	);
 	const labels = useMemo(() => createChromeLabels(t), [t]);
-	const keyBindings = useMemo(
-		() => bindingsFromConfig(resolvedConfig.config.bindings),
-		[resolvedConfig],
-	);
 	const config = resolvedConfig.config;
 	return (
 		<div
@@ -241,7 +257,7 @@ export function LoadedCompositorShell({
 							contentLabel={contentLabel}
 							labels={labels}
 							addable={addable}
-							keyBindings={keyBindings}
+							keyBindings={keys.bindings}
 						/>
 					)}
 				</CornerModeChrome>

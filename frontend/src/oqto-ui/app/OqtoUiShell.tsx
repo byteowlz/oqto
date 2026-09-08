@@ -247,6 +247,7 @@ function LoadedShell({
 						/>
 						{settingsOpen ? (
 							<SettingsPane
+								keyboard={null}
 								schemeId={schemeId}
 								themeRoot={rootEl}
 								userTheme={userTheme}

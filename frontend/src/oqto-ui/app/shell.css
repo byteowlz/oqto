@@ -3567,3 +3567,57 @@
 	font-size: 10px;
 	line-height: 1.4;
 }
+
+/* -------------------------------------------------------------- keyboard */
+
+.wb-keys {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 11px;
+}
+
+.wb-keys li {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 6px;
+}
+
+.wb-keys li > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+}
+
+.wb-keys button {
+	padding: 3px 6px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.wb-keys button:hover {
+	border-color: var(--primary);
+}
+
+.wb-keys button[data-overridden] {
+	color: var(--primary);
+}
+
+.wb-keys button[data-recording] {
+	border-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
+.wb-keys__reset {
+	border-color: transparent !important;
+	background: none !important;
+	color: var(--muted-foreground) !important;
+}

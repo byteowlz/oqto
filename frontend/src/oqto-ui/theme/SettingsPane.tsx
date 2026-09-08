@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatDetail } from "../chat/ChatDetail";
 import type {
@@ -15,6 +16,8 @@ type SettingsPaneProps = {
 	themeRoot: HTMLElement | null;
 	userTheme: OqtoUiUserTheme;
 	resolution: OqtoUiConfigResolution;
+	/** The keyboard section, composed by the host that owns the bindings. */
+	keyboard: ReactNode;
 	onChange: (next: OqtoUiUserTheme) => void;
 	onNavigate: (next: UiNavigation) => void;
 	onClose: () => void;
@@ -26,6 +29,7 @@ export function SettingsPane({
 	themeRoot,
 	userTheme,
 	resolution,
+	keyboard,
 	onChange,
 	onNavigate,
 	onClose,
@@ -52,6 +56,7 @@ export function SettingsPane({
 				<ThemePicker schemeId={schemeId} onNavigate={onNavigate} />
 			</section>
 			<ChatDetail />
+			{keyboard}
 			<ThemeCustomizer
 				embedded
 				themeRoot={themeRoot}

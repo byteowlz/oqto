@@ -871,6 +871,13 @@
 			"everything": "Alles",
 			"everythingHint": "Jeder Tool-Aufruf und Gedanke, ausgeklappt"
 		},
+		"keyboard": {
+			"label": "Tastatur",
+			"rebind": "Kürzel ändern",
+			"press": "Tasten drücken…",
+			"unbound": "Nicht belegt",
+			"reset": "Auf Standard zurücksetzen"
+		},
 		"files": {
 			"copyToName": "{{name}}",
 			"copyTo": "Kopieren nach…",

@@ -55,6 +55,8 @@ export interface ContentRendererDeps {
 		readonly open: boolean;
 		readonly toggle: () => void;
 		readonly close: () => void;
+		/** The keyboard section the settings pane shows. */
+		readonly keyboard: ReactNode;
 	};
 	readonly chrome: {
 		readonly collapseNavigation: () => void;
@@ -220,6 +222,7 @@ export function createContentRenderer(
 		if (content.kind === "settings") {
 			return (
 				<SettingsPane
+					keyboard={settings.keyboard}
 					schemeId={theme.schemeId}
 					themeRoot={theme.rootEl}
 					userTheme={theme.userTheme}

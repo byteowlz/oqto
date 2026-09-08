@@ -871,6 +871,13 @@
 			"everything": "Everything",
 			"everythingHint": "Every tool call and thought, expanded"
 		},
+		"keyboard": {
+			"label": "Keyboard",
+			"rebind": "Change shortcut",
+			"press": "Press keys…",
+			"unbound": "Unbound",
+			"reset": "Reset to default"
+		},
 		"files": {
 			"copyToName": "{{name}}",
 			"copyTo": "Copy to…",

@@ -11,7 +11,7 @@ import {
 } from "../compositor/react/keybindings";
 
 /** Action id -> i18n key suffix under oqtoUi.compositor.actions. */
-const ACTION_LABEL_KEYS: { [id: string]: string } = {
+export const ACTION_LABEL_KEYS: { [id: string]: string } = {
 	"compositor.toggleNavigation": "toggleNavigation",
 	"compositor.focus.start": "focusStart",
 	"compositor.focus.end": "focusEnd",
