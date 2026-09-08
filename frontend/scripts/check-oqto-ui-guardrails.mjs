@@ -1443,6 +1443,138 @@ function cycleViolations(sourceRoot, graph, sourceFiles) {
 	return violations;
 }
 
+/**
+ * Elements that shared components style with utility classes. An unlayered
+ * reset on one of these silently wins over every `@layer utilities` rule,
+ * whatever the specificity, so such resets must sit in `@layer base`.
+ */
+const RESETTABLE_ELEMENTS = new Set([
+	"a",
+	"blockquote",
+	"button",
+	"code",
+	"dd",
+	"details",
+	"dl",
+	"dt",
+	"fieldset",
+	"figure",
+	"form",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"hr",
+	"img",
+	"input",
+	"label",
+	"li",
+	"ol",
+	"p",
+	"pre",
+	"section",
+	"select",
+	"summary",
+	"table",
+	"td",
+	"textarea",
+	"th",
+	"ul",
+	"video",
+]);
+
+async function walkStyles(directory) {
+	let entries;
+	try {
+		entries = await fs.readdir(directory, { withFileTypes: true });
+	} catch (error) {
+		if (error && typeof error === "object" && error.code === "ENOENT")
+			return [];
+		throw error;
+	}
+	const files = [];
+	for (const entry of entries) {
+		const absolute = path.join(directory, entry.name);
+		if (entry.isDirectory()) files.push(...(await walkStyles(absolute)));
+		else if (path.extname(entry.name) === ".css") files.push(absolute);
+	}
+	return files.sort();
+}
+
+/**
+ * The bare elements a shell-wide selector resets. Only selectors rooted at the
+ * shell itself count: they reach every shared component rendered inside it,
+ * whereas a rule scoped to one OqtoUI component styles only its own markup.
+ */
+function shellWideElements(selectorList) {
+	const names = new Set();
+	for (const selector of selectorList.split(",")) {
+		const flattened = selector.replaceAll(/:(?:where|is|not)\(/g, "(");
+		const compounds = flattened
+			.split(/[\s>+~()]+/)
+			.map((part) => part.trim())
+			.filter(Boolean);
+		// Exactly root + element: a rule with a component class in between is
+		// scoped to that component, not a shell-wide reset.
+		if (compounds.length !== 2) continue;
+		// The shell root itself, optionally with a state attribute or pseudo.
+		if (!/^\.wb-shell(?![\w-])/.test(compounds[0])) continue;
+		const rightmost = compounds[compounds.length - 1].toLowerCase();
+		if (RESETTABLE_ELEMENTS.has(rightmost)) names.add(rightmost);
+	}
+	return names;
+}
+
+/**
+ * Element resets in OqtoUI stylesheets must live in `@layer base`. Unlayered
+ * CSS outranks every layered rule, so an unlayered element reset overrides
+ * the utility classes shared components style themselves with.
+ */
+async function styleLayerViolations(sourceRoot) {
+	const files = await walkStyles(sourceRoot);
+	const violations = [];
+	for (const file of files) {
+		const relative = normalizedRelative(sourceRoot, file);
+		// Blank comments in place so reported line numbers stay true to the file.
+		const text = (await fs.readFile(file, "utf8")).replaceAll(
+			/\/\*[\s\S]*?\*\//g,
+			(comment) => comment.replaceAll(/[^\n]/g, " "),
+		);
+		const stack = [];
+		let prelude = "";
+		let offset = 0;
+		for (const character of text) {
+			offset += 1;
+			if (character === "{") {
+				const trimmed = prelude.trim();
+				const atRule = trimmed.startsWith("@");
+				if (!atRule && !stack.some((entry) => entry === "@layer base")) {
+					const elements = shellWideElements(trimmed);
+					if (elements.size > 0) {
+						violations.push({
+							rule: "style/unlayered-element-reset",
+							file: relative,
+							line: text.slice(0, offset).split("\n").length,
+							column: 1,
+							message: `Shell-wide element selector outside \`@layer base\` overrides utility classes on shared components: ${[...elements].sort().join(", ")}`,
+						});
+					}
+				}
+				stack.push(atRule ? trimmed.replace(/\s+/g, " ") : "rule");
+				prelude = "";
+			} else if (character === "}") {
+				stack.pop();
+				prelude = "";
+			} else {
+				prelude += character;
+			}
+		}
+	}
+	return violations;
+}
+
 export async function inspectOqtoUI(
 	sourceRoot,
 	exceptionsPath = DEFAULT_EXCEPTIONS_PATH,
@@ -1481,6 +1613,7 @@ export async function inspectOqtoUI(
 	}
 	violations.push(...cycleViolations(absoluteRoot, graph, sourceFiles));
 	violations.push(...(await sharedRendererBoundaryViolations(absoluteRoot)));
+	violations.push(...(await styleLayerViolations(absoluteRoot)));
 
 	violations.sort(
 		(a, b) =>

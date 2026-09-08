@@ -16,13 +16,21 @@
 	box-sizing: border-box;
 }
 
-.wb-shell :where(button) {
-	font: inherit;
-	color: inherit;
-	background: none;
-	border: 0;
-	padding: 0;
-	cursor: pointer;
+/*
+ * The shell's button reset belongs in the base layer. Unlayered CSS beats
+ * every `@layer utilities` rule whatever the specificity, so an unlayered
+ * reset here silently stripped the padding off shared chat components
+ * (tool call headers) that style themselves with utility classes.
+ */
+@layer base {
+	:where(.wb-shell) :where(button) {
+		font: inherit;
+		color: inherit;
+		background: none;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+	}
 }
 
 /*
@@ -65,14 +73,16 @@
 	border-radius: var(--radius-md, 0) !important;
 }
 
-.wb-shell .wb-tool,
-.wb-shell .wb-task-progress__tooltip,
-.wb-shell .wb-composer__pop,
-.wb-shell button,
-.wb-shell input,
-.wb-shell textarea,
-.wb-shell select {
-	border-radius: var(--radius-sm, 0) !important;
+@layer base {
+	.wb-shell .wb-tool,
+	.wb-shell .wb-task-progress__tooltip,
+	.wb-shell .wb-composer__pop,
+	.wb-shell button,
+	.wb-shell input,
+	.wb-shell textarea,
+	.wb-shell select {
+		border-radius: var(--radius-sm, 0) !important;
+	}
 }
 
 .wb-shell .wb-task-progress__dot,

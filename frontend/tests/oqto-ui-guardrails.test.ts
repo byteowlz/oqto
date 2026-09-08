@@ -115,6 +115,27 @@ describe("OqtoUI architecture guardrails", () => {
 		).not.toThrow();
 	});
 
+	it("rejects a shell-wide element reset outside the base layer", () => {
+		const output = runFailure({
+			"app/shell.css": ".wb-shell button {\n\tpadding: 0;\n}\n",
+		});
+		expect(output).toContain("style/unlayered-element-reset");
+		expect(output).toContain("button");
+	});
+
+	it("accepts a layered reset and a component-scoped element rule", () => {
+		const root = fixture({
+			"app/shell.css":
+				"@layer base {\n\t:where(.wb-shell) :where(button) {\n\t\tpadding: 0;\n\t}\n}\n\n" +
+				"/* .wb-shell button would be shell-wide; this is not. */\n" +
+				".wb-shell .wb-statusbar button {\n\tpadding: 2px;\n}\n\n" +
+				".wb-composer__model-menu button {\n\tcolor: inherit;\n}\n",
+		});
+		expect(() =>
+			execFileSync(process.execPath, [SCRIPT, "--source-root", root]),
+		).not.toThrow();
+	});
+
 	it("rejects an exception not approved by the project owner", () => {
 		const root = fixture({
 			"sessions/chat/View.tsx":
