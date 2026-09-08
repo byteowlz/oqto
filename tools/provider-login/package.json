@@ -1,0 +1,10 @@
+{
+	"name": "@oqto/provider-login-worker",
+	"private": true,
+	"type": "module",
+	"engines": { "node": ">=22" },
+	"scripts": {
+		"test": "node --test *.test.mjs",
+		"test:native": "node -e \"if (!process.env.PI_LOGIN_TEST_SDK) { console.error('PI_LOGIN_TEST_SDK is required'); process.exit(1); }\" && node --test *.test.mjs"
+	}
+}
