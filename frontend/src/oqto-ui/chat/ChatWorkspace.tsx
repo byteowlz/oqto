@@ -14,7 +14,7 @@ import {
 	type PreviewSelection,
 	ResourcePreviewPane,
 } from "./ResourcePreviewPane";
-import { EditorPane, TerminalPane, WorkAreaTabs } from "./WorkAreaPanes";
+import { ChatActions, EditorPane, TerminalPane } from "./WorkAreaPanes";
 
 export type ChatWorkspaceContext = {
 	directory: WorkDirectory;
@@ -35,7 +35,8 @@ type ChatWorkspaceProps = {
 	workAreaTab: string;
 	galleryPane: ReactNode;
 	previewState: PreviewState;
-	onNavigate: (next: UiNavigation) => void;
+	/** The Container's controls, placed in the Chat presentation's header. */
+	chrome: ReactNode;
 	onTogglePanel?: () => void;
 };
 
@@ -46,7 +47,7 @@ export function ChatWorkspace({
 	workAreaTab,
 	galleryPane,
 	previewState,
-	onNavigate,
+	chrome,
 	onTogglePanel,
 }: ChatWorkspaceProps) {
 	const { directory, session, tasks } = context;
@@ -61,14 +62,6 @@ export function ChatWorkspace({
 	return (
 		<main className="wb-main" aria-label={t("oqtoUi.chat.label")}>
 			<div className="wb-chat-card">
-				<WorkAreaTabs
-					tabs={workArea.tabs}
-					activeTab={workAreaTab}
-					chatLabel={session.name}
-					chatMeta={`${directory.name} [${readableRef}] | ${session.updated}`}
-					onNavigate={onNavigate}
-					onTogglePanel={onTogglePanel}
-				/>
 				{preview ? (
 					<ResourcePreviewPane
 						selection={preview}
@@ -92,6 +85,12 @@ export function ChatWorkspace({
 						workAreaTab !== "gallery" ? (
 							<ChatPane
 								key={session.id}
+								actions={
+									<>
+										<ChatActions onTogglePanel={onTogglePanel} />
+										{chrome}
+									</>
+								}
 								platform={platform}
 								agentName={directory.name}
 								session={session}

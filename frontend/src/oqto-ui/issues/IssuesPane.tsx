@@ -5,7 +5,7 @@
  */
 
 import { CircleCheck, CirclePlay, Eye, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Issue, IssueStatus } from "../platform/issues-contract";
 import type { IssueHost } from "../platform/issues-contract";
@@ -30,13 +30,19 @@ interface IssuesPaneProps {
 	readonly issueHost: IssueHost;
 	/** Host path of the work directory whose tracker this is. */
 	readonly workspacePath: string;
+	/** The Container's own controls, placed in this pane's bar. */
+	readonly chrome?: ReactNode;
 }
 
 function byPriority(left: Issue, right: Issue): number {
 	return left.priority - right.priority || left.id.localeCompare(right.id);
 }
 
-export function IssuesPane({ issueHost, workspacePath }: IssuesPaneProps) {
+export function IssuesPane({
+	issueHost,
+	workspacePath,
+	chrome,
+}: IssuesPaneProps) {
 	const { t } = useTranslation();
 	const board = useIssues(issueHost, workspacePath);
 	const [showClosed, setShowClosed] = useState(false);

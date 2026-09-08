@@ -5,6 +5,7 @@
  */
 
 import { Pencil, RotateCcw, Save } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileHost } from "../platform/files-contract";
 import { useFileDocument } from "./useFileDocument";
@@ -16,9 +17,16 @@ interface FilePaneProps {
 	readonly workspacePath: string;
 	/** Path relative to the work directory root. */
 	readonly path: string;
+	/** The Container's own controls, placed in this pane's bar. */
+	readonly chrome?: ReactNode;
 }
 
-export function FilePane({ fileHost, workspacePath, path }: FilePaneProps) {
+export function FilePane({
+	fileHost,
+	workspacePath,
+	path,
+	chrome,
+}: FilePaneProps) {
 	const { t } = useTranslation();
 	const name = path.split("/").pop() ?? path;
 	const document = useFileDocument(fileHost, workspacePath, path, name);
@@ -64,6 +72,7 @@ export function FilePane({ fileHost, workspacePath, path }: FilePaneProps) {
 						<Pencil aria-hidden="true" />
 					</button>
 				) : null}
+				{chrome}
 			</header>
 			<div className="wb-file__body">
 				{document.status === "failed" ? (

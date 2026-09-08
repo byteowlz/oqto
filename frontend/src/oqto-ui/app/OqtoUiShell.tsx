@@ -236,6 +236,7 @@ function LoadedShell({
 							workArea={snapshot.workArea}
 							workAreaTab={navigation.workAreaTab}
 							galleryPane={<GalleryPane resources={snapshot.gallery} />}
+							chrome={null}
 							previewState={{
 								selection:
 									preview?.workDirectoryId === directory.id ? preview : null,
@@ -243,7 +244,6 @@ function LoadedShell({
 									setPreview({ ...selection, workDirectoryId: directory.id }),
 								close: () => setPreview(null),
 							}}
-							onNavigate={onNavigate}
 						/>
 						{settingsOpen ? (
 							<SettingsPane

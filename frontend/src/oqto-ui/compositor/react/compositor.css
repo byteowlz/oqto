@@ -65,19 +65,35 @@
 	color: var(--foreground);
 }
 
+/* Only rendered once a Container holds more than one Content. */
 .oqto-compositor-tabs {
 	display: flex;
 	flex: none;
 	align-items: center;
 	overflow-x: auto;
-	block-size: 20px;
-}
-
-/* A real tab bar only once there is more than one Content to choose from. */
-.oqto-compositor-tabs[data-tabs] {
-	block-size: auto;
 	border-block-end: 1px solid var(--border);
 	background: var(--card);
+}
+
+/*
+ * The Container's controls. With a tab bar they sit at its end; without one
+ * they are handed to the presentation, which places them in its own header,
+ * or anchored in a corner when it has none.
+ */
+.oqto-compositor-chrome {
+	display: flex;
+	flex: none;
+	align-items: center;
+	margin-inline-start: auto;
+}
+
+.oqto-compositor-corner {
+	position: absolute;
+	z-index: 3;
+	inset-block-start: 4px;
+	inset-inline-end: 6px;
+	display: flex;
+	align-items: center;
 }
 
 .oqto-compositor-tab {
@@ -324,7 +340,6 @@
 	position: relative;
 	display: flex;
 	align-items: center;
-	margin-inline-start: auto;
 }
 
 .oqto-compositor-add-open {

@@ -14,6 +14,7 @@ import {
 	Sun,
 } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiNavigation, WorkDirectory } from "../platform/contracts";
 import type { RunnerTargetsPort } from "../platform/runner-targets";
@@ -27,6 +28,8 @@ type NavigationRailProps = {
 	onNavigate: (next: UiNavigation) => void;
 	/** Collapses the hosting Container; absent when the host cannot collapse. */
 	onCollapse?: () => void;
+	/** The Container's own controls, placed in this pane's header. */
+	chrome?: ReactNode;
 	runnerTargets?: RunnerTargetsPort;
 };
 
@@ -37,6 +40,7 @@ export function NavigationRail({
 	schemeId,
 	onNavigate,
 	onCollapse,
+	chrome,
 	runnerTargets,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
@@ -77,6 +81,7 @@ export function NavigationRail({
 				>
 					<PanelLeftClose aria-hidden="true" />
 				</button>
+				{chrome}
 			</header>
 			<div className="wb-sidebar__rule" aria-hidden="true" />
 			{runnerTargets ? <RunnerTargets source={runnerTargets} /> : null}

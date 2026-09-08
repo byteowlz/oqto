@@ -1,94 +1,19 @@
-import {
-	Download,
-	FileCode2,
-	Folder,
-	Images,
-	MessageSquare,
-	PanelRightClose,
-	Pin,
-	Plus,
-	Search,
-	Terminal,
-} from "lucide-react";
+import { Download, FileCode2, PanelRightClose, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { UiNavigation, WorkAreaTab } from "../platform/contracts";
 
-type WorkAreaTabsProps = {
-	tabs: WorkAreaTab[];
-	activeTab: string;
-	chatLabel: string;
-	chatMeta: string;
-	onNavigate: (next: UiNavigation) => void;
+interface ChatActionsProps {
 	/** Toggles the side panel Container; absent when the host cannot. */
-	onTogglePanel?: () => void;
-};
-
-function tabIcon(id: WorkAreaTab["id"]) {
-	if (id === "editor") return <FileCode2 aria-hidden="true" />;
-	if (id === "terminal") return <Terminal aria-hidden="true" />;
-	if (id === "gallery") return <Images aria-hidden="true" />;
-	return <MessageSquare aria-hidden="true" />;
+	readonly onTogglePanel?: () => void;
 }
 
-export function WorkAreaTabs({
-	tabs,
-	activeTab,
-	chatLabel,
-	chatMeta,
-	onNavigate,
-	onTogglePanel,
-}: WorkAreaTabsProps) {
+/**
+ * The Chat presentation's own actions. Choosing what a Container shows is
+ * the compositor's tab bar's job, so this row carries no tabs of its own.
+ */
+export function ChatActions({ onTogglePanel }: ChatActionsProps) {
 	const { t } = useTranslation();
 	return (
-		<div
-			className="wb-wa-tabs"
-			role="tablist"
-			aria-label={t("oqtoUi.workArea.label")}
-		>
-			{tabs.map((tab) => {
-				const label =
-					tab.id === "chat"
-						? chatLabel
-						: (tab.fileName ?? t(`oqtoUi.tools.${tab.id}`));
-				const ownership = t(
-					tab.owner === "session"
-						? "oqtoUi.workArea.sessionOwned"
-						: "oqtoUi.workArea.workDirectoryOwned",
-				);
-				return (
-					<button
-						aria-selected={activeTab === tab.id}
-						className="wb-wa-tab"
-						data-active={activeTab === tab.id}
-						data-owner={tab.owner}
-						key={tab.id}
-						role="tab"
-						title={tab.id === "chat" ? chatMeta : ownership}
-						type="button"
-						onClick={() => onNavigate({ workAreaTab: tab.id })}
-					>
-						{tabIcon(tab.id)}
-						<span className="wb-wa-tab__label">{label}</span>
-						{tab.owner === "workDirectory" ? (
-							<Folder className="wb-wa-tab__owner" aria-hidden="true" />
-						) : null}
-						{tab.pinned ? (
-							<Pin
-								className="wb-wa-tab__pin"
-								aria-label={t("oqtoUi.workArea.pinned")}
-							/>
-						) : null}
-					</button>
-				);
-			})}
-			<button
-				className="wb-wa-tab wb-wa-tab--new"
-				type="button"
-				aria-label={t("oqtoUi.workArea.openTool")}
-			>
-				<Plus aria-hidden="true" />
-			</button>
-			<span className="wb-wa-tabs__spacer" />
+		<>
 			<button
 				className="wb-icon-button"
 				type="button"
@@ -111,7 +36,7 @@ export function WorkAreaTabs({
 			>
 				<PanelRightClose aria-hidden="true" />
 			</button>
-		</div>
+		</>
 	);
 }
 

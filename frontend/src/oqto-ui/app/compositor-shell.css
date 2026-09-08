@@ -181,6 +181,18 @@
 	scrollbar-width: none;
 }
 
+/* In a pane's own header the controls read as part of that header. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-chrome {
+	gap: 2px;
+	margin-inline-start: 4px;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-tabs
+	.oqto-compositor-chrome {
+	margin-inline-start: auto;
+}
+
 .wb-shell[data-compositor="classic"] .oqto-compositor-tab {
 	gap: 4px;
 	min-inline-size: 0;

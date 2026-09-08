@@ -28,11 +28,14 @@ function probeSetup(viewport = DESKTOP, addable: readonly ContentRef[] = []) {
 	) => {
 		renderCounts.set(content.id, (renderCounts.get(content.id) ?? 0) + 1);
 		return (
+			// A host places the Container's controls in its presentation, the way
+			// the shell's panes put them in their own header.
 			<output
 				data-testid={`content-${content.id}`}
 				data-focused={context.focused}
 			>
 				{content.id}
+				{context.chrome}
 			</output>
 		);
 	};
@@ -189,9 +192,9 @@ describe("CompositorHost React adapter (v2)", () => {
 		expect(cell.style.getPropertyValue("--oqto-cell-column")).toBe(
 			"1 / span 1",
 		);
-		// One strip per normal Container; frame chrome has none. A single
-		// Content shows no tab, only the strip's controls.
-		expect(view.queryAllByRole("tablist")).toHaveLength(3);
+		// A Container holding one Content grows no tab bar at all; its controls
+		// travel to the presentation instead.
+		expect(view.queryAllByRole("tablist")).toHaveLength(0);
 		expect(view.queryAllByRole("tab")).toHaveLength(0);
 		expect(view.getByTestId(`content-${chatContent.id}`)).toBeInTheDocument();
 	});

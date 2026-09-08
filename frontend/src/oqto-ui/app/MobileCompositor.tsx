@@ -71,6 +71,9 @@ export function MobileCompositor({
 			containerId: owner.id,
 			active,
 			focused: snapshot.focusedContentId === content.id,
+			// The mobile projection has one destination and its own chrome; a
+			// Container's controls have no meaning here.
+			chrome: null,
 		};
 	};
 	return (

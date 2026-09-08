@@ -1,16 +1,17 @@
 /**
- * One Container's chrome: tab strip (hidden for a single item) plus the
- * active Content presentation. Tabs are draggable; dropping on the center
- * tabs the Content here, dropping near an edge splits beside this
- * Container. Memoized on the Container's object identity — the kernel's
- * structural sharing keeps unchanged Containers identical, so unrelated
- * Containers never re-render.
+ * One Container: its Content, and a tab bar only once it holds more than
+ * one. With a single Content the Container's controls travel to the
+ * presentation instead, so no header band appears above a pane that already
+ * has one. Tabs are draggable; dropping on the center tabs the Content
+ * here, dropping near an edge splits beside this Container. Memoized on the
+ * Container's object identity — the kernel's structural sharing keeps
+ * unchanged Containers identical, so unrelated Containers never re-render.
  */
 
 import { type DragEvent, memo, useState } from "react";
 import { type Container, type ContentId, contentIdFrom } from "../index";
 import { isFrameChrome } from "../queries";
-import { AddContent } from "./AddContent";
+import { ContainerChrome } from "./ContainerChrome";
 import type {
 	CommitCommands,
 	CompositorChromeLabels,
@@ -56,6 +57,18 @@ export const ContainerView = memo(function ContainerView({
 		container.stack.find(
 			(content) => content.id === container.activeContentId,
 		) ?? null;
+	// A Container with several Contents needs a tab bar, and the controls
+	// belong in it; a Container with one hands them to the presentation.
+	const tabbed = container.stack.length > 1;
+	const chrome = isFrameChrome(container) ? null : (
+		<ContainerChrome
+			containerId={container.id}
+			stack={container.stack}
+			content={services}
+			labels={labels}
+			commit={commit}
+		/>
+	);
 	const zoneOf = (event: DragEvent<HTMLElement>) =>
 		dropZoneAt(
 			event.currentTarget.getBoundingClientRect(),
@@ -85,79 +98,42 @@ export const ContainerView = memo(function ContainerView({
 				commit(dropCommands(contentId, container.id, zone));
 			}}
 		>
-			{isFrameChrome(container) ? null : (
-				// Always present, so the Container's controls sit in one fixed place
-				// rather than appearing on hover. It only becomes a real tab bar
-				// once the Container holds more than one Content.
-				<div
-					className="oqto-compositor-tabs"
-					role="tablist"
-					data-tabs={container.stack.length > 1 || undefined}
-				>
-					{container.stack.length > 1 &&
-						container.stack.map((content) => (
-							<div
-								key={content.id}
-								className="oqto-compositor-tab"
-								data-active={
-									content.id === container.activeContentId || undefined
+			{tabbed ? (
+				<div className="oqto-compositor-tabs" role="tablist">
+					{container.stack.map((item) => (
+						<div
+							key={item.id}
+							className="oqto-compositor-tab"
+							data-active={item.id === container.activeContentId || undefined}
+						>
+							<button
+								type="button"
+								role="tab"
+								aria-selected={item.id === container.activeContentId}
+								draggable
+								onDragStart={(event) => {
+									event.dataTransfer.setData(CONTENT_DRAG_TYPE, item.id);
+									event.dataTransfer.effectAllowed = "move";
+								}}
+								onClick={() =>
+									commit([{ type: "activate", contentId: item.id }])
 								}
 							>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={content.id === container.activeContentId}
-									draggable
-									onDragStart={(event) => {
-										event.dataTransfer.setData(CONTENT_DRAG_TYPE, content.id);
-										event.dataTransfer.effectAllowed = "move";
-									}}
-									onClick={() =>
-										commit([{ type: "activate", contentId: content.id }])
-									}
-								>
-									{services.label(content)}
-								</button>
-								<button
-									type="button"
-									className="oqto-compositor-tab-close"
-									aria-label={labels.closeTab}
-									onClick={() =>
-										commit([{ type: "close", contentId: content.id }])
-									}
-								>
-									{"×"}
-								</button>
-							</div>
-						))}
-					<AddContent
-						options={services.addable}
-						label={services.label}
-						labels={labels.add}
-						onAdd={(content, placement) =>
-							services.add(content, container.id, placement)
-						}
-					/>
-					{container.stack.length > 0 ? (
-						<button
-							type="button"
-							className="oqto-compositor-close"
-							aria-label={labels.closeContainer}
-							title={labels.closeContainer}
-							onClick={() =>
-								commit(
-									container.stack.map((content) => ({
-										type: "close" as const,
-										contentId: content.id,
-									})),
-								)
-							}
-						>
-							{"×"}
-						</button>
-					) : null}
+								{services.label(item)}
+							</button>
+							<button
+								type="button"
+								className="oqto-compositor-tab-close"
+								aria-label={labels.closeTab}
+								onClick={() => commit([{ type: "close", contentId: item.id }])}
+							>
+								{"×"}
+							</button>
+						</div>
+					))}
+					{chrome}
 				</div>
-			)}
+			) : null}
 			<div
 				className="oqto-compositor-content"
 				onFocusCapture={() => {
@@ -171,6 +147,7 @@ export const ContainerView = memo(function ContainerView({
 						containerId: container.id,
 						active: true,
 						focused: focusedContentId === active.id,
+						chrome: tabbed ? null : chrome,
 					})
 				) : (
 					<div className="oqto-compositor-empty" />

@@ -1041,6 +1041,20 @@
 	border-bottom: 1px solid var(--border);
 }
 
+/* A narrow pane fits its own controls plus the Container's: the buttons give
+   up padding before the breadcrumb gives up its name. */
+.wb-files:not([data-fidelity="expanded"]) .wb-files-toolbar .wb-icon-button {
+	padding: 4px;
+}
+
+.wb-files-crumb {
+	flex: 0 1 auto;
+	min-inline-size: 3.5rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .wb-files-toolbar__breadcrumb {
 	margin-left: 10px;
 	font-size: 14px;
@@ -2793,6 +2807,14 @@
 
 .wb-chat-header .wb-chat-header__meta + * {
 	flex-shrink: 0;
+}
+
+/* The presentation's own actions and the Container's, on one line. */
+.wb-chat-header__actions {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: 2px;
 }
 
 @media (max-width: 1023px) {

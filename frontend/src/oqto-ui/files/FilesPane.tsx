@@ -10,6 +10,7 @@
 
 import {
 	type KeyboardEvent,
+	type ReactNode,
 	useCallback,
 	useMemo,
 	useRef,
@@ -40,9 +41,11 @@ interface FilesPaneProps {
 	readonly store: FilesStore;
 	/** Opens a file in a host viewer; directories are handled internally. */
 	readonly onOpenFile?: (entry: FileEntry) => void;
+	/** The Container's own controls, placed in the toolbar. */
+	readonly chrome?: ReactNode;
 }
 
-export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
+export function FilesPane({ store, onOpenFile, chrome }: FilesPaneProps) {
 	const { t, i18n } = useTranslation();
 	const state = useFilesState(store);
 	const [details, setDetails] = useState(true);
@@ -206,6 +209,7 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 			<FilesToolbar
 				state={state}
 				store={store}
+				chrome={chrome}
 				view={{ details, tree }}
 				onToggle={(which) =>
 					which === "details"

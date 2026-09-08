@@ -12,6 +12,12 @@ export interface ContentRenderContext {
 	readonly containerId: ContainerId;
 	readonly active: boolean;
 	readonly focused: boolean;
+	/**
+	 * The Container's own controls when it has no tab bar to hold them. The
+	 * presentation places them in its own header; one with no header lets the
+	 * host anchor them in a corner instead.
+	 */
+	readonly chrome: ReactNode;
 }
 
 export type RenderContent = (

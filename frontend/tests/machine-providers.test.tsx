@@ -32,6 +32,25 @@ const snapshot = {
 };
 
 describe("machine-scoped provider authentication", () => {
+	it("filters providers locally by name or ID", async () => {
+		const call = vi.fn(async () => [
+			...catalog,
+			{
+				id: "anthropic",
+				name: "Anthropic",
+				configured: false,
+				methods: ["oauth"],
+			},
+		]);
+		render(<MachineProviders label="Mac" port={{ call }} close={() => {}} />);
+		await screen.findByText("Anthropic");
+		fireEvent.change(screen.getByLabelText("Find a provider"), {
+			target: { value: "CODEX" },
+		});
+		expect(screen.getByText("Codex")).toBeVisible();
+		expect(screen.queryByText("Anthropic")).toBeNull();
+		expect(call).toHaveBeenCalledTimes(1);
+	});
 	it("rejects unsafe authentication links and unknown response states", () => {
 		expect(safeLoginUrl("javascript:alert(1)")).toBeUndefined();
 		expect(safeLoginUrl("https://user:password@example.test")).toBeUndefined();

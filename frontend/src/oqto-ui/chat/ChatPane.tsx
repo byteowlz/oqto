@@ -13,6 +13,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CircleStop, Paperclip, Send } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurnDraft } from "../platform/chat-contract";
@@ -36,6 +37,8 @@ type ChatPaneProps = {
 	sessionId: string;
 	tasks: SessionTask[];
 	workspacePath: string;
+	/** Header-end controls: the presentation's own actions and the Container's. */
+	actions?: ReactNode;
 	onOpenFile: (
 		path: string,
 		range?: { startLine?: number; endLine?: number },
@@ -146,6 +149,7 @@ export function ChatPane({
 	sessionId,
 	tasks,
 	workspacePath,
+	actions,
 	onOpenFile,
 }: ChatPaneProps) {
 	const { t, i18n } = useTranslation();
@@ -308,6 +312,9 @@ export function ChatPane({
 							outputTokens={contextTokens.outputTokens}
 						/>
 					</span>
+					{actions ? (
+						<span className="wb-chat-header__actions">{actions}</span>
+					) : null}
 				</header>
 			) : null}
 			<section

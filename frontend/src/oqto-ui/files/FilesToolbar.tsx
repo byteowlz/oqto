@@ -14,6 +14,7 @@ import {
 	List,
 	ListTree,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { breadcrumb } from "./entries";
 import { setSort } from "./navigation";
@@ -25,6 +26,8 @@ interface FilesToolbarProps {
 	readonly store: FilesStore;
 	readonly view: { readonly details: boolean; readonly tree: boolean };
 	readonly onToggle: (which: "details" | "tree") => void;
+	/** The Container's own controls, placed at the toolbar's end. */
+	readonly chrome?: ReactNode;
 }
 
 export function FilesToolbar({
@@ -32,6 +35,7 @@ export function FilesToolbar({
 	store,
 	view,
 	onToggle,
+	chrome,
 }: FilesToolbarProps) {
 	const { t } = useTranslation();
 	return (
@@ -127,6 +131,7 @@ export function FilesToolbar({
 			>
 				<Columns3 aria-hidden="true" />
 			</button>
+			{chrome}
 		</div>
 	);
 }

@@ -5,10 +5,13 @@
  */
 
 import type { TFunction } from "i18next";
+import type { ReactNode } from "react";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import type { PreviewState } from "../chat/ChatWorkspace";
+import type { ContentRef } from "../compositor/index";
 import type {
 	ContentLabel,
+	ContentRenderContext,
 	RenderContent,
 } from "../compositor/react/contracts";
 import { FilePane } from "../files/FilePane";
@@ -61,6 +64,29 @@ export interface ContentRendererDeps {
 	};
 }
 
+/**
+ * Content kinds whose presentation has a header of its own and places the
+ * Container's controls in it. Every other kind gets them anchored in a
+ * corner, so a kind added without a thought about chrome still shows them.
+ */
+const PLACES_OWN_CHROME = new Set([
+	"sessions",
+	"chat",
+	"files",
+	"file",
+	"issues",
+]);
+
+function inCorner(pane: ReactNode, chrome: ReactNode): ReactNode {
+	if (!chrome) return pane;
+	return (
+		<>
+			{pane}
+			<div className="oqto-compositor-corner">{chrome}</div>
+		</>
+	);
+}
+
 export function createContentRenderer(
 	deps: ContentRendererDeps,
 ): RenderContent {
@@ -76,7 +102,7 @@ export function createContentRenderer(
 		settings,
 		chrome,
 	} = deps;
-	return (content) => {
+	const pane = (content: ContentRef, presentation: ContentRenderContext) => {
 		if (content.kind === "sessions") {
 			return (
 				<NavigationRail
@@ -87,6 +113,7 @@ export function createContentRenderer(
 					schemeId={theme.schemeId}
 					onNavigate={navigate}
 					onCollapse={chrome.collapseNavigation}
+					chrome={presentation.chrome}
 				/>
 			);
 		}
@@ -113,7 +140,7 @@ export function createContentRenderer(
 					workAreaTab={workAreaTab}
 					galleryPane={<GalleryPane resources={snapshot.gallery} />}
 					previewState={previewState}
-					onNavigate={navigate}
+					chrome={presentation.chrome}
 					onTogglePanel={chrome.toggleAuxiliary}
 				/>
 			);
@@ -123,6 +150,7 @@ export function createContentRenderer(
 				<WorkDirectoryFiles
 					fileHost={platform.files}
 					workspacePath={context.directory.path}
+					chrome={presentation.chrome}
 					onOpenFile={chrome.openFile}
 				/>
 			);
@@ -144,6 +172,7 @@ export function createContentRenderer(
 					fileHost={platform.files}
 					workspacePath={context.directory.path}
 					path={path}
+					chrome={presentation.chrome}
 				/>
 			);
 		}
@@ -160,6 +189,7 @@ export function createContentRenderer(
 				<IssuesPane
 					issueHost={platform.issues}
 					workspacePath={context.directory.path}
+					chrome={presentation.chrome}
 				/>
 			);
 		}
@@ -196,6 +226,12 @@ export function createContentRenderer(
 		return (
 			<div className="oqto-compositor-unavailable" data-kind={content.kind} />
 		);
+	};
+	return (content, presentation) => {
+		const rendered = pane(content, presentation);
+		return PLACES_OWN_CHROME.has(content.kind)
+			? rendered
+			: inCorner(rendered, presentation.chrome);
 	};
 }
 
