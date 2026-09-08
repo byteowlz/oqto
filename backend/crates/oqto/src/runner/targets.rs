@@ -20,6 +20,9 @@ pub struct RunnerTargetConfig {
     /// Account IDs, not usernames, roles or SSH principals. No implicit admin bypass.
     pub account_ids: Vec<String>,
     pub endpoint: RunnerEndpointConfig,
+    /// Explicit credential-management grant; inventory alone is insufficient.
+    #[serde(default)]
+    pub provider_login: bool,
 }
 
 impl RunnerTargetConfig {
@@ -42,6 +45,10 @@ impl RunnerTargetConfig {
         ensure!(
             !self.account_ids.is_empty() && self.account_ids.iter().all(|id| !id.trim().is_empty()),
             "runner target requires explicit Account grants"
+        );
+        ensure!(
+            !self.provider_login || self.account_ids.len() == 1,
+            "provider login requires exactly one owning Account"
         );
         match &self.endpoint {
             RunnerEndpointConfig::TcpTls {
@@ -85,6 +92,7 @@ pub struct RunnerTargetStatus {
     pub checked_at: String,
     /// Inventory is not admission: placement/session routing is a separate step.
     pub session_creation: bool,
+    pub provider_login: bool,
 }
 
 struct Target {
@@ -125,6 +133,20 @@ impl RunnerTargets {
         })
     }
 
+    pub fn provider_login_client(&self, account_id: &str, target_id: &str) -> Result<RunnerClient> {
+        let target = self
+            .targets
+            .iter()
+            .find(|target| {
+                target.config.id == target_id
+                    && target.config.provider_login
+                    && target.config.account_ids.len() == 1
+                    && target.config.account_ids[0] == account_id
+            })
+            .ok_or_else(|| anyhow::anyhow!("provider login denied"))?;
+        RunnerClient::from_endpoint(&target.config.endpoint)
+    }
+
     /// Authorization happens before probing, and concurrent readers share a
     /// bounded cache. An offline target cannot block healthy peers indefinitely.
     pub async fn list_for_account(&self, account_id: &str) -> Result<Vec<RunnerTargetStatus>> {
@@ -163,6 +185,7 @@ impl Target {
             connection,
             checked_at: chrono::Utc::now().to_rfc3339(),
             session_creation: false,
+            provider_login: self.config.provider_login,
         };
         *cached = Some((Instant::now(), status.clone()));
         status
@@ -184,6 +207,7 @@ mod tests {
 
     fn config() -> RunnerTargetConfig {
         RunnerTargetConfig {
+            provider_login: false,
             id: "mac".into(),
             label: "Mac".into(),
             account_ids: vec!["alice".into()],
@@ -195,6 +219,21 @@ mod tests {
                 key: "/missing/key.pem".into(),
             },
         }
+    }
+
+    #[test]
+    fn provider_login_requires_single_owner_and_explicit_grant_before_transport() {
+        let targets = RunnerTargets::new(vec![config()]).unwrap();
+        assert!(targets.provider_login_client("alice", "mac").is_err());
+        let mut cfg = config();
+        cfg.provider_login = true;
+        cfg.account_ids.push("bob".into());
+        assert!(RunnerTargets::new(vec![cfg.clone()]).is_err());
+        cfg.account_ids.pop();
+        let targets = RunnerTargets::new(vec![cfg]).unwrap();
+        let denied = targets.provider_login_client("bob", "mac").err().unwrap();
+        assert_eq!(denied.to_string(), "provider login denied");
+        assert!(targets.provider_login_client("alice", "unknown").is_err());
     }
 
     #[test]

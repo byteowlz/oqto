@@ -1,6 +1,6 @@
 # Managed Pi provider login worker
 
-Implementation checkpoint for `oqto-7e9y`. **This is a tested worker, not yet the Oqto browser login feature.** Runner wire operations, Account-authorized API routes, deployment packaging and frontend presentation remain to be integrated. Do not advertise provider login from inventory merely because this directory exists.
+Runner-side implementation for `oqto-7e9y`, integrated with Account-authorized runner operations and the original sidebar's machine provider dialog. See the [deployment and security runbook](../../docs/development/provider-login.md). Both runner configuration and an explicit backend grant are required; this directory's presence is not admission.
 
 ## Ownership and security checklist
 
@@ -13,7 +13,7 @@ Implementation checkpoint for `oqto-7e9y`. **This is a tested worker, not yet th
 - The remote worker pauses before credential persistence. A control-plane supervisor must reauthorize the current Account/grant and issue the one-use `commit` nonce. **Never forward commit automatically without that authorization.** Credentials remain in the worker while this gate is pending.
 - Cancellation/expiry before commit discards the result. A credential already committed by Pi cannot be rolled back by late cancellation. `saved_refresh_required` distinguishes a successful credential mutation from failed local model synchronization; do not blindly retry login.
 - Only one login can run per worker, across all providers. Production integration must also prevent duplicate workers for the same credential store; a frontend process is not a credential-store lock owner.
-- Fixed ten-minute attempt deadline, bounded frames/queue/events, request/prompt IDs and owner checks fence stale inputs. The supervisor must kill a worker that fails to settle after cancellation/expiry, and close it when its owner or placement is revoked.
+- Fixed ten-minute attempt deadline, bounded frames/queue/events, request/prompt IDs and owner checks fence stale inputs. The runner watchdog kills a worker that fails to settle after cancellation/expiry. Operators must stop the runner when revoking its transport authority.
 - HTTPS authentication links are presented, not fetched or automatically opened. A localhost OAuth callback on the target is not reachable via the user's browser localhost. Use the provider's device flow or supported paste-back redirect/code; otherwise require deliberate callback forwarding or native `/login`.
 - Custom extension discovery is intentionally not loaded into this privileged worker. Unsupported extension-owned login methods must remain unavailable rather than executing project extensions.
 

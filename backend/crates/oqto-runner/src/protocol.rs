@@ -65,6 +65,7 @@ pub enum RunnerRequest {
 
     /// Get runner capabilities (harnesses + supported feature surface).
     GetCapabilities,
+    ProviderLogin(crate::provider_login::ProviderLoginRequest),
 
     /// Shutdown the runner gracefully.
     Shutdown,
@@ -361,6 +362,7 @@ pub enum RunnerResponse {
 
     /// Runner capabilities.
     RunnerCapabilities(RunnerCapabilitiesResponse),
+    ProviderLogin(crate::provider_login::ProviderLoginResponse),
 
     /// Shutdown acknowledged.
     ShuttingDown,

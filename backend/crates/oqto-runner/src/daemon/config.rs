@@ -9,6 +9,7 @@ use std::{
 
 #[derive(Debug, Clone, Default)]
 pub struct RunnerUserConfig {
+    pub provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     pub fileserver_binary: String,
     pub ttyd_binary: String,
     pub pi_binary: String,
@@ -76,6 +77,7 @@ struct LinuxUsersSection {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerSection {
+    provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     runner_id: Option<String>,
     pi_sessions_dir: Option<String>,
     memories_dir: Option<String>,
@@ -138,6 +140,7 @@ impl RunnerUserConfig {
         info!("Runner ID: {}", runner_id);
 
         Self {
+            provider_login: config_file.runner.provider_login,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             terminal_enabled: config_file.local.terminal_enabled,

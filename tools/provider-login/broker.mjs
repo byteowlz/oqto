@@ -161,7 +161,7 @@ export class ProviderLoginBroker {
 					signal: attempt.controller.signal,
 					notify: (event) => {
 						if (attempt.controller.signal.aborted) return;
-						attempt.events.push(eventView(event));
+						attempt.events.push({ id: randomUUID(), ...eventView(event) });
 						if (attempt.events.length > 16) attempt.events.shift();
 					},
 					prompt: (prompt) => this.#prompt(attempt, prompt),

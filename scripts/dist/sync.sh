@@ -55,6 +55,12 @@ mkdir -p dist/immutable/defaults/pi-agent \
          dist/immutable/defaults/workdir-templates \
          dist/immutable/defaults/onboarding-templates/onboarding
 
+# Runner-owned auth helper; no credentials or user configuration are shipped.
+mkdir -p dist/immutable/provider-login
+for file in worker.mjs broker.mjs pi-runtime.mjs README.md; do
+  cp "tools/provider-login/$file" "dist/immutable/provider-login/$file"
+done
+
 # Sync canonical template families from oqto-templates.
 cp "$TEMPLATES_REPO/pi-agent/AGENTS.md" dist/immutable/defaults/pi-agent/AGENTS.md
 if [[ -f "$TEMPLATES_REPO/pi-agent/settings.json" ]]; then

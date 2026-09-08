@@ -708,6 +708,33 @@
 		"person": {
 			"name": "You"
 		},
+		"providerLogin": {
+			"title": "Providers · {{machine}}",
+			"button": "Providers",
+			"buttonLabel": "Providers on {{machine}}",
+			"description": "Pi stores credentials on this machine only. OAuth credentials are not synced. EAVS is optional.",
+			"choose": "Choose a login method",
+			"continue": "Continue",
+			"signIn": "Sign in",
+			"apiKey": "API key",
+			"configured": " · configured",
+			"progress": "Authentication progress",
+			"open": "Open provider sign-in",
+			"cancel": "Cancel login",
+			"unavailable": "Login unavailable. Check this machine’s connection and managed Pi support; native Pi /login remains available.",
+			"disconnected": "Connection or authorization unavailable. No new input is queued; a previously accepted save may still finish.",
+			"callbackHint": "For remote machines, use the provider’s device flow or supported redirect/code paste-back. Browser localhost is not this machine’s localhost.",
+			"state": {
+				"saved": "Credentials saved on this machine.",
+				"saved_refresh_required": "Credentials saved. Pi’s model state needs refreshing; do not repeat login.",
+				"running": "Waiting for provider authentication…",
+				"awaiting_commit": "Checking permission to save credentials…",
+				"cancelling": "Cancelling login…",
+				"cancelled": "Login cancelled.",
+				"expired": "Login expired. Start a new attempt.",
+				"failed": "Login failed. No credentials were confirmed saved."
+			}
+		},
 		"runnerTargets": {
 			"title": "Machines",
 			"online": "Online",

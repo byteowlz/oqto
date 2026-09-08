@@ -37,6 +37,7 @@ pub struct Runner {
     binaries: SessionBinaries,
     /// User configuration (paths, etc.)
     user_config: RunnerUserConfig,
+    provider_login: Arc<crate::provider_login::ProviderLoginManager>,
     /// Pi session manager (manages Pi agent processes).
     pi_manager: Arc<PiSessionManager>,
     /// Background Pi JSONL -> oqto-log ingest task.
@@ -577,6 +578,7 @@ impl Runner {
             sandbox_config,
             binaries,
             user_config,
+            provider_login: Arc::new(crate::provider_login::ProviderLoginManager::default()),
             pi_manager,
             jsonl_ingest: super::jsonl_ingest::spawn(),
             expose_dir,
@@ -4004,6 +4006,7 @@ impl Runner {
                                 sandbox_config: self.sandbox_config.clone(),
                                 binaries: self.binaries.clone(),
                                 user_config: self.user_config.clone(),
+                                provider_login: Arc::clone(&self.provider_login),
                                 pi_manager: Arc::clone(&self.pi_manager),
                                 jsonl_ingest: self.jsonl_ingest.clone(),
                                 expose_dir: self.expose_dir.clone(),

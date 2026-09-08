@@ -284,6 +284,10 @@ fn create_router_with_config_and_auth(
         )
         // User profile routes (authenticated users)
         .route("/runner-targets", get(super::runner_targets::list))
+        .route(
+            "/runner-targets/{target}/provider-login",
+            post(super::runner_targets::provider_login),
+        )
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
         .route("/auth/change-password", post(handlers::change_password))

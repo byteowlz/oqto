@@ -15,6 +15,19 @@ current_symlink = "/var/lib/oqto/releases/current"
 # ---------- Immutable shipped assets ----------
 
 [[assets]]
+id = "provider-login-worker"
+class = "immutable_symlink"
+kind = "runtime-helper"
+source = "dist/immutable/provider-login"
+stage_path = "provider-login"
+install_path = "/usr/local/share/oqto/provider-login"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
 id = "bin-oqto"
 class = "immutable_symlink"
 kind = "binary"

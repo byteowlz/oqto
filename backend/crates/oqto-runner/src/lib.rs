@@ -13,6 +13,7 @@ pub mod iroh_transport;
 pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;
+pub mod provider_login;
 pub mod reverse_bridge;
 pub mod ssh_agent_proxy;
 pub mod tls;

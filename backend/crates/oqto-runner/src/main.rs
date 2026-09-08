@@ -108,11 +108,27 @@ async fn main() -> Result<()> {
         );
     }
 
-    let sandbox_config = load_sandbox_config(
+    let mut sandbox_config = load_sandbox_config(
         args.no_sandbox,
         args.sandbox_config.as_ref(),
         allow_user_sandbox_fallback,
     )?;
+    // Every sandboxed child, including provider-auth workers, must be unable
+    // to read or mutate runner transport capabilities.
+    if let Some(policy) = sandbox_config.as_mut() {
+        for path in std::iter::once(&socket_path)
+            .chain(args.tls_key.iter())
+            .chain(args.tls_client_ca.iter())
+        {
+            let path = path.to_string_lossy().into_owned();
+            if !policy.deny_read.contains(&path) {
+                policy.deny_read.push(path.clone());
+            }
+            if !policy.deny_write.contains(&path) {
+                policy.deny_write.push(path);
+            }
+        }
+    }
     log_sandbox_state(&sandbox_config);
 
     // The control socket is an unauthenticated-capability boundary into the
@@ -177,6 +193,7 @@ async fn main() -> Result<()> {
     });
 
     let legacy_user_config = oqto_runner::daemon::config::RunnerUserConfig {
+        provider_login: user_config.provider_login.clone(),
         fileserver_binary: user_config.fileserver_binary.clone(),
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),

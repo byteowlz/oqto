@@ -1881,6 +1881,16 @@ impl RunnerClient {
         }
     }
 
+    pub async fn provider_login(
+        &self,
+        request: crate::provider_login::ProviderLoginRequest,
+    ) -> Result<serde_json::Value> {
+        match self.request(&RunnerRequest::ProviderLogin(request)).await? {
+            RunnerResponse::ProviderLogin(response) => Ok(response.data),
+            _ => anyhow::bail!("provider login unavailable or rejected"),
+        }
+    }
+
     pub async fn get_capabilities(&self) -> Result<RunnerCapabilitiesResponse> {
         let resp = self.request(&RunnerRequest::GetCapabilities).await?;
         match resp {

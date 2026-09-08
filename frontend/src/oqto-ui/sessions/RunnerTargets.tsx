@@ -1,12 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Monitor } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { RunnerTargetsPort } from "../platform/runner-targets";
+import type {
+	RunnerTarget,
+	RunnerTargetsPort,
+} from "../platform/runner-targets";
 import "./runner-targets.css";
 
-type RunnerTargetsProps = { source: RunnerTargetsPort };
+type RunnerTargetsProps = {
+	source: RunnerTargetsPort;
+	actions?: (target: RunnerTarget) => ReactNode;
+};
 
-export function RunnerTargets({ source }: RunnerTargetsProps) {
+export function RunnerTargets({ source, actions }: RunnerTargetsProps) {
 	const { t } = useTranslation();
 	const query = useQuery({
 		queryKey: ["oqto-runner-targets", source.id],
@@ -29,6 +36,7 @@ export function RunnerTargets({ source }: RunnerTargetsProps) {
 					{query.data?.map((target) => (
 						<li key={target.id} data-connection={target.connection}>
 							<Monitor aria-hidden="true" />
+							{actions?.(target)}
 							<div className="wb-runner-targets__name">
 								<strong>{target.label}</strong>
 								<span>{t("oqtoUi.runnerTargets.connectionOnly")}</span>

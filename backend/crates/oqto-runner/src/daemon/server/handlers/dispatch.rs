@@ -4,6 +4,35 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
         RunnerRequest::GetCapabilities => runner.get_capabilities().await,
+        RunnerRequest::ProviderLogin(request) => {
+            if !runner.user_config.single_user || runner.user_config.linux_users_enabled {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "Provider login requires a dedicated single-Account runner",
+                );
+            }
+            match runner
+                .provider_login
+                .request(
+                    runner.user_config.provider_login.as_ref(),
+                    runner.sandbox_config.as_ref(),
+                    &runner.user_config.pi_binary,
+                    &runner.user_config.runner_id,
+                    request,
+                )
+                .await
+            {
+                Ok(value) => {
+                    RunnerResponse::ProviderLogin(crate::provider_login::ProviderLoginResponse {
+                        data: value,
+                    })
+                }
+                Err(_) => error_response(
+                    ErrorCode::InvalidRequest,
+                    "Provider login unavailable or rejected",
+                ),
+            }
+        }
         RunnerRequest::ExposePort(r) => runner.expose_port(r.port).await,
         RunnerRequest::UnexposePort(r) => runner.unexpose_port(r.port).await,
         RunnerRequest::Shutdown => {

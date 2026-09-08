@@ -705,6 +705,33 @@
 		"person": {
 			"name": "Du"
 		},
+		"providerLogin": {
+			"title": "Anbieter · {{machine}}",
+			"button": "Anbieter",
+			"buttonLabel": "Anbieter auf {{machine}}",
+			"description": "Pi speichert Zugangsdaten nur auf diesem Rechner. OAuth-Zugangsdaten werden nicht synchronisiert. EAVS ist optional.",
+			"choose": "Anmeldemethode wählen",
+			"continue": "Weiter",
+			"signIn": "Anmelden",
+			"apiKey": "API-Schlüssel",
+			"configured": " · eingerichtet",
+			"progress": "Anmeldefortschritt",
+			"open": "Anmeldung beim Anbieter öffnen",
+			"cancel": "Anmeldung abbrechen",
+			"unavailable": "Anmeldung nicht verfügbar. Verbindung und verwaltete Pi-Version prüfen; /login im nativen Pi bleibt verfügbar.",
+			"disconnected": "Verbindung oder Berechtigung nicht verfügbar. Neue Eingaben werden nicht gepuffert; ein zuvor freigegebenes Speichern kann noch abgeschlossen werden.",
+			"callbackHint": "Auf entfernten Rechnern den Gerätecode oder die unterstützte Rückgabe von Weiterleitungs-URL/Code verwenden. Browser-localhost ist nicht der entfernte Rechner.",
+			"state": {
+				"saved": "Zugangsdaten auf diesem Rechner gespeichert.",
+				"saved_refresh_required": "Zugangsdaten gespeichert. Pis Modellzustand muss aktualisiert werden; Anmeldung nicht wiederholen.",
+				"running": "Warten auf Anmeldung beim Anbieter…",
+				"awaiting_commit": "Speicherberechtigung wird geprüft…",
+				"cancelling": "Anmeldung wird abgebrochen…",
+				"cancelled": "Anmeldung abgebrochen.",
+				"expired": "Anmeldung abgelaufen. Neu starten.",
+				"failed": "Anmeldung fehlgeschlagen. Das Speichern wurde nicht bestätigt."
+			}
+		},
 		"runnerTargets": {
 			"title": "Rechner",
 			"online": "Online",
