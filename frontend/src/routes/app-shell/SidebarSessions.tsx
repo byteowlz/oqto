@@ -65,6 +65,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { SidebarMachines } from "./SidebarMachines";
 
 export interface SessionsByProject {
 	key: string;
@@ -456,6 +457,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 				externalScroll ? "w-full" : "flex-1 min-h-0 flex flex-col",
 			)}
 		>
+			<SidebarMachines />
 			<DeleteConfirmDialog
 				open={deleteDialogOpen}
 				onOpenChange={(open) => {
