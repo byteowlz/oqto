@@ -33,6 +33,16 @@ ensure_octo_system_user() {
   log_success "Created oqto system user (home: $OQTO_HOME)"
 }
 
+# A Type=simple backend is active before HTTP readiness. Allow bounded startup
+# work (including target backfill) without the watchdog restarting it mid-flight.
+# Unknown/inactive state never suppresses the existing health/repair command.
+healthcheck_startup_condition() {
+  local scope="${1:-}"
+  [[ -z "$scope" || "$scope" == "--user" ]] || return 2
+  # Double dollars survive systemd's ExecCondition environment expansion.
+  printf '%s\n' "ExecCondition=/usr/bin/env bash -c 'state=\$\$(systemctl $scope show oqto.service -p ActiveState --value); started=\$\$(systemctl $scope show oqto.service -p ActiveEnterTimestampMonotonic --value); now=\$\$(cut -d. -f1 /proc/uptime); if [[ \$\$state == active && \$\$started =~ ^[0-9]+\$\$ && \$\$now =~ ^[0-9]+\$\$ ]] && (( 10#\$\$started > 0 && 10#\$\$now >= 10#\$\$started / 1000000 && 10#\$\$now - 10#\$\$started / 1000000 < 120 )); then exit 1; fi; exit 0'"
+}
+
 install_service_linux() {
   log_step "Installing systemd service"
 
@@ -115,6 +125,7 @@ Wants=oqto.service
 [Service]
 Type=oneshot
 Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+$(healthcheck_startup_condition --user)
 ExecStart=/usr/bin/env bash -lc 'if ! curl -fsS --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then echo "[oqto-healthcheck] health failed, restarting oqto"; systemctl --user restart oqto; fi'
 EOF
 
@@ -264,6 +275,7 @@ Wants=oqto.service
 
 [Service]
 Type=oneshot
+$(healthcheck_startup_condition)
 ExecStart=/usr/bin/env bash -lc 'if ! curl -fsS --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then echo "[oqto-healthcheck] health failed, restarting oqto"; systemctl restart oqto; fi'
 EOF
 
