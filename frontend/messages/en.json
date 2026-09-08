@@ -787,6 +787,29 @@
 			"discard": "Discard changes",
 			"edit": "Edit file"
 		},
+		"issues": {
+			"showClosed": "Show closed issues",
+			"more": "+{{count}} more",
+			"label": "Issues",
+			"count": "{{count}} issues",
+			"reload": "Reload issues",
+			"empty": "No issues in this work directory.",
+			"failed": "The issue tracker is unavailable.",
+			"blockedBy": "blocked by {{ids}}",
+			"start": "Start {{id}}",
+			"close": "Close {{id}}",
+			"status": {
+				"in_progress": "In progress",
+				"blocked": "Blocked",
+				"ready": "Ready",
+				"open": "Open",
+				"closed": "Closed"
+			}
+		},
+		"terminal": {
+			"label": "Terminal",
+			"failed": "The terminal could not be started."
+		},
 		"todos": {
 			"label": "Todos",
 			"empty": "No todos yet.",

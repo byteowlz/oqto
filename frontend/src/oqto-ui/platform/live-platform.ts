@@ -15,6 +15,8 @@ import type {
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 import { liveChatTransport } from "./live-chat-transport";
 import { type MuxSocket, createMuxFileSystem } from "./mux-files";
+import { createMuxIssueHost } from "./mux-issues";
+import { createMuxTerminalHost } from "./mux-terminal";
 import { muxWebSocketUrl } from "./mux-url";
 import { parseRunnerTargets } from "./runner-targets";
 
@@ -478,9 +480,12 @@ async function loadStatusBar(): Promise<StatusBarData | null> {
 	return { runningSessions: "", onlineUsers, runnerLoad, version };
 }
 
-const liveFiles = createMuxFileSystem(
-	() => new WebSocket(muxWebSocketUrl()) as unknown as MuxSocket,
-);
+const openMuxSocket = () =>
+	new WebSocket(muxWebSocketUrl()) as unknown as MuxSocket;
+
+const liveFiles = createMuxFileSystem(openMuxSocket);
+const liveIssues = createMuxIssueHost(openMuxSocket);
+const liveTerminal = createMuxTerminalHost(openMuxSocket);
 
 export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	id: "live",
@@ -489,6 +494,8 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 		list: async () => parseRunnerTargets(await readJson("/api/runner-targets")),
 	},
 	files: liveFiles,
+	issues: liveIssues,
+	terminal: liveTerminal,
 	chat: createSessionEngine(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return parseUiConfig(await readJson("/api/oqto-ui/config"));

@@ -14,6 +14,7 @@ import type {
 import { FilePane } from "../files/FilePane";
 import { WorkDirectoryFiles } from "../files/WorkDirectoryFiles";
 import { GalleryPane } from "../gallery/GalleryPane";
+import { IssuesPane } from "../issues/IssuesPane";
 import type {
 	OqtoUiConfigResolution,
 	OqtoUiPlatform,
@@ -25,6 +26,7 @@ import type {
 import { NavigationRail } from "../sessions/NavigationRail";
 import { SessionStatusBar } from "../sessions/SessionStatusBar";
 import { TodosPane } from "../sessions/TodosPane";
+import { TerminalPane } from "../terminal/TerminalPane";
 import { SettingsPane } from "../theme/SettingsPane";
 import type { OqtoUiUserTheme } from "../theme/userTheme";
 import { findSession } from "./compositorRefs";
@@ -145,6 +147,22 @@ export function createContentRenderer(
 				/>
 			);
 		}
+		if (content.kind === "terminal") {
+			return (
+				<TerminalPane
+					terminalHost={platform.terminal}
+					workspacePath={context.directory.path}
+				/>
+			);
+		}
+		if (content.kind === "issues") {
+			return (
+				<IssuesPane
+					issueHost={platform.issues}
+					workspacePath={context.directory.path}
+				/>
+			);
+		}
 		if (content.kind === "todos") {
 			return <TodosPane tasks={context.session.tasks ?? []} />;
 		}
@@ -190,6 +208,8 @@ export function createContentLabel(
 		if (content.kind === "files") return t("oqtoUi.files.label");
 		if (content.kind === "settings") return t("oqtoUi.settings.label");
 		if (content.kind === "todos") return t("oqtoUi.todos.label");
+		if (content.kind === "issues") return t("oqtoUi.issues.label");
+		if (content.kind === "terminal") return t("oqtoUi.terminal.label");
 		if (content.kind === "file") {
 			const path = content.extensions?.path;
 			return typeof path === "string"

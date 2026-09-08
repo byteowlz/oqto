@@ -787,6 +787,29 @@
 			"discard": "Änderungen verwerfen",
 			"edit": "Datei bearbeiten"
 		},
+		"issues": {
+			"showClosed": "Geschlossene Issues zeigen",
+			"more": "+{{count}} weitere",
+			"label": "Issues",
+			"count": "{{count}} Issues",
+			"reload": "Issues neu laden",
+			"empty": "Keine Issues in diesem Arbeitsverzeichnis.",
+			"failed": "Der Issue-Tracker ist nicht erreichbar.",
+			"blockedBy": "blockiert von {{ids}}",
+			"start": "{{id}} starten",
+			"close": "{{id}} schließen",
+			"status": {
+				"in_progress": "In Arbeit",
+				"blocked": "Blockiert",
+				"ready": "Bereit",
+				"open": "Offen",
+				"closed": "Geschlossen"
+			}
+		},
+		"terminal": {
+			"label": "Terminal",
+			"failed": "Das Terminal konnte nicht gestartet werden."
+		},
 		"todos": {
 			"label": "Todos",
 			"empty": "Noch keine Todos.",

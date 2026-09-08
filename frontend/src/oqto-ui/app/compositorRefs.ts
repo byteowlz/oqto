@@ -15,6 +15,8 @@ export const SESSIONS_CONTENT = staticContent("sessions:catalog", "sessions");
 export const STATUS_CONTENT = staticContent("status:session", "status");
 export const SETTINGS_CONTENT = staticContent("settings:ui", "settings");
 export const TODOS_CONTENT = staticContent("todos:session", "todos");
+export const TERMINAL_CONTENT = staticContent("terminal:workdir", "terminal");
+export const ISSUES_CONTENT = staticContent("issues:workdir", "issues");
 export const GALLERY_CONTENT = staticContent("gallery:workdir", "gallery");
 
 export function chatContent(sessionId: string): ContentRef {

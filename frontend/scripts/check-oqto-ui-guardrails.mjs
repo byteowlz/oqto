@@ -19,6 +19,8 @@ const LAYERS = [
 	"engine",
 	"files",
 	"gallery",
+	"issues",
+	"terminal",
 	"theme",
 	"platform",
 	"dev",
@@ -31,6 +33,8 @@ const ALLOWED_DIRECT_IMPORTS = {
 	sessions: new Set(["sessions", "platform"]),
 	chat: new Set(["chat", "engine", "platform"]),
 	files: new Set(["files", "platform"]),
+	issues: new Set(["issues", "platform"]),
+	terminal: new Set(["terminal", "platform"]),
 	gallery: new Set(["gallery", "platform"]),
 	theme: new Set(["theme", "platform"]),
 	platform: new Set(["engine", "platform"]),
@@ -58,6 +62,8 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/lib/workspace-resource",
 	],
 	files: ["@/hooks/use-mount-effect"],
+	issues: ["@/hooks/use-mount-effect"],
+	terminal: ["@/hooks/use-mount-effect"],
 	gallery: [],
 	theme: [],
 	platform: ["@/src/generated"],
@@ -386,9 +392,21 @@ function isExported(node) {
 	);
 }
 
+/**
+ * Operations an exported object literal offers. Only callable members count,
+ * the same way an exported interface counts only its methods: a port object
+ * that carries data fields is not a wider surface for holding them.
+ */
 function objectInterfaceSize(initializer) {
 	if (!ts.isObjectLiteralExpression(initializer)) return 0;
-	return initializer.properties.length;
+	return initializer.properties.filter((property) => {
+		if (ts.isMethodDeclaration(property)) return true;
+		if (!ts.isPropertyAssignment(property)) return false;
+		return (
+			ts.isArrowFunction(property.initializer) ||
+			ts.isFunctionExpression(property.initializer)
+		);
+	}).length;
 }
 
 function isOperationMember(member) {

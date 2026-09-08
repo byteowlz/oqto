@@ -3331,3 +3331,111 @@
 	margin: 0;
 	padding: 12px;
 }
+
+/* ----------------------------------------------------------------- issues */
+
+.wb-issues {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-issues__bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__body {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow-y: auto;
+	padding: 8px;
+}
+
+.wb-issues__note {
+	margin: 4px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__group h3 {
+	margin: 8px 0 4px;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-issues__group ul {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-issues__group li {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--card);
+}
+
+.wb-issues__id {
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__title {
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-issues__blocked {
+	grid-column: 1 / -1;
+	color: var(--destructive, var(--primary));
+	font-size: 10px;
+}
+
+.wb-issues__group li[data-status="closed"] .wb-issues__title {
+	color: var(--muted-foreground);
+	text-decoration: line-through;
+}
+
+/* --------------------------------------------------------------- terminal */
+
+.wb-terminal {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	background: var(--terminal-bg, var(--background));
+}
+
+.wb-terminal__note {
+	margin: 8px;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-terminal__surface {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow: hidden;
+}

@@ -9,6 +9,8 @@ import type {
 import { scriptedFixture, scriptedTimeline } from "./fixture";
 import { ScriptedChatServer } from "./scripted-chat-server";
 import { createScriptedFileHost } from "./scripted-files";
+import { createScriptedIssueHost } from "./scripted-issues";
+import { createScriptedTerminalHost } from "./scripted-terminal";
 
 const SCRIPTED_PAGE_SIZE = 40;
 
@@ -126,6 +128,8 @@ const scriptedConfig: OqtoUiConfigResolution = {
 export const scriptedOqtoUiPlatform: OqtoUiPlatform = {
 	id: "scripted",
 	files: createScriptedFileHost(),
+	issues: createScriptedIssueHost(),
+	terminal: createScriptedTerminalHost(),
 	chat: scriptedChat,
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return scriptedConfig;
