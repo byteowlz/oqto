@@ -6,11 +6,13 @@
  */
 
 import type {
+	GitBranch,
 	GitCommit,
 	GitDiff,
 	GitEntry,
 	GitHost,
 	GitStatus,
+	RemoteOutcome,
 } from "./git-contract";
 import type { MuxSocket } from "./mux-files";
 
@@ -34,6 +36,14 @@ interface GitEvent {
 	readonly staged?: boolean;
 	readonly patch?: string;
 	readonly commit?: string;
+	readonly current?: string;
+	readonly operation?: string;
+	readonly summary?: string;
+	readonly branches?: readonly {
+		name?: string;
+		current?: boolean;
+		worktree?: string;
+	}[];
 	readonly commits?: readonly {
 		id?: string;
 		short_id?: string;
@@ -52,12 +62,15 @@ interface GitCommand {
 	readonly limit?: number;
 	readonly paths?: readonly string[];
 	readonly message?: string;
+	readonly branch?: string;
 }
 
 type PendingValue =
 	| GitStatus
 	| GitDiff
 	| readonly GitCommit[]
+	| readonly GitBranch[]
+	| RemoteOutcome
 	| string
 	| undefined;
 
@@ -141,6 +154,22 @@ export function createMuxGitHost(openSocket: () => MuxSocket): GitHost {
 				);
 			} else if (message.type === "commit_result") {
 				waiting.resolve(message.commit ?? "");
+			} else if (message.type === "branches_result") {
+				waiting.resolve(
+					(message.branches ?? []).map(
+						(raw): GitBranch => ({
+							name: raw.name ?? "",
+							current: raw.current === true,
+							worktree: raw.worktree ?? null,
+						}),
+					),
+				);
+			} else if (message.type === "remote_result") {
+				waiting.resolve({
+					operation: (message.operation ??
+						"fetch") as RemoteOutcome["operation"],
+					summary: message.summary ?? "",
+				});
 			} else {
 				waiting.resolve(undefined);
 			}
@@ -202,6 +231,27 @@ export function createMuxGitHost(openSocket: () => MuxSocket): GitHost {
 				type: staged ? "stage" : "unstage",
 				workspace_path: workspacePath,
 				paths,
+			});
+		},
+		branches: {
+			list(workspacePath) {
+				return request<readonly GitBranch[]>("branches_result", {
+					type: "branches",
+					workspace_path: workspacePath,
+				});
+			},
+			switch(workspacePath, branch) {
+				return request<undefined>("switch_result", {
+					type: "switch",
+					workspace_path: workspacePath,
+					branch,
+				});
+			},
+		},
+		remote(workspacePath, operation) {
+			return request<RemoteOutcome>("remote_result", {
+				type: operation,
+				workspace_path: workspacePath,
 			});
 		},
 		commit(workspacePath, message) {

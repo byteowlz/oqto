@@ -5,10 +5,10 @@
  * distinct, so a path changed in both places appears in both lists.
  */
 
-import { RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GitEntry, GitHost } from "../platform/git-contract";
+import { GitBranchBar } from "./GitBranchBar";
 import { GitChanges } from "./GitChanges";
 import { useGitStatus } from "./useGitStatus";
 
@@ -51,25 +51,23 @@ export function GitPane({ gitHost, workspacePath, chrome }: GitPaneProps) {
 	return (
 		<section className="wb-git" aria-label={t("oqtoUi.git.label")}>
 			<header className="wb-git__bar">
-				<span className="wb-git__branch">
-					{git.status?.branch ?? t("oqtoUi.files.loading")}
-				</span>
+				<GitBranchBar
+					branches={git.branches}
+					current={git.status?.branch ?? ""}
+					onSwitch={git.switchTo}
+					onRemote={git.runRemote}
+				/>
 				{distance ? <small>{distance}</small> : null}
-				<button
-					type="button"
-					className="wb-icon-button"
-					aria-label={t("oqtoUi.git.reload")}
-					title={t("oqtoUi.git.reload")}
-					onClick={git.reload}
-				>
-					<RefreshCw aria-hidden="true" />
-				</button>
 				{chrome}
 			</header>
 			<div className="wb-git__body">
 				{git.failed ? (
-					<p className="wb-git__note">{git.failed}</p>
-				) : entries.length === 0 && !git.loading ? (
+					<p className="wb-git__note" data-failed="true">
+						{git.failed}
+					</p>
+				) : null}
+				{git.notice ? <p className="wb-git__note">{git.notice}</p> : null}
+				{git.failed ? null : entries.length === 0 && !git.loading ? (
 					<p className="wb-git__note">{t("oqtoUi.git.clean")}</p>
 				) : (
 					<>

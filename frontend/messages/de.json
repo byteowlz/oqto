@@ -817,6 +817,11 @@
 			"edit": "Datei bearbeiten"
 		},
 		"git": {
+			"branches": "Branch wechseln",
+			"inWorktree": "in anderem Checkout",
+			"fetch": "Fetch",
+			"pull": "Pull (nur Fast-Forward)",
+			"push": "Push",
 			"label": "Git",
 			"reload": "Status neu laden",
 			"clean": "Keine Änderungen.",

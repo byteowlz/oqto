@@ -40,6 +40,19 @@ export interface GitCommit {
 	readonly timestamp: number;
 }
 
+/** A local branch, and the checkout that already holds it if any. */
+export interface GitBranch {
+	readonly name: string;
+	readonly current: boolean;
+	readonly worktree: string | null;
+}
+
+/** What a fetch, pull or push did. */
+export interface RemoteOutcome {
+	readonly operation: "fetch" | "pull" | "push";
+	readonly summary: string;
+}
+
 export interface GitHost {
 	status(workspacePath: string): Promise<GitStatus>;
 	diff(workspacePath: string, path: string, staged: boolean): Promise<GitDiff>;
@@ -52,4 +65,18 @@ export interface GitHost {
 	): Promise<void>;
 	/** Commits what is staged; never stages on the caller's behalf. */
 	commit(workspacePath: string, message: string): Promise<string>;
+	/** Local branches, and moving the working tree between them. */
+	readonly branches: {
+		list(workspacePath: string): Promise<readonly GitBranch[]>;
+		/** Refused by the host while the working tree has changes. */
+		switch(workspacePath: string, branch: string): Promise<void>;
+	};
+	/**
+	 * Talks to the remote. Non-interactive by contract: it fails rather than
+	 * waiting for a passphrase or a host-key answer.
+	 */
+	remote(
+		workspacePath: string,
+		operation: RemoteOutcome["operation"],
+	): Promise<RemoteOutcome>;
 }

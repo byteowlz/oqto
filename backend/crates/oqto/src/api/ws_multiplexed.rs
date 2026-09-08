@@ -263,6 +263,36 @@ pub enum GitWsCommand {
         workspace_path: String,
         message: String,
     },
+    /// Local branches, and which checkout owns each.
+    Branches {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    /// Moves the working tree to another branch. Refused while it has changes.
+    Switch {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        branch: String,
+    },
+    /// Network operations against the configured remote. Non-interactive:
+    /// they fail rather than wait for a passphrase or a host-key answer.
+    Fetch {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    Pull {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    Push {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
 }
 
 /// Files channel commands.
@@ -800,6 +830,27 @@ pub enum GitWsEvent {
         commit: String,
         success: bool,
     },
+    BranchesResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        current: String,
+        branches: Vec<GitBranch>,
+    },
+    SwitchResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        branch: String,
+        success: bool,
+    },
+    /// Answers fetch, pull and push alike: what git said, and where the
+    /// branch now stands relative to its upstream.
+    RemoteResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        operation: String,
+        summary: String,
+        success: bool,
+    },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -817,6 +868,16 @@ pub struct GitStatusEntry {
     pub worktree: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renamed_from: Option<String>,
+}
+
+/// A local branch. `worktree` is set when another checkout already holds it,
+/// which is why switching to it would fail.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1626,7 +1687,12 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | GitWsCommand::Log { id, .. }
             | GitWsCommand::Stage { id, .. }
             | GitWsCommand::Unstage { id, .. }
-            | GitWsCommand::Commit { id, .. } => id.clone(),
+            | GitWsCommand::Commit { id, .. }
+            | GitWsCommand::Branches { id, .. }
+            | GitWsCommand::Switch { id, .. }
+            | GitWsCommand::Fetch { id, .. }
+            | GitWsCommand::Pull { id, .. }
+            | GitWsCommand::Push { id, .. } => id.clone(),
         },
         WsCommand::Session(_) => None,
     }
@@ -1767,6 +1833,11 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 GitWsCommand::Stage { .. } => "git.stage",
                 GitWsCommand::Unstage { .. } => "git.unstage",
                 GitWsCommand::Commit { .. } => "git.commit",
+                GitWsCommand::Branches { .. } => "git.branches",
+                GitWsCommand::Switch { .. } => "git.switch",
+                GitWsCommand::Fetch { .. } => "git.fetch",
+                GitWsCommand::Pull { .. } => "git.pull",
+                GitWsCommand::Push { .. } => "git.push",
             };
             let workspace_path = match git_cmd {
                 GitWsCommand::Status { workspace_path, .. }
@@ -1774,7 +1845,12 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 | GitWsCommand::Log { workspace_path, .. }
                 | GitWsCommand::Stage { workspace_path, .. }
                 | GitWsCommand::Unstage { workspace_path, .. }
-                | GitWsCommand::Commit { workspace_path, .. } => Some(workspace_path.clone()),
+                | GitWsCommand::Commit { workspace_path, .. }
+                | GitWsCommand::Branches { workspace_path, .. }
+                | GitWsCommand::Switch { workspace_path, .. }
+                | GitWsCommand::Fetch { workspace_path, .. }
+                | GitWsCommand::Pull { workspace_path, .. }
+                | GitWsCommand::Push { workspace_path, .. } => Some(workspace_path.clone()),
             };
             (label.to_string(), None, workspace_path)
         }

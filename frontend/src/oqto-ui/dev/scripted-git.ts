@@ -25,6 +25,15 @@ export function createScriptedGitHost(): GitHost {
 			return [];
 		},
 		async stage() {},
+		branches: {
+			async list() {
+				return [{ name: "main", current: true, worktree: null }];
+			},
+			async switch() {},
+		},
+		async remote(_workspacePath, operation) {
+			return { operation, summary: "" };
+		},
 		async commit() {
 			return "";
 		},

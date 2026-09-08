@@ -30,12 +30,32 @@ struct GitOutput {
     stdout: String,
 }
 
+/// Environment for network commands. Git must fail rather than wait: a
+/// prompt for a passphrase, a credential, or an unknown host key would hang
+/// the request until the transport's own timeout and tell the caller nothing.
+fn non_interactive_env() -> serde_json::Value {
+    serde_json::json!({
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": "ssh -oBatchMode=yes",
+    })
+}
+
 /// Runs one git invocation in a validated work directory as its owner.
 async fn run_git(
     state: &AppState,
     user_id: &str,
     workspace: &Path,
     args: Vec<String>,
+) -> Result<GitOutput, String> {
+    run_git_with_env(state, user_id, workspace, args, serde_json::json!({})).await
+}
+
+async fn run_git_with_env(
+    state: &AppState,
+    user_id: &str,
+    workspace: &Path,
+    args: Vec<String>,
+    env: serde_json::Value,
 ) -> Result<GitOutput, String> {
     if let Some(linux_users) = state.linux_users.as_ref().filter(|cfg| cfg.enabled) {
         let linux_username = linux_users.linux_username(user_id);
@@ -47,6 +67,7 @@ async fn run_git(
                     "username": linux_username,
                     "binary": "git",
                     "args": args,
+                    "env": env,
                     "cwd": cwd,
                 }),
             )
@@ -62,9 +83,16 @@ async fn run_git(
             .to_string();
         Ok(GitOutput { stdout })
     } else {
-        let output = tokio::process::Command::new("git")
-            .args(&args)
-            .current_dir(workspace)
+        let mut command = tokio::process::Command::new("git");
+        command.args(&args).current_dir(workspace);
+        if let Some(vars) = env.as_object() {
+            for (key, value) in vars {
+                if let Some(value) = value.as_str() {
+                    command.env(key, value);
+                }
+            }
+        }
+        let output = command
             .output()
             .await
             .map_err(|e| format!("failed to execute git: {e}"))?;
@@ -138,6 +166,27 @@ fn parse_status(stdout: &str) -> (String, Option<String>, usize, usize, Vec<GitS
     (branch, upstream, ahead, behind, entries)
 }
 
+/// Reads `git for-each-ref --format=%(refname:short)%00%(worktreepath)`.
+/// The worktree path is empty for a branch no checkout holds.
+fn parse_branches(stdout: &str, current: &str) -> Vec<GitBranch> {
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let (name, worktree) = line.split_once('\0').unwrap_or((line, ""));
+            GitBranch {
+                name: name.to_string(),
+                current: name == current,
+                worktree: if worktree.trim().is_empty() {
+                    None
+                } else {
+                    Some(worktree.to_string())
+                },
+            }
+        })
+        .collect()
+}
+
 fn parse_log(stdout: &str) -> Vec<GitCommitSummary> {
     stdout
         .split('\0')
@@ -189,7 +238,14 @@ pub(super) async fn handle_git_command(
         }
         | GitWsCommand::Commit {
             id, workspace_path, ..
-        } => (id.clone(), workspace_path.clone()),
+        }
+        | GitWsCommand::Branches { id, workspace_path }
+        | GitWsCommand::Switch {
+            id, workspace_path, ..
+        }
+        | GitWsCommand::Fetch { id, workspace_path }
+        | GitWsCommand::Pull { id, workspace_path }
+        | GitWsCommand::Push { id, workspace_path } => (id.clone(), workspace_path.clone()),
     };
 
     let workspace = match validate_workspace_path(state, user_id, &workspace_path).await {
@@ -331,6 +387,175 @@ pub(super) async fn handle_git_command(
                 Err(err) => error(id, err),
             }
         }
+        GitWsCommand::Branches { id, .. } => {
+            let current = run_git(
+                state,
+                user_id,
+                &workspace,
+                vec!["branch".to_string(), "--show-current".to_string()],
+            )
+            .await
+            .map(|output| output.stdout.trim().to_string())
+            .unwrap_or_default();
+            let args = vec![
+                "for-each-ref".to_string(),
+                "--format=%(refname:short)%00%(worktreepath)".to_string(),
+                "refs/heads".to_string(),
+            ];
+            match run_git(state, user_id, &workspace, args).await {
+                Ok(output) => Some(WsEvent::Git(GitWsEvent::BranchesResult {
+                    id,
+                    branches: parse_branches(&output.stdout, &current),
+                    current,
+                })),
+                Err(err) => error(id, err),
+            }
+        }
+        GitWsCommand::Switch { id, branch, .. } => {
+            // A name that could read as a flag never reaches git.
+            if branch.starts_with('-') || branch.trim().is_empty() {
+                return error(id, "invalid branch name");
+            }
+            // An Agent may be working in this tree. Moving it under a dirty
+            // working copy is refused outright rather than left to git's own
+            // narrower check, which permits changes it can carry across.
+            match run_git(
+                state,
+                user_id,
+                &workspace,
+                vec![
+                    "status".to_string(),
+                    "--porcelain=v1".to_string(),
+                    "-z".to_string(),
+                ],
+            )
+            .await
+            {
+                Ok(output) if !output.stdout.trim().is_empty() => {
+                    return error(id, "the working tree has changes; commit or stash first");
+                }
+                Err(err) => return error(id, err),
+                _ => {}
+            }
+            match run_git(
+                state,
+                user_id,
+                &workspace,
+                vec!["switch".to_string(), branch.clone()],
+            )
+            .await
+            {
+                Ok(_) => Some(WsEvent::Git(GitWsEvent::SwitchResult {
+                    id,
+                    branch,
+                    success: true,
+                })),
+                Err(err) => error(id, err),
+            }
+        }
+        GitWsCommand::Fetch { id, .. } => {
+            remote_result(
+                state,
+                user_id,
+                &workspace,
+                id,
+                "fetch",
+                vec!["fetch".to_string()],
+            )
+            .await
+        }
+        GitWsCommand::Pull { id, .. } => {
+            remote_result(
+                state,
+                user_id,
+                &workspace,
+                id,
+                "pull",
+                vec!["pull".to_string(), "--ff-only".to_string()],
+            )
+            .await
+        }
+        GitWsCommand::Push { id, .. } => {
+            // Push where the branch already points; a branch with no upstream
+            // gets one on its default remote rather than a confusing failure.
+            let upstream = run_git(
+                state,
+                user_id,
+                &workspace,
+                vec![
+                    "rev-parse".to_string(),
+                    "--abbrev-ref".to_string(),
+                    "--symbolic-full-name".to_string(),
+                    "@{upstream}".to_string(),
+                ],
+            )
+            .await
+            .ok()
+            .map(|output| output.stdout.trim().to_string())
+            .filter(|value| !value.is_empty());
+            let args = if upstream.is_some() {
+                vec!["push".to_string()]
+            } else {
+                let remote = default_remote(state, user_id, &workspace).await?;
+                let branch = run_git(
+                    state,
+                    user_id,
+                    &workspace,
+                    vec!["branch".to_string(), "--show-current".to_string()],
+                )
+                .await
+                .map(|output| output.stdout.trim().to_string())
+                .unwrap_or_default();
+                if branch.is_empty() {
+                    return error(id, "cannot push a detached HEAD");
+                }
+                vec![
+                    "push".to_string(),
+                    "--set-upstream".to_string(),
+                    remote,
+                    branch,
+                ]
+            };
+            remote_result(state, user_id, &workspace, id, "push", args).await
+        }
+    }
+}
+
+/// The remote a push should adopt: origin when it exists, else the first.
+async fn default_remote(state: &AppState, user_id: &str, workspace: &Path) -> Option<String> {
+    let output = run_git(state, user_id, workspace, vec!["remote".to_string()])
+        .await
+        .ok()?;
+    let remotes: Vec<&str> = output.stdout.lines().filter(|l| !l.is_empty()).collect();
+    if remotes.is_empty() {
+        return None;
+    }
+    Some(
+        remotes
+            .iter()
+            .find(|remote| **remote == "origin")
+            .unwrap_or(&remotes[0])
+            .to_string(),
+    )
+}
+
+/// Runs a network command non-interactively and reports what git said.
+async fn remote_result(
+    state: &AppState,
+    user_id: &str,
+    workspace: &Path,
+    id: Option<String>,
+    operation: &str,
+    args: Vec<String>,
+) -> Option<WsEvent> {
+    match run_git_with_env(state, user_id, workspace, args, non_interactive_env()).await {
+        Ok(output) => Some(WsEvent::Git(GitWsEvent::RemoteResult {
+            id,
+            operation: operation.to_string(),
+            summary: output.stdout.trim().to_string(),
+            success: true,
+        })),
+        Err(err) => error(id, err),
     }
 }
 
@@ -383,6 +608,31 @@ mod tests {
         assert_eq!(entries[0].renamed_from.as_deref(), Some("old/name.rs"));
         // The old path is consumed by the rename, not read as another entry.
         assert_eq!(entries[1].path, "other.rs");
+    }
+
+    #[test]
+    fn reads_branches_and_the_checkout_that_holds_each() {
+        let stdout = "main\0/home/u/repo\nfeature\0\nspike\0/home/u/wt\n";
+        let branches = parse_branches(stdout, "main");
+        assert_eq!(branches.len(), 3);
+        assert!(branches[0].current);
+        assert_eq!(branches[0].worktree.as_deref(), Some("/home/u/repo"));
+        // A branch no checkout holds is free to switch to.
+        assert!(!branches[1].current);
+        assert_eq!(branches[1].worktree, None);
+        assert_eq!(branches[2].worktree.as_deref(), Some("/home/u/wt"));
+    }
+
+    #[test]
+    fn network_commands_never_wait_for_a_prompt() {
+        let env = non_interactive_env();
+        assert_eq!(env["GIT_TERMINAL_PROMPT"], "0");
+        assert!(
+            env["GIT_SSH_COMMAND"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("BatchMode=yes")
+        );
     }
 
     #[test]

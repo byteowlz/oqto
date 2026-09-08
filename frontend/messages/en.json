@@ -817,6 +817,11 @@
 			"edit": "Edit file"
 		},
 		"git": {
+			"branches": "Switch branch",
+			"inWorktree": "in another checkout",
+			"fetch": "Fetch",
+			"pull": "Pull (fast-forward only)",
+			"push": "Push",
 			"label": "Git",
 			"reload": "Reload status",
 			"clean": "Nothing changed.",

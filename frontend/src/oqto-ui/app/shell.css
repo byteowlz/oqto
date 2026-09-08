@@ -3653,6 +3653,7 @@
 }
 
 .wb-git__bar {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -3662,8 +3663,61 @@
 }
 
 .wb-git__branch {
+	padding: 2px 4px;
+	border: 0;
+	background: none;
 	color: var(--primary);
+	font-family: var(--font-mono);
+	font-size: 12px;
 	font-weight: 600;
+	cursor: pointer;
+}
+
+.wb-git__branch:disabled {
+	cursor: default;
+}
+
+.wb-git__branches {
+	position: absolute;
+	z-index: 5;
+	inset-block-start: 28px;
+	inset-inline-start: 8px;
+	min-inline-size: 160px;
+	max-block-size: 12rem;
+	overflow-y: auto;
+	margin: 0;
+	padding: 4px;
+	border: 1px solid var(--border);
+	background: color-mix(in srgb, var(--popover, var(--card)) 88%, var(--foreground));
+	list-style: none;
+}
+
+.wb-git__branches button {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	inline-size: 100%;
+	padding: 4px 6px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	text-align: start;
+	cursor: pointer;
+}
+
+.wb-git__branches button:hover {
+	background: var(--muted);
+}
+
+.wb-git__branches small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+}
+
+.wb-git__note[data-failed] {
+	color: var(--destructive, var(--primary));
 }
 
 .wb-git__bar small {
