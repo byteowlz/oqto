@@ -27,6 +27,7 @@ export interface ColumnRendering {
 
 interface MillerColumnsProps {
 	readonly state: FilesState;
+	readonly workspacePath: string;
 	readonly entries: readonly FileEntry[];
 	readonly focused: FileEntry | null;
 	readonly preview: PreviewState;
@@ -39,6 +40,7 @@ function readyEntries(listing: ListingState | undefined): readonly FileEntry[] {
 
 export function MillerColumns({
 	state,
+	workspacePath,
 	entries,
 	focused,
 	preview,
@@ -97,7 +99,12 @@ export function MillerColumns({
 						onOpen={onOpen}
 					/>
 				) : focused ? (
-					<FilesPreview entry={focused} preview={preview} {...facts(focused)} />
+					<FilesPreview
+						entry={focused}
+						preview={preview}
+						workspacePath={workspacePath}
+						{...facts(focused)}
+					/>
 				) : (
 					<p className="wb-files-note">{t("oqtoUi.files.empty")}</p>
 				)}

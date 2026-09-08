@@ -6,12 +6,14 @@
 import { useTranslation } from "react-i18next";
 import type { FileEntry } from "../platform/files-contract";
 import type { PreviewState } from "./usePreview";
+import { FileViewer } from "./viewers/FileViewer";
 
 interface FilesPreviewProps {
 	readonly entry: FileEntry;
 	readonly preview: PreviewState;
 	readonly size: string;
 	readonly modified: string;
+	readonly workspacePath: string;
 }
 
 export function FilesPreview({
@@ -19,6 +21,7 @@ export function FilesPreview({
 	preview,
 	size,
 	modified,
+	workspacePath,
 }: FilesPreviewProps) {
 	const { t } = useTranslation();
 	return (
@@ -31,15 +34,12 @@ export function FilesPreview({
 				{size === "" ? null : <span>{size}</span>}
 				{modified === "" ? null : <span>{modified}</span>}
 			</span>
-			{preview.status === "text" ? (
-				<pre className="wb-files-preview__body">{preview.text}</pre>
-			) : (
-				<p className="wb-files-preview__body">
-					{preview.status === "loading"
-						? t("oqtoUi.files.loading")
-						: t("oqtoUi.files.previewUnavailable")}
-				</p>
-			)}
+			<FileViewer
+				name={entry.name}
+				path={entry.path}
+				workspacePath={workspacePath}
+				text={preview}
+			/>
 		</section>
 	);
 }

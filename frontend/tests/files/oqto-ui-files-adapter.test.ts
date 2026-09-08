@@ -75,6 +75,25 @@ describe("mux files adapter", () => {
 		]);
 	});
 
+	it("decodes file contents from the channel's base64 as UTF-8", async () => {
+		const { socket } = fakeSocket();
+		const files = createMuxFileSystem(() => socket);
+		const pending = files.read("/work/repo", "notes.md");
+		socket.open();
+		socket.deliver({
+			channel: "files",
+			type: "read_result",
+			id: "files-1",
+			path: "notes.md",
+			content: btoa(
+				String.fromCharCode(
+					...new TextEncoder().encode("# Überschrift\nnaïve — ok"),
+				),
+			),
+		});
+		await expect(pending).resolves.toBe("# Überschrift\nnaïve — ok");
+	});
+
 	it("rejects the matching request on a channel error and ignores other channels", async () => {
 		const { socket } = fakeSocket();
 		const files = createMuxFileSystem(() => socket);

@@ -26,6 +26,22 @@ interface FilesEvent {
 	readonly workspace_path?: string;
 }
 
+/**
+ * The files channel sends file contents as base64 of the raw bytes, so text
+ * has to be decoded as UTF-8 rather than shown as the transport encoded it.
+ */
+function decodeContent(encoded: string): string {
+	try {
+		const binary = atob(encoded);
+		const bytes = Uint8Array.from(binary, (character) =>
+			character.charCodeAt(0),
+		);
+		return new TextDecoder().decode(bytes);
+	} catch {
+		return "";
+	}
+}
+
 const CHANGE_KINDS: { readonly [event: string]: FileChange["kind"] } = {
 	file_created: "created",
 	dir_created: "created",
@@ -161,7 +177,7 @@ export function createMuxFileSystem(openSocket: SocketFactory): FileHost {
 					(message.entries ?? []).map((raw) => toEntry(directory, raw)),
 				);
 			} else if (message.type === "read_result") {
-				waiting.resolve(message.content ?? "");
+				waiting.resolve(decodeContent(message.content ?? ""));
 			} else if (message.success === false) {
 				waiting.reject(new Error(message.type));
 			} else {

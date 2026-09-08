@@ -6,7 +6,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { FileHost } from "../platform/files-contract";
-import { entryKind, isTextual } from "./kinds";
+import { viewerFor } from "./viewers/registry";
 
 export type PreviewState =
 	| { readonly status: "idle" }
@@ -42,10 +42,8 @@ export function usePreview(fileHost: FileHost, workspacePath: string): Preview {
 			const key = `${workspacePath}:${target.path}`;
 			if (showing.current === key) return;
 			showing.current = key;
-			if (
-				target.directory ||
-				!isTextual(entryKind(target.name, target.directory))
-			) {
+			// Image and media viewers stream from a URL; only text is fetched.
+			if (target.directory || viewerFor(target.name, false) !== "text") {
 				setState({ status: "unavailable" });
 				return;
 			}

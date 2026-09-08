@@ -238,6 +238,7 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				) : columns ? (
 					<MillerColumns
 						state={state}
+						workspacePath={store.context.workspacePath}
 						entries={entries}
 						focused={focused}
 						preview={preview.state}
@@ -261,6 +262,7 @@ export function FilesPane({ store, onOpenFile }: FilesPaneProps) {
 				<FilesPreview
 					entry={focused}
 					preview={preview.state}
+					workspacePath={store.context.workspacePath}
 					{...facts(focused)}
 				/>
 			) : null}

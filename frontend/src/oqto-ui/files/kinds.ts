@@ -112,16 +112,8 @@ export function entryKind(name: string, directory: boolean): EntryKind {
 	const named = BY_NAME[lower] ?? BY_NAME[lower.replace(/\.[^.]+$/, "")];
 	if (named) return named;
 	const dot = lower.lastIndexOf(".");
-	if (dot <= 0) return "file";
+	// A leading-dot name is a config file (.gitignore, .env, .bashrc).
+	if (dot === 0) return "data";
+	if (dot < 0) return "file";
 	return BY_EXTENSION[lower.slice(dot + 1)] ?? "file";
-}
-
-/** True for kinds whose contents a text preview can show. */
-export function isTextual(kind: EntryKind): boolean {
-	return (
-		kind === "code" ||
-		kind === "markup" ||
-		kind === "data" ||
-		kind === "document"
-	);
 }
