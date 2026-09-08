@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -740,7 +739,8 @@ impl Runner {
         // Build command - either direct or via oqto-sandbox
         let mut sandbox_config_for_spawn: Option<SandboxConfig> = None;
 
-        let (program, args, effective_binary) = if use_sandbox {
+        let effective_binary = req.binary.clone();
+        let mut cmd = if use_sandbox {
             let Some(sandbox_config) = self.sandbox_config.as_ref() else {
                 return error_response(
                     ErrorCode::SandboxError,
@@ -748,55 +748,43 @@ impl Runner {
                 );
             };
 
-            // Build bwrap args using the trusted config
-            // Note: We use the current user (runner's user) for path expansion
-            match sandbox_config.build_bwrap_args_for_user(&req.cwd, None) {
-                Some(bwrap_args) => {
-                    // Command: bwrap [bwrap_args] -- binary [args]
-                    let mut full_args = bwrap_args;
-                    full_args.push(req.binary.clone());
-                    full_args.extend(req.args.iter().cloned());
-
-                    sandbox_config_for_spawn = Some(sandbox_config.clone());
-
-                    info!(
-                        "Sandboxing process '{}' with {} bwrap args",
-                        req.id,
-                        full_args.len()
-                    );
-                    debug!("bwrap command: bwrap {}", full_args.join(" "));
-
-                    ("bwrap".to_string(), full_args, req.binary.clone())
+            // Generic processes do not own an egress namespace guard. Refuse
+            // proxy mode rather than skip the required namespace entry.
+            let mut effective = sandbox_config.with_workspace_config(&req.cwd);
+            if effective.network_mode() == oqto_sandbox::NetworkMode::Proxy {
+                return error_response(
+                    ErrorCode::SandboxError,
+                    "Proxy egress requires a session-managed launch".to_string(),
+                );
+            }
+            if let Some(upstream) = crate::ssh_agent_proxy::upstream_agent_socket() {
+                effective
+                    .deny_read
+                    .push(upstream.to_string_lossy().into_owned());
+            }
+            match oqto_sandbox::build_sandbox_command(
+                &effective,
+                &req.cwd,
+                Path::new(&req.binary),
+                &req.args,
+                oqto_sandbox::SandboxStdin::Redirected,
+            ) {
+                Ok(command) => {
+                    sandbox_config_for_spawn = Some(effective);
+                    Command::from(command)
                 }
-                None => {
-                    // SECURITY: bwrap not available - refuse to run
-                    error!(
-                        "SECURITY: Sandbox requested for '{}' but bwrap not available. \
-                         Install bubblewrap (bwrap) or disable sandboxing.",
-                        req.id
-                    );
+                Err(error) => {
                     return error_response(
                         ErrorCode::SandboxError,
-                        format!(
-                            "Sandbox requested but bwrap not available. \
-                             Cannot run '{}' without bubblewrap installed.",
-                            req.binary
-                        ),
+                        format!("Failed to build sandbox command: {error:#}"),
                     );
                 }
             }
         } else {
-            (req.binary.clone(), req.args.clone(), req.binary.clone())
+            let mut command = Command::new(&req.binary);
+            command.args(&req.args).current_dir(&req.cwd);
+            command
         };
-
-        // Build the command
-        let mut cmd = Command::new(&program);
-        cmd.args(&args);
-        // Note: For sandboxed processes, cwd is handled by bwrap's workspace bind
-        // For non-sandboxed, we set it directly
-        if !use_sandbox {
-            cmd.current_dir(&req.cwd);
-        }
         cmd.envs(&req.env);
 
         if let Some(config) = sandbox_config_for_spawn.as_ref()

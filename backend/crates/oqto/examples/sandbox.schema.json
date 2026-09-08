@@ -512,6 +512,7 @@
             "~/.gnupg",
             "~/.aws",
             "/etc/oqto",
+            "/run/oqto",
             "~/.config/oqto/config.toml",
             "~/.local/share/oqto/credentials",
             "/usr/bin/systemctl",

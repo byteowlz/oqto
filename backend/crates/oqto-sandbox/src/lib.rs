@@ -1,5 +1,6 @@
 pub mod capability;
 pub mod cli;
+mod command;
 mod config;
 pub mod egress;
 pub mod egress_relay;
@@ -13,6 +14,7 @@ mod spawn;
 pub mod workspace_config;
 
 pub use cli::run_cli;
+pub use command::{SandboxStdin, build_sandbox_command};
 pub use config::{
     GuardConfig, GuardPolicy, LandlockMode, NetworkConfig, NetworkMode, PromptConfig,
     SandboxConfig, SandboxConfigFile, SandboxProfile, SeccompMode, SshProxyConfig,

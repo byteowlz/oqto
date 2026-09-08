@@ -20,9 +20,10 @@ async fn runner_serves_on_inherited_fd_and_stops_on_sigterm() -> Result<()> {
     let mut command = std::process::Command::new("bash");
     command
         .arg("-c")
-        .arg("export LISTEN_PID=$$; exec \"$0\"")
+        .arg("export LISTEN_PID=$$; exec \"$0\" --no-sandbox")
         .arg(env!("CARGO_BIN_EXE_oqto-runner"))
         .env("HOME", temp.path())
+        .env("XDG_CONFIG_HOME", temp.path().join("config"))
         .env("XDG_STATE_HOME", temp.path().join("state"))
         .env("LISTEN_FDS", "1")
         .stdout(std::process::Stdio::null())
@@ -48,7 +49,7 @@ async fn runner_serves_on_inherited_fd_and_stops_on_sigterm() -> Result<()> {
                 if child.try_wait()?.is_some() {
                     anyhow::bail!("runner exited before becoming ready");
                 }
-                if client.ensure_ready_with_recovery().await.is_ok() {
+                if client.list_sessions().await.is_ok() {
                     break Ok::<_, anyhow::Error>(());
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;

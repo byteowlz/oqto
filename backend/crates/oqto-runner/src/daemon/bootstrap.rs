@@ -104,7 +104,10 @@ pub fn load_sandbox_config(
 
 pub fn log_sandbox_state(sandbox_config: &Option<SandboxConfig>) {
     if sandbox_config.is_some() {
-        info!("Sandbox enabled - processes will be wrapped with bwrap");
+        info!(
+            "Sandbox enabled - platform backend for {}",
+            std::env::consts::OS
+        );
     } else {
         warn!("Sandbox disabled - processes will run without isolation");
     }

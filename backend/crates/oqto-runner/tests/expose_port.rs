@@ -27,9 +27,13 @@ async fn spawn_runner(
 ) -> Result<RunnerProcess> {
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_oqto-runner"));
     command
+        // This is a transport fixture, not a containment test. Never inherit
+        // host sandbox policy or attempt to recover a production runner.
+        .arg("--no-sandbox")
         .arg("--socket")
         .arg(socket)
         .env("HOME", temp)
+        .env("XDG_CONFIG_HOME", temp.join("config"))
         .env("XDG_STATE_HOME", temp.join("state"))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -37,19 +41,23 @@ async fn spawn_runner(
         command.arg("--expose-dir").arg(dir);
     }
     let child = command.spawn().context("spawning oqto-runner")?;
-    let process = RunnerProcess { child };
+    let mut process = RunnerProcess { child };
 
     let client = oqto_runner::client::RunnerClient::new(socket.to_path_buf());
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if client.ensure_ready_with_recovery().await.is_ok() {
-                break;
+            anyhow::ensure!(
+                process.child.try_wait()?.is_none(),
+                "fixture runner exited before readiness"
+            );
+            if client.list_sessions().await.is_ok() {
+                break Ok::<_, anyhow::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })
     .await
-    .context("runner did not become ready")?;
+    .context("runner did not become ready")??;
     Ok(process)
 }
 

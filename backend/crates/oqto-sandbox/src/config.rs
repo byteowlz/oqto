@@ -213,7 +213,7 @@ fn default_workspace_cache_root() -> String {
 /// `RUSTUP_HOME` is deliberately absent: rustup shims resolve the active
 /// toolchain through it, so pointing it at an empty directory breaks `cargo`
 /// and `rustc` entirely. It only needs to be readable, which it already is.
-const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
+pub(crate) const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
     ("CARGO_HOME", "cargo"),
     ("NPM_CONFIG_CACHE", "npm"),
     ("BUN_INSTALL_CACHE_DIR", "bun"),
@@ -2259,19 +2259,34 @@ impl SandboxConfig {
     /// inside it, and a deny inside that work directory only order correctly
     /// when all three are decided by one mechanism.
     fn permission_args(&self, workspace: &Path, username: Option<&str>) -> Option<Vec<String>> {
+        let build = match self.permission_policy(workspace, username) {
+            Ok(build) => build,
+            Err(error) => {
+                error!("Sandbox policy could not be resolved: {error:#}");
+                return None;
+            }
+        };
+        Some(crate::policy_bwrap::compile_filesystem_args(
+            &build.policy,
+            &crate::policy_bwrap::HostPaths,
+            &build.reconstructions,
+        ))
+    }
+
+    /// Resolve permission fields once for every enforcement backend (ADR-0028).
+    pub(crate) fn permission_policy(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> anyhow::Result<crate::path_policy::ResolvedPolicyBuild> {
         let home = if let Some(user) = username {
             Self::get_user_home(user)
         } else {
             dirs::home_dir()
         };
-        let Some(home) = home else {
-            warn!(
-                "Could not determine home directory for user {:?}; refusing to build a sandbox \
-                 whose home policy cannot be resolved",
-                username
-            );
-            return None;
-        };
+        let home = home.ok_or_else(|| anyhow::anyhow!(
+            "Could not determine home directory for user {username:?}; refusing unresolved home policy"
+        ))?;
 
         let fields = crate::policy_translate::PermissionFields {
             profile_name: &self.profile,
@@ -2284,37 +2299,20 @@ impl SandboxConfig {
             extra_ro_bind: &self.extra_ro_bind,
             extra_rw_bind: &self.extra_rw_bind,
         };
-        let translated = match crate::policy_translate::translate_permissions(&fields) {
-            Ok(translated) => translated,
-            Err(error) => {
-                error!("Sandbox policy is invalid: {error}");
-                return None;
-            }
-        };
-
+        let translated = crate::policy_translate::translate_permissions(&fields)?;
         let registry = crate::path_policy::ResourceRegistry::default();
-        let build = match translated
+        let build = translated
             .policy
             .resolve_roots(&crate::path_policy::ResolutionContext {
                 workdir: workspace,
                 home: &home,
                 resources: &registry,
-            }) {
-            Ok(build) => build,
-            Err(error) => {
-                error!("Sandbox policy could not be resolved: {error}");
-                return None;
-            }
-        };
+            })?;
         for id in &build.unavailable_resources {
             warn!("Sandbox policy resource unavailable on this target: {id}");
         }
 
-        Some(crate::policy_bwrap::compile_filesystem_args(
-            &build.policy,
-            &crate::policy_bwrap::HostPaths,
-            &build.reconstructions,
-        ))
+        Ok(build)
     }
 
     pub fn build_bwrap_args_for_user(
@@ -4274,6 +4272,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_does_not_bind_the_whole_home() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4307,6 +4306,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_binds_existing_allow_read_entries() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4345,6 +4345,7 @@ log_requests = true
     /// deny applies and the allowed child is rebound after it: strictly
     /// narrower, and the ordering is what proves it.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_deny_does_not_hide_a_more_specific_grant() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4428,6 +4429,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn writable_scoped_targets_are_authorised_not_just_mounted() {
         // A read-write bind that Landlock does not also authorise fails at the
         // first write with EACCES while the mount itself looks correct. The
@@ -4611,6 +4613,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn only_the_current_workspace_shard_is_bound() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
@@ -4815,6 +4818,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_still_applies_denies_inside_the_workspace() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
@@ -4847,6 +4851,7 @@ log_requests = true
 
     /// The narrower half of the same rule, with the grant present on disk.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_denied_parent_still_yields_to_its_allowed_child() {
         let _env = env_guard();
         let temp = tempdir().unwrap();

@@ -1,0 +1,39 @@
+# Native single-user macOS host policy; not hostile multi-tenant isolation.
+# Work directory: read/write. Home and Unix sockets: allowlist.
+# Denied paths remain observable; this is NOT namespace masking.
+# Add deliberate grants for your harness state, credentials, caches and tools.
+# This template does not grant your existing ~/.pi or ~/.ssh.
+# Set TMPDIR to a directory inside the granted work directory.
+# Run `oqto-sandbox --config <this-file> --workspace <workdir> -- <command>`.
+profile = "macos-host"
+enabled = true
+
+[profiles.macos-host]
+read_policy = "allowlist"
+home_access = "none"
+allow_read = ["/opt/homebrew"]
+allow_write = []
+deny_write = []
+extra_ro_bind = []
+extra_rw_bind = []
+isolate_network = false
+isolate_pid = false
+no_new_privs = false
+drop_all_caps = false
+disable_userns = false
+assert_userns_disabled = false
+seccomp_mode = "off"
+landlock_mode = "off"
+overlay_enabled = false
+scoped_paths = []
+workspace_cache_enabled = false
+
+[profiles.macos-host.network]
+mode = "open"
+allow_domains = []
+
+[profiles.macos-host.ssh]
+enabled = false
+allowed_hosts = []
+allowed_keys = []
+prompt_unknown = false

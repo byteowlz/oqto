@@ -95,7 +95,7 @@ fn resolve_agent_socket(auth_sock: Option<&str>, runtime_dir: Option<&str>) -> O
     candidate.exists().then_some(candidate)
 }
 
-fn upstream_agent_socket() -> Option<PathBuf> {
+pub(crate) fn upstream_agent_socket() -> Option<PathBuf> {
     resolve_agent_socket(
         std::env::var("SSH_AUTH_SOCK").ok().as_deref(),
         std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),

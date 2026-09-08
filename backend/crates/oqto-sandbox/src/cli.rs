@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, error, info};
-#[cfg(target_os = "macos")]
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -10,7 +8,7 @@ use std::process::Command;
 use std::os::unix::process::CommandExt;
 
 use crate::landlock_shim::maybe_run_shim;
-use crate::{SandboxConfig, SandboxConfigFile, configure_bwrap_pre_exec};
+use crate::{SandboxConfig, SandboxConfigFile, build_sandbox_command, configure_bwrap_pre_exec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -130,40 +128,22 @@ fn exec_direct(command: &[String], workspace: &PathBuf) -> Result<()> {
     Err(err.into())
 }
 
-#[cfg(target_os = "linux")]
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
     workspace: &std::path::Path,
     dry_run: bool,
 ) -> Result<()> {
-    let bwrap_args = match config.build_bwrap_args_for_user(workspace, None) {
-        Some(args) => args,
-        None => {
-            // build_bwrap_args_for_user returns None for several reasons:
-            // - bwrap binary missing
-            // - seccomp_mode=enforce with missing/unreadable bpf
-            // - landlock_mode=enforce without kernel support or shim binary
-            // Check each cause so the user sees the right error and dry-run
-            // returns a non-zero exit code instead of a silent success.
-            let msg = if !SandboxConfig::is_bwrap_available() {
-                "bubblewrap (bwrap) not found in PATH"
-            } else {
-                "sandbox config rejected (seccomp/landlock enforce without backing support — see log above)"
-            };
-            error!("{}", msg);
-            if dry_run {
-                println!("ERROR: {}", msg);
-            }
-            anyhow::bail!("{}", msg);
-        }
-    };
-
-    let mut full_args = bwrap_args;
-    full_args.extend(command.iter().cloned());
-
+    let (program, args) = command.split_first().context("missing sandbox command")?;
+    let mut cmd = build_sandbox_command(
+        config,
+        workspace,
+        std::path::Path::new(program),
+        args,
+        crate::SandboxStdin::Inherited,
+    )?;
     if dry_run {
-        println!("bwrap {}", full_args.join(" \\\n  "));
+        println!("{cmd:?}");
         return Ok(());
     }
 
@@ -172,18 +152,14 @@ fn exec_sandboxed(
     // sandboxed process -- which means we cannot `exec()` it away in proxy mode.
     let egress = config.prepare_egress()?;
 
-    debug!("Executing: bwrap {:?}", full_args);
-    let mut cmd = Command::new("bwrap");
-    cmd.args(&full_args);
+    debug!("Executing sandbox: {cmd:?}");
 
     configure_bwrap_pre_exec(&mut cmd, config, workspace, egress.plan())?;
 
     if egress.plan().is_some() {
         // Proxy mode: supervise rather than exec, so the egress guard's Drop
         // runs teardown after the child exits. Mirror the child's exit code.
-        let status = cmd
-            .status()
-            .map_err(|e| anyhow::anyhow!("failed to spawn bwrap: {e}"))?;
+        let status = cmd.status().context("failed to spawn sandbox")?;
         drop(egress); // tear down the egress namespace before exiting
         std::process::exit(status.code().unwrap_or(1));
     }
@@ -191,102 +167,8 @@ fn exec_sandboxed(
     // No egress namespace to clean up: exec-replace as before.
     let err = cmd.exec();
 
-    error!("Failed to exec bwrap: {:?}", err);
+    error!("Failed to exec sandbox: {:?}", err);
     Err(err.into())
-}
-
-#[cfg(all(target_os = "macos", feature = "macos-seatbelt"))]
-fn exec_sandboxed(
-    config: &SandboxConfig,
-    command: &[String],
-    workspace: &Path,
-    dry_run: bool,
-) -> Result<()> {
-    use std::io::Write;
-
-    let profile_text = crate::seatbelt::compile_profile(config, workspace, None);
-
-    if dry_run {
-        println!("sandbox-exec -f <profile> {}", command.join(" "));
-        println!("\n# Seatbelt profile:");
-        println!("{profile_text}");
-        return Ok(());
-    }
-
-    if which::which("sandbox-exec").is_err() {
-        // Fail closed: running unsandboxed after being asked to sandbox would
-        // silently drop every restriction the profile describes.
-        anyhow::bail!("sandbox-exec not available, refusing to run unsandboxed");
-    }
-
-    let mut profile_file =
-        tempfile::NamedTempFile::new().context("creating Seatbelt profile file")?;
-    profile_file
-        .write_all(profile_text.as_bytes())
-        .context("writing Seatbelt profile")?;
-    profile_file.flush().context("flushing Seatbelt profile")?;
-
-    let mut full_args = vec![
-        "-f".to_string(),
-        profile_file.path().to_string_lossy().to_string(),
-    ];
-    full_args.extend(command.iter().cloned());
-
-    debug!("Executing: sandbox-exec {:?}", full_args);
-    let mut cmd = Command::new("sandbox-exec");
-    cmd.args(&full_args);
-    // sandbox-exec inherits this process's environment, so a sparse PATH from a
-    // launchd job or non-interactive ssh session leaves shebang interpreters
-    // (`/usr/bin/env node`) unresolvable inside the sandbox.
-    cmd.env(
-        "PATH",
-        SandboxConfig::sandbox_path(dirs::home_dir().as_deref()),
-    );
-    configure_bwrap_pre_exec(&mut cmd, config, workspace, None)?;
-
-    // exec replaces this process, so the temp profile would be unlinked before
-    // sandbox-exec reads it. Keep the file alive by supervising the child and
-    // mirroring its exit status instead.
-    let status = cmd.status().context("spawning sandbox-exec")?;
-    drop(profile_file);
-    std::process::exit(status.code().unwrap_or(1));
-}
-
-/// macOS without the Seatbelt backend compiled in. Fail closed: running
-/// unsandboxed after being asked to sandbox would silently drop every
-/// restriction the profile describes.
-#[cfg(all(target_os = "macos", not(feature = "macos-seatbelt")))]
-fn exec_sandboxed(
-    _config: &SandboxConfig,
-    command: &[String],
-    _workspace: &Path,
-    dry_run: bool,
-) -> Result<()> {
-    if dry_run {
-        println!("ERROR: built without the macos-seatbelt feature");
-        println!("Would refuse to execute: {command:?}");
-        return Ok(());
-    }
-    anyhow::bail!(
-        "sandboxing requested but this build lacks the macos-seatbelt feature; \
-         rebuild with --features macos-seatbelt"
-    )
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn exec_sandboxed(
-    _config: &SandboxConfig,
-    command: &[String],
-    _workspace: &PathBuf,
-    dry_run: bool,
-) -> Result<()> {
-    error!("Sandboxing not supported on this platform");
-    if dry_run {
-        println!("ERROR: Sandboxing not supported on this platform");
-        println!("Would execute directly: {:?}", command);
-        return Ok(());
-    }
-    anyhow::bail!("Sandboxing not supported on this platform")
 }
 
 pub fn run_cli() -> Result<()> {

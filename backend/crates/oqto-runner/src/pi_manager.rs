@@ -32,7 +32,7 @@ use crate::protocol::{
 };
 use oqto_pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
-use oqto_sandbox::{EgressGuard, SandboxConfig, configure_bwrap_pre_exec};
+use oqto_sandbox::{EgressGuard, SandboxConfig, build_sandbox_command, configure_bwrap_pre_exec};
 
 // ============================================================================
 // Configuration
@@ -854,8 +854,8 @@ impl PiSessionManager {
             pi_args.push("--session".to_string());
             pi_args.push(session_file.to_string_lossy().to_string());
         }
-        // Build command - either direct or via bwrap sandbox
-        let mut bwrap_pre_exec_config: Option<SandboxConfig> = None;
+        // Platform selection and filesystem policy belong to oqto-sandbox.
+        let mut sandbox_pre_exec_config: Option<SandboxConfig> = None;
         // Egress namespace guard; replaced with a live one for proxy mode below.
         // Held in the session so teardown runs when the session ends.
         let mut egress_guard = EgressGuard::inert();
@@ -884,68 +884,37 @@ impl PiSessionManager {
                         .push(session_socket_dir_str.clone());
                 }
 
-                // Build bwrap args for the workspace
-                match effective_config.build_bwrap_args_for_user(&config.cwd, None) {
-                    Some(bwrap_args) => {
-                        // Command: bwrap [bwrap_args] -- pi [pi_args]
-                        let mut cmd = Command::new("bwrap");
-
-                        // Add bwrap args
-                        for arg in &bwrap_args {
-                            cmd.arg(arg);
-                        }
-
-                        // Add Pi binary and args
-                        cmd.arg(&self.config.pi_binary);
-                        for arg in &pi_args {
-                            cmd.arg(arg);
-                        }
-
-                        bwrap_pre_exec_config = Some(effective_config.clone());
-
-                        // Proxy mode: create the egress namespace now (the child
-                        // joins it via setns in the pre-exec hook below). Inert
-                        // for open/isolated. Fail-closed propagates here.
-                        egress_guard = effective_config
-                            .prepare_egress()
-                            .context("Failed to prepare network egress namespace")?;
-
-                        // SSH keys stay in the user's agent; the session gets a
-                        // policy-filtered socket instead of key material.
-                        if let Some(ref ssh_config) = effective_config.ssh {
-                            ssh_agent_proxy =
-                                crate::ssh_agent_proxy::spawn(ssh_config, &session_socket_dir)
-                                    .context("Failed to start SSH agent proxy")?;
-                        }
-
-                        info!(
-                            "Sandboxing Pi session '{}' with profile '{}' ({} bwrap args)",
-                            session_id,
-                            effective_config.profile,
-                            bwrap_args.len()
-                        );
-                        debug!(
-                            "bwrap command: bwrap {} {} {:?}",
-                            bwrap_args.join(" "),
-                            self.config.pi_binary.display(),
-                            pi_args
-                        );
-
-                        cmd
-                    }
-                    None => {
-                        // SECURITY: bwrap not available but sandbox was requested
-                        error!(
-                            "SECURITY: Sandbox requested for Pi session '{}' but bwrap not available. \
-                             Refusing to run unsandboxed.",
-                            session_id
-                        );
-                        anyhow::bail!(
-                            "Sandbox requested but bwrap not available. \
-                             Install bubblewrap (bwrap) or disable sandboxing."
-                        );
-                    }
+                // The real SSH agent must remain unreachable even when the
+                // session receives a filtered proxy and network access.
+                if let Some(upstream) = crate::ssh_agent_proxy::upstream_agent_socket() {
+                    effective_config
+                        .deny_read
+                        .push(upstream.to_string_lossy().into_owned());
                 }
+                let cmd = build_sandbox_command(
+                    &effective_config,
+                    &config.cwd,
+                    &self.config.pi_binary,
+                    &pi_args,
+                    oqto_sandbox::SandboxStdin::Redirected,
+                )
+                .context("Failed to build Pi sandbox command")?;
+                egress_guard = effective_config
+                    .prepare_egress()
+                    .context("Failed to prepare network egress")?;
+                if let Some(ref ssh_config) = effective_config.ssh {
+                    ssh_agent_proxy =
+                        crate::ssh_agent_proxy::spawn(ssh_config, &session_socket_dir)
+                            .context("Failed to start SSH agent proxy")?;
+                }
+                info!(
+                    "Sandboxing Pi session '{}' with profile '{}' on {}",
+                    session_id,
+                    effective_config.profile,
+                    std::env::consts::OS
+                );
+                sandbox_pre_exec_config = Some(effective_config);
+                Command::from(cmd)
             } else {
                 // Sandbox config exists but is disabled
                 let mut cmd = Command::new(&self.config.pi_binary);
@@ -992,14 +961,14 @@ impl PiSessionManager {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        if let Some(pre_exec_cfg) = bwrap_pre_exec_config.as_ref() {
+        if let Some(pre_exec_cfg) = sandbox_pre_exec_config.as_ref() {
             configure_bwrap_pre_exec(
                 cmd.as_std_mut(),
                 pre_exec_cfg,
                 &config.cwd,
                 egress_guard.plan(),
             )
-            .context("Failed to configure bwrap pre-exec hooks")?;
+            .context("Failed to configure sandbox pre-exec hooks")?;
         }
 
         // Spawn the process
