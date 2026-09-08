@@ -7,7 +7,7 @@
 //! The service manages session lifecycles and runtime orchestration.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -51,6 +51,12 @@ use super::workspace_locations::WorkspaceLocationRepository;
 
 /// Prefix used for container names managed by this orchestrator.
 const CONTAINER_NAME_PREFIX: &str = "oqto-";
+
+/// Host path of the oqto-templates App SDK store (staged by setup).
+const TEMPLATES_APP_SDK_HOST_PATH: &str = "/usr/share/oqto/oqto-templates/app-sdk";
+
+/// In-container mount point for the offline App SDK store.
+const CONTAINER_APP_SDK_PATH: &str = "/usr/local/share/oqto/app-sdk";
 
 /// Default container image.
 const DEFAULT_IMAGE: &str = "oqto:latest";
@@ -1496,6 +1502,16 @@ impl SessionService {
             .env("OPENCODE_PORT", "41820")
             .env("FILESERVER_PORT", "41821")
             .env("TTYD_PORT", "41822");
+
+        // Expose the offline App SDK store (read-only) so scaffolded Apps
+        // resolve @byteowlz/oqto-app-sdk without network egress. The in-
+        // container HOME is the mounted workspace, so the store must ride an
+        // explicit mount plus env rather than the HOME default path.
+        if Path::new(TEMPLATES_APP_SDK_HOST_PATH).is_dir() {
+            config = config
+                .volume_read_only(TEMPLATES_APP_SDK_HOST_PATH, CONTAINER_APP_SDK_PATH)
+                .env("OQTO_APP_SDK_HOME", CONTAINER_APP_SDK_PATH);
+        }
 
         // Map sub-agent ports if configured
         // Each sub-agent gets a port: external (agent_base_port + i) -> internal (4001 + i)

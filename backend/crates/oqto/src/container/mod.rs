@@ -275,6 +275,34 @@ impl ContainerRuntime {
         // Validate all inputs before creating the container
         config.validate()?;
 
+        let owned_args = self.build_run_args(config);
+
+        let output = Command::new(&self.binary)
+            .args(&owned_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ContainerError::CommandFailed {
+                command: "run".to_string(),
+                message: e.to_string(),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ContainerError::CommandFailed {
+                command: "run".to_string(),
+                message: stderr.to_string(),
+            });
+        }
+
+        // Return container ID (trimmed)
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Build the `run` argument vector for a container config. Pure so the
+    /// mount/flag emission stays unit-testable without a container runtime.
+    fn build_run_args(&self, config: &ContainerConfig) -> Vec<String> {
         let mut owned_args: Vec<String> = Vec::new();
 
         owned_args.push("run".to_string());
@@ -325,6 +353,17 @@ impl ContainerRuntime {
             }
         }
 
+        // Read-only mounts never get the SELinux private label: the host
+        // content is shared infrastructure, not exclusive to this container.
+        for (host, container) in &config.read_only_volumes {
+            owned_args.push("-v".to_string());
+            let mut options = vec!["ro".to_string()];
+            if self.runtime_type.needs_selinux_labels() {
+                options.push("Z".to_string());
+            }
+            owned_args.push(format!("{}:{}:{}", host, container, options.join(",")));
+        }
+
         // Environment variables
         for (key, value) in &config.env {
             owned_args.push("-e".to_string());
@@ -345,27 +384,7 @@ impl ContainerRuntime {
             owned_args.push(cmd.clone());
         }
 
-        let output = Command::new(&self.binary)
-            .args(&owned_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| ContainerError::CommandFailed {
-                command: "run".to_string(),
-                message: e.to_string(),
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ContainerError::CommandFailed {
-                command: "run".to_string(),
-                message: stderr.to_string(),
-            });
-        }
-
-        // Return container ID (trimmed)
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        owned_args
     }
 
     /// Stop a running container.
@@ -821,6 +840,46 @@ impl ContainerRuntime {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_volumes_emit_ro_and_skip_private_selinux_label() {
+        let runtime = ContainerRuntime::with_type(RuntimeType::Podman);
+        let config = ContainerConfig::new("oqto:test")
+            .volume("/srv/workdir", "/home/dev")
+            .volume_read_only(
+                "/usr/share/oqto/oqto-templates/app-sdk",
+                "/usr/local/share/oqto/app-sdk",
+            );
+
+        let args = runtime.build_run_args(&config);
+
+        let mounts: Vec<&String> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-v")
+            .map(|pair| &pair[1])
+            .collect();
+        assert!(
+            mounts
+                .iter()
+                .any(|m| m.as_str() == "/srv/workdir:/home/dev:Z")
+        );
+        assert!(mounts.iter().any(|m| m.as_str()
+            == "/usr/share/oqto/oqto-templates/app-sdk:/usr/local/share/oqto/app-sdk:ro,Z"));
+    }
+
+    #[test]
+    fn read_only_volumes_emit_plain_ro_without_selinux() {
+        let runtime = ContainerRuntime::with_type(RuntimeType::Docker);
+        let config = ContainerConfig::new("oqto:test").volume_read_only("/srv/store", "/store");
+
+        let args = runtime.build_run_args(&config);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-v" && pair[1] == "/srv/store:/store:ro")
+        );
+    }
+
     use super::*;
 
     #[tokio::test]
