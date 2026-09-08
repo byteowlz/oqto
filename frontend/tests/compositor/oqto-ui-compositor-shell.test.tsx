@@ -215,6 +215,15 @@ describe("OG shell parity chrome", () => {
 		expect(
 			view.container.querySelectorAll(".oqto-compositor-cell"),
 		).toHaveLength(4);
+		// The status Lane is frame chrome: no tab strip, no add control.
+		expect(
+			view.container.querySelector(
+				'[data-role="status"] .oqto-compositor-add-open',
+			),
+		).toBeNull();
+		expect(
+			view.container.querySelectorAll(".oqto-compositor-add-open"),
+		).toHaveLength(3);
 		fireEvent.click(
 			screen.getByRole("button", { name: "Open interface settings" }),
 		);

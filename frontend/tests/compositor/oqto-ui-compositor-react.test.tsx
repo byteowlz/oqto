@@ -50,27 +50,52 @@ function probeSetup(viewport = DESKTOP, addable: readonly ContentRef[] = []) {
 	return { store, renderCounts, view };
 }
 
-describe("adding a Container", () => {
-	it("places the chosen Content beside the Container the control belongs to", () => {
+describe("adding Content", () => {
+	it("adds a tab to the Container whose control was used", () => {
 		const { store, view } = probeSetup(DESKTOP, [terminalContent]);
 		const primary = containerByRole(store.getSnapshot(), "primary");
 		const container = view.container.querySelector(
 			`[data-container-id="${primary.id}"]`,
 		) as HTMLElement;
-		const controls = container.querySelectorAll(
-			":scope > .oqto-compositor-add > .oqto-compositor-add-open",
-		);
-		expect(controls).toHaveLength(4);
-		const below = container.querySelector(
-			'.oqto-compositor-add[data-edge="block-end"] .oqto-compositor-add-open',
-		) as HTMLElement;
 		act(() => {
-			fireEvent.click(below);
+			fireEvent.click(
+				container.querySelector(".oqto-compositor-add-open") as HTMLElement,
+			);
 		});
 		act(() => {
 			fireEvent.click(
 				container.querySelector(
-					".oqto-compositor-add-menu button",
+					".oqto-compositor-add-menu ul button",
+				) as HTMLElement,
+			);
+		});
+		expect(
+			containerByRole(store.getSnapshot(), "primary").stack.map((c) => c.id),
+		).toEqual([chatContent.id, terminalContent.id]);
+	});
+
+	it("places a new Container on the chosen edge", () => {
+		const { store, view } = probeSetup(DESKTOP, [terminalContent]);
+		const primary = containerByRole(store.getSnapshot(), "primary");
+		const container = view.container.querySelector(
+			`[data-container-id="${primary.id}"]`,
+		) as HTMLElement;
+		act(() => {
+			fireEvent.click(
+				container.querySelector(".oqto-compositor-add-open") as HTMLElement,
+			);
+		});
+		act(() => {
+			fireEvent.click(
+				container.querySelector(
+					'.oqto-compositor-add-where button[aria-label="add-above"]',
+				) as HTMLElement,
+			);
+		});
+		act(() => {
+			fireEvent.click(
+				container.querySelector(
+					".oqto-compositor-add-menu ul button",
 				) as HTMLElement,
 			);
 		});
@@ -79,24 +104,72 @@ describe("adding a Container", () => {
 		const placed = snapshot.containers.find((candidate) =>
 			candidate.stack.some((item) => item.id === terminalContent.id),
 		);
-		expect(placed).toBeDefined();
-		expect(placed?.id).not.toBe(primary.id);
 		const target = arrangement.grid.placements.find(
 			(placement) => placement.containerId === placed?.id,
 		);
 		const source = arrangement.grid.placements.find(
 			(placement) => placement.containerId === primary.id,
 		);
-		// Below means below: same column band, the next row down.
+		// Above means above: same column band, the row the Chat used to hold.
+		expect(placed?.id).not.toBe(primary.id);
 		expect(target?.column).toBe(source?.column);
-		expect(target?.row).toBe((source?.row ?? 0) + 1);
+		expect(target?.row).toBe((source?.row ?? 1) - 1);
 	});
 
-	it("offers nothing on frame chrome and nothing when the host offers no Content", () => {
-		const { view } = probeSetup();
+	it("duplicates Content that is already placed instead of moving it", () => {
+		const { store, view } = probeSetup(DESKTOP, [sessionsContent]);
+		const primary = containerByRole(store.getSnapshot(), "primary");
+		const container = view.container.querySelector(
+			`[data-container-id="${primary.id}"]`,
+		) as HTMLElement;
+		act(() => {
+			fireEvent.click(
+				container.querySelector(".oqto-compositor-add-open") as HTMLElement,
+			);
+		});
+		act(() => {
+			fireEvent.click(
+				container.querySelector(
+					".oqto-compositor-add-menu ul button",
+				) as HTMLElement,
+			);
+		});
+		const snapshot = store.getSnapshot();
+		// The sidebar keeps its catalogue; the Chat Container gains its own copy.
 		expect(
-			view.container.querySelectorAll(".oqto-compositor-add"),
+			containerByRole(snapshot, "navigation").stack.map((c) => c.id),
+		).toEqual([sessionsContent.id]);
+		const added = containerByRole(snapshot, "primary").stack[1];
+		expect(added.kind).toBe("sessions");
+		expect(added.id).not.toBe(sessionsContent.id);
+	});
+
+	it("closes a Container by closing everything it holds", () => {
+		const { store, view } = probeSetup();
+		const auxiliary = containerByRole(store.getSnapshot(), "auxiliary");
+		act(() => {
+			store.commit([
+				{ type: "open", content: gitContent, target: { role: "auxiliary" } },
+			]);
+		});
+		const container = view.container.querySelector(
+			`[data-container-id="${auxiliary.id}"]`,
+		) as HTMLElement;
+		act(() => {
+			fireEvent.click(
+				container.querySelector(".oqto-compositor-close") as HTMLElement,
+			);
+		});
+		expect(
+			containerByRole(store.getSnapshot(), "auxiliary").stack,
 		).toHaveLength(0);
+	});
+
+	it("gives every Container exactly one control", () => {
+		const { view } = probeSetup(DESKTOP, [terminalContent]);
+		expect(
+			view.container.querySelectorAll(".oqto-compositor-add-open"),
+		).toHaveLength(3);
 	});
 });
 
@@ -116,7 +189,10 @@ describe("CompositorHost React adapter (v2)", () => {
 		expect(cell.style.getPropertyValue("--oqto-cell-column")).toBe(
 			"1 / span 1",
 		);
-		expect(view.queryAllByRole("tablist")).toHaveLength(0);
+		// One strip per normal Container; frame chrome has none. A single
+		// Content shows no tab, only the strip's controls.
+		expect(view.queryAllByRole("tablist")).toHaveLength(3);
+		expect(view.queryAllByRole("tab")).toHaveLength(0);
 		expect(view.getByTestId(`content-${chatContent.id}`)).toBeInTheDocument();
 	});
 
@@ -148,7 +224,11 @@ describe("CompositorHost React adapter (v2)", () => {
 			`label:${gitContent.id}`,
 		]);
 		const before = new Map(renderCounts);
-		fireEvent.click(tabs[0]);
+		fireEvent.click(
+			tabs.find(
+				(tab) => tab.textContent === `label:${filesContent.id}`,
+			) as HTMLElement,
+		);
 		expect(
 			containerByRole(store.getSnapshot(), "auxiliary").activeContentId,
 		).toBe(filesContent.id);

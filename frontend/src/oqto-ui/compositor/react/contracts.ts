@@ -5,12 +5,8 @@
  */
 
 import type { ReactNode } from "react";
-import type {
-	ContainerId,
-	ContentRef,
-	LayoutCommand,
-	SplitEdge,
-} from "../index";
+import type { ContainerId, ContentRef, LayoutCommand } from "../index";
+import type { AddPlacement } from "./gestures";
 
 export interface ContentRenderContext {
 	readonly containerId: ContainerId;
@@ -29,13 +25,20 @@ export type ContentLabel = (content: ContentRef) => string;
 export interface ContentServices {
 	readonly render: RenderContent;
 	readonly label: ContentLabel;
-	/** Content the host offers when adding a Container beside this one. */
+	/** Content the host offers from a Container's add control. */
 	readonly addable: readonly ContentRef[];
+	/** Places `content` in the Container; already-placed Content is duplicated. */
+	readonly add: (
+		content: ContentRef,
+		containerId: ContainerId,
+		placement: AddPlacement,
+	) => void;
 }
 
-/** Strings for the add affordance; `edges` is keyed by the direction. */
+/** Strings for the add control; `placements` is keyed by where it puts Content. */
 export interface AddLabels {
-	readonly edges: { readonly [edge in SplitEdge]: string };
+	readonly open: string;
+	readonly placements: { readonly [placement in AddPlacement]: string };
 }
 
 /** Command palette strings; `actions` maps action ids to labels. */
@@ -49,6 +52,7 @@ export interface PaletteLabels {
 /** Translated chrome strings, injected by the composing host. */
 export interface CompositorChromeLabels {
 	readonly closeTab: string;
+	readonly closeContainer: string;
 	readonly resizeColumns: string;
 	readonly resizeRows: string;
 	readonly dropTop: string;

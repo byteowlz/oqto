@@ -40,6 +40,7 @@ export function createChromeLabels(t: TFunction): CompositorChromeLabels {
 	}
 	return {
 		closeTab: t("common.close"),
+		closeContainer: t("oqtoUi.compositor.closeContainer"),
 		resizeColumns: t("oqtoUi.compositor.resizeColumns"),
 		resizeRows: t("oqtoUi.compositor.resizeRows"),
 		dropTop: t("oqtoUi.compositor.dropTop"),
@@ -48,7 +49,9 @@ export function createChromeLabels(t: TFunction): CompositorChromeLabels {
 		dropEnd: t("oqtoUi.compositor.dropEnd"),
 		expandStart: t("oqtoUi.compositor.expandStart"),
 		add: {
-			edges: {
+			open: t("oqtoUi.compositor.add.open"),
+			placements: {
+				tab: t("oqtoUi.compositor.add.tab"),
 				"inline-start": t("oqtoUi.compositor.add.inlineStart"),
 				"inline-end": t("oqtoUi.compositor.add.inlineEnd"),
 				"block-start": t("oqtoUi.compositor.add.blockStart"),

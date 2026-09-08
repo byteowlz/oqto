@@ -55,6 +55,7 @@ export function activeArrangementOf(snapshot: LayoutSnapshot) {
 
 export const LABELS = {
 	closeTab: "close-tab",
+	closeContainer: "close-container",
 	resizeColumns: "resize-columns",
 	resizeRows: "resize-rows",
 	dropTop: "drop-top",
@@ -63,7 +64,9 @@ export const LABELS = {
 	dropEnd: "drop-end",
 	expandStart: "expand-start",
 	add: {
-		edges: {
+		open: "add-content",
+		placements: {
+			tab: "add-tab",
 			"inline-start": "add-left",
 			"inline-end": "add-right",
 			"block-start": "add-above",

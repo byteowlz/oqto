@@ -4,6 +4,7 @@
  * touches the DOM or layout state, so every mapping is unit-testable.
  */
 
+import { contentIdFrom } from "../index";
 import type {
 	Arrangement,
 	ContainerId,
@@ -16,6 +17,9 @@ import type {
 } from "../index";
 
 export type DropZone = "center" | SplitEdge;
+
+/** A tab in the Container, or a new Container on that edge. */
+export type AddPlacement = "tab" | SplitEdge;
 
 export interface PointerBox {
 	readonly x: number;
@@ -67,19 +71,42 @@ export function edgeDropCommands(
 }
 
 /**
- * Adding Content beside a Container: place it there, then split it out to
- * the chosen edge, so a new Container appears in that direction whether or
- * not the Content was already placed somewhere else.
+ * Adding Content to a Container: a tab in it, or a new Container on one of
+ * its edges. Content already placed elsewhere is duplicated rather than
+ * moved — adding Files beside a Files pane means a second pane, not the
+ * same one relocated — so the ref gets a fresh id when its own is taken.
  */
 export function addCommands(
 	content: ContentRef,
 	containerId: ContainerId,
-	edge: SplitEdge,
+	placement: AddPlacement,
+	taken: ReadonlySet<string>,
 ): LayoutCommand[] {
+	const added = taken.has(content.id)
+		? { ...content, id: freeContentId(content.id, taken) }
+		: content;
+	const open: LayoutCommand = {
+		type: "open",
+		content: added,
+		target: { containerId },
+	};
+	if (placement === "tab") return [open];
 	return [
-		{ type: "open", content, target: { containerId } },
-		{ type: "split", contentId: content.id, relativeTo: containerId, edge },
+		open,
+		{
+			type: "split",
+			contentId: added.id,
+			relativeTo: containerId,
+			edge: placement,
+		},
 	];
+}
+
+/** Deterministic: the first `id~n` nobody holds. */
+function freeContentId(id: string, taken: ReadonlySet<string>): ContentId {
+	let index = 2;
+	while (taken.has(`${id}~${index}`)) index += 1;
+	return contentIdFrom(`${id}~${index}`);
 }
 
 function containerInTrack(

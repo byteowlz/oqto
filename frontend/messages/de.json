@@ -651,8 +651,11 @@
 	},
 	"oqtoUi": {
 		"compositor": {
+			"closeContainer": "Container schließen",
 			"expandStart": "Seitenleiste ausklappen",
 			"add": {
+				"open": "Inhalt hinzufügen",
+				"tab": "Als Tab hier",
 				"inlineStart": "Container links hinzufügen",
 				"inlineEnd": "Container rechts hinzufügen",
 				"blockStart": "Container oberhalb hinzufügen",

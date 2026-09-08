@@ -68,7 +68,14 @@
 .oqto-compositor-tabs {
 	display: flex;
 	flex: none;
+	align-items: center;
 	overflow-x: auto;
+	block-size: 20px;
+}
+
+/* A real tab bar only once there is more than one Content to choose from. */
+.oqto-compositor-tabs[data-tabs] {
+	block-size: auto;
 	border-block-end: 1px solid var(--border);
 	background: var(--card);
 }
@@ -291,61 +298,43 @@
 	color: var(--foreground);
 }
 
-/* ------------------------------------------------------- add a Container */
+/* ---------------------------------------------------------- add control */
 
 /*
- * One control per edge, quiet until the Container is hovered or holds focus.
- * The Container is the positioning context, so the controls sit on its own
- * edges rather than on the grid line.
+ * One control per Container, docked at the end of its tab strip. Persistent
+ * rather than hover-revealed: the Arrangement stays quiet and the way to add
+ * Content is always in the same place.
  */
+.oqto-compositor-close {
+	inline-size: 22px;
+	block-size: 22px;
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.oqto-compositor-close:hover {
+	color: var(--destructive, var(--primary));
+}
+
 .oqto-compositor-add {
-	position: absolute;
-	z-index: 3;
+	position: relative;
 	display: flex;
 	align-items: center;
-	justify-content: center;
-	opacity: 0;
-	transition: opacity 120ms ease-out;
-}
-
-.oqto-compositor-container:hover .oqto-compositor-add,
-.oqto-compositor-container:focus-within .oqto-compositor-add,
-.oqto-compositor-add:focus-within {
-	opacity: 1;
-}
-
-.oqto-compositor-add[data-edge="inline-start"] {
-	inset-inline-start: 0;
-	inset-block-start: 50%;
-	translate: -50% -50%;
-}
-
-.oqto-compositor-add[data-edge="inline-end"] {
-	inset-inline-end: 0;
-	inset-block-start: 50%;
-	translate: 50% -50%;
-}
-
-.oqto-compositor-add[data-edge="block-start"] {
-	inset-block-start: 0;
-	inset-inline-start: 50%;
-	translate: -50% -50%;
-}
-
-.oqto-compositor-add[data-edge="block-end"] {
-	inset-block-end: 0;
-	inset-inline-start: 50%;
-	translate: -50% 50%;
+	margin-inline-start: auto;
 }
 
 .oqto-compositor-add-open {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	inline-size: 20px;
-	block-size: 20px;
-	border: 1px solid var(--border);
-	background: var(--card);
+	inline-size: 22px;
+	block-size: 22px;
+	border: 0;
+	background: none;
 	color: var(--muted-foreground);
 	font-size: 13px;
 	line-height: 1;
@@ -354,34 +343,64 @@
 
 .oqto-compositor-add-open:hover,
 .oqto-compositor-add-open[aria-expanded="true"] {
-	border-color: var(--primary);
 	color: var(--foreground);
 }
 
 .oqto-compositor-add-menu {
 	position: absolute;
 	inset-block-start: 24px;
+	inset-inline-end: 0;
 	z-index: 4;
-	display: flex;
-	flex-direction: column;
-	min-inline-size: 160px;
-	margin: 0;
-	padding: 4px;
+	inline-size: 220px;
 	border: 1px solid var(--border);
 	background: var(--popover, var(--card));
-	list-style: none;
 }
 
-.oqto-compositor-add-menu button {
-	inline-size: 100%;
-	padding: 6px 8px;
+.oqto-compositor-add-where {
+	display: flex;
+	gap: 2px;
+	padding: 4px;
+	border-block-end: 1px solid var(--border);
+}
+
+.oqto-compositor-add-where button {
+	flex: 1 1 auto;
+	padding: 4px 0;
+	border: 1px solid transparent;
 	background: none;
-	border: 0;
-	color: var(--foreground);
-	text-align: start;
+	color: var(--muted-foreground);
+	font-size: 12px;
 	cursor: pointer;
 }
 
-.oqto-compositor-add-menu button:hover {
+.oqto-compositor-add-where button:hover {
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-where button[aria-pressed="true"] {
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-menu ul {
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+}
+
+.oqto-compositor-add-menu ul button {
+	inline-size: 100%;
+	padding: 6px 8px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-menu ul button:hover {
 	background: var(--muted);
 }

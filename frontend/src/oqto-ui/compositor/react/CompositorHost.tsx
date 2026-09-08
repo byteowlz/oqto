@@ -22,6 +22,7 @@ import {
 } from "react";
 import {
 	type Container,
+	type ContainerId,
 	type ContentRef,
 	type GridPlacement,
 	type LayoutCommand,
@@ -41,7 +42,9 @@ import type {
 	RenderContent,
 } from "./contracts";
 import {
+	type AddPlacement,
 	CONTENT_DRAG_TYPE,
+	addCommands,
 	edgeDropCommands,
 	resizeCommands,
 	scrollByColumns,
@@ -123,9 +126,28 @@ export function CompositorHost({
 	addable = NO_ADDABLE_CONTENT,
 	keyBindings = DEFAULT_KEY_BINDINGS,
 }: CompositorHostProps) {
+	// Stable across renders so Containers keep their memoization; the current
+	// layout is read at call time, not at render time.
+	const add = useCallback(
+		(
+			content: ContentRef,
+			containerId: ContainerId,
+			placement: AddPlacement,
+		) => {
+			const taken = new Set(
+				store
+					.getSnapshot()
+					.containers.flatMap((container) =>
+						container.stack.map((item) => item.id as string),
+					),
+			);
+			store.commit(addCommands(content, containerId, placement, taken));
+		},
+		[store],
+	);
 	const services = useMemo(
-		() => ({ render: renderContent, label: contentLabel, addable }),
-		[renderContent, contentLabel, addable],
+		() => ({ render: renderContent, label: contentLabel, addable, add }),
+		[renderContent, contentLabel, addable, add],
 	);
 	const snapshot = useSyncExternalStore(
 		store.subscribe,

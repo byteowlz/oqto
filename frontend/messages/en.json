@@ -654,8 +654,11 @@
 	},
 	"oqtoUi": {
 		"compositor": {
+			"closeContainer": "Close container",
 			"expandStart": "Expand sidebar",
 			"add": {
+				"open": "Add content",
+				"tab": "As a tab here",
 				"inlineStart": "Add a container to the left",
 				"inlineEnd": "Add a container to the right",
 				"blockStart": "Add a container above",
