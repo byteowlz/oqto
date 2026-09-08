@@ -202,6 +202,7 @@ export function MachineProviders({
 }: { label: string; port: ProviderLoginPort; close: () => void }) {
 	const { t } = useTranslation();
 	const [providers, setProviders] = useState<Provider[]>([]);
+	const [search, setSearch] = useState("");
 	const [attempt, setAttempt] = useState<Attempt | null>(null);
 	const [error, setError] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -325,9 +326,23 @@ export function MachineProviders({
 					</p>
 				)}
 				{!active && (
+					<Input
+						aria-label={t("oqtoUi.providerLogin.search")}
+						placeholder={t("oqtoUi.providerLogin.search")}
+						value={search}
+						onChange={(event) => setSearch(event.target.value)}
+					/>
+				)}
+				{!active && (
 					<ul className="space-y-3">
 						{providers
-							.filter((provider) => provider.methods.length > 0)
+							.filter(
+								(provider) =>
+									provider.methods.length > 0 &&
+									`${provider.name} ${provider.id}`
+										.toLowerCase()
+										.includes(search.trim().toLowerCase()),
+							)
 							.map((provider) => (
 								<li
 									key={provider.id}

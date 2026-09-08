@@ -11,7 +11,9 @@ enabled = true
 [profiles.macos-host]
 read_policy = "allowlist"
 home_access = "none"
-allow_read = ["/opt/homebrew"]
+# Darwin DNS uses this Unix socket even for ordinary HTTPS requests.
+# Grant the resolver endpoint, not arbitrary /var/run files or sockets.
+allow_read = ["/opt/homebrew", "/private/var/run/mDNSResponder"]
 allow_write = []
 deny_write = []
 extra_ro_bind = []

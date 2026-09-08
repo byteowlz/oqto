@@ -714,6 +714,7 @@
 			"buttonLabel": "Providers on {{machine}}",
 			"description": "Pi stores credentials on this machine only. OAuth credentials are not synced. EAVS is optional.",
 			"choose": "Choose a login method",
+			"search": "Find a provider",
 			"continue": "Continue",
 			"signIn": "Sign in",
 			"apiKey": "API key",

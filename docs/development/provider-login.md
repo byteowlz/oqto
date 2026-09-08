@@ -38,6 +38,10 @@ The agent directory is the owning process's `PI_CODING_AGENT_DIR`, or its `HOME/
 
 Back up configuration before editing, preview a targeted diff, merge only selected fields, and retain rollback instructions. Never replace a personal `auth.json`, `models.json`, settings file, SSH identity or existing placement to enable this feature. There is no EAVS prerequisite and no provider-entry synchronization in this login operation.
 
+## macOS DNS and sandbox diagnostics
+
+A network-enabled allowlist profile still needs the specific Darwin resolver socket, `/private/var/run/mDNSResponder`. The shipped `macos-host` template grants that endpoint, not all of `/var/run`. Without it, Node HTTPS requests can fail with `ENOTFOUND` even though the same provider flow works outside the sandbox. Granting only `resolv.conf` does not fix this. Explicit socket denial and network-isolated mode still win; regression coverage lives in `oqto-sandbox/tests/macos_launch.rs`.
+
 ## Browser and headless behavior
 
 In the original sidebar, an explicitly granted online Machine has a **Providers** button. Choose a provider and **Sign in** or **API key**. Supported Pi interaction types are text, secret, select, manual code, authorization URL, device code and progress. Secret/manual input is private and is cleared after submission. Authentication state is not put in query/history caches or browser persistent storage. Account/deployment changes unmount that state and attempt cancellation.
@@ -65,3 +69,7 @@ Closing the dialog cancels best-effort. Offline status cannot approve a credenti
 - Live: prove mutual-TLS identity rejection, unauthenticated API rejection, browser commit rejection, owning Mac catalog and supported provider interaction, cancellation and unchanged credentials without human consent. Complete actual OAuth credential issuance only with the user's explicit provider consent.
 
 A native fixture login is not a successful real OAuth/model turn. Record these separately in issue evidence.
+
+Development proof (2026-09-08): authenticated original sidebar → Mac → Providers → OpenAI Codex → device flow produced a real verification code and an `auth.openai.com` link. The probe cancelled without opening the link or disclosing the code; the code/private prompt disappeared and the Mac credential contents remained unchanged. Final provider consent is the user's action. Native credential persistence was separately proved with disposable fixtures on Linux and Mac.
+
+Current incremental-delivery debt: the clean parent worktree and implementation both report the same 41 Rust guardrail findings (including 30 in an external test module), and the existing canonical chat renderer has two unapproved effects. These are tracked separately; do not relax their baselines or misreport whole-repository gates as clean. Focused auth tests, Clippy and the OqtoUI type/architecture gates pass. Whole-frontend type checking also retains unrelated migration errors; no auth-file diagnostic was introduced.

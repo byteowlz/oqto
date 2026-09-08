@@ -188,6 +188,42 @@ fn socket_probe(config: &SandboxConfig, workspace: &Path, socket: &Path, allowed
 }
 
 #[test]
+fn shipped_profile_grants_only_system_dns_and_respects_network_isolation() {
+    let file: oqto_sandbox::SandboxConfigFile = toml::from_str(include_str!(
+        "../../oqto/examples/sandbox.template.macos-host.toml"
+    ))
+    .unwrap();
+    let mut config: SandboxConfig = file.into();
+    let workspace = tempfile::Builder::new()
+        .prefix("oq-dns-work-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let outside = tempfile::Builder::new()
+        .prefix("oq-dns-other-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let control = outside.path().join("control.sock");
+    let _listener = UnixListener::bind(&control).unwrap();
+    let resolver = Path::new("/private/var/run/mDNSResponder");
+    assert!(
+        resolver.exists(),
+        "macOS resolver service is required for this proof"
+    );
+    socket_probe(&config, workspace.path(), resolver, true);
+    socket_probe(&config, workspace.path(), &control, false);
+    config
+        .deny_read
+        .push(resolver.to_string_lossy().into_owned());
+    socket_probe(&config, workspace.path(), resolver, false);
+    config.deny_read.clear();
+    config.network = Some(NetworkConfig {
+        mode: NetworkMode::Isolated,
+        ..Default::default()
+    });
+    socket_probe(&config, workspace.path(), resolver, false);
+}
+
+#[test]
 fn socket_boundaries_with_open_and_isolated_network() {
     // Short /tmp paths avoid Darwin's 104-byte sockaddr_un limit.
     let root = tempfile::Builder::new()

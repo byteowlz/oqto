@@ -711,6 +711,7 @@
 			"buttonLabel": "Anbieter auf {{machine}}",
 			"description": "Pi speichert Zugangsdaten nur auf diesem Rechner. OAuth-Zugangsdaten werden nicht synchronisiert. EAVS ist optional.",
 			"choose": "Anmeldemethode wählen",
+			"search": "Anbieter suchen",
 			"continue": "Weiter",
 			"signIn": "Anmelden",
 			"apiKey": "API-Schlüssel",
