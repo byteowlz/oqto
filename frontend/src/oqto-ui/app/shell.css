@@ -3459,7 +3459,26 @@
 .wb-terminal__surface {
 	flex: 1 1 auto;
 	min-block-size: 0;
+	min-inline-size: 0;
 	overflow: hidden;
+}
+
+/*
+ * wterm renders to the DOM and reads its palette from custom properties, so
+ * the terminal wears the shell's theme instead of a stock one. Its own card
+ * chrome is dropped: the Container already is the card.
+ */
+.wb-terminal__surface.wterm {
+	padding: 8px 10px;
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--terminal-bg, var(--background));
+	--term-bg: var(--terminal-bg, var(--background));
+	--term-fg: var(--terminal-fg, var(--foreground));
+	--term-cursor: var(--primary);
+	--term-font-family: var(--font-mono);
+	--term-font-size: 12px;
+	--term-line-height: 1.45;
 }
 
 /* ------------------------------------------------------ files menu */
