@@ -1451,6 +1451,17 @@ impl SessionService {
                 "PLAYWRIGHT_BROWSERS_PATH".to_string(),
                 "/usr/local/share/playwright-browsers".to_string(),
             );
+
+            // Upstream engine: pin the agent to the SAME session and stream port
+            // the backend manages, so the agent, the user's BrowserView, and the
+            // stream proxy all address one browser.
+            if self.config.agent_browser.engine == crate::agent_browser::BrowserEngine::Upstream {
+                let session_name = browser_session_name(&session.id);
+                env.insert("AGENT_BROWSER_SESSION".to_string(), session_name.clone());
+                if let Ok(Some(port)) = self.agent_browser_stream_port(&session.id) {
+                    env.insert("AGENT_BROWSER_STREAM_PORT".to_string(), port.to_string());
+                }
+            }
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
