@@ -12,6 +12,32 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+/// Explicit permission to run work on a machine Oqto does not own.
+///
+/// The roots are ceilings, not defaults: a remote Workspace must resolve inside
+/// one of them, so reachability plus history access still cannot execute.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteExecutionGrant {
+    /// Actual OS principal on the remote machine; never a provisioned Linux alias.
+    pub principal: String,
+    pub roots: Vec<std::path::PathBuf>,
+}
+
+impl RemoteExecutionGrant {
+    /// Canonical, symlink-free containment check against the configured ceilings.
+    pub fn permits(&self, path: &std::path::Path) -> bool {
+        path.is_absolute()
+            && !path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            && self
+                .roots
+                .iter()
+                .any(|root| path == root || path.starts_with(root))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerTargetConfig {
@@ -25,6 +51,9 @@ pub struct RunnerTargetConfig {
     pub provider_login: bool,
     #[serde(default)]
     pub history_read: bool,
+    /// Absent means this machine may never execute Sessions, whatever else it offers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<RemoteExecutionGrant>,
 }
 
 impl RunnerTargetConfig {
@@ -56,6 +85,33 @@ impl RunnerTargetConfig {
             !self.history_read || self.account_ids.len() == 1,
             "history reading requires exactly one owning Account"
         );
+        if let Some(grant) = &self.execution {
+            ensure!(
+                self.account_ids.len() == 1,
+                "remote execution requires exactly one owning Account"
+            );
+            ensure!(
+                !grant.principal.is_empty()
+                    && grant.principal.len() <= 64
+                    && grant
+                        .principal
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+                "invalid remote principal"
+            );
+            ensure!(
+                !grant.roots.is_empty() && grant.roots.len() <= 16,
+                "remote execution requires explicit workspace roots"
+            );
+            ensure!(
+                grant.roots.iter().all(|root| root.is_absolute()
+                    && root.parent().is_some()
+                    && !root
+                        .components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))),
+                "explicit absolute workspace ceilings are required"
+            );
+        }
         match &self.endpoint {
             RunnerEndpointConfig::TcpTls {
                 address,
@@ -154,6 +210,40 @@ impl RunnerTargets {
         RunnerClient::from_endpoint(&target.config.endpoint)
     }
 
+    /// Authorize execution on a machine, independent of reaching it.
+    pub fn execution_grant(
+        &self,
+        account_id: &str,
+        target_id: &str,
+    ) -> Result<RemoteExecutionGrant> {
+        let target = self
+            .targets
+            .iter()
+            .find(|target| {
+                target.config.id == target_id
+                    && target.config.execution.is_some()
+                    && target.config.account_ids.len() == 1
+                    && target.config.account_ids[0] == account_id
+            })
+            .ok_or_else(|| anyhow::anyhow!("remote execution denied"))?;
+        target
+            .config
+            .execution
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("remote execution denied"))
+    }
+
+    /// Transport for an already authorized execution target.
+    pub fn execution_client(&self, account_id: &str, target_id: &str) -> Result<RunnerClient> {
+        self.execution_grant(account_id, target_id)?;
+        let target = self
+            .targets
+            .iter()
+            .find(|target| target.config.id == target_id)
+            .ok_or_else(|| anyhow::anyhow!("remote execution denied"))?;
+        RunnerClient::from_endpoint(&target.config.endpoint)
+    }
+
     pub fn provider_login_client(&self, account_id: &str, target_id: &str) -> Result<RunnerClient> {
         let target = self
             .targets
@@ -205,7 +295,7 @@ impl Target {
             label: self.config.label.clone(),
             connection,
             checked_at: chrono::Utc::now().to_rfc3339(),
-            session_creation: false,
+            session_creation: self.config.execution.is_some(),
             provider_login: self.config.provider_login,
             history_read: self.config.history_read,
         };
@@ -231,6 +321,7 @@ mod tests {
         RunnerTargetConfig {
             provider_login: false,
             history_read: false,
+            execution: None,
             id: "mac".into(),
             label: "Mac".into(),
             account_ids: vec!["alice".into()],
@@ -278,6 +369,57 @@ mod tests {
         let denied = targets.provider_login_client("bob", "mac").err().unwrap();
         assert_eq!(denied.to_string(), "provider login denied");
         assert!(targets.provider_login_client("alice", "unknown").is_err());
+    }
+
+    #[test]
+    fn execution_requires_an_explicit_single_owner_grant_with_absolute_ceilings() {
+        let mut cfg = config();
+        assert!(
+            RunnerTargets::new(vec![cfg.clone()])
+                .unwrap()
+                .execution_grant("alice", "mac")
+                .is_err(),
+            "inventory alone must not execute"
+        );
+
+        cfg.execution = Some(RemoteExecutionGrant {
+            principal: "tommy".into(),
+            roots: vec!["/Users/tommy/work".into()],
+        });
+        let targets = RunnerTargets::new(vec![cfg.clone()]).unwrap();
+        let grant = targets.execution_grant("alice", "mac").unwrap();
+        assert!(targets.execution_grant("bob", "mac").is_err());
+        assert!(targets.execution_grant("alice", "other").is_err());
+
+        assert!(grant.permits(std::path::Path::new("/Users/tommy/work")));
+        assert!(grant.permits(std::path::Path::new("/Users/tommy/work/project")));
+        assert!(!grant.permits(std::path::Path::new("/Users/tommy")));
+        assert!(!grant.permits(std::path::Path::new("/Users/tommy/work-other")));
+        assert!(!grant.permits(std::path::Path::new("/Users/tommy/work/../.ssh")));
+        assert!(!grant.permits(std::path::Path::new("relative/path")));
+
+        let mut shared = cfg.clone();
+        shared.account_ids = vec!["alice".into(), "bob".into()];
+        assert!(RunnerTargets::new(vec![shared]).is_err());
+        for bad in [
+            vec![],
+            vec![std::path::PathBuf::from("relative")],
+            vec![std::path::PathBuf::from("/")],
+            vec![std::path::PathBuf::from("/Users/tommy/../root")],
+        ] {
+            let mut invalid = cfg.clone();
+            invalid.execution = Some(RemoteExecutionGrant {
+                principal: "tommy".into(),
+                roots: bad,
+            });
+            assert!(RunnerTargets::new(vec![invalid]).is_err());
+        }
+        let mut bad_principal = cfg.clone();
+        bad_principal.execution = Some(RemoteExecutionGrant {
+            principal: "root; rm -rf".into(),
+            roots: vec!["/Users/tommy/work".into()],
+        });
+        assert!(RunnerTargets::new(vec![bad_principal]).is_err());
     }
 
     #[test]
