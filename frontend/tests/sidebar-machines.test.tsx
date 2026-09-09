@@ -77,6 +77,25 @@ describe("original-shell machine inventory", () => {
 		await waitFor(() => expect(screen.queryByText("Mac")).toBeNull());
 		expect(fetcher).toHaveBeenCalledTimes(2);
 	});
+	it("describes the capability the machine actually has", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify([{ ...row, history_read: true }])),
+			),
+		);
+		render(shell(new QueryClient()));
+		expect(await screen.findByText("Chat history only")).toBeVisible();
+		expect(screen.queryByText("Chat not enabled")).toBeNull();
+	});
+	it("still reports machines without any chat capability", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(new Response(JSON.stringify([row]))),
+		);
+		render(shell(new QueryClient()));
+		expect(await screen.findByText("Chat not enabled")).toBeVisible();
+	});
 	it("does not probe before authentication", () => {
 		auth.user = null;
 		const fetcher = vi.fn();

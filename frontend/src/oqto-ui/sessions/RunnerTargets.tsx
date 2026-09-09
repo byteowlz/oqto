@@ -43,7 +43,13 @@ export function RunnerTargets({
 							{actions?.(target)}
 							<div className="wb-runner-targets__name">
 								<strong>{target.label}</strong>
-								<span>{t("oqtoUi.runnerTargets.connectionOnly")}</span>
+								<span>
+									{t(
+										target.historyRead
+											? "oqtoUi.runnerTargets.historyOnly"
+											: "oqtoUi.runnerTargets.connectionOnly",
+									)}
+								</span>
 							</div>
 							<span
 								className="wb-runner-targets__status"
