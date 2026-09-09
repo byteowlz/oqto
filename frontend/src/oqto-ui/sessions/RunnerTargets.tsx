@@ -11,12 +11,14 @@ import "./runner-targets.css";
 type RunnerTargetsProps = {
 	source: RunnerTargetsPort;
 	actions?: (target: RunnerTarget) => ReactNode;
+	belowTarget?: (target: RunnerTarget) => ReactNode;
 	presentation?: "section" | "rows";
 };
 
 export function RunnerTargets({
 	source,
 	actions,
+	belowTarget,
 	presentation = "section",
 }: RunnerTargetsProps) {
 	const { t } = useTranslation();
@@ -59,6 +61,7 @@ export function RunnerTargets({
 							>
 								{t(`oqtoUi.runnerTargets.${target.connection}`)}
 							</span>
+							{belowTarget?.(target)}
 						</li>
 					))}
 				</ul>

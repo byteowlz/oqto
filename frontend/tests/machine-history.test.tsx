@@ -7,10 +7,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	type HistoryPort,
-	MachineHistory,
-} from "../src/routes/app-shell/MachineHistory";
+import { MachineChats } from "../src/routes/app-shell/MachineChats";
+import type { HistoryPort } from "../src/routes/app-shell/MachineHistory";
 
 afterEach(cleanup);
 const session = {
@@ -39,17 +37,22 @@ const page = {
 function shell(scope: string, port: HistoryPort, client = new QueryClient()) {
 	return (
 		<QueryClientProvider client={client}>
-			<MachineHistory
+			<MachineChats
 				key={scope}
 				scope={scope}
 				label="Mac"
-				close={vi.fn()}
+				online
+				isMobile={false}
 				port={port}
 			/>
 		</QueryClientProvider>
 	);
 }
-describe("read-only machine history", () => {
+async function expandMachineAndWorkspace() {
+	fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
+	fireEvent.click(await screen.findByRole("button", { name: /project/ }));
+}
+describe("read-only machine chats in the sidebar", () => {
 	it("reads the selected public ID and opaque page cursor, never sends or opens files", async () => {
 		const call = vi
 			.fn()
@@ -57,6 +60,7 @@ describe("read-only machine history", () => {
 			.mockResolvedValueOnce(page)
 			.mockResolvedValueOnce({ messages: [], has_more: false });
 		render(shell("deployment:alice:mac", { call }));
+		await expandMachineAndWorkspace();
 		fireEvent.click(
 			await screen.findByRole("button", { name: /Saved Mac chat/ }),
 		);
@@ -85,9 +89,45 @@ describe("read-only machine history", () => {
 			),
 		).toBe(true);
 	});
+	it("does not query the machine until it is expanded", async () => {
+		const call = vi.fn().mockResolvedValue({ sessions: [session] });
+		render(shell("deployment:alice:mac", { call }));
+		expect(call).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
+		await waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+	});
+	it("groups chats by workspace like the sessions list", async () => {
+		const call = vi.fn().mockResolvedValue({
+			sessions: [
+				session,
+				{ ...session, id: "oqto-native-2", title: "Second chat" },
+				{
+					...session,
+					id: "oqto-native-3",
+					title: "Elsewhere",
+					workspace: "/Users/native/other",
+				},
+			],
+		});
+		render(shell("deployment:alice:mac", { call }));
+		fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
+		const group = await screen.findByRole("button", {
+			name: /project\s*\(2\)/,
+		});
+		expect(
+			await screen.findByRole("button", { name: /other\s*\(1\)/ }),
+		).toBeVisible();
+		expect(screen.queryByRole("button", { name: /Saved Mac chat/ })).toBeNull();
+		fireEvent.click(group);
+		expect(
+			await screen.findByRole("button", { name: /Saved Mac chat/ }),
+		).toBeVisible();
+		expect(screen.queryByRole("button", { name: /Elsewhere/ })).toBeNull();
+	});
 	it("does not fall back to another machine when history is unavailable", async () => {
 		const call = vi.fn().mockRejectedValue(new Error("offline"));
 		render(shell("deployment:alice:mac", { call }));
+		fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"No other machine will be queried",
 		);
@@ -97,6 +137,7 @@ describe("read-only machine history", () => {
 		const client = new QueryClient();
 		const call = vi.fn().mockResolvedValue({ sessions: [session] });
 		const view = render(shell("deployment:alice:mac", { call }, client));
+		await expandMachineAndWorkspace();
 		await screen.findByRole("button", { name: /Saved Mac chat/ });
 		view.unmount();
 		await waitFor(() =>

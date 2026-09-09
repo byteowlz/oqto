@@ -36,31 +36,19 @@ export type HistoryPort = {
 };
 
 /** No execution, file-opening or auth capabilities are supplied to this snapshot view. */
-export function MachineHistory({
+export function MachineConversation({
 	scope,
 	label,
+	session,
 	port,
 	close,
-}: { scope: string; label: string; port: HistoryPort; close: () => void }) {
-	const [search, setSearch] = useState("");
-	const [selected, setSelected] = useState<HistorySession | null>(null);
-	const catalog = useQuery({
-		queryKey: ["machine-history", scope, "catalog"],
-		queryFn: async ({ signal }) => {
-			const data = (await port.call({ command: "list" }, signal)) as {
-				sessions: HistorySession[];
-			};
-			return data.sessions;
-		},
-		gcTime: 0,
-		staleTime: 0,
-		retry: false,
-	});
-	const matches = (catalog.data ?? []).filter((row) =>
-		`${row.title ?? ""} ${row.workspace ?? ""}`
-			.toLocaleLowerCase()
-			.includes(search.toLocaleLowerCase()),
-	);
+}: {
+	scope: string;
+	label: string;
+	session: HistorySession;
+	port: HistoryPort;
+	close: () => void;
+}) {
 	return (
 		<Dialog
 			open
@@ -68,7 +56,7 @@ export function MachineHistory({
 				if (!open) close();
 			}}
 		>
-			<DialogContent className="flex h-[90dvh] max-w-[min(1100px,96vw)] sm:max-w-[min(1100px,96vw)] flex-col gap-3 overflow-hidden">
+			<DialogContent className="flex h-[90dvh] max-w-[min(900px,96vw)] sm:max-w-[min(900px,96vw)] flex-col gap-3 overflow-hidden">
 				<DialogHeader>
 					<DialogTitle>{label} · Chat history</DialogTitle>
 					<DialogDescription>
@@ -76,59 +64,8 @@ export function MachineHistory({
 						started. Tools, files and attachments are not interactive.
 					</DialogDescription>
 				</DialogHeader>
-				<div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
-					<aside className="flex max-h-[30vh] min-h-0 flex-col gap-2 md:max-h-none md:w-72 md:shrink-0">
-						<input
-							aria-label="Search Mac chat history"
-							placeholder="Search chats and folders…"
-							className="rounded border bg-background px-3 py-2 text-sm"
-							value={search}
-							onChange={(event) => setSearch(event.target.value)}
-						/>
-						<p className="text-xs text-muted-foreground">
-							{catalog.isPending ? "Loading chats…" : `${matches.length} chats`}
-						</p>
-						{catalog.isError && (
-							<p role="alert" className="text-sm">
-								Machine history unavailable. No other machine will be queried.
-							</p>
-						)}
-						<div
-							className="min-h-0 overflow-auto"
-							aria-label="Machine chat list"
-						>
-							{matches.map((row) => (
-								<button
-									type="button"
-									key={row.id}
-									className={`mb-1 block w-full rounded border p-2 text-left text-sm hover:bg-muted ${selected?.id === row.id ? "bg-muted" : ""}`}
-									onClick={() => setSelected(row)}
-									aria-pressed={selected?.id === row.id}
-								>
-									<span className="block truncate font-medium">
-										{row.title || "Untitled chat"}
-									</span>
-									<span className="block truncate text-xs text-muted-foreground">
-										{row.workspace || "No workspace"}
-									</span>
-								</button>
-							))}
-						</div>
-					</aside>
-					<main className="min-h-0 flex-1 overflow-auto border-t pt-3 md:border-l md:border-t-0 md:pl-4 md:pt-0">
-						{selected ? (
-							<HistoryConversation
-								key={selected.id}
-								scope={scope}
-								session={selected}
-								port={port}
-							/>
-						) : (
-							<p className="py-8 text-sm text-muted-foreground">
-								Select a chat to read its saved messages.
-							</p>
-						)}
-					</main>
+				<div className="min-h-0 flex-1 overflow-auto">
+					<HistoryConversation scope={scope} session={session} port={port} />
 				</div>
 			</DialogContent>
 		</Dialog>
