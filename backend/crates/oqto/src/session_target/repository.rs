@@ -250,6 +250,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_machine_scoped_target_survives_the_schema() {
+        let db = crate::db::Database::in_memory().await.unwrap();
+        let repo = SessionTargetRepository::new(db.pool().clone());
+        let record = SessionTargetRecord {
+            session_id: "oqto-machine-session".to_string(),
+            owner_user_id: Some("wismut".to_string()),
+            scope: SessionTargetScope::RemoteMachine,
+            workspace_id: Some("mac".to_string()),
+            workspace_path: Some("/Users/tommy/work/project".to_string()),
+        };
+        repo.upsert(&record)
+            .await
+            .expect("machine target must persist");
+        let stored = repo.get(&record.session_id).await.unwrap().expect("row");
+        assert_eq!(stored.scope, SessionTargetScope::RemoteMachine);
+        assert_eq!(stored.workspace_id.as_deref(), Some("mac"));
+        assert_eq!(
+            stored.workspace_path.as_deref(),
+            Some("/Users/tommy/work/project")
+        );
+
+        for missing in [
+            SessionTargetRecord {
+                workspace_id: None,
+                ..record.clone()
+            },
+            SessionTargetRecord {
+                workspace_path: None,
+                ..record.clone()
+            },
+        ] {
+            assert!(SessionTargetRepository::validate_record(&missing).is_err());
+        }
+    }
+
     #[test]
     fn accept_personal_record_for_shared_linux_owner() {
         let mut record = personal_record(Some("/home/oqto_shared_team/oqto/project"));
