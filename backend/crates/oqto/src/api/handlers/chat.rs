@@ -90,6 +90,23 @@ async fn resolve_session_target(
                 }
                 ExecutionTarget::Personal
             }
+            crate::session_target::SessionTargetScope::RemoteMachine => {
+                if let Some(owner) = record.owner_user_id.as_deref()
+                    && owner != user_id
+                {
+                    return Err(ApiError::forbidden("session does not belong to this user"));
+                }
+                let workspace_path = record.workspace_path.clone().ok_or_else(|| {
+                    ApiError::internal("remote machine session target missing workspace path")
+                })?;
+                let machine_id = record.workspace_id.clone().ok_or_else(|| {
+                    ApiError::internal("remote machine session target missing machine id")
+                })?;
+                ExecutionTarget::RemoteMachine {
+                    machine_id,
+                    workspace_path,
+                }
+            }
             crate::session_target::SessionTargetScope::SharedWorkspace => {
                 let workspace_id = record.workspace_id.ok_or_else(|| {
                     ApiError::internal("shared session target missing workspace_id")

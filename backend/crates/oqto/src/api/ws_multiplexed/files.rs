@@ -694,6 +694,11 @@ async fn resolve_terminal_session_owner_for_target(
 ) -> Result<String, String> {
     match target {
         ExecutionTarget::Personal => Ok(user_id.to_string()),
+        ExecutionTarget::RemoteMachine { machine_id, .. } => state
+            .runner_targets
+            .execution_grant(user_id, machine_id)
+            .map(|grant| grant.principal)
+            .map_err(|_| "Remote execution denied".to_string()),
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state
                 .shared_workspaces
@@ -760,6 +765,30 @@ pub(super) async fn resolve_terminal_session(
                                 );
                             }
                             user_id.to_string()
+                        }
+                        SessionTargetScope::RemoteMachine => {
+                            if let Some(ref owner_user_id) = record.owner_user_id
+                                && owner_user_id != user_id
+                            {
+                                return Err(
+                                    "Access denied: session does not belong to this user".into()
+                                );
+                            }
+                            let machine_id = record.workspace_id.clone().ok_or_else(|| {
+                                "Invalid session target metadata: missing machine id".to_string()
+                            })?;
+                            let workspace_path = record.workspace_path.clone().ok_or_else(|| {
+                                "Invalid session target metadata: missing workspace path".to_string()
+                            })?;
+                            resolve_terminal_session_owner_for_target(
+                                state,
+                                user_id,
+                                &ExecutionTarget::RemoteMachine {
+                                    machine_id,
+                                    workspace_path,
+                                },
+                            )
+                            .await?
                         }
                         SessionTargetScope::SharedWorkspace => {
                             let workspace_id = record.workspace_id.ok_or_else(|| {

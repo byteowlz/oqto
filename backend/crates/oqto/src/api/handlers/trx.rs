@@ -128,6 +128,12 @@ pub async fn validate_workspace_path(
         .map_err(|e| ApiError::internal(format!("Failed to resolve workspace target: {e}")))?
     {
         ExecutionTarget::Personal => user_id.to_string(),
+        // The machine's own principal owns its files; no Linux user exists here.
+        ExecutionTarget::RemoteMachine { machine_id, .. } => state
+            .runner_targets
+            .execution_grant(user_id, &machine_id)
+            .map_err(|_| ApiError::forbidden("Remote execution denied"))?
+            .principal,
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state
                 .shared_workspaces

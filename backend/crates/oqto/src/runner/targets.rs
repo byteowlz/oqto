@@ -183,6 +183,27 @@ impl RunnerTargets {
                 config.id
             );
         }
+        // A workspace path must identify one machine, so overlapping execution
+        // roots are a configuration error rather than a routing race.
+        for (index, config) in configs.iter().enumerate() {
+            let Some(grant) = &config.execution else {
+                continue;
+            };
+            for other in configs.iter().skip(index + 1) {
+                let Some(other_grant) = &other.execution else {
+                    continue;
+                };
+                ensure!(
+                    !grant.roots.iter().any(|root| other_grant
+                        .roots
+                        .iter()
+                        .any(|peer| root.starts_with(peer) || peer.starts_with(root))),
+                    "runner targets {} and {} claim overlapping execution roots",
+                    config.id,
+                    other.id
+                );
+            }
+        }
         Ok(Self {
             targets: configs
                 .into_iter()
@@ -231,6 +252,24 @@ impl RunnerTargets {
             .execution
             .clone()
             .ok_or_else(|| anyhow::anyhow!("remote execution denied"))
+    }
+
+    /// Which machine owns `path`, if any.
+    ///
+    /// Roots are globally unique (enforced at registration), so a workspace path
+    /// identifies at most one machine and can never silently move between them.
+    pub fn machine_for_path(
+        &self,
+        account_id: &str,
+        path: &std::path::Path,
+    ) -> Option<(String, RemoteExecutionGrant)> {
+        self.targets.iter().find_map(|target| {
+            let grant = target.config.execution.as_ref()?;
+            (target.config.account_ids.len() == 1
+                && target.config.account_ids[0] == account_id
+                && grant.permits(path))
+            .then(|| (target.config.id.clone(), grant.clone()))
+        })
     }
 
     /// Transport for an already authorized execution target.
@@ -414,6 +453,34 @@ mod tests {
             });
             assert!(RunnerTargets::new(vec![invalid]).is_err());
         }
+        let mut peer = cfg.clone();
+        peer.id = "mac2".into();
+        peer.execution = Some(RemoteExecutionGrant {
+            principal: "tommy".into(),
+            roots: vec!["/Users/tommy/work/nested".into()],
+        });
+        assert!(
+            RunnerTargets::new(vec![cfg.clone(), peer]).is_err(),
+            "overlapping roots would make a path ambiguous"
+        );
+
+        assert_eq!(
+            targets
+                .machine_for_path("alice", std::path::Path::new("/Users/tommy/work/project"))
+                .map(|(id, _)| id),
+            Some("mac".to_string())
+        );
+        assert!(
+            targets
+                .machine_for_path("bob", std::path::Path::new("/Users/tommy/work/project"))
+                .is_none()
+        );
+        assert!(
+            targets
+                .machine_for_path("alice", std::path::Path::new("/home/alice/project"))
+                .is_none()
+        );
+
         let mut bad_principal = cfg.clone();
         bad_principal.execution = Some(RemoteExecutionGrant {
             principal: "root; rm -rf".into(),

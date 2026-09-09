@@ -328,3 +328,96 @@ async fn absent_workspace_is_distinct_from_failed_admission() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn a_machine_path_routes_to_its_own_runner_and_nowhere_else() {
+    use crate::runner::{
+        router::{ExecutionTarget, resolve_runner_for_target, resolve_target_for_workspace_path},
+        targets::{RemoteExecutionGrant, RunnerTargetConfig, RunnerTargets},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let (mut state, owner) = state(root.path()).await;
+    state.runner_targets = Arc::new(
+        RunnerTargets::new(vec![RunnerTargetConfig {
+            id: "mac".into(),
+            label: "Mac".into(),
+            account_ids: vec![owner.clone()],
+            endpoint: oqto_runner::transport::RunnerEndpointConfig::TcpTls {
+                address: "127.0.0.1:9".parse().unwrap(),
+                server_name: "mac.runner".into(),
+                ca: root.path().join("missing-ca.pem"),
+                certificate: root.path().join("missing-cert.pem"),
+                key: root.path().join("missing-key.pem"),
+            },
+            provider_login: false,
+            history_read: false,
+            execution: Some(RemoteExecutionGrant {
+                principal: "tommy".into(),
+                roots: vec!["/Users/tommy/work".into()],
+            }),
+        }])
+        .unwrap(),
+    );
+
+    let granted = "/Users/tommy/work/project";
+    assert_eq!(
+        resolve_target_for_workspace_path(&state, &owner, granted)
+            .await
+            .unwrap(),
+        ExecutionTarget::RemoteMachine {
+            machine_id: "mac".into(),
+            workspace_path: granted.into(),
+        }
+    );
+
+    // Another Account, and a path outside the ceiling, must never reach the machine.
+    assert_eq!(
+        resolve_target_for_workspace_path(&state, "ungranted-account", granted)
+            .await
+            .unwrap(),
+        ExecutionTarget::Personal
+    );
+    assert_eq!(
+        resolve_target_for_workspace_path(&state, &owner, "/Users/tommy/.ssh")
+            .await
+            .unwrap(),
+        ExecutionTarget::Personal
+    );
+
+    // Authorization is re-checked at resolve time, so a forged target is refused
+    // rather than silently falling back to this host's personal runner.
+    for (account, path) in [
+        ("ungranted-account", granted),
+        (owner.as_str(), "/Users/tommy/.ssh"),
+    ] {
+        let forged = ExecutionTarget::RemoteMachine {
+            machine_id: "mac".into(),
+            workspace_path: path.into(),
+        };
+        assert!(
+            resolve_runner_for_target(&state, account, &forged)
+                .await
+                .is_err(),
+            "forged remote target was admitted for {account}"
+        );
+    }
+
+    // The authorized route fails because the machine is offline, not because it
+    // was rerouted to a local runner.
+    let error = resolve_runner_for_target(
+        &state,
+        &owner,
+        &ExecutionTarget::RemoteMachine {
+            machine_id: "mac".into(),
+            workspace_path: granted.into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("mac") || error.contains("TLS") || error.contains("certificate"),
+        "{error}"
+    );
+    assert!(!root.path().join("personal-spy.sock").exists());
+}

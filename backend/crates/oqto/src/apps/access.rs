@@ -35,7 +35,10 @@ pub async fn authorize_work_directory(
         .ok_or_else(|| ApiError::service_unavailable("Work-directory runner unavailable"))?;
 
     let (owner_kind, owner_id) = match target {
-        ExecutionTarget::Personal => (AppOwnerKind::Account, account_id.to_owned()),
+        // Apps on a machine belong to the owning Account, not to a Workspace record.
+        ExecutionTarget::Personal | ExecutionTarget::RemoteMachine { .. } => {
+            (AppOwnerKind::Account, account_id.to_owned())
+        }
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             (AppOwnerKind::Workspace, workspace_id)
         }

@@ -3027,6 +3027,13 @@ async fn backfill_sessions_for_target(
                 workspace_id: Some(workspace_id.clone()),
                 workspace_path: Some(session.workspace_path),
             },
+            ExecutionTarget::RemoteMachine { machine_id, .. } => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: owner_user_id.map(ToOwned::to_owned),
+                scope: SessionTargetScope::RemoteMachine,
+                workspace_id: Some(machine_id.clone()),
+                workspace_path: Some(session.workspace_path),
+            },
         };
 
         state.session_targets.upsert(&record).await?;

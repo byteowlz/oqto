@@ -7,6 +7,9 @@ use sqlx::SqlitePool;
 pub enum SessionTargetScope {
     Personal,
     SharedWorkspace,
+    /// Runs on a machine Oqto does not own. The machine is re-derived from the
+    /// workspace path's execution grant, so it can never drift from routing.
+    RemoteMachine,
 }
 
 impl SessionTargetScope {
@@ -14,6 +17,7 @@ impl SessionTargetScope {
         match self {
             Self::Personal => "personal",
             Self::SharedWorkspace => "shared_workspace",
+            Self::RemoteMachine => "remote_machine",
         }
     }
 
@@ -21,6 +25,7 @@ impl SessionTargetScope {
         match value {
             "personal" => Some(Self::Personal),
             "shared_workspace" => Some(Self::SharedWorkspace),
+            "remote_machine" => Some(Self::RemoteMachine),
             _ => None,
         }
     }
@@ -77,6 +82,30 @@ impl SessionTargetRepository {
                         "invalid personal session target: shared workspace path stored as personal (session_id={}, path={})",
                         record.session_id,
                         path
+                    );
+                }
+            }
+            SessionTargetScope::RemoteMachine => {
+                if record
+                    .workspace_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    anyhow::bail!(
+                        "invalid remote machine session target: missing machine id (session_id={})",
+                        record.session_id
+                    );
+                }
+                if record
+                    .workspace_path
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    anyhow::bail!(
+                        "invalid remote machine session target: missing workspace path (session_id={})",
+                        record.session_id
                     );
                 }
             }
