@@ -6,6 +6,7 @@ import {
 	ChevronRight,
 	FolderKanban,
 	MessageSquare,
+	Plus,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
@@ -51,12 +52,15 @@ export function MachineChats({
 	port,
 	online,
 	isMobile,
+	onNewSession,
 }: {
 	scope: string;
 	label: string;
 	port: HistoryPort;
 	online: boolean;
 	isMobile: boolean;
+	/** Only supplied when this machine carries an execution grant. */
+	onNewSession?: (directory: string) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -122,7 +126,7 @@ export function MachineChats({
 								key={group.key}
 								className="border-b border-sidebar-border/50 last:border-b-0"
 							>
-								<div className="flex items-center gap-1 px-1 py-1.5">
+								<div className="flex items-center gap-1 px-1 py-1.5 group">
 									<button
 										type="button"
 										onClick={() =>
@@ -163,6 +167,17 @@ export function MachineChats({
 											({group.chats.length})
 										</span>
 									</button>
+									{onNewSession && group.key && (
+										<button
+											type="button"
+											onClick={() => onNewSession(group.key)}
+											className="text-muted-foreground hover:text-primary hover:bg-sidebar-accent rounded p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+											title={`New session in ${group.name} on ${label}`}
+											aria-label={`New session in ${group.name} on ${label}`}
+										>
+											<Plus className={iconSize} />
+										</button>
+									)}
 								</div>
 								{isOpen && (
 									<div className="space-y-0.5 pb-1">

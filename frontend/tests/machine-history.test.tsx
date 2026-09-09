@@ -89,6 +89,36 @@ describe("read-only machine chats in the sidebar", () => {
 			),
 		).toBe(true);
 	});
+	it("offers a new session only where the machine may execute", async () => {
+		const call = vi.fn().mockResolvedValue({ sessions: [session] });
+		const onNewSession = vi.fn();
+		const client = new QueryClient();
+		render(
+			<QueryClientProvider client={client}>
+				<MachineChats
+					scope="deployment:alice:mac"
+					label="Mac"
+					online
+					isMobile={false}
+					port={{ call }}
+					onNewSession={onNewSession}
+				/>
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: "New session in project on Mac",
+			}),
+		);
+		expect(onNewSession).toHaveBeenCalledWith("/Users/native/project");
+
+		cleanup();
+		render(shell("deployment:alice:mac", { call }, new QueryClient()));
+		fireEvent.click(screen.getByRole("button", { name: "Mac chat history" }));
+		await screen.findByRole("button", { name: /project/ });
+		expect(screen.queryByRole("button", { name: /New session/ })).toBeNull();
+	});
 	it("does not query the machine until it is expanded", async () => {
 		const call = vi.fn().mockResolvedValue({ sessions: [session] });
 		render(shell("deployment:alice:mac", { call }));

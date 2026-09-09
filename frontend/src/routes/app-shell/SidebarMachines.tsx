@@ -39,13 +39,27 @@ function historyPort(scope: string, targetId: string) {
 }
 
 /** Original-shell adapter for Account-authorized inventory and explicit login grants. */
-export function SidebarMachines() {
+export function SidebarMachines({
+	onNewSessionInDirectory,
+}: { onNewSessionInDirectory?: (directory: string) => void } = {}) {
 	const { data: user } = useCurrentUser();
 	if (!user) return null;
 	const scope = `original:${controlPlaneApiUrl("/api/runner-targets")}:${user.id}`;
-	return <AccountMachines key={scope} scope={scope} />;
+	return (
+		<AccountMachines
+			key={scope}
+			scope={scope}
+			onNewSessionInDirectory={onNewSessionInDirectory}
+		/>
+	);
 }
-function AccountMachines({ scope }: { scope: string }) {
+function AccountMachines({
+	scope,
+	onNewSessionInDirectory,
+}: {
+	scope: string;
+	onNewSessionInDirectory?: (directory: string) => void;
+}) {
 	const { t } = useTranslation();
 	const [selected, setSelected] = useState<RunnerTarget | null>(null);
 	const isMobile =
@@ -77,6 +91,9 @@ function AccountMachines({ scope }: { scope: string }) {
 							label={target.label}
 							online={target.connection === "online"}
 							isMobile={isMobile}
+							onNewSession={
+								target.sessionCreation ? onNewSessionInDirectory : undefined
+							}
 							port={historyPort(`${scope}:${target.id}`, target.id)}
 						/>
 					) : null

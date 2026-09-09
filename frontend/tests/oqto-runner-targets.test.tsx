@@ -31,12 +31,17 @@ describe("runner target boundary", () => {
 			},
 		]);
 	});
+	it("carries an explicit execution grant rather than assuming none", () => {
+		const [granted] = parseRunnerTargets([{ ...row, session_creation: true }]);
+		expect(granted.sessionCreation).toBe(true);
+		expect(parseRunnerTargets([row])[0].sessionCreation).toBe(false);
+	});
 	it("rejects unsupported admission and malformed or duplicate targets", () => {
 		for (const value of [
 			null,
 			[{}],
 			[{ ...row, connection: "ready" }],
-			[{ ...row, session_creation: true }],
+			[{ ...row, session_creation: "yes" }],
 			[{ ...row, checked_at: "invalid" }],
 			[row, row],
 		]) {

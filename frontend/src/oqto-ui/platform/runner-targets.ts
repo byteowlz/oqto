@@ -3,8 +3,8 @@ export type RunnerTarget = {
 	label: string;
 	connection: "online" | "unavailable" | "incompatible";
 	checkedAt: string;
-	/** Connectivity is not permission or support for Session creation. */
-	sessionCreation: false;
+	/** Connectivity is not permission: this is an explicit execution grant. */
+	sessionCreation: boolean;
 	providerLogin?: boolean;
 	historyRead?: boolean;
 };
@@ -43,7 +43,7 @@ export function parseRunnerTargets(value: unknown): RunnerTarget[] {
 				row.connection !== "incompatible") ||
 			typeof row.checked_at !== "string" ||
 			!Number.isFinite(Date.parse(row.checked_at)) ||
-			row.session_creation !== false
+			typeof row.session_creation !== "boolean"
 		)
 			throw new Error("Invalid runner target capabilities");
 		ids.add(row.id);
@@ -52,7 +52,7 @@ export function parseRunnerTargets(value: unknown): RunnerTarget[] {
 			label: row.label,
 			connection: row.connection,
 			checkedAt: row.checked_at,
-			sessionCreation: false,
+			sessionCreation: row.session_creation,
 			...(row.provider_login === true ? { providerLogin: true } : {}),
 			...(row.history_read === true ? { historyRead: true } : {}),
 		};
