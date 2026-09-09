@@ -615,6 +615,15 @@ impl SessionService {
         })
     }
 
+    /// Whether this workspace belongs to a machine Oqto does not own.
+    fn is_remote_machine_workspace(&self, user_id: &str, workspace_path: &str) -> bool {
+        self.remote_execution.as_ref().is_some_and(|targets| {
+            targets
+                .machine_for_path(user_id, std::path::Path::new(workspace_path))
+                .is_some()
+        })
+    }
+
     /// Resolve the runner that owns a session's workspace: the placement
     /// runner when the workspace is container-placed, otherwise the host
     /// runner for the session's user.
@@ -1744,8 +1753,13 @@ impl SessionService {
             .set_container_id(&session.id, &response.pids)
             .await?;
 
-        // Wait for core services to become reachable
+        // Wait for core services to become reachable. A machine's service ports
+        // live on that machine, so probing this host's loopback would either
+        // hang or, worse, succeed against an unrelated local listener.
         let readiness_result = match placement.as_ref() {
+            _ if self.is_remote_machine_workspace(&session.user_id, &session.workspace_path) => {
+                Ok(())
+            }
             Some(record) => {
                 self.wait_for_placed_session_services(&runner, record, fileserver_port, ttyd_port)
                     .await
