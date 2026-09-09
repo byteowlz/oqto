@@ -23,6 +23,8 @@ pub struct RunnerTargetConfig {
     /// Explicit credential-management grant; inventory alone is insufficient.
     #[serde(default)]
     pub provider_login: bool,
+    #[serde(default)]
+    pub history_read: bool,
 }
 
 impl RunnerTargetConfig {
@@ -49,6 +51,10 @@ impl RunnerTargetConfig {
         ensure!(
             !self.provider_login || self.account_ids.len() == 1,
             "provider login requires exactly one owning Account"
+        );
+        ensure!(
+            !self.history_read || self.account_ids.len() == 1,
+            "history reading requires exactly one owning Account"
         );
         match &self.endpoint {
             RunnerEndpointConfig::TcpTls {
@@ -93,6 +99,7 @@ pub struct RunnerTargetStatus {
     /// Inventory is not admission: placement/session routing is a separate step.
     pub session_creation: bool,
     pub provider_login: bool,
+    pub history_read: bool,
 }
 
 struct Target {
@@ -131,6 +138,20 @@ impl RunnerTargets {
                 })
                 .collect(),
         })
+    }
+
+    pub fn history_read_client(&self, account_id: &str, target_id: &str) -> Result<RunnerClient> {
+        let target = self
+            .targets
+            .iter()
+            .find(|target| {
+                target.config.id == target_id
+                    && target.config.history_read
+                    && target.config.account_ids.len() == 1
+                    && target.config.account_ids[0] == account_id
+            })
+            .ok_or_else(|| anyhow::anyhow!("history access denied"))?;
+        RunnerClient::from_endpoint(&target.config.endpoint)
     }
 
     pub fn provider_login_client(&self, account_id: &str, target_id: &str) -> Result<RunnerClient> {
@@ -186,6 +207,7 @@ impl Target {
             checked_at: chrono::Utc::now().to_rfc3339(),
             session_creation: false,
             provider_login: self.config.provider_login,
+            history_read: self.config.history_read,
         };
         *cached = Some((Instant::now(), status.clone()));
         status
@@ -208,6 +230,7 @@ mod tests {
     fn config() -> RunnerTargetConfig {
         RunnerTargetConfig {
             provider_login: false,
+            history_read: false,
             id: "mac".into(),
             label: "Mac".into(),
             account_ids: vec!["alice".into()],
@@ -219,6 +242,27 @@ mod tests {
                 key: "/missing/key.pem".into(),
             },
         }
+    }
+
+    #[test]
+    fn history_requires_single_owner_and_explicit_grant_before_transport() {
+        let targets = RunnerTargets::new(vec![config()]).unwrap();
+        assert!(targets.history_read_client("alice", "mac").is_err());
+        let mut cfg = config();
+        cfg.history_read = true;
+        cfg.account_ids.push("bob".into());
+        assert!(RunnerTargets::new(vec![cfg.clone()]).is_err());
+        cfg.account_ids = vec!["alice".into()];
+        let targets = RunnerTargets::new(vec![cfg]).unwrap();
+        assert_eq!(
+            targets
+                .history_read_client("bob", "mac")
+                .err()
+                .unwrap()
+                .to_string(),
+            "history access denied"
+        );
+        assert!(targets.history_read_client("alice", "missing").is_err());
     }
 
     #[test]

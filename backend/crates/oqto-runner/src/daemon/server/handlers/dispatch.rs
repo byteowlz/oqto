@@ -4,6 +4,21 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
         RunnerRequest::GetCapabilities => runner.get_capabilities().await,
+        RunnerRequest::HistoryRead(request) => {
+            match crate::history_read::read(
+                runner.user_config.history_read.as_ref(),
+                runner.user_config.single_user && !runner.user_config.linux_users_enabled,
+                request,
+            )
+            .await
+            {
+                Ok(response) => RunnerResponse::HistoryRead(response),
+                Err(_) => error_response(
+                    ErrorCode::InvalidRequest,
+                    "History unavailable or access denied",
+                ),
+            }
+        }
         RunnerRequest::ProviderLogin(request) => {
             if !runner.user_config.single_user || runner.user_config.linux_users_enabled {
                 return error_response(

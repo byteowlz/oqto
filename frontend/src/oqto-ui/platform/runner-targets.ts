@@ -6,6 +6,7 @@ export type RunnerTarget = {
 	/** Connectivity is not permission or support for Session creation. */
 	sessionCreation: false;
 	providerLogin?: boolean;
+	historyRead?: boolean;
 };
 
 export type RunnerTargetsPort = {
@@ -21,6 +22,7 @@ type RunnerTargetWire = {
 	checked_at?: unknown;
 	session_creation?: unknown;
 	provider_login?: unknown;
+	history_read?: unknown;
 };
 
 export function parseRunnerTargets(value: unknown): RunnerTarget[] {
@@ -52,6 +54,7 @@ export function parseRunnerTargets(value: unknown): RunnerTarget[] {
 			checkedAt: row.checked_at,
 			sessionCreation: false,
 			...(row.provider_login === true ? { providerLogin: true } : {}),
+			...(row.history_read === true ? { historyRead: true } : {}),
 		};
 	});
 }

@@ -8,6 +8,31 @@ use axum::{
 };
 use oqto_runner::provider_login::{ProviderLoginOperation, ProviderLoginRequest};
 
+/// Read-only owning-machine history, independent of execution admission.
+pub async fn history_read(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(target): Path<String>,
+    payload: Result<
+        Json<oqto_runner::history_read::HistoryReadOperation>,
+        axum::extract::rejection::JsonRejection,
+    >,
+) -> ApiResult<impl IntoResponse> {
+    let Json(operation) = payload.map_err(|_| ApiError::bad_request("invalid history request"))?;
+    let client = state
+        .runner_targets
+        .history_read_client(user.id(), &target)
+        .map_err(|_| ApiError::forbidden("history access denied"))?;
+    let data = client
+        .history_read(oqto_runner::history_read::HistoryReadRequest {
+            account_id: user.id().to_owned(),
+            operation,
+        })
+        .await
+        .map_err(|_| ApiError::service_unavailable("machine history unavailable"))?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(data)))
+}
+
 /// Private machine-scoped auth. No browser-supplied owner, paths, or commit permits.
 pub async fn provider_login(
     State(state): State<AppState>,

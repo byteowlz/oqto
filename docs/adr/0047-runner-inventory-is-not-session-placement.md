@@ -18,4 +18,6 @@ Machine grouping remains optional presentation, not a Session identity hierarchy
 
 The development Mac transport is loopback mutual TLS carried by an independently supervised SSH forward. This is deliberately static operator configuration, not a complete audited enrollment/rotation/revocation service. Dedicated certificate revocation currently means removing its trust/configuration and restarting the relevant service. Replacing certificates is an operator maintenance task; authentication never falls back to plaintext.
 
+Read-only machine history is a separate, explicit single-Account grant (`history_read`), not execution admission. A dedicated runner can present an operator-selected existing oqto-log home without changing its process HOME or starting Pi. The preview uses stored public IDs, rejects ambiguous identities, and supplies no send/file/auth actions. It does not invent Session placement or imply live TUI attachment. See [existing machine history](../development/machine-history.md) for authorization, reload/disconnect behavior and proof.
+
 Verification and reversible host setup: [Mac runner runbook](../development/macos-runner.md).

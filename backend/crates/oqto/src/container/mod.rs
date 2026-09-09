@@ -880,8 +880,6 @@ mod tests {
         );
     }
 
-    use super::*;
-
     #[tokio::test]
     async fn test_container_runtime_health_check() {
         let runtime = ContainerRuntime::new();

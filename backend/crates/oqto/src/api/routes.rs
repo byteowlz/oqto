@@ -285,6 +285,10 @@ fn create_router_with_config_and_auth(
         // User profile routes (authenticated users)
         .route("/runner-targets", get(super::runner_targets::list))
         .route(
+            "/runner-targets/{target}/history",
+            post(super::runner_targets::history_read),
+        )
+        .route(
             "/runner-targets/{target}/provider-login",
             post(super::runner_targets::provider_login),
         )

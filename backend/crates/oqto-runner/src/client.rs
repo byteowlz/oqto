@@ -1881,6 +1881,16 @@ impl RunnerClient {
         }
     }
 
+    pub async fn history_read(
+        &self,
+        request: crate::history_read::HistoryReadRequest,
+    ) -> Result<serde_json::Value> {
+        match self.request(&RunnerRequest::HistoryRead(request)).await? {
+            RunnerResponse::HistoryRead(response) => Ok(response.data),
+            _ => anyhow::bail!("History unavailable"),
+        }
+    }
+
     pub async fn provider_login(
         &self,
         request: crate::provider_login::ProviderLoginRequest,

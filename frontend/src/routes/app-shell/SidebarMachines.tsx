@@ -7,6 +7,7 @@ import {
 	parseRunnerTargets,
 } from "../../oqto-ui/platform/runner-targets";
 import { RunnerTargets } from "../../oqto-ui/sessions/RunnerTargets";
+import { MachineHistory } from "./MachineHistory";
 import { MachineProviders } from "./MachineProviders";
 
 /** Original-shell adapter for Account-authorized inventory and explicit login grants. */
@@ -19,6 +20,7 @@ export function SidebarMachines() {
 function AccountMachines({ scope }: { scope: string }) {
 	const { t } = useTranslation();
 	const [selected, setSelected] = useState<RunnerTarget | null>(null);
+	const [history, setHistory] = useState<RunnerTarget | null>(null);
 	return (
 		<>
 			<RunnerTargets
@@ -37,22 +39,66 @@ function AccountMachines({ scope }: { scope: string }) {
 						return parseRunnerTargets(await response.json());
 					},
 				}}
-				actions={(target) =>
-					target.providerLogin ? (
-						<button
-							type="button"
-							className="rounded border px-2 py-1 text-xs disabled:opacity-40"
-							disabled={target.connection !== "online"}
-							onClick={() => setSelected(target)}
-							aria-label={t("oqtoUi.providerLogin.buttonLabel", {
-								machine: target.label,
-							})}
-						>
-							{t("oqtoUi.providerLogin.button")}
-						</button>
-					) : null
-				}
+				actions={(target) => (
+					<>
+						{target.historyRead && (
+							<button
+								type="button"
+								className="rounded border px-2 py-1 text-xs disabled:opacity-40"
+								disabled={target.connection !== "online"}
+								onClick={() => setHistory(target)}
+								aria-label={`Read ${target.label} chat history`}
+							>
+								Chats
+							</button>
+						)}
+						{target.providerLogin ? (
+							<button
+								type="button"
+								className="rounded border px-2 py-1 text-xs disabled:opacity-40"
+								disabled={target.connection !== "online"}
+								onClick={() => setSelected(target)}
+								aria-label={t("oqtoUi.providerLogin.buttonLabel", {
+									machine: target.label,
+								})}
+							>
+								{t("oqtoUi.providerLogin.button")}
+							</button>
+						) : null}
+					</>
+				)}
 			/>
+			{history && (
+				<MachineHistory
+					key={`${scope}:${history.id}`}
+					scope={`${scope}:${history.id}`}
+					label={history.label}
+					close={() => setHistory(null)}
+					port={{
+						call: async (command, signal) => {
+							const response = await fetch(
+								controlPlaneApiUrl(
+									`/api/runner-targets/${encodeURIComponent(history.id)}/history`,
+								),
+								{
+									method: "POST",
+									credentials: "include",
+									cache: "no-store",
+									signal,
+									headers: {
+										...getAuthHeaders(),
+										"Content-Type": "application/json",
+										Accept: "application/json",
+									},
+									body: JSON.stringify(command),
+								},
+							);
+							if (!response.ok) throw new Error("Machine history unavailable");
+							return response.json();
+						},
+					}}
+				/>
+			)}
 			{selected && (
 				<MachineProviders
 					key={`${scope}:${selected.id}`}
