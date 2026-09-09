@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::pi::AgentMessage;
+use oqto_pi::AgentMessage;
 
 use super::store::platform_id_for_external_id;
-use oqto_history::oqto_log::store::PiJsonlMessageRecord;
+use crate::oqto_log::store::PiJsonlMessageRecord;
 
 #[derive(Debug, Default, Clone)]
 pub struct ImportStats {
@@ -16,6 +16,7 @@ pub struct ImportStats {
     pub failed_files: usize,
     pub imported_messages: usize,
     pub failure_samples: Vec<String>,
+    pub failure_categories: std::collections::BTreeMap<String, usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -437,7 +438,7 @@ async fn repair_legacy_identity_conflict(
     user_home: &Path,
     user_id: &str,
     workspace_id: &str,
-    conflict: &oqto_history::oqto_log::ops::SessionIdentityConflict,
+    conflict: &crate::oqto_log::ops::SessionIdentityConflict,
     jsonl_path: Option<&Path>,
 ) -> Result<()> {
     let path = jsonl_path.context("no Pi JSONL found for conflicted external id")?;
@@ -448,7 +449,7 @@ async fn repair_legacy_identity_conflict(
         );
     }
     let target = platform_id_for_external_id(&conflict.external_id);
-    oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+    crate::oqto_log::store::replace_session_with_pi_jsonl_records(
         user_home,
         user_id,
         workspace_id,
@@ -476,7 +477,7 @@ pub async fn fast_import_identities_from_pi_jsonl(
 
     let mut by_workspace: std::collections::BTreeMap<
         String,
-        Vec<oqto_history::oqto_log::ops::SessionIdentityInput>,
+        Vec<crate::oqto_log::ops::SessionIdentityInput>,
     > = std::collections::BTreeMap::new();
     let mut jsonl_by_external: std::collections::BTreeMap<String, std::path::PathBuf> =
         std::collections::BTreeMap::new();
@@ -518,7 +519,7 @@ pub async fn fast_import_identities_from_pi_jsonl(
             }
             jsonl_by_external.insert(external_id.clone(), path.clone());
             by_workspace.entry(workspace_id.clone()).or_default().push(
-                oqto_history::oqto_log::ops::SessionIdentityInput {
+                crate::oqto_log::ops::SessionIdentityInput {
                     platform_id: platform_id_for_external_id(&external_id),
                     external_id,
                     title: metadata.title,
@@ -531,7 +532,7 @@ pub async fn fast_import_identities_from_pi_jsonl(
     }
 
     for (workspace_id, identities) in by_workspace {
-        match oqto_history::oqto_log::ops::batch_upsert_session_identities(
+        match crate::oqto_log::ops::batch_upsert_session_identities(
             user_home,
             user_id,
             &workspace_id,
@@ -587,20 +588,58 @@ pub async fn bootstrap_import_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
 ) -> Result<ImportStats> {
-    import_from_pi_jsonl(user_home, user_id, false).await
+    import_from_pi_jsonl(user_home, user_id, false, None).await
 }
 
 /// Re-project every Pi JSONL from authority, ignoring incremental fingerprints.
 /// This is the explicit repair path for historical split/over-populated rows;
 /// ordinary deploys continue to use incremental bootstrap.
 pub async fn rebuild_from_pi_jsonl(user_home: &Path, user_id: &str) -> Result<ImportStats> {
-    import_from_pi_jsonl(user_home, user_id, true).await
+    import_from_pi_jsonl(user_home, user_id, true, None).await
+}
+
+/// Bounded maintenance/diagnosis using the same incremental import path.
+pub async fn bootstrap_import_limited(
+    user_home: &Path,
+    user_id: &str,
+    max_imports: Option<usize>,
+) -> Result<ImportStats> {
+    anyhow::ensure!(max_imports != Some(0), "max_imports must be positive");
+    import_from_pi_jsonl(user_home, user_id, false, max_imports).await
+}
+
+fn failure_category(error: &anyhow::Error) -> String {
+    if error
+        .to_string()
+        .starts_with("exact Session replace was partial")
+    {
+        return "partial_replace".into();
+    }
+    for cause in error.chain() {
+        if let Some(sqlx::Error::Database(database)) = cause.downcast_ref::<sqlx::Error>() {
+            return format!("sqlite_{}", database.code().unwrap_or_default());
+        }
+        if cause
+            .downcast_ref::<crate::oqto_log::bindings::SessionBindingError>()
+            .is_some()
+        {
+            return "identity_binding".into();
+        }
+        if cause
+            .downcast_ref::<sqlx::migrate::MigrateError>()
+            .is_some()
+        {
+            return "migration".into();
+        }
+    }
+    "other".into()
 }
 
 async fn import_from_pi_jsonl(
     user_home: &Path,
     user_id: &str,
     force_rebuild: bool,
+    max_imports: Option<usize>,
 ) -> Result<ImportStats> {
     let mut stats = ImportStats::default();
     let mut importer_state = load_importer_state(user_home);
@@ -637,8 +676,12 @@ async fn import_from_pi_jsonl(
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut imported_sessions_this_run: Vec<ImportedSession> = Vec::new();
+    let mut attempts = 0;
 
     for (path, fallback_workspace_id) in files {
+        if max_imports.is_some_and(|limit| attempts >= limit) {
+            break;
+        }
         stats.scanned_files += 1;
         let path_key = path.to_string_lossy().to_string();
         let current_fp = file_fingerprint(&path);
@@ -664,6 +707,7 @@ async fn import_from_pi_jsonl(
             continue;
         }
 
+        attempts += 1;
         // The JSONL header cwd is the exact workspace; the safe dirname
         // decode is lossy for paths containing '-'.
         let workspace_id = read_pi_jsonl_session_metadata(&path)
@@ -676,15 +720,13 @@ async fn import_from_pi_jsonl(
         // Also use the workspace_id from the existing session to ensure we
         // write to the correct database file.
         let (session_id, workspace_id) =
-            match oqto_history::oqto_log::ops::find_session_by_external(user_home, &pi_session_id)
-                .await
-            {
+            match crate::oqto_log::ops::find_session_by_external(user_home, &pi_session_id).await {
                 Some((existing_id, existing_ws)) if !existing_ws.is_empty() => {
                     (existing_id, existing_ws)
                 }
                 Some((existing_id, _)) => (existing_id, workspace_id),
                 None => (
-                    oqto_history::oqto_log::store::platform_id_for_external_id(&pi_session_id),
+                    crate::oqto_log::store::platform_id_for_external_id(&pi_session_id),
                     workspace_id,
                 ),
             };
@@ -693,7 +735,7 @@ async fn import_from_pi_jsonl(
         let mut last_err: Option<anyhow::Error> = None;
         let mut appended = None;
         for _attempt in 0..3 {
-            match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+            match crate::oqto_log::store::replace_session_with_pi_jsonl_records(
                 user_home,
                 user_id,
                 &workspace_id,
@@ -723,7 +765,7 @@ async fn import_from_pi_jsonl(
             // are inserted. The reported id is the identity actually written.
             let session_id = append_stats.session_id.clone();
 
-            let _ = oqto_history::oqto_log::store::upsert_import_checkpoint(
+            let _ = crate::oqto_log::store::upsert_import_checkpoint(
                 user_home,
                 &workspace_id,
                 "pi_jsonl",
@@ -754,6 +796,11 @@ async fn import_from_pi_jsonl(
             stats.imported_messages += append_stats.messages_written;
         } else {
             stats.failed_files += 1;
+            let category = last_err
+                .as_ref()
+                .map(failure_category)
+                .unwrap_or_else(|| "other".into());
+            *stats.failure_categories.entry(category).or_default() += 1;
             if stats.failure_samples.len() < 25 {
                 let err_text = last_err
                     .map(|e| e.to_string())
@@ -793,7 +840,7 @@ async fn import_from_pi_jsonl(
             // deterministically; exact replace removes same-store competitors
             // in its own rollback-safe transaction.
             let target_external_id = mismatch_session_id.clone();
-            let candidates = oqto_history::oqto_log::ops::list_sessions_by_external_in_workspace(
+            let candidates = crate::oqto_log::ops::list_sessions_by_external_in_workspace(
                 user_home,
                 &workspace_id,
                 &target_external_id,
@@ -801,7 +848,7 @@ async fn import_from_pi_jsonl(
             .await
             .unwrap_or_default();
             let target_session_id = candidates.first().cloned().unwrap_or_else(|| {
-                oqto_history::oqto_log::store::platform_id_for_external_id(&target_external_id)
+                crate::oqto_log::store::platform_id_for_external_id(&target_external_id)
             });
             let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &target_external_id)
             else {
@@ -821,7 +868,7 @@ async fn import_from_pi_jsonl(
             let mut replaced_ok = None;
             let mut replace_err: Option<anyhow::Error> = None;
             for _attempt in 0..3 {
-                match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+                match crate::oqto_log::store::replace_session_with_pi_jsonl_records(
                     user_home,
                     user_id,
                     &workspace_id,
@@ -943,11 +990,9 @@ mod tests {
             .await
             .expect("initial import");
 
-        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
-            temp.path(),
-            workspace,
-        )
-        .expect("db path");
+        let db_path =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
+                .expect("db path");
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
         )
@@ -1028,12 +1073,10 @@ mod tests {
 
         // Seed the archvm oqto-svwp shape: an empty canonical row and a raw
         // self-identified row both claim the Pi id; no binding facts exist.
-        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
-            temp.path(),
-            workspace,
-        )
-        .expect("db path");
-        oqto_history::oqto_log::store::migrate_db_path(&db_path)
+        let db_path =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
+                .expect("db path");
+        crate::oqto_log::store::migrate_db_path(&db_path)
             .await
             .expect("migrate");
         let pool = sqlx::SqlitePool::connect_with(
@@ -1117,11 +1160,9 @@ mod tests {
         bootstrap_import_from_pi_jsonl(temp.path(), "user-1")
             .await
             .expect("initial exact import");
-        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
-            temp.path(),
-            workspace,
-        )
-        .expect("db path");
+        let db_path =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
+                .expect("db path");
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path),
         )

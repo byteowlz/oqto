@@ -24,6 +24,8 @@ use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
     about = "Process runner daemon for multi-user isolation"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<MaintenanceCommand>,
     #[arg(short, long)]
     config: Option<PathBuf>,
     #[arg(short, long, conflicts_with = "listen_tls")]
@@ -58,9 +60,43 @@ struct Args {
     expose_dir: Option<PathBuf>,
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum MaintenanceCommand {
+    /// Preview native Pi history import; --apply updates only canonical oqto-log state.
+    /// JSON is emitted on stdout; failures exit nonzero. Back up canonical stores first.
+    HistoryImport {
+        #[arg(long)]
+        apply: bool,
+        /// Bound projection attempts for diagnosis or gradual import.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_imports: Option<u32>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(MaintenanceCommand::HistoryImport { apply, max_imports }) = args.command {
+        use std::io::Write;
+        let config = args
+            .config
+            .clone()
+            .map(RunnerUserConfig::load_from_path)
+            .unwrap_or_else(RunnerUserConfig::load);
+        let report = oqto_runner::history_import::run(&config, apply, max_imports.map(|n| n as usize)).await.unwrap_or_else(|_| serde_json::json!({"schema":1,"ok":false,"error":"History import unavailable; check explicit history configuration and source access"}));
+        let output = format!("{report}\n");
+        if let Err(error) = std::io::stdout().write_all(output.as_bytes()) {
+            if error.kind() == std::io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(error.into());
+        }
+        anyhow::ensure!(
+            report["ok"] == true,
+            "History import failed; see the JSON summary"
+        );
+        return Ok(());
+    }
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
