@@ -24,10 +24,15 @@
 	list-style: none;
 }
 .wb-runner-targets li {
-	display: flex;
+	display: grid;
+	grid-template-columns: auto 1fr auto auto;
 	align-items: center;
 	gap: 8px;
 	padding: 6px 0;
+}
+/* Nested machine content owns its own row under the machine header. */
+.wb-runner-targets__below {
+	grid-column: 1 / -1;
 }
 .wb-runner-targets li > svg {
 	width: 15px;

@@ -61,7 +61,11 @@ export function RunnerTargets({
 							>
 								{t(`oqtoUi.runnerTargets.${target.connection}`)}
 							</span>
-							{belowTarget?.(target)}
+							{belowTarget ? (
+								<div className="wb-runner-targets__below">
+									{belowTarget(target)}
+								</div>
+							) : null}
 						</li>
 					))}
 				</ul>
