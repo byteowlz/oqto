@@ -429,6 +429,9 @@ pub struct SessionService {
     /// workspace lives inside a placement are served by that placement's
     /// runner and their services are reached via exposed sockets.
     placements: Option<Arc<dyn oqto_placement::PlacementStore>>,
+    /// Machines this deployment may execute on. Their workspace paths exist on
+    /// the machine, not on this host.
+    remote_execution: Option<Arc<crate::runner::targets::RunnerTargets>>,
     config: SessionServiceConfig,
 }
 
@@ -459,6 +462,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             placements: None,
+            remote_execution: None,
             config,
         }
     }
@@ -470,6 +474,14 @@ impl SessionService {
         placements: Arc<dyn oqto_placement::PlacementStore>,
     ) -> Self {
         self.placements = Some(placements);
+        self
+    }
+
+    pub fn with_remote_execution(
+        mut self,
+        targets: Arc<crate::runner::targets::RunnerTargets>,
+    ) -> Self {
+        self.remote_execution = Some(targets);
         self
     }
 
@@ -491,6 +503,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             placements: None,
+            remote_execution: None,
             config,
         }
     }
@@ -516,6 +529,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             placements: None,
+            remote_execution: None,
             config,
         }
     }
@@ -539,6 +553,7 @@ impl SessionService {
             readiness: Arc::new(HttpSessionReadiness),
             agent_browser: AgentBrowserManager::new(config.agent_browser.clone()),
             placements: None,
+            remote_execution: None,
             config,
         }
     }
@@ -607,6 +622,19 @@ impl SessionService {
         &self,
         session: &Session,
     ) -> Result<(RunnerClient, Option<oqto_placement::PlacementRecord>)> {
+        // A machine's own runner owns its workspaces; this host has no placement
+        // for them and must not fall back to the local runner.
+        if let Some(targets) = &self.remote_execution
+            && let Some((machine_id, _)) = targets.machine_for_path(
+                &session.user_id,
+                std::path::Path::new(&session.workspace_path),
+            )
+        {
+            let client = targets
+                .execution_client(&session.user_id, &machine_id)
+                .with_context(|| format!("building runner endpoint for machine {machine_id}"))?;
+            return Ok((client, None));
+        }
         if let Some(record) = self
             .placement_for_workspace_path(&session.workspace_path)
             .await
@@ -899,6 +927,14 @@ impl SessionService {
                 resolved.display(),
                 record.workspace_id
             );
+            return Ok(resolved);
+        }
+
+        // A machine's authorized roots are the authority for its own paths;
+        // this host cannot stat them and must not invent a local directory.
+        if let Some(targets) = &self.remote_execution
+            && targets.machine_for_path(user_id, &resolved).is_some()
+        {
             return Ok(resolved);
         }
 
