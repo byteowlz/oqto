@@ -12,6 +12,20 @@ import { initI18n } from "../../lib/i18n";
 
 initI18n();
 
+/** A real unified patch: the renderer parses it, so a sketch will not do. */
+const PATCH = [
+	"diff --git a/dirty.ts b/dirty.ts",
+	"index 1111111..2222222 100644",
+	"--- a/dirty.ts",
+	"+++ b/dirty.ts",
+	"@@ -1,3 +1,3 @@",
+	" const kept = 1;",
+	"-const before = 2;",
+	"+const after = 2;",
+	" const also = 3;",
+	"",
+].join("\n");
+
 function entry(path: string, index: string, worktree: string): GitEntry {
 	return { path, index, worktree, renamedFrom: null };
 }
@@ -41,7 +55,7 @@ function host(overrides: Partial<GitHost> = {}): GitHost {
 			return status();
 		},
 		async diff(_workspacePath, path, isStaged) {
-			return { path, staged: isStaged, patch: `--- ${path}`, truncated: false };
+			return { path, staged: isStaged, patch: PATCH, truncated: false };
 		},
 		async log() {
 			return [];
@@ -227,7 +241,9 @@ describe("git pane", () => {
 	});
 
 	it("shows the branch, its distance, and both change lists", async () => {
-		render(<GitPane gitHost={host()} workspacePath="/work" />);
+		render(
+			<GitPane gitHost={host()} workspacePath="/work" schemeId="oqto-dark" />,
+		);
 		expect(await screen.findByText("main")).toBeInTheDocument();
 		expect(screen.getByText("2 ahead")).toBeInTheDocument();
 		expect(screen.getByText("Staged")).toBeInTheDocument();
@@ -241,6 +257,7 @@ describe("git pane", () => {
 			<GitPane
 				gitHost={host({ stage, status: statusCalls })}
 				workspacePath="/work"
+				schemeId="oqto-dark"
 			/>,
 		);
 		await screen.findByText("main");
@@ -252,11 +269,24 @@ describe("git pane", () => {
 		await waitFor(() => expect(statusCalls).toHaveBeenCalledTimes(2));
 	});
 
-	it("shows a path's diff when it is chosen", async () => {
-		render(<GitPane gitHost={host()} workspacePath="/work" />);
+	it("hands a chosen path's patch to the diff renderer", async () => {
+		const view = render(
+			<GitPane gitHost={host()} workspacePath="/work" schemeId="oqto-dark" />,
+		);
 		await screen.findByText("main");
 		fireEvent.click(screen.getAllByText("dirty.ts")[0]);
-		expect(await screen.findByText("--- dirty.ts")).toBeInTheDocument();
+		// The renderer owns its own markup, inside a shadow root: what the pane
+		// must prove is that the patch was parsed and rendered as a diff, not
+		// printed as text.
+		const surface = await waitFor(() => {
+			const found = view.container.querySelector("diffs-container");
+			expect(found).not.toBeNull();
+			return found as HTMLElement;
+		});
+		await waitFor(() =>
+			expect(surface.shadowRoot?.innerHTML ?? "").toContain("dirty.ts"),
+		);
+		expect(surface.shadowRoot?.innerHTML).toContain("data-deletions-count");
 	});
 
 	it("refuses to commit with nothing staged or no message", async () => {
@@ -265,6 +295,7 @@ describe("git pane", () => {
 			<GitPane
 				gitHost={host({ commit, status: async () => status({ entries: [] }) })}
 				workspacePath="/work"
+				schemeId="oqto-dark"
 			/>,
 		);
 		await screen.findByText("main");
@@ -275,7 +306,13 @@ describe("git pane", () => {
 
 	it("commits the staged set with the typed message", async () => {
 		const commit = vi.fn(async () => "abc123");
-		render(<GitPane gitHost={host({ commit })} workspacePath="/work" />);
+		render(
+			<GitPane
+				gitHost={host({ commit })}
+				workspacePath="/work"
+				schemeId="oqto-dark"
+			/>,
+		);
 		await screen.findByText("main");
 		fireEvent.change(screen.getByLabelText("Commit message"), {
 			target: { value: "Fix the thing" },
@@ -302,6 +339,7 @@ describe("git pane", () => {
 					},
 				})}
 				workspacePath="/work"
+				schemeId="oqto-dark"
 			/>,
 		);
 		await screen.findByText("main");
@@ -313,7 +351,9 @@ describe("git pane", () => {
 	});
 
 	it("marks a branch another checkout already holds", async () => {
-		render(<GitPane gitHost={host()} workspacePath="/work" />);
+		render(
+			<GitPane gitHost={host()} workspacePath="/work" schemeId="oqto-dark" />,
+		);
 		await screen.findByText("main");
 		fireEvent.click(screen.getByRole("button", { name: "Switch branch" }));
 		expect(await screen.findByText("in another checkout")).toBeInTheDocument();
@@ -324,7 +364,13 @@ describe("git pane", () => {
 			operation: "push" as const,
 			summary: "everything up-to-date",
 		}));
-		render(<GitPane gitHost={host({ remote })} workspacePath="/work" />);
+		render(
+			<GitPane
+				gitHost={host({ remote })}
+				workspacePath="/work"
+				schemeId="oqto-dark"
+			/>,
+		);
 		await screen.findByText("main");
 		fireEvent.click(screen.getByRole("button", { name: "Push" }));
 		await waitFor(() => expect(remote).toHaveBeenCalledWith("/work", "push"));
@@ -352,6 +398,7 @@ describe("git pane", () => {
 					},
 				})}
 				workspacePath="/work"
+				schemeId="oqto-dark"
 			/>,
 		);
 		await screen.findByText("main");
@@ -373,6 +420,7 @@ describe("git pane", () => {
 					},
 				})}
 				workspacePath="/work"
+				schemeId="oqto-dark"
 			/>,
 		);
 		expect(await screen.findByText("not a git repository")).toBeInTheDocument();

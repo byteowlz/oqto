@@ -10,10 +10,14 @@ import { useTranslation } from "react-i18next";
 import type { GitEntry, GitHost } from "../platform/git-contract";
 import { GitBranchBar } from "./GitBranchBar";
 import { GitChanges } from "./GitChanges";
+import { GitDiff } from "./GitDiff";
 import { useGitStatus } from "./useGitStatus";
+import { usePaneWidth } from "./usePaneWidth";
 
 interface GitPaneProps {
 	readonly gitHost: GitHost;
+	/** The active colour scheme, so the diff wears the shell's own. */
+	readonly schemeId: string;
 	/** Host path of the work directory this repository lives in. */
 	readonly workspacePath: string;
 	/** The Container's own controls, placed in this pane's bar. */
@@ -30,9 +34,15 @@ export function unstaged(entries: readonly GitEntry[]): readonly GitEntry[] {
 	return entries.filter((entry) => entry.worktree !== " ");
 }
 
-export function GitPane({ gitHost, workspacePath, chrome }: GitPaneProps) {
+export function GitPane({
+	gitHost,
+	workspacePath,
+	schemeId,
+	chrome,
+}: GitPaneProps) {
 	const { t } = useTranslation();
 	const git = useGitStatus(gitHost, workspacePath);
+	const pane = usePaneWidth();
 	const [message, setMessage] = useState("");
 	const entries = git.status?.entries ?? [];
 	const stagedEntries = staged(entries);
@@ -49,7 +59,11 @@ export function GitPane({ gitHost, workspacePath, chrome }: GitPaneProps) {
 				.join(" ")
 		: "";
 	return (
-		<section className="wb-git" aria-label={t("oqtoUi.git.label")}>
+		<section
+			className="wb-git"
+			aria-label={t("oqtoUi.git.label")}
+			ref={pane.ref}
+		>
 			<header className="wb-git__bar">
 				<GitBranchBar
 					branches={git.branches}
@@ -90,7 +104,13 @@ export function GitPane({ gitHost, workspacePath, chrome }: GitPaneProps) {
 				{git.status?.truncated ? (
 					<p className="wb-git__note">{t("oqtoUi.git.truncated")}</p>
 				) : null}
-				{git.diff ? <pre className="wb-git__diff">{git.diff.patch}</pre> : null}
+				{git.diff ? (
+					<GitDiff
+						diff={git.diff}
+						width={pane.width}
+						dark={!schemeId.endsWith("-light")}
+					/>
+				) : null}
 			</div>
 			<footer className="wb-git__commit">
 				<input

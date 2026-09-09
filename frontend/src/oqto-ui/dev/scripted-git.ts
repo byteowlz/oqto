@@ -6,6 +6,20 @@
 
 import type { GitHost } from "../platform/git-contract";
 
+/** One small patch, so the dev route exercises the renderer, not an empty box. */
+const PATCH = [
+	"diff --git a/greeting.ts b/greeting.ts",
+	"index 1111111..2222222 100644",
+	"--- a/greeting.ts",
+	"+++ b/greeting.ts",
+	"@@ -1,4 +1,4 @@",
+	"export function greeting(name: string): string {",
+	"-\treturn `Hello, ${name}`;",
+	"+\treturn `Hello, ${name}!`;",
+	"}",
+	"",
+].join("\n");
+
 export function createScriptedGitHost(): GitHost {
 	return {
 		async status() {
@@ -14,12 +28,19 @@ export function createScriptedGitHost(): GitHost {
 				upstream: null,
 				ahead: 0,
 				behind: 0,
-				entries: [],
+				entries: [
+					{
+						path: "greeting.ts",
+						index: " ",
+						worktree: "M",
+						renamedFrom: null,
+					},
+				],
 				truncated: false,
 			};
 		},
 		async diff(_workspacePath, path, staged) {
-			return { path, staged, patch: "", truncated: false };
+			return { path, staged, patch: PATCH, truncated: false };
 		},
 		async log() {
 			return [];

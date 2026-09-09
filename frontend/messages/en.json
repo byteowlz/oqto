@@ -817,6 +817,7 @@
 			"edit": "Edit file"
 		},
 		"git": {
+			"diffTruncated": "Diff truncated.",
 			"branches": "Switch branch",
 			"inWorktree": "in another checkout",
 			"fetch": "Fetch",

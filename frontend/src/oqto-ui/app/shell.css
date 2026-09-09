@@ -3688,7 +3688,11 @@
 	margin: 0;
 	padding: 4px;
 	border: 1px solid var(--border);
-	background: color-mix(in srgb, var(--popover, var(--card)) 88%, var(--foreground));
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
 	list-style: none;
 }
 
@@ -3823,15 +3827,13 @@
 	color: var(--foreground);
 }
 
+/* The patch renderer brings its own layout; the pane gives it a frame. */
 .wb-git__diff {
 	margin: 8px 0 0;
-	padding: 8px;
+	border: 1px solid var(--border);
 	background: var(--card);
-	color: var(--foreground);
+	overflow: hidden;
 	font-size: 11px;
-	line-height: 16px;
-	white-space: pre;
-	overflow-x: auto;
 }
 
 .wb-git__commit {

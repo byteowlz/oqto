@@ -200,6 +200,7 @@ export function createContentRenderer(
 				<GitPane
 					gitHost={platform.git}
 					workspacePath={context.directory.path}
+					schemeId={theme.schemeId}
 					chrome={presentation.chrome}
 				/>
 			);
