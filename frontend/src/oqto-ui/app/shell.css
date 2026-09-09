@@ -3827,6 +3827,17 @@
 	color: var(--foreground);
 }
 
+/* The plain patch, shown until the renderer arrives or when it cannot. */
+.wb-git__patch {
+	margin: 0;
+	padding: 8px;
+	color: var(--foreground);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: pre;
+	overflow-x: auto;
+}
+
 /* The patch renderer brings its own layout; the pane gives it a frame. */
 .wb-git__diff {
 	margin: 8px 0 0;

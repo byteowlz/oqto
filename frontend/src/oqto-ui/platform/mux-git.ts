@@ -78,7 +78,15 @@ interface Pending {
 	readonly resolve: (value: PendingValue) => void;
 	readonly reject: (error: Error) => void;
 	readonly expect: string;
+	readonly timer: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * A request the host never answers must not spin forever. A host without
+ * this channel answers on `system` instead, which is why those errors fail
+ * the requests in flight rather than being ignored.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function toStatus(message: GitEvent): GitStatus {
 	return {
@@ -120,16 +128,20 @@ export function createMuxGitHost(openSocket: () => MuxSocket): GitHost {
 			} catch {
 				return;
 			}
+			if (message.channel === "system" && message.type === "error") {
+				failAll(new Error(message.error ?? "connection error"));
+				return;
+			}
 			if (message.channel !== "git" || !message.id) return;
 			const waiting = pending.get(message.id);
 			if (!waiting) return;
 			if (message.type === "error") {
-				pending.delete(message.id);
+				settle(message.id);
 				waiting.reject(new Error(message.error ?? "git error"));
 				return;
 			}
 			if (message.type !== waiting.expect) return;
-			pending.delete(message.id);
+			settle(message.id);
 			if (message.type === "status_result") {
 				waiting.resolve(toStatus(message));
 			} else if (message.type === "diff_result") {
@@ -177,10 +189,24 @@ export function createMuxGitHost(openSocket: () => MuxSocket): GitHost {
 		created.onclose = () => {
 			open = false;
 			socket = null;
-			for (const waiting of pending.values())
-				waiting.reject(new Error("git socket closed"));
-			pending.clear();
+			failAll(new Error("git socket closed"));
 		};
+	}
+
+	/** Clears a request's timer and forgets it. */
+	function settle(id: string): void {
+		const waiting = pending.get(id);
+		if (!waiting) return;
+		clearTimeout(waiting.timer);
+		pending.delete(id);
+	}
+
+	function failAll(error: Error): void {
+		for (const [id, waiting] of pending) {
+			clearTimeout(waiting.timer);
+			pending.delete(id);
+			waiting.reject(error);
+		}
 	}
 
 	function request<Value extends PendingValue>(
@@ -190,10 +216,15 @@ export function createMuxGitHost(openSocket: () => MuxSocket): GitHost {
 		nextId += 1;
 		const id = `git-${nextId}`;
 		return new Promise<Value>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				pending.delete(id);
+				reject(new Error(`git ${command.type} timed out`));
+			}, REQUEST_TIMEOUT_MS);
 			pending.set(id, {
 				resolve: resolve as (value: PendingValue) => void,
 				reject,
 				expect,
+				timer,
 			});
 			const frame = JSON.stringify({ channel: "git", id, ...command });
 			if (open && socket) socket.send(frame);

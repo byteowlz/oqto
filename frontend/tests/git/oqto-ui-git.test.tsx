@@ -212,6 +212,21 @@ describe("git adapter", () => {
 		});
 	});
 
+	it("fails in flight when the host has no git channel at all", async () => {
+		const { socket } = fakeSocket();
+		const git = createMuxGitHost(() => socket);
+		const pending = git.status("/work/repo");
+		socket.open();
+		// An older host answers an unknown channel on `system`; without this the
+		// request would wait for a reply that is never coming.
+		socket.deliver({
+			channel: "system",
+			type: "error",
+			error: "Invalid command: unknown variant `git`",
+		});
+		await expect(pending).rejects.toThrow("unknown variant `git`");
+	});
+
 	it("rejects the matching request on a channel error", async () => {
 		const { socket } = fakeSocket();
 		const git = createMuxGitHost(() => socket);
