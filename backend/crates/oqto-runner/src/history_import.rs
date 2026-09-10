@@ -67,6 +67,7 @@ mod tests {
             history_read: Some(HistoryReadConfig {
                 account_id: "owner".into(),
                 home: home.path().to_owned(),
+                workspace_roots: Vec::new(),
             }),
             ..Default::default()
         };
@@ -102,6 +103,7 @@ mod tests {
             history_read: Some(HistoryReadConfig {
                 account_id: "owner".into(),
                 home: home.path().to_owned(),
+                workspace_roots: Vec::new(),
             }),
             ..Default::default()
         };
