@@ -1292,7 +1292,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 					)}
 				</div>
 			)}
-			<SidebarMachines onNewSessionInDirectory={onNewChatInProject} />
+			<div className="px-1">
+				<SidebarMachines onNewSessionInDirectory={onNewChatInProject} />
+			</div>
 		</div>
 	);
 });

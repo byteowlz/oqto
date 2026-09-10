@@ -38,6 +38,41 @@ impl std::fmt::Debug for HistoryReadResponse {
     }
 }
 
+/// The catalog is rebuilt by opening and migrating every workspace store on this
+/// machine, which costs about a second for a large history. Expanding a machine
+/// in the UI must not pay that each time, so a recent catalog is reused briefly.
+/// Held per source home, dropped on age, and never written to disk.
+const CATALOG_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+type CatalogEntry = (
+    std::time::Instant,
+    std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>,
+);
+static CATALOG_CACHE: once_cell::sync::Lazy<
+    tokio::sync::Mutex<std::collections::HashMap<PathBuf, CatalogEntry>>,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+async fn catalog(
+    home: &std::path::Path,
+) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
+    {
+        let cache = CATALOG_CACHE.lock().await;
+        if let Some((at, rows)) = cache.get(home)
+            && at.elapsed() < CATALOG_TTL
+        {
+            return Ok(rows.clone());
+        }
+    }
+    let rows = std::sync::Arc::new(oqto_history::oqto_log::ops::list_sessions(home, None).await?);
+    let mut cache = CATALOG_CACHE.lock().await;
+    cache.retain(|_, (at, _)| at.elapsed() < CATALOG_TTL);
+    cache.insert(
+        home.to_path_buf(),
+        (std::time::Instant::now(), rows.clone()),
+    );
+    Ok(rows)
+}
+
 pub async fn read(
     config: Option<&HistoryReadConfig>,
     dedicated: bool,
@@ -52,15 +87,15 @@ pub async fn read(
         config.home.is_absolute() && config.home.is_dir(),
         "History home unavailable"
     );
-    let rows = oqto_history::oqto_log::ops::list_sessions(&config.home, None).await?;
+    let rows = catalog(&config.home).await?;
     let mut identities = std::collections::HashMap::new();
-    for row in &rows {
+    for row in rows.iter() {
         *identities.entry(row.platform_id.clone()).or_insert(0_usize) += 1;
     }
     let data = match request.operation {
         HistoryReadOperation::List {} => {
             let sessions: Vec<_> = rows
-                .into_iter()
+                .iter()
                 .filter(|row| {
                     !row.platform_id.is_empty() && identities.get(&row.platform_id) == Some(&1)
                 })
@@ -121,6 +156,37 @@ mod tests {
             assert_eq!(result.unwrap_err().to_string(), "History access denied");
         }
     }
+    #[tokio::test]
+    async fn a_cached_catalog_is_reused_briefly_and_then_expires() {
+        let home = tempfile::tempdir().unwrap();
+        let rows = catalog(home.path()).await.unwrap();
+        let again = catalog(home.path()).await.unwrap();
+        assert!(
+            std::sync::Arc::ptr_eq(&rows, &again),
+            "a second read within the TTL must reuse the catalog"
+        );
+
+        // Age the entry past its TTL: the next read must rebuild rather than
+        // serve history that no longer reflects the machine.
+        {
+            let mut cache = CATALOG_CACHE.lock().await;
+            let entry = cache.get_mut(home.path()).expect("cached");
+            entry.0 = std::time::Instant::now() - CATALOG_TTL - std::time::Duration::from_secs(1);
+        }
+        let rebuilt = catalog(home.path()).await.unwrap();
+        assert!(
+            !std::sync::Arc::ptr_eq(&rows, &rebuilt),
+            "stale catalog served"
+        );
+
+        // Distinct machines never share a catalog.
+        let other = tempfile::tempdir().unwrap();
+        assert!(!std::sync::Arc::ptr_eq(
+            &catalog(home.path()).await.unwrap(),
+            &catalog(other.path()).await.unwrap()
+        ));
+    }
+
     #[tokio::test]
     async fn reads_canonical_history_without_touching_pi_or_accepting_harness_ids() {
         let home = tempfile::tempdir().unwrap();

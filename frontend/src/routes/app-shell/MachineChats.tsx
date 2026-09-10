@@ -104,15 +104,13 @@ export function MachineChats({
 					aria-label={`${label} chat history`}
 					title={online ? label : `${label} (offline)`}
 				>
-					{expanded ? (
-						<ChevronDown
-							className={cn("text-muted-foreground flex-shrink-0", iconSize)}
-						/>
-					) : (
-						<ChevronRight
-							className={cn("text-muted-foreground flex-shrink-0", iconSize)}
-						/>
-					)}
+					<span className="rounded p-0.5 flex-shrink-0">
+						{expanded ? (
+							<ChevronDown className={cn("text-muted-foreground", iconSize)} />
+						) : (
+							<ChevronRight className={cn("text-muted-foreground", iconSize)} />
+						)}
+					</span>
 					<span className="text-muted-foreground text-xs truncate">
 						{label}
 					</span>
