@@ -31,15 +31,16 @@ export function RunnerTargets({
 		gcTime: 0,
 		retry: false,
 	});
-	if (query.isPending) return null;
-	if (!query.isError && !query.data?.length) return null;
+	// An unverifiable roster is worse than none: showing the previous status
+	// would claim a machine is Online when that can no longer be confirmed, and
+	// a standalone error block just occupies the sidebar with nothing to act on.
+	const targets = query.isError ? [] : (query.data ?? []);
+	if (!targets.length) return null;
 	const contents = (
 		<>
-			{query.isError ? (
-				<output>{t("oqtoUi.runnerTargets.refreshFailed")}</output>
-			) : (
+			{
 				<ul aria-label={t("oqtoUi.runnerTargets.title")}>
-					{query.data?.map((target) => (
+					{targets.map((target) => (
 						<li key={target.id} data-connection={target.connection}>
 							<Monitor aria-hidden="true" />
 							{actions?.(target)}
@@ -69,7 +70,7 @@ export function RunnerTargets({
 						</li>
 					))}
 				</ul>
-			)}
+			}
 		</>
 	);
 	if (presentation === "rows") {
