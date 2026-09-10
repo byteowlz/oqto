@@ -295,11 +295,15 @@ pub enum PiEvent {
         #[serde(rename = "toolResults", default)]
         tool_results: Vec<ToolResultMessage>,
     },
+    /// Agent has finished and is idle again.
+    AgentSettled,
     /// Message begins.
     MessageStart { message: AgentMessage },
     /// Streaming update.
     MessageUpdate {
-        message: AgentMessage,
+        /// Pi 0.85.1 streams deltas without restating the message.
+        #[serde(default)]
+        message: Option<AgentMessage>,
         #[serde(rename = "assistantMessageEvent")]
         assistant_message_event: Box<AssistantMessageEvent>,
     },
@@ -378,34 +382,58 @@ pub enum PiEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageEvent {
     Start {
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextEnd {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         content: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingEnd {
@@ -414,17 +442,29 @@ pub enum AssistantMessageEvent {
         /// The thinking content (Pi sends this as "content" not "thinking")
         #[serde(alias = "thinking")]
         content: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallEnd {
@@ -432,6 +472,10 @@ pub enum AssistantMessageEvent {
         content_index: usize,
         #[serde(rename = "toolCall")]
         tool_call: ToolCall,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     Done {
