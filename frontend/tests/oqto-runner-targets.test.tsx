@@ -31,12 +31,17 @@ describe("runner target boundary", () => {
 			},
 		]);
 	});
+	it("carries an explicit execution grant rather than assuming none", () => {
+		const [granted] = parseRunnerTargets([{ ...row, session_creation: true }]);
+		expect(granted.sessionCreation).toBe(true);
+		expect(parseRunnerTargets([row])[0].sessionCreation).toBe(false);
+	});
 	it("rejects unsupported admission and malformed or duplicate targets", () => {
 		for (const value of [
 			null,
 			[{}],
 			[{ ...row, connection: "ready" }],
-			[{ ...row, session_creation: true }],
+			[{ ...row, session_creation: "yes" }],
 			[{ ...row, checked_at: "invalid" }],
 			[row, row],
 		]) {
@@ -64,7 +69,7 @@ describe("runner target boundary", () => {
 			).toBeUndefined(),
 		);
 	});
-	it("hides stale Online status when the control plane becomes unavailable", async () => {
+	it("withdraws the roster entirely when the control plane becomes unavailable", async () => {
 		const client = new QueryClient();
 		const list = vi.fn().mockResolvedValue(parseRunnerTargets([row]));
 		render(
@@ -77,7 +82,10 @@ describe("runner target boundary", () => {
 		await client.invalidateQueries({
 			queryKey: ["oqto-runner-targets", "test"],
 		});
-		expect(await screen.findByText("Machine status unavailable")).toBeVisible();
-		expect(screen.queryByText("Online")).toBeNull();
+		await waitFor(() => expect(screen.queryByText("Online")).toBeNull());
+		// No stale status, and no error block left sitting in the sidebar.
+		expect(screen.queryByText("Machine status unavailable")).toBeNull();
+		expect(screen.queryByText("Mac")).toBeNull();
+		expect(document.querySelector(".wb-runner-targets")).toBeNull();
 	});
 });

@@ -86,6 +86,11 @@ pub async fn get_io_session_for_workspace(
         })?;
     let session_owner = match &target {
         ExecutionTarget::Personal => user.id().to_string(),
+        ExecutionTarget::RemoteMachine { machine_id, .. } => state
+            .runner_targets
+            .execution_grant(user.id(), machine_id)
+            .map_err(|_| StatusCode::FORBIDDEN)?
+            .principal,
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state.shared_workspaces.as_ref().ok_or_else(|| {
                 error!(

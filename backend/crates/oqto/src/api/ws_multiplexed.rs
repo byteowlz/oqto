@@ -3088,16 +3088,17 @@ mod tests {
 
     #[tokio::test]
     async fn session_identity_isolation_client_ids_are_scoped_per_session() {
-        clear_client_ids_for_session("sess-a").await;
-        clear_client_ids_for_session("sess-b").await;
+        // Disjoint from the concurrent test: this cache is process-global.
+        clear_client_ids_for_session("scoped-sess-a").await;
+        clear_client_ids_for_session("scoped-sess-b").await;
 
-        mark_client_id_accepted("sess-a", Some("cid-1")).await;
+        mark_client_id_accepted("scoped-sess-a", Some("cid-1")).await;
 
-        assert!(has_accepted_client_id("sess-a", Some("cid-1")).await);
-        assert!(!has_accepted_client_id("sess-b", Some("cid-1")).await);
+        assert!(has_accepted_client_id("scoped-sess-a", Some("cid-1")).await);
+        assert!(!has_accepted_client_id("scoped-sess-b", Some("cid-1")).await);
 
-        clear_client_ids_for_session("sess-a").await;
-        clear_client_ids_for_session("sess-b").await;
+        clear_client_ids_for_session("scoped-sess-a").await;
+        clear_client_ids_for_session("scoped-sess-b").await;
     }
 
     #[tokio::test]

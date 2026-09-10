@@ -128,6 +128,20 @@ pub async fn validate_workspace_path(
         .map_err(|e| ApiError::internal(format!("Failed to resolve workspace target: {e}")))?
     {
         ExecutionTarget::Personal => user_id.to_string(),
+        // The machine's grant is the authority for its own paths. This host
+        // cannot stat them, and the machine principal is not an account here,
+        // so local validation would both fail and ask the wrong question.
+        ExecutionTarget::RemoteMachine { machine_id, .. } => {
+            let grant = state
+                .runner_targets
+                .execution_grant(user_id, &machine_id)
+                .map_err(|_| ApiError::forbidden("Remote execution denied"))?;
+            let requested = PathBuf::from(workspace_path);
+            if !grant.permits(&requested) {
+                return Err(ApiError::forbidden("Remote execution denied"));
+            }
+            return Ok(requested);
+        }
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state
                 .shared_workspaces

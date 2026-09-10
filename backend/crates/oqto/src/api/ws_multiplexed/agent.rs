@@ -50,6 +50,26 @@ pub(super) async fn handle_agent_command(
                 {
                     ExecutionTarget::Personal
                 }
+                SessionTargetScope::RemoteMachine
+                    if binding.owner_user_id.as_deref() == Some(user_id) =>
+                {
+                    match (binding.workspace_id.clone(), binding.workspace_path.clone()) {
+                        (Some(machine_id), Some(workspace_path)) => {
+                            ExecutionTarget::RemoteMachine {
+                                machine_id,
+                                workspace_path,
+                            }
+                        }
+                        _ => {
+                            return Some(agent_response(
+                                &session_id,
+                                id,
+                                "error",
+                                Err("Session machine binding missing".into()),
+                            ));
+                        }
+                    }
+                }
                 SessionTargetScope::SharedWorkspace => match binding.workspace_id {
                     Some(workspace_id) => ExecutionTarget::SharedWorkspace { workspace_id },
                     None => {
@@ -61,7 +81,7 @@ pub(super) async fn handle_agent_command(
                         ));
                     }
                 },
-                SessionTargetScope::Personal => {
+                SessionTargetScope::Personal | SessionTargetScope::RemoteMachine => {
                     return Some(agent_response(
                         &session_id,
                         id,
@@ -219,6 +239,16 @@ pub(super) async fn handle_agent_command(
                                         ExecutionTarget::SharedWorkspace { workspace_id }
                                     })
                                 }
+                                SessionTargetScope::RemoteMachine => record
+                                    .workspace_id
+                                    .clone()
+                                    .zip(record.workspace_path.clone())
+                                    .map(|(machine_id, workspace_path)| {
+                                        ExecutionTarget::RemoteMachine {
+                                            machine_id,
+                                            workspace_path,
+                                        }
+                                    }),
                             };
 
                             // Self-heal stale target rows: some older sessions were
@@ -554,6 +584,17 @@ pub(super) async fn handle_agent_command(
                                     owner_user_id: Some(user_id.to_string()),
                                     scope: SessionTargetScope::Personal,
                                     workspace_id: None,
+                                    workspace_path: Some(cwd_string.clone()),
+                                },
+                            ),
+                            ExecutionTarget::RemoteMachine { machine_id, .. } => (
+                                "remote_machine",
+                                None,
+                                SessionTargetRecord {
+                                    session_id: session_id.clone(),
+                                    owner_user_id: Some(user_id.to_string()),
+                                    scope: SessionTargetScope::RemoteMachine,
+                                    workspace_id: Some(machine_id.clone()),
                                     workspace_path: Some(cwd_string.clone()),
                                 },
                             ),

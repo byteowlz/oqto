@@ -623,8 +623,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 				>
 					{t("oqtoUi.runnerTargets.title")}
 				</h2>
-				<SidebarMachines />
-				{/* Local machine actions and its session list; remote rows are peers. */}
+				{/* Local machine actions and its session list; remote machines follow below. */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
 						{onToggleSessionsExpanded && (
@@ -1293,6 +1292,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 					)}
 				</div>
 			)}
+			<div className="px-1">
+				<SidebarMachines onNewSessionInDirectory={onNewChatInProject} />
+			</div>
 		</div>
 	);
 });

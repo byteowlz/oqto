@@ -1,5 +1,7 @@
+use super::pool_cache::PoolCache;
+#[cfg(test)]
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use once_cell::sync::Lazy;
@@ -14,8 +16,7 @@ use crate::oqto_log::ids::{MessageIdInput, TurnIdInput, derive_message_id, deriv
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
 use oqto_pi::AgentMessage;
 
-static OQTO_LOG_POOLS: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static OQTO_LOG_POOLS: Lazy<Mutex<PoolCache>> = Lazy::new(|| Mutex::new(PoolCache::default()));
 
 static OQTO_LOG_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations_oqto_log");
 
@@ -199,7 +200,7 @@ pub(crate) async fn open_workspace_pool(
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 
     {
-        let pools = OQTO_LOG_POOLS.lock().await;
+        let mut pools = OQTO_LOG_POOLS.lock().await;
         if let Some(pool) = pools.get(&db_path) {
             return Ok(pool.clone());
         }

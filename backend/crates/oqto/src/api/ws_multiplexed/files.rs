@@ -130,8 +130,33 @@ pub(super) async fn handle_files_command(
     // Container-placed workspaces must use their placement runner. Their
     // auto-userns volumes are intentionally inaccessible to both the backend
     // process and the connection-level host runner.
+    // A machine owns its own files: never serve them from this host, whether or
+    // not container placements are configured here.
+    let workspace_root_str = workspace_root.to_string_lossy().to_string();
+    let remote_machine_plane: Option<Arc<dyn UserPlane>> =
+        match resolve_target_for_workspace_path(state, user_id, &workspace_root_str).await {
+            Ok(target @ ExecutionTarget::RemoteMachine { .. }) => {
+                match resolve_runner_for_target(state, user_id, &target).await {
+                    Ok(Some(client)) => {
+                        let base: Arc<dyn UserPlane> = Arc::new(RunnerUserPlane::new(client));
+                        Some(Arc::new(MeteredUserPlane::new(
+                            base,
+                            UserPlanePath::Runner,
+                            state.user_plane_metrics.clone(),
+                        )))
+                    }
+                    _ => {
+                        return Some(WsEvent::Files(FilesWsEvent::Error {
+                            id,
+                            error: "File access unavailable: machine is not reachable".to_string(),
+                        }));
+                    }
+                }
+            }
+            _ => None,
+        };
+
     let placement_plane: Option<Arc<dyn UserPlane>> = if state.placement_manager.is_some() {
-        let workspace_root_str = workspace_root.to_string_lossy();
         match resolve_target_for_workspace_path(state, user_id, &workspace_root_str).await {
             Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
                 Ok(Some(client)) => {
@@ -162,7 +187,9 @@ pub(super) async fn handle_files_command(
     };
 
     let is_multi_user = state.user_isolation_enabled();
-    let user_plane: Arc<dyn UserPlane> = if let Some(plane) = placement_plane {
+    let user_plane: Arc<dyn UserPlane> = if let Some(plane) = remote_machine_plane {
+        plane
+    } else if let Some(plane) = placement_plane {
         plane
     } else if is_multi_user {
         let Some(pattern) = state.runner_socket_pattern.as_deref() else {
@@ -694,6 +721,11 @@ async fn resolve_terminal_session_owner_for_target(
 ) -> Result<String, String> {
     match target {
         ExecutionTarget::Personal => Ok(user_id.to_string()),
+        ExecutionTarget::RemoteMachine { machine_id, .. } => state
+            .runner_targets
+            .execution_grant(user_id, machine_id)
+            .map(|grant| grant.principal)
+            .map_err(|_| "Remote execution denied".to_string()),
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state
                 .shared_workspaces
@@ -760,6 +792,32 @@ pub(super) async fn resolve_terminal_session(
                                 );
                             }
                             user_id.to_string()
+                        }
+                        SessionTargetScope::RemoteMachine => {
+                            if let Some(ref owner_user_id) = record.owner_user_id
+                                && owner_user_id != user_id
+                            {
+                                return Err(
+                                    "Access denied: session does not belong to this user".into()
+                                );
+                            }
+                            let machine_id = record.workspace_id.clone().ok_or_else(|| {
+                                "Invalid session target metadata: missing machine id".to_string()
+                            })?;
+                            let workspace_path =
+                                record.workspace_path.clone().ok_or_else(|| {
+                                    "Invalid session target metadata: missing workspace path"
+                                        .to_string()
+                                })?;
+                            resolve_terminal_session_owner_for_target(
+                                state,
+                                user_id,
+                                &ExecutionTarget::RemoteMachine {
+                                    machine_id,
+                                    workspace_path,
+                                },
+                            )
+                            .await?
                         }
                         SessionTargetScope::SharedWorkspace => {
                             let workspace_id = record.workspace_id.ok_or_else(|| {

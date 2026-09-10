@@ -553,11 +553,9 @@ mod validator_streamed_tail_tests {
         )
         .expect("write");
 
-        let db_path = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
-            temp.path(),
-            workspace,
-        )
-        .expect("db path");
+        let db_path =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
+                .expect("db path");
         std::fs::create_dir_all(db_path.parent().unwrap()).expect("mkdir db");
         let pool = sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new()
@@ -566,7 +564,7 @@ mod validator_streamed_tail_tests {
         )
         .await
         .expect("open");
-        oqto_history::oqto_log::store::migrate_db_path(&db_path)
+        crate::oqto_log::store::migrate_db_path(&db_path)
             .await
             .expect("migrate");
         let seeded = sqlx::query(

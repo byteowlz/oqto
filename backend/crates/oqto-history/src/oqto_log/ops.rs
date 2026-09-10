@@ -604,8 +604,35 @@ pub async fn list_sessions(
     user_home: &Path,
     workspace: Option<&str>,
 ) -> Result<Vec<OqtoLogSessionRow>> {
+    list_sessions_from(list_db_paths(user_home), workspace).await
+}
+
+/// List sessions for an explicit set of workspaces.
+///
+/// Scanning every store on the machine is both slow and wrong for a scoped
+/// reader: Pi writes history wherever it is run, so a machine accumulates
+/// stores for directories the operator never designated as workspaces. Callers
+/// that own a workspace allowlist resolve stores directly instead.
+pub async fn list_sessions_for_workspaces(
+    user_home: &Path,
+    workspaces: &[String],
+) -> Result<Vec<OqtoLogSessionRow>> {
+    let dbs = workspaces
+        .iter()
+        .map(|workspace| {
+            crate::oqto_log::paths::existing_user_home_workspace_db_path(user_home, workspace)
+        })
+        .filter(|db| db.exists())
+        .collect();
+    list_sessions_from(dbs, None).await
+}
+
+async fn list_sessions_from(
+    dbs: Vec<PathBuf>,
+    workspace: Option<&str>,
+) -> Result<Vec<OqtoLogSessionRow>> {
     let mut sessions = Vec::new();
-    for db in list_db_paths(user_home) {
+    for db in dbs {
         crate::oqto_log::store::migrate_db_path(&db).await?;
         let options = SqliteConnectOptions::new().filename(&db).read_only(true);
         let pool = match SqlitePoolOptions::new()

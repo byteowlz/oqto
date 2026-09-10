@@ -3,7 +3,7 @@
 //! This module intentionally returns neutral `oqto_protocol::projection` DTOs so
 //! storage/projection code does not depend on runner wire types.
 
-use std::collections::HashMap;
+use super::pool_cache::PoolCache;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -18,8 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
 
-static PROJECTOR_POOLS: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static PROJECTOR_POOLS: Lazy<Mutex<PoolCache>> = Lazy::new(|| Mutex::new(PoolCache::default()));
 
 fn projected_created_at_ms_sql() -> &'static str {
     r#"CASE
@@ -40,7 +39,7 @@ async fn open_pool_for_workspace(user_home: &Path, workspace_id: &str) -> Result
     let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
 
     {
-        let pools = PROJECTOR_POOLS.lock().await;
+        let mut pools = PROJECTOR_POOLS.lock().await;
         if let Some(pool) = pools.get(&db_path) {
             return Ok(pool.clone());
         }

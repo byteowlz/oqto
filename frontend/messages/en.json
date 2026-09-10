@@ -738,10 +738,12 @@
 		},
 		"runnerTargets": {
 			"title": "Machines",
-			"thisMachine": "This machine",
+			"thisMachine": "Hub",
+			"executionReady": "Sessions and history",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update needed",
+			"historyOnly": "Chat history only",
 			"connectionOnly": "Chat not enabled",
 			"refreshFailed": "Machine status unavailable",
 			"checkedAt": "Last checked {{time}}"

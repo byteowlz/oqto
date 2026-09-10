@@ -15,6 +15,14 @@ pub enum ExecutionTarget {
     Personal,
     /// Shared workspace runner (resolved via workspace -> linux_user mapping).
     SharedWorkspace { workspace_id: String },
+    /// A machine Oqto does not own, reached through an explicit execution grant.
+    ///
+    /// The path is carried because the grant's roots, not a placement record,
+    /// bound what may run there.
+    RemoteMachine {
+        machine_id: String,
+        workspace_path: String,
+    },
 }
 
 impl ExecutionTarget {
@@ -25,8 +33,16 @@ impl ExecutionTarget {
             Self::SharedWorkspace { workspace_id } => {
                 format!("target:shared:{workspace_id}")
             }
+            Self::RemoteMachine { machine_id, .. } => format!("target:machine:{machine_id}"),
         }
     }
+}
+
+/// Service ports on a machine Oqto does not own would need a reverse tunnel
+/// from that machine back to this host; until one exists, refuse rather than
+/// dial a loopback address that belongs to the wrong machine.
+async fn exposed_service_target_on(_client: &RunnerClient, port: u16) -> Result<ServiceTarget> {
+    anyhow::bail!("port {port} previews are not available on a remote machine yet")
 }
 
 /// Backend-dialable address of a workspace service (fileserver, ttyd,
@@ -64,6 +80,14 @@ pub async fn resolve_service_target(
     let workspace_id = match target {
         ExecutionTarget::Personal => user_id,
         ExecutionTarget::SharedWorkspace { workspace_id } => workspace_id.as_str(),
+        // A remote machine has no placement here; its runner exposes ports itself.
+        ExecutionTarget::RemoteMachine { machine_id, .. } => {
+            let client = state
+                .runner_targets
+                .execution_client(user_id, machine_id)
+                .context("remote execution denied")?;
+            return exposed_service_target_on(&client, port).await;
+        }
     };
     let Some(record) = store.find_workspace(workspace_id).await? else {
         return Ok(localhost);
@@ -123,6 +147,21 @@ fn translate_exposed_socket(
 }
 
 async fn authorize_target(state: &AppState, user_id: &str, target: &ExecutionTarget) -> Result<()> {
+    if let ExecutionTarget::RemoteMachine {
+        machine_id,
+        workspace_path,
+    } = target
+    {
+        let grant = state
+            .runner_targets
+            .execution_grant(user_id, machine_id)
+            .context("remote execution denied")?;
+        anyhow::ensure!(
+            grant.permits(std::path::Path::new(workspace_path)),
+            "remote execution denied outside the machine's authorized roots"
+        );
+        return Ok(());
+    }
     if let ExecutionTarget::SharedWorkspace { workspace_id } = target {
         let service = state
             .shared_workspaces
@@ -146,10 +185,23 @@ pub async fn resolve_runner_for_target(
 ) -> Result<Option<RunnerClient>> {
     // Placement reachability never substitutes for Workspace authorization.
     authorize_target(state, user_id, target).await?;
+    // A remote machine runs its own runner: it has no placement or Linux user here.
+    if let ExecutionTarget::RemoteMachine { machine_id, .. } = target {
+        let client = state
+            .runner_targets
+            .execution_client(user_id, machine_id)
+            .context("remote execution denied")?;
+        client
+            .ensure_ready_with_recovery()
+            .await
+            .with_context(|| format!("machine {machine_id} is not ready"))?;
+        return Ok(Some(client));
+    }
     if let Some(store) = &state.placement_store {
         let workspace_id = match target {
             ExecutionTarget::Personal => user_id,
             ExecutionTarget::SharedWorkspace { workspace_id } => workspace_id,
+            ExecutionTarget::RemoteMachine { .. } => unreachable!("resolved above"),
         };
         if let Some(endpoint) = store.resolve_workspace(workspace_id).await? {
             let client = RunnerClient::from_endpoint(&endpoint).with_context(|| {
@@ -201,6 +253,7 @@ pub async fn resolve_runner_for_target(
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             resolve_shared_workspace_runner(state, user_id, workspace_id).await
         }
+        ExecutionTarget::RemoteMachine { .. } => unreachable!("resolved above"),
     }
 }
 
@@ -314,6 +367,17 @@ pub async fn resolve_target_for_workspace_path(
     user_id: &str,
     workspace_path: &str,
 ) -> Result<ExecutionTarget> {
+    // An authorized machine root wins: those paths do not exist on this host.
+    if let Some((machine_id, _)) = state
+        .runner_targets
+        .machine_for_path(user_id, std::path::Path::new(workspace_path))
+    {
+        return Ok(ExecutionTarget::RemoteMachine {
+            machine_id,
+            workspace_path: workspace_path.to_string(),
+        });
+    }
+
     if let Some(sw_service) = state.shared_workspaces.as_ref()
         && let Some((ws, _role)) = sw_service
             .check_access_for_path(workspace_path, user_id)

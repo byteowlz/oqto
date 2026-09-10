@@ -735,10 +735,12 @@
 		},
 		"runnerTargets": {
 			"title": "Rechner",
-			"thisMachine": "Dieser Rechner",
+			"thisMachine": "Hub",
+			"executionReady": "Sitzungen und Verlauf",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update erforderlich",
+			"historyOnly": "Nur Chat-Verlauf",
 			"connectionOnly": "Verbindungsziel · Chat noch nicht verfügbar",
 			"refreshFailed": "Rechnerstatus nicht verfügbar",
 			"checkedAt": "Zuletzt geprüft: {{time}}"

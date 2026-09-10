@@ -15,7 +15,7 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
-it("places one Machines heading below search and retains local session actions", () => {
+it("lists the hub first and additional machines below it", () => {
 	const newChat = vi.fn();
 	const props = {
 		locale: "en",
@@ -40,12 +40,13 @@ it("places one Machines heading below search and retains local session actions",
 	const heading = screen.getByRole("heading", { name: "Machines" });
 	const search = screen.getByRole("textbox");
 	const remote = screen.getByTestId("remote-machines");
-	const local = screen.getByText("This machine");
+	const local = screen.getByText("Hub");
 	const before = (a: Element, b: Element) =>
 		Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 	expect(before(search, heading)).toBe(true);
-	expect(before(heading, remote)).toBe(true);
-	expect(before(remote, local)).toBe(true);
+	expect(before(heading, local)).toBe(true);
+	// Additional machines are peers listed under the hub, not above it.
+	expect(before(local, remote)).toBe(true);
 	expect(screen.queryByText("Sessions", { selector: "span" })).toBeNull();
 	fireEvent.click(screen.getByTitle("New Session"));
 	expect(newChat).toHaveBeenCalledOnce();

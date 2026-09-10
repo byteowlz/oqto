@@ -2392,7 +2392,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             session::SessionService::new(session_repo, container_rt, session_config.clone())
         }
     };
-    let session_service = session_service.with_placement_store(placement_store.clone());
+    let runner_targets = Arc::new(
+        runner::targets::RunnerTargets::new(ctx.config.backend.runner.targets.clone())
+            .context("validating remote runner target configuration")?,
+    );
+    let session_service = session_service
+        .with_placement_store(placement_store.clone())
+        .with_remote_execution(runner_targets.clone());
 
     let mut sldr_users: Option<local::UserSldrManager> = None;
 
@@ -2546,10 +2552,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         max_proxy_body_bytes,
     );
     state = state.with_single_user(single_user);
-    state.runner_targets = Arc::new(
-        runner::targets::RunnerTargets::new(ctx.config.backend.runner.targets.clone())
-            .context("validating remote runner target configuration")?,
-    );
+    state.runner_targets = runner_targets.clone();
     state = state.with_feedback_config(ctx.config.feedback.clone());
     if ctx.config.apps.enabled {
         state = state.with_apps(apps::AppRuntimeService::new(
@@ -3025,6 +3028,13 @@ async fn backfill_sessions_for_target(
                 owner_user_id: None,
                 scope: SessionTargetScope::SharedWorkspace,
                 workspace_id: Some(workspace_id.clone()),
+                workspace_path: Some(session.workspace_path),
+            },
+            ExecutionTarget::RemoteMachine { machine_id, .. } => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: owner_user_id.map(ToOwned::to_owned),
+                scope: SessionTargetScope::RemoteMachine,
+                workspace_id: Some(machine_id.clone()),
                 workspace_path: Some(session.workspace_path),
             },
         };
