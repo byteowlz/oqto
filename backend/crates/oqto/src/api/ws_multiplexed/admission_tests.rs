@@ -421,3 +421,60 @@ async fn a_machine_path_routes_to_its_own_runner_and_nowhere_else() {
     );
     assert!(!root.path().join("personal-spy.sock").exists());
 }
+
+/// Panels that validate a workspace before using it (trx, workspace metadata)
+/// must not resolve a machine path against this host's filesystem. Doing so
+/// reported "workspace path does not exist" for a directory that exists on the
+/// machine, because the machine principal is not an account on this host.
+#[tokio::test]
+async fn validating_a_machine_workspace_does_not_stat_this_host() {
+    use crate::api::handlers::trx::validate_workspace_path;
+    use crate::runner::targets::{RemoteExecutionGrant, RunnerTargetConfig, RunnerTargets};
+
+    let root = tempfile::tempdir().unwrap();
+    let (mut state, owner) = state(root.path()).await;
+    state.runner_targets = Arc::new(
+        RunnerTargets::new(vec![RunnerTargetConfig {
+            id: "mac".into(),
+            label: "Mac".into(),
+            account_ids: vec![owner.clone()],
+            endpoint: oqto_runner::transport::RunnerEndpointConfig::TcpTls {
+                address: "127.0.0.1:9".parse().unwrap(),
+                server_name: "mac.runner".into(),
+                ca: root.path().join("missing-ca.pem"),
+                certificate: root.path().join("missing-cert.pem"),
+                key: root.path().join("missing-key.pem"),
+            },
+            provider_login: false,
+            history_read: false,
+            execution: Some(RemoteExecutionGrant {
+                principal: "tommy".into(),
+                roots: vec!["/Users/tommy/work".into()],
+            }),
+        }])
+        .unwrap(),
+    );
+
+    // Exists on the machine, never on this host.
+    let granted = "/Users/tommy/work/project";
+    assert!(!std::path::Path::new(granted).exists());
+    assert_eq!(
+        validate_workspace_path(&state, &owner, granted)
+            .await
+            .expect("a granted machine path is valid"),
+        std::path::PathBuf::from(granted)
+    );
+
+    // The grant still bounds it: outside the ceiling, or another Account, is refused
+    // rather than silently validated or resolved against this host.
+    assert!(
+        validate_workspace_path(&state, &owner, "/Users/tommy/.ssh")
+            .await
+            .is_err()
+    );
+    assert!(
+        validate_workspace_path(&state, "ungranted-account", granted)
+            .await
+            .is_err()
+    );
+}
