@@ -735,7 +735,8 @@
 		},
 		"runnerTargets": {
 			"title": "Rechner",
-			"thisMachine": "Dieser Rechner",
+			"thisMachine": "Hub",
+			"executionReady": "Sitzungen und Verlauf",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update erforderlich",

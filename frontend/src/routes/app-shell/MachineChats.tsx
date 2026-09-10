@@ -74,8 +74,11 @@ export function MachineChats({
 			return data.sessions;
 		},
 		enabled: expanded && online,
+		// Dropped as soon as the Account-scoped view unmounts, but kept while it
+		// is mounted: rebuilding a whole machine catalog on every expand costs a
+		// round trip plus a full scan of that machine's history stores.
 		gcTime: 0,
-		staleTime: 0,
+		staleTime: 5 * 60_000,
 		retry: false,
 	});
 	const groups = useMemo(
@@ -100,7 +103,7 @@ export function MachineChats({
 						<ChevronRight className={iconSize} />
 					)}
 				</button>
-				<span className="text-muted-foreground text-xs">{label}</span>
+				<span className="text-muted-foreground text-xs">Chats</span>
 				{catalog.data && (
 					<span className="text-muted-foreground/50 text-xs">
 						({catalog.data.length})
@@ -109,7 +112,7 @@ export function MachineChats({
 			</div>
 			{expanded && (
 				<div className="space-y-1 px-1">
-					{catalog.isPending && (
+					{catalog.isPending && !catalog.data && (
 						<p className="text-muted-foreground/50 text-xs px-1 py-1">
 							Loading chats…
 						</p>

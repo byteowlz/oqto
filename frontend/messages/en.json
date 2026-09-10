@@ -738,7 +738,8 @@
 		},
 		"runnerTargets": {
 			"title": "Machines",
-			"thisMachine": "This machine",
+			"thisMachine": "Hub",
+			"executionReady": "Sessions and history",
 			"online": "Online",
 			"unavailable": "Offline",
 			"incompatible": "Update needed",

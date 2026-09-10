@@ -43,14 +43,15 @@ export function RunnerTargets({
 					{targets.map((target) => (
 						<li key={target.id} data-connection={target.connection}>
 							<Monitor aria-hidden="true" />
-							{actions?.(target)}
 							<div className="wb-runner-targets__name">
 								<strong>{target.label}</strong>
 								<span>
 									{t(
-										target.historyRead
-											? "oqtoUi.runnerTargets.historyOnly"
-											: "oqtoUi.runnerTargets.connectionOnly",
+										target.sessionCreation
+											? "oqtoUi.runnerTargets.executionReady"
+											: target.historyRead
+												? "oqtoUi.runnerTargets.historyOnly"
+												: "oqtoUi.runnerTargets.connectionOnly",
 									)}
 								</span>
 							</div>
@@ -62,6 +63,7 @@ export function RunnerTargets({
 							>
 								{t(`oqtoUi.runnerTargets.${target.connection}`)}
 							</span>
+							{actions?.(target)}
 							{belowTarget ? (
 								<div className="wb-runner-targets__below">
 									{belowTarget(target)}
