@@ -20,6 +20,7 @@ const row = {
 	connection: "online",
 	checked_at: "2026-09-08T10:00:00Z",
 	session_creation: false,
+	history_read: true,
 };
 beforeAll(async () => {
 	await initI18n();
@@ -47,9 +48,10 @@ describe("original-shell machine inventory", () => {
 		vi.stubGlobal("fetch", fetcher);
 		render(shell(new QueryClient()));
 		expect(await screen.findByText("Mac")).toBeVisible();
-		expect(screen.getByText("Online")).toBeVisible();
+		// A machine is one sidebar row, not a status panel.
+		expect(screen.queryByText("Online")).toBeNull();
 		expect(screen.queryByText("Machines")).toBeNull();
-		expect(document.querySelector("details.wb-runner-targets")).toBeNull();
+		expect(document.querySelector(".wb-runner-targets")).toBeNull();
 		expect(fetcher).toHaveBeenCalledWith(
 			"https://control.example/api/runner-targets",
 			{
@@ -77,24 +79,33 @@ describe("original-shell machine inventory", () => {
 		await waitFor(() => expect(screen.queryByText("Mac")).toBeNull());
 		expect(fetcher).toHaveBeenCalledTimes(2);
 	});
-	it("describes the capability the machine actually has", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify([{ ...row, history_read: true }])),
-			),
-		);
-		render(shell(new QueryClient()));
-		expect(await screen.findByText("Chat history only")).toBeVisible();
-		expect(screen.queryByText("Chat not enabled")).toBeNull();
-	});
-	it("still reports machines without any chat capability", async () => {
+	it("keeps provider login out of the row until the machine offers it", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockResolvedValue(new Response(JSON.stringify([row]))),
 		);
 		render(shell(new QueryClient()));
-		expect(await screen.findByText("Chat not enabled")).toBeVisible();
+		await screen.findByText("Mac");
+		expect(screen.queryByRole("button", { name: /provider/i })).toBeNull();
+
+		cleanup();
+		vi.stubGlobal(
+			"fetch",
+			vi
+				.fn()
+				.mockResolvedValue(
+					new Response(JSON.stringify([{ ...row, provider_login: true }])),
+				),
+		);
+		render(shell(new QueryClient()));
+		expect(
+			await screen.findByRole("button", { name: /provider/i }),
+		).toBeVisible();
+	});
+	it("withholds a roster it cannot verify", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+		render(shell(new QueryClient()));
+		await waitFor(() => expect(screen.queryByText("Mac")).toBeNull());
 	});
 	it("does not probe before authentication", () => {
 		auth.user = null;

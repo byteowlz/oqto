@@ -5,6 +5,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	FolderKanban,
+	KeyRound,
 	MessageSquare,
 	Plus,
 } from "lucide-react";
@@ -53,6 +54,8 @@ export function MachineChats({
 	online,
 	isMobile,
 	onNewSession,
+	onOpenProviders,
+	providersLabel,
 }: {
 	scope: string;
 	label: string;
@@ -61,6 +64,9 @@ export function MachineChats({
 	isMobile: boolean;
 	/** Only supplied when this machine carries an execution grant. */
 	onNewSession?: (directory: string) => void;
+	/** Only supplied when this machine carries a provider-login grant. */
+	onOpenProviders?: () => void;
+	providersLabel?: string;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -88,26 +94,44 @@ export function MachineChats({
 	const iconSize = isMobile ? "w-4 h-4" : "w-3 h-3";
 	return (
 		<>
-			<div className="flex items-center gap-2 py-1.5 px-1">
+			<div className="flex items-center justify-between gap-2 py-1.5 px-1 group">
 				<button
 					type="button"
 					onClick={() => setExpanded(!expanded)}
 					disabled={!online}
-					className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded p-0.5 disabled:opacity-40"
+					className="flex flex-1 min-w-0 items-center gap-2 text-left disabled:opacity-40"
 					aria-expanded={expanded}
 					aria-label={`${label} chat history`}
+					title={online ? label : `${label} (offline)`}
 				>
 					{expanded ? (
-						<ChevronDown className={iconSize} />
+						<ChevronDown
+							className={cn("text-muted-foreground flex-shrink-0", iconSize)}
+						/>
 					) : (
-						<ChevronRight className={iconSize} />
+						<ChevronRight
+							className={cn("text-muted-foreground flex-shrink-0", iconSize)}
+						/>
+					)}
+					<span className="text-muted-foreground text-xs truncate">
+						{label}
+					</span>
+					{catalog.data && (
+						<span className="text-muted-foreground/50 text-xs">
+							({catalog.data.length})
+						</span>
 					)}
 				</button>
-				<span className="text-muted-foreground text-xs">Chats</span>
-				{catalog.data && (
-					<span className="text-muted-foreground/50 text-xs">
-						({catalog.data.length})
-					</span>
+				{onOpenProviders && (
+					<button
+						type="button"
+						onClick={onOpenProviders}
+						className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+						aria-label={providersLabel ?? `${label} providers`}
+						title={providersLabel ?? `${label} providers`}
+					>
+						<KeyRound className={iconSize} />
+					</button>
 				)}
 			</div>
 			{expanded && (
