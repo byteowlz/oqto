@@ -194,7 +194,7 @@
 
 @media (max-width: 48rem) {
 	:root[data-chat-agent="boxed"] {
-		--chat-turn-gap: 0.25rem;
+		--chat-turn-gap: 0.5rem;
 	}
 }
 

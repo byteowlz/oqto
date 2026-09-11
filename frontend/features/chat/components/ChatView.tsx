@@ -2521,7 +2521,7 @@ export function ChatView({
 													// The stylesheet already spaces turns; this only adds
 													// the room a phone cannot spare on top of it. The
 													// breakpoint matches use-mobile, not Tailwind's sm.
-													className={groupIndex > 0 ? "mt-1.5 md:mt-6" : ""}
+													className={groupIndex > 0 ? "mt-2.5 md:mt-6" : ""}
 												>
 													{modelChangeDivider}
 													<MessageGroupCard
