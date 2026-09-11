@@ -71,6 +71,7 @@ import {
 	type ChatFileAdapter,
 	MessageGroupCard,
 } from "@/lib/chat-rendering/CanonicalMessageRenderer";
+import { ChatSelectionToolbar } from "@/lib/chat-rendering/ChatSelectionToolbar";
 import { stripAnsiSequences } from "@/lib/chat-rendering/chat-render-text";
 import {
 	type MessageGroup,
@@ -2414,6 +2415,15 @@ export function ChatView({
 
 	return (
 		<>
+			<ChatSelectionToolbar
+				onQuote={(passage) => {
+					const current = inputValueRef.current;
+					setInput(
+						`${current}${current ? "\n\n" : ""}> ${passage.replace(/\n/g, "\n> ")}\n\n`,
+					);
+					inputRef.current?.focus();
+				}}
+			/>
 			<div className={cn("flex flex-col h-full min-h-0", className)}>
 				{!hideHeader && SessionHeader}
 
@@ -2446,7 +2456,11 @@ export function ChatView({
 					<div
 						ref={messagesContainerRef}
 						onScroll={handleScroll}
-						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide [overflow-anchor:none]"
+						// No frame and no inline padding: the turns carry their own
+						// borders, and any padding here would inset them from the edge
+						// the composer's own border sits on, so the two columns could
+						// never line up. The scroller is a scroller.
+						className="h-full overflow-y-auto scrollbar-hide [overflow-anchor:none]"
 						data-spotlight="chat-timeline"
 					>
 						<div>
@@ -2500,7 +2514,9 @@ export function ChatView({
 											return (
 												<div
 													key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
-													className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+													// The stylesheet already spaces turns; this only adds
+													// the room a phone cannot spare on top of it.
+													className={groupIndex > 0 ? "mt-1.5 sm:mt-6" : ""}
 												>
 													{modelChangeDivider}
 													<MessageGroupCard
