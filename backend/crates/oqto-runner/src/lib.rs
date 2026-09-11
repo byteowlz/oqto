@@ -10,6 +10,7 @@ pub mod daemon;
 pub mod endpoint_bridge;
 pub mod history_import;
 pub mod history_read;
+pub mod session_resume;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
 pub mod pi_manager;

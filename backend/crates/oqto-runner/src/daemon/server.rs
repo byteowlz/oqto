@@ -2423,13 +2423,43 @@ impl Runner {
             req.session_id, req.config.cwd
         );
 
+        // Only this host can see its own Pi session files, and a public session
+        // id is not a Pi filename, so resolution belongs here rather than on a
+        // control plane that cannot read either.
+        let continue_session = match req.config.continue_session {
+            Some(explicit) => Some(explicit),
+            None => {
+                let sources = crate::session_resume::SessionFileSources {
+                    pi_sessions_dir: self.user_config.pi_sessions_dir.clone(),
+                    history_home: self
+                        .user_config
+                        .history_read
+                        .as_ref()
+                        .map(|history| history.home.clone()),
+                };
+                let resolved = crate::session_resume::resolve_continue_session(
+                    &sources,
+                    &req.session_id,
+                    &req.config.cwd,
+                )
+                .await;
+                if let Some(found) = &resolved {
+                    info!(
+                        "pi_create_session: continuing {} from {:?}",
+                        req.session_id, found
+                    );
+                }
+                resolved
+            }
+        };
+
         // Convert protocol config to pi_manager config
         let pi_config = crate::pi_manager::PiSessionConfig {
             cwd: req.config.cwd,
             provider: req.config.provider,
             model: req.config.model,
             session_file: req.config.session_file,
-            continue_session: req.config.continue_session,
+            continue_session,
             env: req.config.env,
         };
 

@@ -457,8 +457,23 @@ pub(super) async fn handle_agent_command(
             // existing Pi JSONL session file for this session ID. This enables
             // resuming external sessions (started in Pi directly, not through
             // Oqto) so the agent has the full conversation context.
+            //
+            // A machine's session files are not on this host, and an id that
+            // happens to match a local file would continue an unrelated
+            // conversation, so the owning runner resolves its own files.
+            let owned_by_machine = matches!(
+                crate::runner::router::resolve_target_for_workspace_path(
+                    state,
+                    user_id,
+                    &cwd.to_string_lossy()
+                )
+                .await,
+                Ok(crate::runner::router::ExecutionTarget::RemoteMachine { .. })
+            );
             let continue_session = if config.continue_session.is_some() {
                 config.continue_session.map(std::path::PathBuf::from)
+            } else if owned_by_machine {
+                None
             } else {
                 crate::pi::session_files::find_session_file_async(
                     session_id.clone(),
