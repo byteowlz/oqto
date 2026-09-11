@@ -2460,10 +2460,14 @@ export function ChatView({
 						// borders, and any padding here would inset them from the edge
 						// the composer's own border sits on, so the two columns could
 						// never line up. The scroller is a scroller.
-						className="h-full overflow-y-auto scrollbar-hide [overflow-anchor:none]"
+						// overscroll-contain keeps a drag inside the transcript instead
+						// of chaining to the page, and the inner wrapper always fills
+						// the scroller so a single turn still has a scrollable box to
+						// bounce against rather than being inert.
+						className="h-full overflow-y-auto overscroll-contain scrollbar-hide [overflow-anchor:none]"
 						data-spotlight="chat-timeline"
 					>
-						<div>
+						<div className="min-h-[calc(100%+1px)]">
 							{showSkeleton && ChatSkeleton}
 
 							{!showSkeleton && instructionsContent && (
