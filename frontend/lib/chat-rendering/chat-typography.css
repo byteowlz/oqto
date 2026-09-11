@@ -1,0 +1,920 @@
+/*
+ * Chat typography.
+ *
+ * The scale for conversation text lives here and nowhere else, so the renderer
+ * can stay a renderer. Both shells import this through the global stylesheet.
+ *
+ * Two rules shape everything below:
+ *
+ *   1. Prose is set in a proportional face. Monospace is reserved for the
+ *      things that are actually code — fragments, paths, timings, tool names.
+ *   2. The detail level governs thinking and tool calls. It never touches the
+ *      answer: a less technical reader gets the same text, not a shorter one.
+ */
+
+/* ── the prose faces, self-hosted ────────────────────────────────────────
+ * A self-hosted Oqto must not reach a font CDN on every page load, so the
+ * files ship with the app. Both are variable across 400–700, which is one
+ * file instead of three, and both carry the full Latin-1 range the German
+ * interface needs.
+ */
+
+@font-face {
+	font-family: "Schibsted Grotesk";
+	src: url("/fonts/SchibstedGrotesk-latin.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: normal;
+	font-display: swap;
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Schibsted Grotesk";
+	src: url("/fonts/SchibstedGrotesk-latin-ext.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: normal;
+	font-display: swap;
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "Schibsted Grotesk";
+	src: url("/fonts/SchibstedGrotesk-Italic-latin.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: italic;
+	font-display: swap;
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Schibsted Grotesk";
+	src: url("/fonts/SchibstedGrotesk-Italic-latin-ext.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: italic;
+	font-display: swap;
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "Atkinson Hyperlegible Next";
+	src: url("/fonts/AtkinsonHyperlegibleNext-latin.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: normal;
+	font-display: swap;
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Atkinson Hyperlegible Next";
+	src: url("/fonts/AtkinsonHyperlegibleNext-latin-ext.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: normal;
+	font-display: swap;
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "Atkinson Hyperlegible Next";
+	src: url("/fonts/AtkinsonHyperlegibleNext-Italic-latin.woff2") format("woff2");
+	font-weight: 400 700;
+	font-style: italic;
+	font-display: swap;
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+		U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+		U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Atkinson Hyperlegible Next";
+	src: url("/fonts/AtkinsonHyperlegibleNext-Italic-latin-ext.woff2")
+		format("woff2");
+	font-weight: 400 700;
+	font-style: italic;
+	font-display: swap;
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+		U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+		U+A720-A7FF;
+}
+
+/* ── tokens ──────────────────────────────────────────────────────────── */
+
+:root {
+	--chat-prose-family: "Schibsted Grotesk", system-ui, sans-serif;
+	--chat-code-family: var(--font-mono);
+
+	/* Faces differ in apparent size at the same nominal px, so each choice
+	 * carries the size that puts it on the same x-height as the default. */
+	--chat-prose-size: 16px;
+
+	--chat-body: var(--chat-prose-size);
+	--chat-turn-text: calc(var(--chat-prose-size) * 1.03);
+	--chat-compact: calc(var(--chat-prose-size) * 0.94);
+	--chat-aside: calc(var(--chat-prose-size) * 0.86);
+	--chat-meta: max(12px, calc(var(--chat-prose-size) * 0.8));
+
+	/* The column fills its pane. A fixed measure inside a pane this wide
+	 * leaves a band of dead space down both sides while the composer below
+	 * spans the full width, and the mismatch reads as breakage. The measured
+	 * widths stay available as a preference for anyone who wants one. */
+	--chat-measure: 100%;
+	--chat-block-gap: 0.7rem;
+	--chat-turn-gap: 1.75rem;
+
+	/* Dark on light carries further than light on dark, so the dark theme
+	 * below compensates on leading and tracking. */
+	--chat-leading: 1.58;
+	--chat-tracking: 0;
+}
+
+.dark {
+	--chat-leading: 1.65;
+	--chat-tracking: 0.004em;
+}
+
+:root[data-chat-font="atkinson"] {
+	--chat-prose-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+	--chat-prose-size: 15.4px;
+}
+
+:root[data-chat-font="system"] {
+	--chat-prose-family: system-ui, sans-serif;
+	--chat-prose-size: 16.4px;
+}
+
+:root[data-chat-font="mono"] {
+	--chat-prose-family: var(--font-mono);
+	--chat-prose-size: 14.9px;
+}
+
+:root[data-chat-measure="narrow"] {
+	--chat-measure: 58ch;
+}
+
+:root[data-chat-measure="normal"] {
+	--chat-measure: 68ch;
+}
+
+:root[data-chat-measure="wide"] {
+	--chat-measure: 78ch;
+}
+
+@layer components {
+	/* ── the turn ────────────────────────────────────────────────────── */
+
+	/* Centred, because the pane it sits in is usually far wider than a
+	 * readable measure. Flushing the column left leaves the other half of the
+	 * pane empty and strands the end-aligned user bubble in the middle of
+	 * nowhere — aligned to the measure's edge rather than to anything the
+	 * reader can see. */
+	.chat-turn {
+		max-inline-size: var(--chat-measure);
+		margin-block-end: var(--chat-turn-gap);
+		margin-inline: auto;
+		font-family: var(--chat-prose-family);
+		font-size: var(--chat-body);
+		min-width: 0;
+	}
+
+	:root[data-chat-column="left"] .chat-turn {
+		margin-inline: 0;
+	}
+
+	.chat-turn--user {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+	}
+
+	/* The user turn is the one shape in the transcript with a fill. It does
+	 * not need a header repeating who wrote it. */
+	.chat-bubble {
+		max-inline-size: min(80%, 62ch);
+		padding: 0.625rem 0.875rem;
+		border: 1px solid color-mix(in oklab, var(--primary), transparent 68%);
+		border-radius: var(--radius);
+		background: color-mix(in oklab, var(--primary), transparent 90%);
+		font-size: var(--chat-turn-text);
+		line-height: var(--chat-leading);
+		letter-spacing: var(--chat-tracking);
+		overflow-wrap: anywhere;
+	}
+
+	:root[data-chat-turn="block"] .chat-turn--user {
+		align-items: stretch;
+	}
+
+	:root[data-chat-turn="block"] .chat-bubble {
+		max-inline-size: 100%;
+	}
+
+	:root[data-chat-turn="plain"] .chat-turn--user {
+		align-items: stretch;
+	}
+
+	:root[data-chat-turn="plain"] .chat-bubble {
+		max-inline-size: 100%;
+		padding: 0 0 0 0.875rem;
+		border: 0;
+		border-left: 2px solid color-mix(in oklab, var(--primary), transparent 60%);
+		border-radius: 0;
+		background: transparent;
+	}
+
+	/* An assistant turn has no fill of its own: the user turn is the one
+	 * shape in the transcript that is filled, and two filled shapes side by
+	 * side say the two turns are the same kind of thing. What the old card
+	 * did do, though, was bound the turn — and once the column fills the pane
+	 * there is nothing else marking where one answer ends and the next
+	 * begins. A rule does that for the price of one pixel. */
+	:root[data-chat-agent="ruled"] .chat-turn--agent {
+		border-block-start: 1px solid var(--border);
+		padding-block-start: 0.9rem;
+	}
+
+	/* Bounded and filled, with the byline as the box's header strip.
+	 *
+	 * A header only pays for itself if the box it heads earns back the room
+	 * it costs, so this variant is tight everywhere else: the strip is one
+	 * line at metadata size, the body padding is a third of what a card
+	 * usually takes, and because the boxes already separate the turns the gap
+	 * between them drops from 28px to 10px. That is where the vertical space
+	 * actually comes from — not from deleting the header. */
+	:root[data-chat-agent="boxed"] {
+		--chat-turn-gap: 0.1875rem;
+	}
+
+	:root[data-chat-agent="boxed"] .chat-turn--agent {
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: color-mix(in oklab, var(--muted), transparent 60%);
+		overflow: hidden;
+	}
+
+	:root[data-chat-agent="boxed"] .chat-turn > .chat-byline {
+		align-self: stretch;
+		margin: 0;
+		min-height: 1.9rem;
+		padding: 0.15rem 0.35rem 0.15rem 0.6rem;
+		border-block-end: 1px solid var(--border);
+	}
+
+	:root[data-chat-agent="boxed"] .chat-turn--agent > .chat-byline {
+		background: color-mix(in oklab, var(--muted), transparent 25%);
+	}
+
+	/* The header has real corners, so the actions go in one. Outside a box
+	 * there is no corner to go to, only the far side of the pane. */
+	:root[data-chat-agent="boxed"]
+		.chat-turn--agent
+		> .chat-byline
+		.chat-byline__spacer {
+		flex: 1;
+	}
+
+	:root[data-chat-agent="boxed"] .chat-turn--agent > :not(.chat-byline) {
+		padding: 0.5rem 0.6rem;
+	}
+
+	/* A rule, not a second strip. The header is a label bar and earns a fill;
+	 * the footer is a quiet note at the bottom of the same box, and filling
+	 * it too would close the turn off with a band at each end and leave the
+	 * answer looking like the filling in between. */
+	:root[data-chat-agent="boxed"] .chat-turn--agent > .chat-activity {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		/* Inset by the body's own padding rather than padded from the box
+		 * edge, so the rule starts and ends on the text column above it. A
+		 * line running the full width of the box would be dividing the box;
+		 * this one divides the content. */
+		margin: 0 0.6rem;
+		min-height: 1.9rem;
+		padding: 0.15rem 0;
+		border-block-start: 1px solid var(--border);
+	}
+
+	/* Your own turn gets the same anatomy — box, header strip, body — so the
+	 * two read as one kind of thing said by two people. What separates them
+	 * is the fill and which side of the column the box sits on, not whether
+	 * it has a header at all.
+	 *
+	 * The box lands on the turn itself rather than on the message inside it,
+	 * because the header has to sit inside the border to be a header. */
+	:root[data-chat-agent="boxed"] .chat-turn--user {
+		max-inline-size: min(80%, 62ch);
+		margin-inline: auto 0;
+		align-items: stretch;
+		border: 1px solid color-mix(in oklab, var(--primary), transparent 68%);
+		border-radius: var(--radius);
+		background: color-mix(in oklab, var(--primary), transparent 92%);
+		overflow: hidden;
+	}
+
+	:root[data-chat-agent="boxed"] .chat-turn--user > .chat-byline {
+		border-block-end-color: color-mix(in oklab, var(--primary), transparent 78%);
+		background: color-mix(in oklab, var(--primary), transparent 86%);
+	}
+
+	:root[data-chat-agent="boxed"]
+		.chat-turn--user
+		> .chat-byline
+		.chat-byline__spacer {
+		flex: 1;
+	}
+
+	/* The bubble's own shell would be a second border inside the first. */
+	:root[data-chat-agent="boxed"] .chat-turn--user > .chat-bubble {
+		max-inline-size: 100%;
+		padding: 0.5rem 0.6rem;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+	}
+
+	:root[data-chat-agent="boxed"]
+		.chat-turn--user
+		> :not(.chat-byline):not(.chat-bubble) {
+		padding-inline: 0.6rem;
+		padding-block-end: 0.5rem;
+	}
+
+	/* ── the byline, and the actions that live in it ─────────────────── */
+
+	.chat-byline {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-block-end: 0.5rem;
+		font-family: var(--chat-code-family);
+		font-size: var(--chat-meta);
+		color: var(--muted-foreground);
+	}
+
+	.chat-byline__who {
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--foreground);
+		opacity: 0.75;
+	}
+
+	/* Kept for the answer turn, where the name still anchors the left edge of
+	 * the column, but it no longer pushes the actions a pane's width away. */
+	.chat-byline__spacer {
+		flex: 0 0 0.75rem;
+	}
+
+	/* The byline hugs the message it labels rather than spanning the pane.
+	 * Stretched across a full-width turn it leaves the name marooned at one
+	 * end and the actions at the other, with a metre of nothing between them
+	 * — and on a user turn the name ends up on the opposite side from the
+	 * bubble it belongs to. Same contents, same order, each sitting with its
+	 * own message. */
+	.chat-turn--user .chat-byline {
+		align-self: flex-end;
+	}
+
+	.chat-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
+	}
+
+	/* Copy fades in with the turn — but only where there is a pointer that can
+	 * hover. On touch there is no hover state to enter, so the actions stay on
+	 * screen; hiding them there makes them unreachable rather than tidy.
+	 * Keyboard focus counts as arriving, hence :focus-within. */
+	@media (hover: hover) and (pointer: fine) {
+		:root:not([data-chat-actions="always"]) .chat-turn .chat-actions {
+			opacity: 0;
+			pointer-events: none;
+			transition: opacity 90ms ease-out;
+		}
+
+		:root:not([data-chat-actions="always"]) .chat-turn:hover .chat-actions,
+		:root:not([data-chat-actions="always"])
+			.chat-turn:focus-within
+			.chat-actions {
+			opacity: 1;
+			pointer-events: auto;
+		}
+	}
+
+	.chat-action {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		height: 1.5rem;
+		padding-inline: 0.4rem;
+		border-radius: var(--radius);
+		font-family: var(--chat-code-family);
+		font-size: var(--chat-meta);
+		color: var(--muted-foreground);
+		cursor: pointer;
+	}
+
+	.chat-action:hover {
+		background: var(--muted);
+		color: var(--foreground);
+	}
+
+	.chat-action svg {
+		width: 1em;
+		height: 1em;
+	}
+
+	/* Thinking and other explanations of the answer. No fill: a filled block
+	 * beside unfilled prose reads as the more important of the two, which is
+	 * backwards. A rule in the margin sets it apart well enough. */
+	.chat-aside {
+		border-inline-start: 2px solid var(--border);
+		background: transparent;
+	}
+
+	/* ── file shapes ─────────────────────────────────────────────────── */
+
+	/* Two truncations, because a path and a filename fail differently.
+	 * A filename loses its extension from the right, so it truncates at the
+	 * end. A path loses the part you were looking for at the end, so it
+	 * truncates at the start — hence the RTL flip, with a left-to-right mark
+	 * in ::before so a leading "~/" does not get thrown to the other end. */
+	.chat-truncate,
+	.chat-truncate-start {
+		display: block;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.chat-truncate-start {
+		direction: rtl;
+		text-align: left;
+	}
+
+	.chat-truncate-start::before {
+		content: "\200E";
+	}
+
+	.chat-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+		margin-block-start: 0.7rem;
+	}
+
+	.chat-turn--user .chat-chips {
+		justify-content: flex-end;
+	}
+
+	.chat-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		max-width: 18rem;
+		padding: 0.1875rem 0.5625rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--muted);
+		font-family: var(--chat-code-family);
+		font-size: var(--chat-meta);
+		color: var(--muted-foreground);
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.chat-chip:hover {
+		border-color: var(--primary);
+		color: var(--foreground);
+	}
+
+	.chat-chip svg {
+		width: 1em;
+		height: 1em;
+		flex: none;
+	}
+
+	.chat-chip__stat {
+		flex: none;
+		font-variant-numeric: tabular-nums;
+		opacity: 0.7;
+	}
+
+	/* ── detail levels ───────────────────────────────────────────────── */
+
+	/* Level 1 replaces the thinking blocks and the tool rows with a single
+	 * quiet line, written in plain language and expandable for anyone who
+	 * wants the detail after all. */
+	/* The step count is a footer, not a header.
+	 *
+	 * A header carrying identity, time, a step count and two actions is four
+	 * things competing for one line, and on a phone that line is 360px wide.
+	 * Splitting them gives each strip a job: the header says who and when and
+	 * offers the actions, the footer says what the turn did. The list also
+	 * opens downward from a footer, which is where it wants to go, instead of
+	 * shoving the header contents around.
+	 *
+	 * Chronologically the steps came before the answer, but collapsed they
+	 * read as provenance — how this answer came about — and provenance
+	 * belongs underneath. */
+	.chat-activity {
+		margin-block: var(--chat-block-gap) 0;
+		font-family: var(--chat-prose-family);
+		font-size: var(--chat-meta);
+		color: var(--muted-foreground);
+	}
+
+	.chat-activity > summary {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.chat-activity > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.chat-activity__icons {
+		display: inline-flex;
+		gap: 0.3rem;
+	}
+
+	.chat-activity__icons svg {
+		width: 1em;
+		height: 1em;
+	}
+
+	.chat-activity__count {
+		font-family: var(--chat-code-family);
+		font-size: var(--chat-meta);
+	}
+
+	.chat-activity ol {
+		margin-block: 0.35rem 0.2rem;
+		padding-inline-start: 1.3em;
+		border-inline-start: 2px solid var(--border);
+		list-style: none;
+	}
+
+	.chat-activity ol li {
+		padding-block: 0.125rem;
+	}
+
+	/* ── narrow viewports ────────────────────────────────────────────── */
+
+	/* The strips are the one part of a turn that costs the same on a phone as
+	 * on a desktop while having a third of the width to spend, so they get
+	 * tighter and the actions drop their labels. Losing the words is what
+	 * keeps the row from wrapping, and a wrapped strip is twice the height —
+	 * which is the whole thing we are trying to avoid. The label survives as
+	 * the accessible name. */
+	@media (max-width: 40rem) {
+		/* A phone column is already about as narrow as the 62ch the bubble was
+		 * holding itself to, so the cap only buys an indent: the same sentence
+		 * wraps earlier than the reply directly beneath it, and the transcript
+		 * reads as two different measures. On a wide screen the cap is what
+		 * keeps a question from running the full pane, which is why this is a
+		 * width rule and not a change to the shape. */
+		.chat-turn--user {
+			align-items: stretch;
+		}
+
+		.chat-bubble {
+			max-inline-size: 100%;
+		}
+
+		:root[data-chat-agent="boxed"] .chat-turn > .chat-byline,
+		:root[data-chat-agent="boxed"] .chat-turn--agent > .chat-activity {
+			min-height: 1.5rem;
+			padding-block: 0.05rem;
+		}
+
+		.chat-byline {
+			gap: 0.35rem;
+		}
+
+		/* The tap target stays 24px — shrinking it is the wrong direction on
+		 * the one device where a finger is doing the aiming — but it is
+		 * allowed to overflow the strip instead of setting its height. The
+		 * row ends up as tall as its text, with a target bigger than itself. */
+		.chat-byline .chat-action {
+			height: 1.5rem;
+			margin-block: -0.3rem;
+			padding-inline: 0.3rem;
+		}
+
+		.chat-byline .chat-action span {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
+
+		/* Nothing is hovering on a phone, so the strip is the only place the
+		 * name can come from. Keep it, and give back the room by letting the
+		 * turn itself sit closer to its neighbours. */
+		:root[data-chat-agent="boxed"] {
+			--chat-turn-gap: 0.125rem;
+		}
+	}
+
+	/* ── the selection toolbar ───────────────────────────────────────── */
+
+	/* It exists because something is selected, not because a pointer passed
+	 * over something. That distinction is the whole argument for it. */
+	.chat-selection {
+		position: fixed;
+		z-index: 60;
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
+		padding: 0.1875rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--popover);
+		box-shadow: 0 6px 22px rgb(0 0 0 / 0.24);
+		/* Short enough to read as arriving rather than snapping into place. */
+		animation: chat-selection-in 90ms ease-out;
+	}
+
+	@keyframes chat-selection-in {
+		from {
+			opacity: 0;
+			transform: translateY(2px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+}
+
+/* ── prose ───────────────────────────────────────────────────────────────
+ * These rules sit OUTSIDE the cascade layers on purpose.
+ *
+ * The markdown renderer is shared with the file preview, the tool cards and
+ * the pinned instructions, and it sets its rhythm with utility classes. Those
+ * live in the utilities layer, which outranks every layer regardless of
+ * specificity, so a layered rule here would simply never apply. Everything
+ * below is scoped to .chat-prose, so the override reaches the conversation
+ * and nothing else: the other markdown surfaces keep the scale they have.
+ *
+ * Do not move this into @layer components. It will silently stop working.
+ */
+
+/* ── prose ───────────────────────────────────────────────────────── */
+
+.chat-prose {
+	font-family: var(--chat-prose-family);
+	font-size: var(--chat-body);
+	line-height: var(--chat-leading);
+	letter-spacing: var(--chat-tracking);
+	color: var(--foreground);
+	min-width: 0;
+}
+
+/* Two prose blocks become neighbours whenever the rows between them are
+ * hidden by the detail level, so they need a gap of their own. */
+.chat-prose + .chat-prose {
+	margin-block-start: var(--chat-block-gap);
+}
+
+.chat-prose > :first-child {
+	margin-block-start: 0;
+}
+
+.chat-prose > :last-child {
+	margin-block-end: 0;
+}
+
+.chat-prose p,
+.chat-prose ul,
+.chat-prose ol,
+.chat-prose blockquote,
+.chat-prose pre,
+.chat-prose table {
+	margin-block: var(--chat-block-gap);
+}
+
+/* Headings are signposts inside a conversation, not titles of a
+ * document: a compressed scale, carried as much by weight as by size. */
+.chat-prose h1,
+.chat-prose h2,
+.chat-prose h3,
+.chat-prose h4,
+.chat-prose h5,
+.chat-prose h6 {
+	margin-block: 1.4em 0.5em;
+	line-height: 1.3;
+	font-weight: 600;
+	color: var(--foreground);
+}
+
+.chat-prose h1 {
+	font-size: calc(var(--chat-body) * 1.42);
+}
+
+.chat-prose h2 {
+	font-size: calc(var(--chat-body) * 1.28);
+}
+
+.chat-prose h3 {
+	font-size: calc(var(--chat-body) * 1.12);
+}
+
+.chat-prose h4,
+.chat-prose h5,
+.chat-prose h6 {
+	font-size: var(--chat-body);
+}
+
+/* A list starts where the paragraph above it starts.
+ *
+ * The shared renderer indents every item by a further 1.25rem on top of the
+ * list's own gutter, so a top-level list sits two steps in from its own
+ * prose for no reason anyone chose. Here the marker goes flush with the text
+ * column and the item hangs off it, which is what a list is supposed to look
+ * like. Nesting still indents, because there the indent means something.
+ *
+ * The markers are drawn rather than left to ::marker: that is the only way
+ * to put them at a known position instead of wherever the gutter puts them,
+ * and it makes the bullet a real square rather than a font's idea of one. */
+.chat-prose ul,
+.chat-prose ol {
+	padding-inline-start: 0;
+	list-style: none;
+}
+
+.chat-prose li {
+	position: relative;
+	margin-inline-start: 0;
+	padding-inline-start: 1.45em;
+}
+
+.chat-prose ol {
+	counter-reset: chat-ordinal;
+}
+
+.chat-prose ol > li {
+	counter-increment: chat-ordinal;
+}
+
+/* Tabular figures so 1. and 10. share a left edge. */
+.chat-prose ol > li::before {
+	content: counter(chat-ordinal) ".";
+	position: absolute;
+	inset-inline-start: 0;
+	font-variant-numeric: tabular-nums;
+	color: var(--muted-foreground);
+}
+
+.chat-prose ul > li::before {
+	content: "";
+	position: absolute;
+	inset-inline-start: 0.25em;
+	/* Centred on the first line, not on the item: a three-line item would
+	   otherwise put its bullet somewhere in the middle of the paragraph. */
+	inset-block-start: calc(var(--chat-leading) * 0.5em - 0.16em);
+	width: 0.32em;
+	height: 0.32em;
+	background: var(--muted-foreground);
+}
+
+.chat-prose li + li {
+	margin-block-start: 0.3em;
+}
+
+.chat-prose li > ul,
+.chat-prose li > ol {
+	margin-block: 0.35em 0;
+}
+
+.chat-prose li > p {
+	margin: 0;
+}
+
+.chat-prose strong {
+	font-weight: 600;
+	color: var(--foreground);
+}
+
+.chat-prose blockquote {
+	padding-inline-start: 0.9em;
+	border-inline-start: 2px solid var(--border);
+	color: var(--muted-foreground);
+}
+
+/* An inline fragment gets the mono face, one step down so it never towers
+ * over its sentence, and a shift in colour. That is all.
+ *
+ * A box around each fragment is fine when a paragraph holds two of them.
+ * Answers about a wiring plan or a config file hold twenty, and at that
+ * density the boxes stop marking the fragments and start being the content.
+ * The proportional prose face already separates them; the outline was
+ * separating something that was not together in the first place. */
+.chat-prose :not(pre) > code {
+	font-family: var(--chat-code-family);
+	font-size: 0.86em;
+	color: var(--muted-foreground);
+	overflow-wrap: anywhere;
+}
+
+.chat-prose a {
+	color: var(--primary);
+	text-decoration: none;
+	border-block-end: 1px solid
+		color-mix(in oklab, var(--primary), transparent 65%);
+}
+
+.chat-prose a:hover {
+	border-block-end-color: var(--primary);
+}
+
+/* ── a filename inside a sentence ────────────────────────────────────────
+ * The renderer turns a recognised path into a button. It stays part of the
+ * sentence: the mono face, the accent colour, and a rule only once you are
+ * pointing at it. A permanent underline on every path turns a dense answer
+ * into a page of underlines, and a boxed chip turns it into a page of
+ * widgets. Neither is the filename's job.
+ */
+.chat-prose .markdown-file-reference-inline {
+	text-decoration: none;
+	font-size: max(12px, 0.88em);
+}
+
+.chat-prose .markdown-file-reference-inline:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.16em;
+}
+
+/* The alternative: no colour, a faint wash instead, so a path reads as a
+ * thing rather than as a link. */
+:root[data-chat-fileref="subtle"] .chat-prose .markdown-file-reference-inline {
+	padding: 0.08em 0.3em;
+	background: var(--muted);
+	color: var(--muted-foreground);
+}
+
+:root[data-chat-fileref="subtle"]
+	.chat-prose
+	.markdown-file-reference-inline:hover {
+	color: var(--foreground);
+	text-decoration: none;
+}
+
+/* The chat scope quietens the shared inline-code wash: see the note on
+ * .chat-prose code above. */
+.chat-prose .markdown-inline-code {
+	padding: 0;
+	background-color: transparent;
+}
+
+/* Thinking, tool output and anything else that explains the answer rather
+   than being it. Metadata can rank by colour alone because it is a few words;
+   these run to paragraphs, and at a hair under the body size they end up
+   arguing with the answer. They take a real step down as well. */
+.chat-prose--aside,
+.chat-prose--aside p,
+.chat-prose--aside li,
+.chat-prose--aside code {
+	font-size: var(--chat-aside);
+	color: var(--muted-foreground);
+}
+
+/* A long identifier has to be able to break, but only when it genuinely does
+   not fit. The shared markdown rule is word-break: break-all, which splits
+   every fragment mid-token wherever the line happens to end. */
+.chat-prose code,
+.chat-prose .markdown-inline-code {
+	word-break: normal;
+	overflow-wrap: break-word;
+}
