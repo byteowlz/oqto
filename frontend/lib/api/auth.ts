@@ -3,6 +3,7 @@
  * Login, logout, register, current user
  */
 
+import { clearCachedChats } from "@/lib/machine-chat-cache";
 import {
 	authFetch,
 	controlPlaneApiUrl,
@@ -126,6 +127,8 @@ export async function logout(): Promise<void> {
 	});
 	// Clear token regardless of response
 	setAuthToken(null);
+	// A machine's cached history must not outlive the session on this device.
+	await clearCachedChats();
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 

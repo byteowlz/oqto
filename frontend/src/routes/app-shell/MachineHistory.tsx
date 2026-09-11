@@ -5,6 +5,17 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { MessageGroupCard } from "@/lib/chat-rendering/CanonicalMessageRenderer";
+import { groupMessages } from "@/lib/chat-rendering/group-messages";
+import {
+	machineChatKey,
+	readCachedChat,
+	writeCachedChat,
+} from "@/lib/machine-chat-cache";
+import {
+	type MachineHistoryMessage,
+	toDisplayMessages,
+} from "@/lib/machine-chat-messages";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -60,8 +71,8 @@ export function MachineConversation({
 				<DialogHeader>
 					<DialogTitle>{label} · Chat history</DialogTitle>
 					<DialogDescription>
-						Read-only text preview from this machine’s oqto-log. No session is
-						started. Tools, files and attachments are not interactive.
+						Stored conversation from this machine. No session is started until
+						you send a message.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="min-h-0 flex-1 overflow-auto">
@@ -77,17 +88,44 @@ function HistoryConversation({
 	port,
 }: { scope: string; session: HistorySession; port: HistoryPort }) {
 	const [before, setBefore] = useState<string | null>(null);
+	const cacheKey = machineChatKey(scope, session.workspace ?? "", session.id);
 	const page = useQuery({
 		queryKey: ["machine-history", scope, session.id, before],
-		queryFn: async ({ signal }) =>
-			(await port.call(
-				{ command: "messages", session_id: session.id, before },
-				signal,
-			)) as HistoryPage,
+		queryFn: async ({ signal }) => {
+			try {
+				const fresh = (await port.call(
+					{ command: "messages", session_id: session.id, before },
+					signal,
+				)) as HistoryPage;
+				if (!before) {
+					void writeCachedChat(
+						cacheKey,
+						fresh.messages,
+						fresh.has_more,
+						fresh.next_before,
+					);
+				}
+				return fresh;
+			} catch (error) {
+				// An unreachable machine must not blank a conversation already read.
+				if (!before) {
+					const cached = await readCachedChat<MachineHistoryMessage>(cacheKey);
+					if (cached) {
+						return {
+							messages: cached.messages,
+							has_more: cached.hasMore,
+							next_before: cached.nextBefore ?? undefined,
+						} satisfies HistoryPage;
+					}
+				}
+				throw error;
+			}
+		},
 		gcTime: 0,
 		staleTime: 0,
 		retry: false,
 	});
+	const messages = page.data?.messages ?? [];
 	return (
 		<section aria-label="Read-only conversation">
 			<h2 className="mb-3 font-semibold">{session.title || "Untitled chat"}</h2>
@@ -115,47 +153,15 @@ function HistoryConversation({
 					</button>
 				)}
 			</div>
-			{page.data?.messages.map((message) => (
-				<article
-					key={message.id}
-					className="mb-5 border-b pb-4"
-					data-message-id={message.id}
-				>
-					<h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						{message.role}
-					</h3>
-					{message.parts.map((part) => (
-						<div key={part.id}>
-							{part.text && (
-								<div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-									{part.text}
-								</div>
-							)}
-							{part.tool_name && (
-								<details className="my-2 rounded border p-2 text-xs">
-									<summary>{part.tool_name} · saved tool data</summary>
-									<pre className="mt-2 whitespace-pre-wrap break-all">
-										{JSON.stringify(
-											part.tool_output ?? part.tool_input ?? null,
-											null,
-											2,
-										)?.slice(0, 20000)}
-									</pre>
-									<p className="text-muted-foreground">
-										Preview limited to 20,000 characters.
-									</p>
-								</details>
-							)}
-							{!part.text && !part.tool_name && (
-								<p className="text-xs text-muted-foreground">
-									{part.part_type} · not shown in text preview
-								</p>
-							)}
-						</div>
-					))}
-				</article>
+			{groupMessages(toDisplayMessages(messages)).map((group, index) => (
+				<MessageGroupCard
+					key={group.messages[0]?.id ?? index}
+					group={group}
+					messageId={group.messages[0]?.id}
+					workspacePath={session.workspace}
+				/>
 			))}
-			{page.data?.messages.length === 0 && (
+			{page.isSuccess && messages.length === 0 && (
 				<p>No saved messages in this projection.</p>
 			)}
 		</section>
