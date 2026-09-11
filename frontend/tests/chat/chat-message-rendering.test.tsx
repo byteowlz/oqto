@@ -123,7 +123,7 @@ describe("chat message rendering", () => {
 			"utf8",
 		);
 		const phone = stylesheet.slice(
-			stylesheet.indexOf("@media (max-width: 40rem)"),
+			stylesheet.indexOf("A phone column is already"),
 		);
 
 		// On a narrow screen the question and the answer below it must share one
@@ -131,13 +131,40 @@ describe("chat message rendering", () => {
 		expect(phone).toMatch(/\.chat-bubble \{\s*max-inline-size: 100%;/);
 		expect(phone).toMatch(/\.chat-turn--user \{\s*align-items: stretch;/);
 
+		// The shell calls anything under 768px mobile (use-mobile), so the
+		// transcript must change measure at the same width, not at 640.
+		expect(stylesheet).toMatch(/@media \(max-width: 48rem\)/);
+
 		// The cap still governs a wide screen; this is a width rule, not a
-		// different shape for the turn.
+		// different shape for the turn. The boxed variant puts that cap on the
+		// turn, which is the one that governs the default appearance.
 		const wide = stylesheet.slice(
 			0,
-			stylesheet.indexOf("@media (max-width: 40rem)"),
+			stylesheet.indexOf("A phone column is already"),
 		);
 		expect(wide).toMatch(/max-inline-size: min\(80%, 62ch\);/);
+		expect(phone).toMatch(
+			/data-chat-agent="boxed"\] \.chat-turn--user \{\s*max-inline-size: 100%;/,
+		);
+	});
+
+	it("lets the boxed variant's turn gap actually reach the turn", () => {
+		const stylesheet = readFileSync(
+			resolve(process.cwd(), "lib/chat-rendering/chat-typography.css"),
+			"utf8",
+		);
+		// The base token is unlayered, and an unlayered declaration beats a
+		// layered one however specific it is. Declaring the boxed override
+		// inside @layer components left every turn on the 1.75rem default.
+		const layerStart = stylesheet.indexOf("@layer components {");
+		const boxedGap = stylesheet.indexOf(
+			'data-chat-agent="boxed"]\n\t--chat-turn-gap',
+		);
+		const override = stylesheet.slice(0, layerStart);
+		expect(override).toMatch(
+			/:root\[data-chat-agent="boxed"\] \{\s*--chat-turn-gap:/,
+		);
+		expect(boxedGap).toBeLessThan(layerStart);
 	});
 
 	it("folds tool calls into one activity line at the lowest detail level", () => {

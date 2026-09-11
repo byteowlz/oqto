@@ -2515,8 +2515,9 @@ export function ChatView({
 												<div
 													key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
 													// The stylesheet already spaces turns; this only adds
-													// the room a phone cannot spare on top of it.
-													className={groupIndex > 0 ? "mt-1.5 sm:mt-6" : ""}
+													// the room a phone cannot spare on top of it. The
+													// breakpoint matches use-mobile, not Tailwind's sm.
+													className={groupIndex > 0 ? "mt-1.5 md:mt-6" : ""}
 												>
 													{modelChangeDivider}
 													<MessageGroupCard
