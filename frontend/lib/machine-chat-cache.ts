@@ -19,14 +19,60 @@ const CACHE_SHAPE_VERSION = 1;
 /** Cached messages are evicted once they are older than this. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * The machine owns the conversation; this is only a cache in front of it, so it
+ * is deliberately small. Only conversations actually opened are stored, only
+ * their newest page, and only until the budget is needed by a newer read.
+ */
+export const CACHE_LIMITS = {
+	/** A single conversation larger than this is left to the machine. */
+	maxEntryBytes: 4 * 1024 * 1024,
+	maxTotalBytes: 64 * 1024 * 1024,
+	maxEntries: 50,
+};
+
 export type CachedChat<TMessage> = {
 	key: string;
 	shape: number;
 	cachedAt: number;
+	/** Last time this conversation was read, for eviction order. */
+	lastReadAt: number;
+	/** Approximate stored size, kept so eviction needs no second pass. */
+	bytes: number;
 	messages: TMessage[];
 	hasMore: boolean;
 	nextBefore?: string | null;
 };
+
+export type EvictionCandidate = {
+	key: string;
+	bytes: number;
+	lastReadAt: number;
+};
+
+/**
+ * Keys to drop so the cache stays inside its budget.
+ *
+ * Least recently read goes first: the conversation you are working in should
+ * survive opening a run of older ones.
+ */
+export function selectEvictions(
+	entries: EvictionCandidate[],
+	limits: typeof CACHE_LIMITS = CACHE_LIMITS,
+): string[] {
+	const ordered = [...entries].sort((a, b) => a.lastReadAt - b.lastReadAt);
+	let total = ordered.reduce((sum, entry) => sum + entry.bytes, 0);
+	let count = ordered.length;
+	const evict: string[] = [];
+
+	for (const entry of ordered) {
+		if (total <= limits.maxTotalBytes && count <= limits.maxEntries) break;
+		evict.push(entry.key);
+		total -= entry.bytes;
+		count -= 1;
+	}
+	return evict;
+}
 
 export function machineChatKey(
 	accountId: string,
@@ -94,6 +140,10 @@ export async function readCachedChat<TMessage>(
 	);
 	if (!entry || entry.shape !== CACHE_SHAPE_VERSION) return null;
 	if (Date.now() - entry.cachedAt > MAX_AGE_MS) return null;
+	// Reading keeps a conversation alive against eviction.
+	void withStore("readwrite", (store) =>
+		store.put({ ...entry, lastReadAt: Date.now() }),
+	);
 	return entry;
 }
 
@@ -103,15 +153,49 @@ export async function writeCachedChat<TMessage>(
 	hasMore: boolean,
 	nextBefore?: string | null,
 ): Promise<void> {
+	const now = Date.now();
+	const bytes = approximateBytes(messages);
+	// Caching a huge conversation would evict many useful ones to hold one that
+	// is cheap to re-read a page at a time.
+	if (bytes > CACHE_LIMITS.maxEntryBytes) return;
+
 	const entry: CachedChat<TMessage> = {
 		key,
 		shape: CACHE_SHAPE_VERSION,
-		cachedAt: Date.now(),
+		cachedAt: now,
+		lastReadAt: now,
+		bytes,
 		messages,
 		hasMore,
 		nextBefore: nextBefore ?? null,
 	};
 	await withStore("readwrite", (store) => store.put(entry));
+	await enforceBudget();
+}
+
+function approximateBytes(value: unknown): number {
+	try {
+		return JSON.stringify(value)?.length ?? 0;
+	} catch {
+		return Number.POSITIVE_INFINITY;
+	}
+}
+
+async function enforceBudget(): Promise<void> {
+	const all = await withStore<CachedChat<unknown>[]>("readonly", (store) =>
+		store.getAll(),
+	);
+	if (!all) return;
+	const evict = selectEvictions(
+		all.map((entry) => ({
+			key: entry.key,
+			bytes: entry.bytes ?? 0,
+			lastReadAt: entry.lastReadAt ?? entry.cachedAt ?? 0,
+		})),
+	);
+	for (const key of evict) {
+		await withStore("readwrite", (store) => store.delete(key));
+	}
 }
 
 /**
