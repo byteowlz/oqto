@@ -6,6 +6,7 @@ import { installTauriWebSocketPolyfill } from "@/lib/tauri-websocket-polyfill";
 installTauriWebSocketPolyfill();
 
 import { Providers } from "@/components/providers";
+import { applyChatAppearance, readChatAppearance } from "@/lib/chat-appearance";
 import { initI18n } from "@/lib/i18n";
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -85,6 +86,11 @@ function enforceUserIsolation() {
 setupStorageRecovery();
 enforceUserIsolation();
 initI18n();
+
+// The chat typography reads its settings off the document element, so they go
+// on before the first paint. Otherwise the transcript renders once at the
+// defaults and reflows the moment the preference loads.
+applyChatAppearance(readChatAppearance());
 
 const container = document.getElementById("root");
 if (!container) {
