@@ -1130,7 +1130,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, []);
 
 	const chatHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-20">
+		<div className="pb-3 border-b border-border pr-20">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
@@ -1165,7 +1165,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const overviewHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-20">
+		<div className="pb-3 border-b border-border pr-20">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
