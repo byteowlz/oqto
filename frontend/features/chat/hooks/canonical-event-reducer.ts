@@ -11,10 +11,22 @@ export const appendDeltaPart = ({
 	partType: "text" | "thinking";
 	nextPartId: () => string;
 }): void => {
-	const lastPart = message.parts[message.parts.length - 1];
-	if (lastPart?.type === partType) {
-		(lastPart as { text: string }).text += delta;
-		return;
+	// Reasoning and content stream as two sequences whose deltas interleave,
+	// so the last part is often the *other* one. Merging only into the last
+	// part starts a new part on every switch between them, which chops a
+	// sentence wherever the two happened to alternate — a word can end up
+	// split across two parts with a thinking block wedged between its halves.
+	//
+	// Scan back to the most recent part of this type instead. A tool call
+	// stops the scan: whatever the agent says after running something is a
+	// new block, not a continuation of what it was saying before.
+	for (let index = message.parts.length - 1; index >= 0; index--) {
+		const part = message.parts[index];
+		if (part.type === partType) {
+			(part as { text: string }).text += delta;
+			return;
+		}
+		if (part.type === "tool_call" || part.type === "tool_result") break;
 	}
 	message.parts.push({
 		type: partType,
