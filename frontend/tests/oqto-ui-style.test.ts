@@ -20,9 +20,16 @@ describe("OqtoUI visual stability", () => {
 		expect(shellCss).not.toMatch(/@keyframes|\banimation\s*:|\btransition\s*:/);
 	});
 
-	it("keeps the button reset lower-specificity than component spacing", () => {
-		expect(shellCss).toContain(".wb-shell :where(button)");
+	it("keeps the button reset beneath component spacing", () => {
+		// Specificity is not enough on its own: an unlayered reset outranks
+		// every rule in @layer utilities regardless of how specific that rule
+		// is, which is how shared chat components lost their padding in this
+		// shell but not in the legacy one. The reset has to be layered.
+		expect(shellCss).toMatch(
+			/@layer base \{[\s\S]*:where\(\.wb-shell\) :where\(button\)/,
+		);
 		expect(shellCss).not.toMatch(/\.wb-shell button\s*\{/);
+		expect(shellCss).not.toMatch(/^\.wb-shell :where\(button\)/m);
 	});
 
 	it("collapses mobile chrome to one bar and hides duplicated headers", () => {

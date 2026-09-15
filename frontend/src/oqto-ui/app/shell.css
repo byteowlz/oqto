@@ -515,10 +515,20 @@
 	min-width: 0;
 	min-height: 0;
 	background: var(--card);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg, 0);
-	box-shadow: var(--shadow-sm, none);
-	padding: 24px;
+	/*
+	 * No frame of its own. The turns carry their own boundary and so does the
+	 * composer, so a border here is a frame drawn around a stack of frames.
+	 *
+	 * One inset governs the whole column: the timeline reads it as padding,
+	 * the composer as a margin, and the header the same. That is what keeps a
+	 * turn's edge on the same pixel as the prompt box below it — aligning
+	 * them by construction rather than by two numbers that happen to match.
+	 */
+	--chat-inset: 16px;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	padding: var(--chat-inset) 0;
 }
 
 .wb-wa-tabs {
@@ -758,10 +768,10 @@
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	background: color-mix(in srgb, var(--muted) 30%, transparent);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-md, 0);
-	padding: 20px;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	padding: 0 var(--chat-inset);
 }
 
 /* -------------------------------------------------------------- messages */
@@ -993,6 +1003,13 @@
 	background: color-mix(in srgb, var(--muted) 60%, transparent);
 	border: 1px solid var(--border);
 	border-radius: var(--radius-md, 0);
+}
+
+/* On the same inset as the turns above it: the timeline spends --chat-inset
+   as padding inside the scroller, so the composer has to spend it as a margin
+   outside one, or the prompt box ends up wider than every message in it. */
+.wb-chat-card > .wb-composer {
+	margin-inline: var(--chat-inset);
 }
 
 .wb-composer:focus-within {
@@ -1906,8 +1923,23 @@
 		gap: 4px;
 	}
 
+	/*
+	 * Full-bleed on a narrow screen: the turns run to both edges, so their
+	 * own borders are the only vertical lines and nothing is spent on a
+	 * stripe of chrome down a 390px viewport. The composer keeps an inset
+	 * because it is not a turn and should not touch the edge.
+	 */
 	.wb-chat-card {
-		padding: 12px;
+		--chat-inset: 12px;
+		padding: 0;
+	}
+
+	.wb-chat-panel {
+		padding-inline: 0;
+	}
+
+	.wb-chat-card > .wb-composer {
+		margin: 8px var(--chat-inset) 12px;
 	}
 
 	.wb-wa-tabs {
@@ -2748,8 +2780,17 @@
 	top: 0;
 	left: 0;
 	width: 100%;
-	padding-bottom: 12px;
+	padding-bottom: var(--chat-turn-gap);
 	transform: translateY(var(--row-offset, 0));
+}
+
+/*
+ * The virtualizer measures the row with offsetHeight, which excludes margins,
+ * so a turn's own bottom margin would go uncounted and the rows would overlap.
+ * Inside a timeline row the row owns the gap.
+ */
+.wb-timeline-row > .chat-turn {
+	margin-block-end: 0;
 }
 
 .wb-load-earlier {
@@ -2773,7 +2814,9 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 6px 12px 6px 16px;
+	/* On the same inset as the turns and the composer below it. */
+	margin-inline: var(--chat-inset);
+	padding: 6px 0;
 	border-bottom: 1px solid var(--border);
 	font-family: var(--font-mono);
 	font-size: 11px;
@@ -2863,7 +2906,6 @@
 	font-size: 12px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	transition: color 90ms ease-out;
 }
 
 .wb-files-crumb:last-of-type {
@@ -2930,7 +2972,6 @@
 	color: var(--foreground);
 	font-size: 12px;
 	line-height: 18px;
-	transition: background 80ms ease-out;
 }
 
 .wb-files .wb-tree__row svg {
