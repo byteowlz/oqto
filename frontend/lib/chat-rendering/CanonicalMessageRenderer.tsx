@@ -2,18 +2,13 @@ import { A2UICallCard } from "@/components/chat/a2ui-call-card";
 import { ToolCallCard, getToolIcon } from "@/components/chat/tool-call-card";
 import { ToolCallGroup } from "@/components/chat/tool-call-group";
 import { BrailleSpinner } from "@/components/common";
-import { CopyButton, MarkdownRenderer } from "@/components/data-display";
+import { MarkdownRenderer } from "@/components/data-display";
 import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
 import { AgentErrorBody } from "@/features/chat/components/AgentErrorBody";
 import type { A2UIUserAction } from "@/lib/a2ui/types";
 import type { FileRange, Part } from "@/lib/canonical-types";
@@ -24,7 +19,6 @@ import type { StreamingPresentationMode } from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 import {
-	Bot,
 	Check,
 	Copy,
 	Download,
@@ -37,7 +31,6 @@ import {
 	Loader2,
 	PaintBucket,
 	Paperclip,
-	User,
 } from "lucide-react";
 import {
 	type ReactNode,
@@ -55,11 +48,13 @@ import { useTranslation } from "react-i18next";
 import { dedentMarkdown, stripAnsiSequences } from "./chat-render-text";
 import type { MessageGroup } from "./group-messages";
 
-// Compact copy button for message headers
-function CompactCopyButton({
-	text,
-	className,
-}: { text: string; className?: string }) {
+/**
+ * The one action people actually reach for, so it is always on screen rather
+ * than revealed under the pointer. It carries no size utilities of its own:
+ * the chat stylesheet owns the metrics, which keeps it on the byline's scale
+ * whatever the reader has chosen for the prose.
+ */
+function ChatCopyAction({ text, label }: { text: string; label: string }) {
 	const [copied, setCopied] = useState(false);
 
 	const handleCopy = useCallback(() => {
@@ -85,13 +80,11 @@ function CompactCopyButton({
 		<button
 			type="button"
 			onClick={handleCopy}
-			className={cn("text-muted-foreground hover:text-foreground", className)}
+			className="chat-action"
+			title={label}
 		>
-			{copied ? (
-				<Check className="w-3 h-3 text-primary" />
-			) : (
-				<Copy className="w-3 h-3" />
-			)}
+			{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+			<span>{label}</span>
 		</button>
 	);
 }
@@ -132,153 +125,100 @@ type Segment =
 
 /** Gutter icon for collapsed tool calls in minimal mode (verbosity=1).
  *  Shows a single collapsed icon; click opens a popover listing each tool + summary. */
-function splitToolGroupIntoRuns(toolGroup: {
-	key: string;
-	type: "tool_group";
+/**
+ * Everything the agent did, condensed to one quiet line.
+ *
+ * This is what the lowest detail level shows in place of thinking blocks and
+ * tool rows: a count, the icons of the tools involved, and — once expanded —
+ * the same plain-language summaries the tool rows carry. It sits in the flow
+ * above the answer rather than in a margin, because a margin is not reachable
+ * on a narrow viewport and it competes with the reading measure.
+ */
+function ChatActivitySummary({
+	segments,
+	locale,
+	preambleOf,
+}: {
 	segments: Array<
 		| Extract<Segment, { type: "tool_call" }>
 		| Extract<Segment, { type: "tool_result_only" }>
 	>;
-	timestamp: number;
-}) {
-	const runs: Array<{
-		key: string;
-		type: "tool_group";
-		segments: Array<
-			| Extract<Segment, { type: "tool_call" }>
-			| Extract<Segment, { type: "tool_result_only" }>
-		>;
-		timestamp: number;
-	}> = [];
-
-	let currentRun: Array<
-		| Extract<Segment, { type: "tool_call" }>
-		| Extract<Segment, { type: "tool_result_only" }>
-	> = [];
-	let currentName: string | null = null;
-
-	for (const seg of toolGroup.segments) {
-		const name =
-			seg.type === "tool_call" ? seg.part.name : seg.part.name || "result";
-		if (currentRun.length === 0 || name === currentName) {
-			currentRun.push(seg);
-			currentName = name;
-			continue;
-		}
-		runs.push({
-			key: `${toolGroup.key}-run-${runs.length}`,
-			type: "tool_group",
-			segments: currentRun,
-			timestamp: currentRun[0]?.timestamp ?? toolGroup.timestamp,
-		});
-		currentRun = [seg];
-		currentName = name;
-	}
-
-	if (currentRun.length > 0) {
-		runs.push({
-			key: `${toolGroup.key}-run-${runs.length}`,
-			type: "tool_group",
-			segments: currentRun,
-			timestamp: currentRun[0]?.timestamp ?? toolGroup.timestamp,
-		});
-	}
-
-	return runs;
-}
-
-function ToolGutterIcon({
-	toolGroup,
-	locale,
-}: {
-	toolGroup: {
-		key: string;
-		type: "tool_group";
-		segments: Array<
-			| Extract<Segment, { type: "tool_call" }>
-			| Extract<Segment, { type: "tool_result_only" }>
-		>;
-		timestamp: number;
-	};
 	locale: "en" | "de";
+	/** What the agent said it was about to do, keyed by segment. */
+	preambleOf: Map<string, string>;
 }) {
-	// Collapse consecutive identical tools
-	const collapsed: Array<{
+	const { t } = useTranslation();
+
+	// Consecutive calls to the same tool read as one step — unless the agent
+	// announced the second one, in which case it said itself that this is a
+	// new step and it gets its own line.
+	const steps: Array<{
 		toolName: string;
 		count: number;
 		input?: Record<string, unknown>;
+		said?: string;
 	}> = [];
-	for (const seg of toolGroup.segments) {
+	for (const segment of segments) {
 		const toolName =
-			seg.type === "tool_call" ? seg.part.name : seg.part.name || "result";
+			segment.type === "tool_call"
+				? segment.part.name
+				: segment.part.name || "result";
 		const input =
-			seg.type === "tool_call"
-				? (seg.part.input as Record<string, unknown> | undefined)
+			segment.type === "tool_call"
+				? (segment.part.input as Record<string, unknown> | undefined)
 				: undefined;
-		const last = collapsed[collapsed.length - 1];
-		if (last && last.toolName === toolName) {
+		const said = preambleOf.get(segment.key);
+		const last = steps[steps.length - 1];
+		if (last && last.toolName === toolName && said === undefined) {
 			last.count += 1;
 			continue;
 		}
-		collapsed.push({ toolName, count: 1, input });
+		steps.push({ toolName, count: 1, input, said });
 	}
 
-	// Pick the most representative icon (first entry)
-	const primaryIcon = getToolIcon(
-		collapsed[0]?.toolName ?? "tool",
-		collapsed[0]?.input,
-	);
-	const totalCount = toolGroup.segments.length;
+	if (steps.length === 0) return null;
+
+	// A handful of icons says "some work happened"; thirty says nothing.
+	const shownIcons = steps.slice(0, 3);
 
 	return (
-		<Popover>
-			<PopoverTrigger asChild>
-				<button
-					type="button"
-					className="relative flex h-6 w-6 items-center justify-center rounded hover:bg-muted transition-colors text-muted-foreground/60 hover:text-muted-foreground"
-					title={`${totalCount} tool call${totalCount !== 1 ? "s" : ""}`}
-				>
-					{primaryIcon}
-					{totalCount > 1 && (
-						<span className="absolute top-0 right-0 min-w-[12px] h-[12px] bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full inline-flex items-center justify-center leading-none">
-							{totalCount}
+		<details className="chat-activity">
+			<summary>
+				<span className="chat-activity__icons">
+					{shownIcons.map((step, index) => (
+						<span key={`${step.toolName}-${index}`}>
+							{getToolIcon(step.toolName, step.input)}
 						</span>
-					)}
-				</button>
-			</PopoverTrigger>
-			<PopoverContent
-				side="left"
-				align="start"
-				className="w-64 max-w-[calc(100vw-2rem)] p-2"
-			>
-				<div className="space-y-1">
-					{collapsed.map((entry, i) => {
-						const icon = getToolIcon(entry.toolName, entry.input);
-						const summary = getToolSummary(entry.toolName, entry.input, locale);
-						const label = summary ?? entry.toolName;
-						return (
-							<div
-								key={`${entry.toolName}-${i}`}
-								className="flex min-w-0 items-start gap-2 rounded px-1.5 py-1 text-xs text-muted-foreground"
-							>
-								<span className="mt-0.5 shrink-0">{icon}</span>
-								<span className="min-w-0 flex-1 leading-snug break-words [overflow-wrap:anywhere]">
-									{label}
-									{entry.count > 1 && (
-										<span className="ml-1 opacity-60">x{entry.count}</span>
-									)}
-								</span>
-							</div>
-						);
-					})}
-				</div>
-			</PopoverContent>
-		</Popover>
+					))}
+				</span>
+				<span className="chat-activity__count">
+					{t("chat.activitySteps", { count: segments.length })}
+				</span>
+			</summary>
+			<ol>
+				{steps.map((step, index) => (
+					<li key={`${step.toolName}-${index}`}>
+						{step.said ??
+							getToolSummary(step.toolName, step.input, locale) ??
+							step.toolName}
+						{step.count > 1 ? (
+							<span className="opacity-60"> x{step.count}</span>
+						) : null}
+					</li>
+				))}
+			</ol>
+		</details>
 	);
 }
 
 export type ChatFileAdapter = {
 	fileUrl: (workspacePath: string, filePath: string) => string;
+	/**
+	 * Read the answer aloud. Nothing renders it at the moment: speech is not
+	 * wired up, so the button was offering something that does not happen.
+	 * The seam stays because the adapter is where a host declares what it can
+	 * do, and this is a host capability, not a renderer one.
+	 */
 	renderReadAloud?: (text: string) => ReactNode;
 	downloadFile?: (
 		workspacePath: string,
@@ -286,6 +226,43 @@ export type ChatFileAdapter = {
 		fileName: string,
 	) => Promise<void>;
 };
+
+/** Longest single line still read as an announcement rather than an answer. */
+const PREAMBLE_MAX = 160;
+
+/**
+ * Drops the lines that are nothing but file mentions.
+ *
+ * Attaching files to a prompt writes them into the text as "@uploads/x.pdf"
+ * tokens, so a message with seven attachments opens with seven paths and then
+ * says what it actually wanted — and the same seven files are listed again
+ * underneath as chips. The tokens are how the attachment reaches the agent,
+ * not something the reader wrote or needs to see.
+ *
+ * Only whole lines go. A mention inside a sentence ("look at @src/foo.ts and
+ * tell me why") is the writer referring to a file, and it stays.
+ */
+function withoutMentionOnlyLines(content: string): string {
+	let inFence = false;
+	const kept: string[] = [];
+	for (const line of content.split("\n")) {
+		if (/^\s*(?:```|~~~)/.test(line)) {
+			inFence = !inFence;
+			kept.push(line);
+			continue;
+		}
+		const isManifest =
+			!inFence &&
+			line.trim().length > 0 &&
+			line
+				.trim()
+				.split(/\s+/)
+				.every((token) => /^@[^\s@`"'<>()[\]{}]+$/.test(token));
+		if (isManifest) continue;
+		kept.push(line);
+	}
+	return kept.join("\n").replace(/^\n+/, "");
+}
 
 const ChatFileAdapterContext = createContext<ChatFileAdapter | null>(null);
 type FileReferenceOpenHandler = (filePath: string, range?: FileRange) => void;
@@ -605,100 +582,69 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 				timestamp: number;
 		  };
 
+	// An agent announces what it is about to do and then does it: "Let me
+	// check how the frame reads downloaded files:" followed by a read. The
+	// sentence is not part of the answer — it is the human-readable label of
+	// the call that follows, and the colon is pointing straight at it.
+	//
+	// Pairing the two matters most at the lowest detail level, where lifting
+	// the calls out of the flow used to strand a column of orphaned sentences
+	// that all ended in a colon and introduced nothing. Paired, they travel
+	// together: the narration goes wherever its call goes, and what stays in
+	// the flow is the answer.
+	const preambleOf = new Map<string, string>();
+	const preambleKeys = new Set<string>();
+	for (const [index, segment] of displaySegments.entries()) {
+		if (segment.type !== "text") continue;
+		const next = displaySegments[index + 1];
+		if (next?.type !== "tool_call" && next?.type !== "tool_result_only") {
+			continue;
+		}
+		const announcement = segment.text.trim();
+		// Conservative on purpose: a colon, or one short line. A paragraph of
+		// answer that happens to sit before a call stays in the answer.
+		const announces =
+			announcement.endsWith(":") ||
+			(!announcement.includes("\n") && announcement.length <= PREAMBLE_MAX);
+		if (!announces) continue;
+		preambleOf.set(next.key, announcement.replace(/:$/, ""));
+		preambleKeys.add(segment.key);
+	}
+
+	// At the lowest detail level the thinking blocks and the tool rows leave
+	// the flow entirely and become one summary line above the answer. The
+	// answer itself is untouched: a less technical reader gets the same text.
+	const minimalActivity: Array<
+		| Extract<Segment, { type: "tool_call" }>
+		| Extract<Segment, { type: "tool_result_only" }>
+	> =
+		verbosity === 1
+			? displaySegments.filter(
+					(
+						segment,
+					): segment is
+						| Extract<Segment, { type: "tool_call" }>
+						| Extract<Segment, { type: "tool_result_only" }> =>
+						segment.type === "tool_call" || segment.type === "tool_result_only",
+				)
+			: [];
+
 	const renderSegments: RenderSegment[] = (() => {
 		if (verbosity === 1) {
-			const grouped: RenderSegment[] = [];
-			let toolBuffer: Extract<
-				RenderSegment,
-				{ type: "tool_group" }
-			>["segments"] = [];
-			let thinkingBuffer: string[] = [];
-			let thinkingKey: string | null = null;
-			let thinkingTimestamp = 0;
-
-			const flushThinkingOnly = () => {
-				if (thinkingBuffer.length > 0) {
-					grouped.push({
-						key: thinkingKey ?? `thinking-${grouped.length}`,
-						type: "thinking",
-						text: thinkingBuffer.join("\n\n"),
-						timestamp: thinkingTimestamp,
-					});
-					thinkingBuffer = [];
-					thinkingKey = null;
-					thinkingTimestamp = 0;
-				}
-			};
-
-			// Tool group waiting to be attached to the next content segment.
-			let pendingToolGroup: {
-				key: string;
-				type: "tool_group";
-				segments: typeof toolBuffer;
-				timestamp: number;
-			} | null = null;
-
-			const attachToolGroup = () => {
-				if (toolBuffer.length === 0) return;
-				const tg = {
-					key: `tool-group-${toolBuffer[0].key}`,
-					type: "tool_group" as const,
-					segments: toolBuffer,
-					timestamp: toolBuffer[0].timestamp,
-				};
-				toolBuffer = [];
-				// Attach to the last grouped segment (text or thinking)
-				const last = grouped[grouped.length - 1];
-				if (last) {
-					(last as RenderSegment & { _toolGroup?: typeof tg })._toolGroup = tg;
-				} else {
-					// No preceding segment -- attach to the next one
-					pendingToolGroup = tg;
-				}
-			};
-
-			const pushSegment = (seg: RenderSegment) => {
-				// Attach any pending (leading) tool group to this segment
-				if (pendingToolGroup) {
-					(
-						seg as RenderSegment & { _toolGroup?: typeof pendingToolGroup }
-					)._toolGroup = pendingToolGroup;
-					pendingToolGroup = null;
-				}
-				grouped.push(seg);
-			};
-
-			for (const segment of displaySegments) {
-				if (segment.type === "thinking") {
-					if (thinkingBuffer.length === 0) {
-						thinkingKey = segment.key;
-						thinkingTimestamp = segment.timestamp;
-					}
-					thinkingBuffer.push(segment.text);
-					continue;
-				}
-				if (
-					segment.type === "tool_call" ||
-					segment.type === "tool_result_only"
-				) {
-					toolBuffer.push(segment);
-					continue;
-				}
-				// Non-thinking, non-tool segment: flush pending items
-				flushThinkingOnly();
-				attachToolGroup();
-				pushSegment(segment);
-			}
-			flushThinkingOnly();
-			attachToolGroup();
-			// If only tool calls remain (no text/thinking segments to attach to),
-			// emit the pending tool group as a standalone segment so the message
-			// bubble isn't empty.
-			if (pendingToolGroup && grouped.length === 0) {
-				grouped.push(pendingToolGroup);
-				pendingToolGroup = null;
-			}
-			return grouped;
+			const flow = displaySegments.filter(
+				(segment) =>
+					segment.type !== "thinking" &&
+					segment.type !== "tool_call" &&
+					segment.type !== "tool_result_only" &&
+					!preambleKeys.has(segment.key),
+			);
+			// A turn that was nothing but announcements and calls would render
+			// as an empty answer, so the last announcement stands in for one.
+			if (flow.length > 0) return flow;
+			const lastText = [...displaySegments]
+				.reverse()
+				.find((segment) => segment.type === "text");
+			return lastText ? [lastText] : [];
 		}
 		if (verbosity !== 2) return displaySegments;
 		const grouped: RenderSegment[] = [];
@@ -776,89 +722,49 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		<div
 			data-message-id={messageId}
 			className={cn(
-				"group transition-colors duration-200 overflow-hidden min-w-0 max-w-full",
-				isUser
-					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
-					: "sm:mr-8 bg-muted/50 border border-border",
+				"chat-turn group min-w-0",
+				isUser ? "chat-turn--user" : "chat-turn--agent",
 			)}
 		>
-			<div
-				className={cn(
-					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b overflow-hidden",
-					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
-				)}
-			>
-				{isUser ? (
-					<User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
-				) : (
-					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
-				)}
-				{isUser ? (
-					<span className="text-sm font-medium text-foreground truncate min-w-0">
-						{group.messages[0]?.sender?.name ?? t("chat.you")}
-					</span>
-				) : (
-					<span className="text-sm font-medium text-foreground truncate min-w-0">
-						{assistantDisplayName}
-					</span>
-				)}
-				{group.messages.length > 1 && (
-					<span
-						className={cn(
-							"inline-flex min-h-4 items-center justify-center rounded-sm border px-1 text-[9px] sm:text-[10px] leading-tight flex-shrink-0",
-							isUser
-								? "border-primary/30 text-primary"
-								: "border-border text-muted-foreground",
-						)}
-					>
-						{group.messages.length}
-					</span>
-				)}
-				<div className="flex-1" />
-				{!isUser && allTextContent
-					? fileAdapter?.renderReadAloud?.(allTextContent)
-					: null}
-				{isUser && onForkHere && (
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							onForkHere();
-						}}
-						className="text-muted-foreground hover:text-foreground transition-colors"
-						title={t("chat.forkHere", "Fork here")}
-					>
-						<GitBranch className="w-3.5 h-3.5" />
-					</button>
-				)}
-				{createdAt && !Number.isNaN(createdAt.getTime()) && (
-					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2 flex-shrink-0">
+			<div className="chat-byline">
+				<span className="chat-byline__who">
+					{isUser
+						? (group.messages[0]?.sender?.name ?? t("chat.you"))
+						: assistantDisplayName}
+				</span>
+				{createdAt && !Number.isNaN(createdAt.getTime()) ? (
+					<span>
 						{createdAt.toLocaleTimeString([], {
 							hour: "2-digit",
 							minute: "2-digit",
 						})}
 					</span>
-				)}
-				{allTextContent && (
-					<CopyButton
-						text={allTextContent}
-						className="hidden sm:inline-flex ml-1 [&_svg]:w-3 [&_svg]:h-3"
-					/>
-				)}
-				{allTextContent && (
-					<CompactCopyButton text={allTextContent} className="sm:hidden ml-1" />
-				)}
+				) : null}
+				<span className="chat-byline__spacer" />
+				{isUser && onForkHere ? (
+					<button
+						type="button"
+						className="chat-action"
+						onClick={(event) => {
+							event.stopPropagation();
+							onForkHere();
+						}}
+						title={t("chat.forkHere", "Fork here")}
+					>
+						<GitBranch aria-hidden="true" />
+					</button>
+				) : null}
+				{allTextContent ? (
+					<ChatCopyAction text={allTextContent} label={t("chat.copy")} />
+				) : null}
 			</div>
 
 			<div
 				className={cn(
-					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full transition-[padding] duration-150 ease-out",
-					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
+					"relative min-w-0 max-w-full space-y-2 overflow-hidden",
+					isUser && "chat-bubble",
 				)}
 			>
-				{!isUser && verbosity === 1 && (
-					<div className="absolute top-2 bottom-2 right-[2.25rem] sm:right-[2.75rem] w-px bg-border/40" />
-				)}
 				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
@@ -875,53 +781,6 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 					const prevSegment = idx > 0 ? renderSegments[idx - 1] : null;
 					const needsTopMargin =
 						prevSegment?.type === "text" && segment.type !== "text";
-
-					// In minimal mode, segments may have an attached _toolGroup.
-					// Wrap content + gutter icon in a flex row.
-					const attachedToolGroup = (
-						segment as RenderSegment & {
-							_toolGroup?: Extract<RenderSegment, { type: "tool_group" }>;
-						}
-					)._toolGroup;
-
-					const wrapWithGutter = (
-						key: string,
-						content: React.ReactNode,
-						isThinking = false,
-					) => {
-						if (!attachedToolGroup || verbosity !== 1) {
-							return content;
-						}
-						const runs = splitToolGroupIntoRuns(attachedToolGroup);
-						return (
-							<div
-								key={key}
-								className={cn(
-									"relative",
-									isThinking &&
-										"[&>.tool-gutter]:hidden [&:has(details[open])>.tool-gutter]:flex",
-								)}
-							>
-								{content}
-								<div
-									className={cn(
-										"absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 items-center",
-										isThinking ? "tool-gutter" : "flex",
-									)}
-								>
-									<div className="flex flex-col items-center gap-1 py-0.5">
-										{runs.map((run) => (
-											<ToolGutterIcon
-												key={run.key}
-												toolGroup={run}
-												locale={locale}
-											/>
-										))}
-									</div>
-								</div>
-							</div>
-						);
-					};
 
 					if (segment.type === "text") {
 						const inner = (
@@ -941,7 +800,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 								streamingPresentationMode={streamingPresentationMode}
 							/>
 						);
-						return wrapWithGutter(segment.key, inner);
+						return inner;
 					}
 					if (segment.type === "tool_call") {
 						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
@@ -1012,7 +871,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 								/>
 							</div>
 						);
-						return wrapWithGutter(segment.key, inner, true);
+						return inner;
 					}
 					if (segment.type === "part") {
 						return (
@@ -1129,26 +988,6 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						// In minimal mode, tool groups are usually attached to neighboring
-						// text/thinking segments via _toolGroup. But tool-only assistant
-						// messages can produce a standalone tool_group. Render a compact
-						// fallback row so the bubble is never empty.
-						if (verbosity === 1) {
-							return (
-								<div
-									key={segment.key}
-									className={cn(
-										"relative h-6 leading-none text-xs text-muted-foreground",
-										needsTopMargin && "mt-2",
-									)}
-								>
-									<span>{t("chat.toolsUsed", "Used tools")}</span>
-									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
-										<ToolGutterIcon toolGroup={segment} locale={locale} />
-									</div>
-								</div>
-							);
-						}
 						const visibleToolSegments = hideRecoveredErrors
 							? segment.segments.filter(
 									(toolSegment) => !recoveredSegmentKeys.has(toolSegment.key),
@@ -1226,6 +1065,14 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 					return null;
 				})}
 			</div>
+
+			{verbosity === 1 && minimalActivity.length > 0 ? (
+				<ChatActivitySummary
+					segments={minimalActivity}
+					locale={locale}
+					preambleOf={preambleOf}
+				/>
+			) : null}
 		</div>
 	);
 
@@ -1503,7 +1350,7 @@ function PiPartRenderer({
 			return (
 				<details
 					open={isOpen}
-					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0 overflow-hidden"
+					className="chat-aside group my-2 overflow-hidden"
 				>
 					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-foreground/70 hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						<svg
@@ -1547,7 +1394,7 @@ function PiPartRenderer({
 					>
 						<MarkdownRenderer
 							content={thinkingText}
-							className="text-xs text-foreground/70 leading-relaxed overflow-hidden min-w-0 max-w-full [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
+							className="chat-prose chat-prose--aside overflow-hidden min-w-0 max-w-full"
 							isStreaming={isStreaming}
 						/>
 					</div>
@@ -2193,6 +2040,28 @@ function TextWithFileReferences({
 		() => extractFileReferenceDetails(cleanContent),
 		[cleanContent],
 	);
+
+	// The attachment manifest is stripped only when its files are actually
+	// shown somewhere else, which is the same condition the chips render on.
+	const readableContent = useMemo(
+		() =>
+			fileRefs.length > 0 && workspacePath
+				? withoutMentionOnlyLines(markdownContent)
+				: markdownContent,
+		[fileRefs.length, markdownContent, workspacePath],
+	);
+
+	// An attachment is shown once, as a chip. Media keeps its preview card,
+	// because a thumbnail is the only honest preview of an image.
+	const { mediaRefs, chipRefs } = useMemo(() => {
+		const media: typeof fileRefs = [];
+		const chips: typeof fileRefs = [];
+		for (const ref of fileRefs) {
+			const category = getFileTypeInfo(ref.filePath).category;
+			(category === "image" || category === "video" ? media : chips).push(ref);
+		}
+		return { mediaRefs: media, chipRefs: chips };
+	}, [fileRefs]);
 	const streamingReservedLines = useMemo(
 		() =>
 			isStreaming && streamingPresentationMode === "chunked"
@@ -2224,8 +2093,8 @@ function TextWithFileReferences({
 			}
 		>
 			<MarkdownRenderer
-				content={markdownContent}
-				className="canonical-message-prose text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
+				content={readableContent}
+				className="canonical-message-prose chat-prose overflow-hidden min-w-0 max-w-full"
 				enableMermaid={!deferMermaidUntilFinal}
 				isStreaming={isStreaming}
 				onFileReferenceOpen={(reference) =>
@@ -2235,10 +2104,30 @@ function TextWithFileReferences({
 					})
 				}
 			/>
-			{/* Render file reference cards */}
-			{fileRefs.length > 0 && workspacePath && (
+			{chipRefs.length > 0 && workspacePath && (
+				<div className="chat-chips">
+					{chipRefs.map((ref) => (
+						<button
+							key={`${ref.filePath}-${ref.label}`}
+							type="button"
+							className="chat-chip"
+							title={ref.filePath}
+							onClick={() =>
+								onFileReferenceOpen?.(ref.filePath, {
+									startLine: ref.startLine,
+									endLine: ref.endLine,
+								})
+							}
+						>
+							<FileText aria-hidden="true" />
+							<span className="chat-truncate">{ref.label}</span>
+						</button>
+					))}
+				</div>
+			)}
+			{mediaRefs.length > 0 && workspacePath && (
 				<div className="flex flex-wrap gap-2 mt-2">
-					{fileRefs.map((ref) => (
+					{mediaRefs.map((ref) => (
 						<FileReferenceCard
 							key={`${ref.filePath}-${ref.label}`}
 							filePath={ref.filePath}

@@ -65,7 +65,11 @@
 		"idle_label": "Bereit",
 		"copyAll": "Alles kopieren",
 		"copy": "Kopieren",
-		"you": "Du"
+		"you": "Du",
+		"quote": "Zitieren",
+		"selectionActions": "Aktionen für die Auswahl",
+		"activitySteps_one": "{{count}} Schritt",
+		"activitySteps_other": "{{count}} Schritte"
 	},
 	"sessions": {
 		"title": "Sitzungen",
@@ -963,7 +967,6 @@
 			"parentFolder": "Zum übergeordneten Ordner",
 			"rootLabel": "Home",
 			"upload": "Dateien hochladen",
-			"newFolder": "Neuer Ordner",
 			"viewTree": "Baumansicht",
 			"viewList": "Listenansicht",
 			"viewGrid": "Rasteransicht",

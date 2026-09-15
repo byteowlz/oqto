@@ -68,7 +68,11 @@
 		"idle_label": "Idle",
 		"copyAll": "Copy all",
 		"copy": "Copy",
-		"you": "You"
+		"you": "You",
+		"quote": "Quote",
+		"selectionActions": "Selection actions",
+		"activitySteps_one": "{{count}} step",
+		"activitySteps_other": "{{count}} steps"
 	},
 	"sessions": {
 		"title": "Sessions",
@@ -963,7 +967,6 @@
 			"parentFolder": "Go to parent folder",
 			"rootLabel": "Home",
 			"upload": "Upload files",
-			"newFolder": "New folder",
 			"viewTree": "Tree view",
 			"viewList": "List view",
 			"viewGrid": "Grid view",
