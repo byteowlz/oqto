@@ -57,6 +57,7 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/hooks/use-mobile",
 		"@/hooks/use-mount-effect",
 		"@/lib/chat-rendering/CanonicalMessageRenderer",
+		"@/lib/chat-rendering/ChatSelectionToolbar",
 		"@/lib/chat-verbosity",
 		"@/lib/chat-rendering/group-messages",
 		"@/lib/chat-render-types",

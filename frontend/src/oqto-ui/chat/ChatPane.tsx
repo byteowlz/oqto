@@ -6,6 +6,7 @@ import {
 	type ChatFileAdapter,
 	MessageGroupCard,
 } from "@/lib/chat-rendering/CanonicalMessageRenderer";
+import { ChatSelectionToolbar } from "@/lib/chat-rendering/ChatSelectionToolbar";
 import {
 	type MessageGroup as CanonicalMessageGroup,
 	groupMessages,
@@ -433,6 +434,15 @@ export function ChatPane({
 					) : null}
 				</div>
 			</section>
+
+			<ChatSelectionToolbar
+				onQuote={(passage) =>
+					setPrompt(
+						(current) =>
+							`${current}${current ? "\n\n" : ""}> ${passage.replace(/\n/g, "\n> ")}\n\n`,
+					)
+				}
+			/>
 
 			<TaskProgress tasks={tasks} placement="desktop" />
 
