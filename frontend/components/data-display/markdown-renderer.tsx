@@ -413,10 +413,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 			);
 		}
 		return (
-			<code
-				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]"
-				style={{ backgroundColor: "var(--code-inline-bg)" }}
-			>
+			<code className="markdown-inline-code px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]">
 				{children}
 			</code>
 		);

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../../lib/chat-rendering/chat-typography.css";
 
 /* JetBrainsMono Nerd Font - Optional custom fonts
    If fonts are not available in /public/fonts/, the system will fallback to ui-monospace */
@@ -380,6 +381,12 @@
 
 .markdown-content code {
 	word-break: break-all;
+}
+
+/* The inline-code wash. It used to be an inline style, which no stylesheet
+   could reach: the chat scope needs to be able to quieten it. */
+.markdown-inline-code {
+	background-color: var(--code-inline-bg);
 }
 
 .stream-commit-slide-in-a,
