@@ -30,15 +30,7 @@
 		"base17": "oklch(0.620 0.110 302)"
 	},
 	"overrides": {
-		"--background": "var(--base02)",
-		"--card": "var(--base01)",
-		"--popover": "var(--base00)",
 		"--muted-foreground": "var(--base05)",
-		"--sidebar": "var(--base02)",
-		"--sidebar-accent": "var(--base01)",
-		"--border": "var(--base03)",
-		"--input": "var(--base02)",
-		"--sidebar-border": "var(--base03)",
 		"--chart-1": "var(--base0B)",
 		"--chart-2": "var(--base04)",
 		"--chart-3": "var(--base0F)",

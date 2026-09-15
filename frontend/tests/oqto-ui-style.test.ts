@@ -74,12 +74,30 @@ describe("OqtoUI visual stability", () => {
 	it("maps the same light-theme roles to the same Base24 slots", () => {
 		const [oqtoLight, nordLight] = lightSchemes;
 		expect(nordLight.overrides).toEqual(oqtoLight.overrides);
-		expect(nordLight.overrides["--background"]).toBe("var(--base02)");
-		expect(nordLight.overrides["--card"]).toBe("var(--base01)");
-		expect(nordLight.overrides["--sidebar"]).toBe("var(--base02)");
-		expect(nordLight.overrides["--border"]).toBe("var(--base03)");
-		expect(nordLight.overrides["--input"]).toBe("var(--base02)");
 		expect(nordLight.overrides["--code-accent"]).toBe("var(--base0B)");
+	});
+
+	it("leaves the light surfaces to the role layer", () => {
+		// These used to be pinned here: --background at base02 with --card at
+		// base01, which puts the page ground a step DARKER than the cards
+		// sitting on it, and --border at base03, heavy enough that the UI
+		// reads as a line drawing. The role layer already places them —
+		// background at base00, the lightest slot, and border at base01 — so
+		// the overrides were not adding a decision, they were inverting one.
+		for (const scheme of lightSchemes) {
+			for (const role of [
+				"--background",
+				"--card",
+				"--popover",
+				"--border",
+				"--input",
+				"--sidebar",
+				"--sidebar-accent",
+				"--sidebar-border",
+			]) {
+				expect(scheme.overrides).not.toHaveProperty(role);
+			}
+		}
 	});
 
 	it("keeps the canonical Tinted Theming Nord Light Base16 slots unchanged", () => {
