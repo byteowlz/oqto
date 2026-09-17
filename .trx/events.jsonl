@@ -1672,3 +1672,4 @@
 {"id":"evt_jqtjw6c9","issue_id":"oqto-6rg1","action":"updated","timestamp":"2026-09-11T09:10:19.383924625Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
 {"id":"evt_1k81ecfy","issue_id":"oqto-6rg1","action":"verification_added","timestamp":"2026-09-15T07:34:23.605839701Z","note":"vrun-yqe2: passed"}
 {"id":"evt_q8ssmq6t","issue_id":"oqto-6rg1","action":"closed","timestamp":"2026-09-15T07:34:23.637024795Z","changes":[{"field":"status","from":"in_progress","to":"closed"}]}
+{"id":"evt_c83b6b6t","issue_id":"oqto-azqn","action":"created","timestamp":"2026-09-17T13:32:53.913491Z","harness":"pi","harness_session_id":"01a0ae37-c356-76a6-9c74-764bc0797343","session_name":"Planning Session Overview","workspace_id":"w1E","model":"rtx6000/deepseek-v4-flash-vision"}
