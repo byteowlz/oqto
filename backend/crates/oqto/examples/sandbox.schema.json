@@ -140,7 +140,7 @@
       ]
     },
     "profile": {
-      "description": "Which profile to use: \"minimal\", \"development\", \"strict\", or a custom name.",
+      "description": "Which profile to use: \"minimal\", \"development\", \"strict\", \"development-macos\", or a custom name.",
       "default": "",
       "type": "string"
     },
@@ -456,7 +456,7 @@
       }
     },
     "SandboxProfile": {
-      "description": "A sandbox profile definition.\n\nProfiles define the security settings for sandboxed processes. Built-in profiles: \"minimal\", \"development\", \"strict\" Custom profiles can be defined in `[profiles.<name>]` sections.\n\n## Security Layers\n\n1. **oqto-sandbox (bwrap)**: Hard deny/allow via namespace isolation 2. **oqto-guard (FUSE)**: Runtime approval for \"gray area\" paths 3. **oqto-ssh-proxy**: SSH access without exposing private keys 4. **Network (eavs)**: Domain-level network filtering",
+      "description": "A sandbox profile definition.\n\nProfiles define the security settings for sandboxed processes. Built-in profiles: \"minimal\", \"development\", \"strict\", \"development-macos\" Custom profiles can be defined in `[profiles.<name>]` sections.\n\n## Security Layers\n\n1. **oqto-sandbox (bwrap)**: Hard deny/allow via namespace isolation 2. **oqto-guard (FUSE)**: Runtime approval for \"gray area\" paths 3. **oqto-ssh-proxy**: SSH access without exposing private keys 4. **Network (eavs)**: Domain-level network filtering",
       "type": "object",
       "properties": {
         "allow_read": {

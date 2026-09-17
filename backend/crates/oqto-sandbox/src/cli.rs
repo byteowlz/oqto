@@ -110,7 +110,7 @@ fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
             .context("user sandbox config exists but failed to parse");
     }
 
-    let profile = profile.unwrap_or("development");
+    let profile = profile.unwrap_or(crate::default_profile_name());
     info!(
         "No config file found, using hardcoded profile '{}'",
         profile

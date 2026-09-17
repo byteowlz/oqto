@@ -18,6 +18,7 @@ pub use command::{SandboxStdin, build_sandbox_command};
 pub use config::{
     GuardConfig, GuardPolicy, LandlockMode, NetworkConfig, NetworkMode, PromptConfig,
     SandboxConfig, SandboxConfigFile, SandboxProfile, SeccompMode, SshProxyConfig,
+    default_profile_name,
 };
 pub use egress::{EgressGuard, EgressPlan, EgressProxy};
 pub use spawn::configure_bwrap_pre_exec;

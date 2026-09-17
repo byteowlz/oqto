@@ -26,7 +26,7 @@ use crate::skills::{
     SkillMutability, SkillPolicy, SkillScope,
 };
 use crate::workspace::meta::{WorkspaceMeta, load_workspace_meta, write_workspace_meta};
-use oqto_sandbox::{SandboxConfigFile, SandboxProfile};
+use oqto_sandbox::{SandboxConfigFile, SandboxProfile, default_profile_name};
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
@@ -1001,13 +1001,13 @@ pub async fn get_workspace_sandbox(
     };
 
     let profile_name = if file.profile.is_empty() {
-        "development".to_string()
+        default_profile_name().to_string()
     } else {
         file.profile.clone()
     };
 
     let mut profiles = HashSet::new();
-    profiles.extend(["minimal", "development", "strict"].map(String::from));
+    profiles.extend(["minimal", "development", "strict", "development-macos"].map(String::from));
     profiles.extend(file.profiles.keys().cloned());
 
     Ok(Json(WorkspaceSandboxResponse {
@@ -1056,7 +1056,7 @@ pub async fn update_workspace_sandbox(
         .map_err(|e| ApiError::internal(format!("Failed to write sandbox config: {}", e)))?;
 
     let mut profiles = HashSet::new();
-    profiles.extend(["minimal", "development", "strict"].map(String::from));
+    profiles.extend(["minimal", "development", "strict", "development-macos"].map(String::from));
     profiles.extend(file.profiles.keys().cloned());
 
     Ok(Json(WorkspaceSandboxResponse {
@@ -1512,7 +1512,7 @@ fn update_workspace_sandbox_pi_access(
     };
 
     let profile_name = if file.profile.is_empty() {
-        "development".to_string()
+        default_profile_name().to_string()
     } else {
         file.profile.clone()
     };
@@ -1522,7 +1522,7 @@ fn update_workspace_sandbox_pi_access(
         .get(&profile_name)
         .cloned()
         .or_else(|| SandboxProfile::builtin(&profile_name))
-        .unwrap_or_else(SandboxProfile::development);
+        .unwrap_or_else(SandboxProfile::for_platform);
 
     let mut profile = base_profile;
 

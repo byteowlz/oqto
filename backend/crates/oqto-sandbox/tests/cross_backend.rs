@@ -56,7 +56,7 @@ fn resolved(profile_name: &str) -> ResolvedPolicy {
 
 #[test]
 fn neither_adapter_drops_a_rule() {
-    for name in ["minimal", "development", "strict"] {
+    for name in ["minimal", "development", "development-macos", "strict"] {
         let policy = resolved(name);
         let bwrap = compile_filesystem_args(&policy, &AllPresent, &[]);
         let sbpl = compile_profile(&policy);
@@ -78,7 +78,7 @@ fn neither_adapter_drops_a_rule() {
 
 #[test]
 fn a_denied_path_is_denied_by_both() {
-    for name in ["minimal", "development", "strict"] {
+    for name in ["minimal", "development", "development-macos", "strict"] {
         let policy = resolved(name);
         let sbpl = compile_profile(&policy);
         let bwrap = compile_filesystem_args(&policy, &AllPresent, &[]);

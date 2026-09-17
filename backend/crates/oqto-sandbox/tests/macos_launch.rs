@@ -311,6 +311,42 @@ fn redirected_input_never_borrows_the_runner_terminal() {
 }
 
 #[test]
+fn shipped_development_macos_profile_runs_and_scopes_the_workdir() {
+    // The fix for shipped profiles failing on macOS: the default profile must
+    // actually start under Seatbelt while keeping the path denylist and
+    // workspace scoping that Seatbelt enforces.
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("work");
+    std::fs::create_dir(&workspace).unwrap();
+    let denied = workspace.join("denied");
+    std::fs::write(&denied, "private\n").unwrap();
+    let mut config = SandboxConfig::from_profile("development-macos");
+    config.enabled = true;
+    config.deny_read.push(denied.to_string_lossy().into_owned());
+    // Workdir is writable (workspace scoping) and the default profile starts.
+    let workdir = workspace.canonicalize().unwrap();
+    success(
+        run(
+            &config,
+            &workspace,
+            "printf ok > local; pwd -P; cat local",
+            &[],
+        ),
+        &format!("{}\nok", workdir.display()),
+    );
+    // A path denied under the workspace is still denied.
+    success(
+        run(
+            &config,
+            &workspace,
+            "printf READY; if cat \"$1\"; then exit 9; fi; printf DENIED",
+            &[&denied],
+        ),
+        "READYDENIED",
+    );
+}
+
+#[test]
 fn unsupported_policy_errors_before_any_payload_runs() {
     let root = tempfile::tempdir().unwrap();
     let config = SandboxConfig::from_profile("strict");

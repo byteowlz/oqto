@@ -725,10 +725,26 @@ pub enum ReadPolicy {
     Allowlist,
 }
 
+/// The profile a sandbox should use when nothing has selected one.
+///
+/// Linux and other platforms default to `development`, whose namespace and
+/// kernel isolations bubblewrap can enforce. macOS defaults to
+/// `development-macos`, because the Seatbelt backend cannot enforce the
+/// pid/user-namespace and no-new-privs guarantees the shared `development` and
+/// `strict` profiles ask for; refusing them would leave macOS with no usable
+/// shipped profile and push users to disable the sandbox entirely.
+pub fn default_profile_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "development-macos"
+    } else {
+        "development"
+    }
+}
+
 /// A sandbox profile definition.
 ///
 /// Profiles define the security settings for sandboxed processes.
-/// Built-in profiles: "minimal", "development", "strict"
+/// Built-in profiles: "minimal", "development", "strict", "development-macos"
 /// Custom profiles can be defined in `[profiles.<name>]` sections.
 ///
 /// ## Security Layers
@@ -1125,11 +1141,55 @@ impl SandboxProfile {
         }
     }
 
+    /// Create a macOS-compatible development profile.
+    ///
+    /// This is `development` adapted for the macOS Seatbelt backend, which
+    /// enforces per-path access but cannot isolate a process namespace, cannot
+    /// deny user-namespace creation, and cannot assert `no_new_privs`. Refusing
+    /// those guarantees (as the shared `development`/`strict` profiles request)
+    /// would leave macOS with no shipped profile that can start.
+    ///
+    /// It keeps the path policy `development` already ships — the deny_read
+    /// list for secrets, the allow_write agents, the deny_write for
+    /// `sandbox.toml`, and the denylist home read with workspace scoping — all
+    /// of which Seatbelt does enforce. It only drops the guarantees Seatbelt
+    /// cannot provide and disables the advisory Linux audit modes it has no
+    /// equivalent for.
+    pub fn development_macos() -> Self {
+        let mut profile = Self::development();
+        // Seatbelt cannot isolate the process namespace or create one:
+        // these must be off or validate_config refuses to start.
+        profile.isolate_pid = false;
+        profile.disable_userns = false;
+        profile.no_new_privs = false;
+        // Seccomp/Landlock do not exist on macOS; keeping the Linux 'audit'
+        // mode would only emit a warning for a ruleset never applied.
+        profile.seccomp_mode = SeccompMode::Off;
+        profile.landlock_mode = LandlockMode::Off;
+        // Overlays need a mount namespace Seatbelt does not provide.
+        profile.overlay_paths = vec![];
+        // Destination grants are not supported on macOS and are rejected:
+        // clear them so every SSH sign request prompts instead.
+        if let Some(ssh) = &mut profile.ssh {
+            ssh.allowed_hosts.clear();
+        }
+        profile
+    }
+
+    /// The profile this host should use when none is selected.
+    ///
+    /// See [`default_profile_name`]; this must exist as a built-in profile on
+    /// the host it returns.
+    pub fn for_platform() -> Self {
+        Self::builtin(default_profile_name()).expect("default profile is built-in")
+    }
+
     /// Get a built-in profile by name.
     pub fn builtin(name: &str) -> Option<Self> {
         match name {
             "minimal" => Some(Self::minimal()),
             "development" => Some(Self::development()),
+            "development-macos" => Some(Self::development_macos()),
             "strict" => Some(Self::strict()),
             _ => None,
         }
@@ -1163,7 +1223,7 @@ pub struct SandboxConfigFile {
     /// Enable sandboxing.
     pub enabled: bool,
 
-    /// Which profile to use: "minimal", "development", "strict", or a custom name.
+    /// Which profile to use: "minimal", "development", "strict", "development-macos", or a custom name.
     pub profile: String,
 
     /// Custom profile definitions.
@@ -1374,13 +1434,13 @@ pub const USER_SANDBOX_CONFIG: &str = "~/.config/oqto/sandbox.toml";
 
 impl Default for SandboxConfig {
     fn default() -> Self {
-        let profile = SandboxProfile::development();
+        let profile = SandboxProfile::for_platform();
         Self {
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: false,
-            profile: "development".to_string(),
+            profile: default_profile_name().to_string(),
             read_policy: profile.read_policy,
             home_access: profile.home_access,
             allow_read: profile.allow_read,
@@ -1422,8 +1482,9 @@ impl SandboxConfigFile {
 
 impl From<SandboxConfigFile> for SandboxConfig {
     fn from(file: SandboxConfigFile) -> Self {
+        let default_name = default_profile_name();
         let profile_name = if file.profile.is_empty() {
-            "development"
+            default_name
         } else {
             &file.profile
         };
@@ -1436,10 +1497,10 @@ impl From<SandboxConfigFile> for SandboxConfig {
             .or_else(|| SandboxProfile::builtin(profile_name))
             .unwrap_or_else(|| {
                 warn!(
-                    "Unknown profile '{}', falling back to 'development'",
+                    "Unknown profile '{}', falling back to '{default_name}'",
                     profile_name
                 );
-                SandboxProfile::development()
+                SandboxProfile::for_platform()
             });
 
         let mut config = Self {
@@ -1628,10 +1689,11 @@ impl SandboxConfig {
             .or_else(|| SandboxProfile::builtin(profile_name))
             .unwrap_or_else(|| {
                 warn!(
-                    "Unknown profile '{}', falling back to 'development'",
-                    profile_name
+                    "Unknown profile '{}', falling back to '{}'",
+                    profile_name,
+                    default_profile_name()
                 );
-                SandboxProfile::development()
+                SandboxProfile::for_platform()
             });
 
         let mut config = Self {
@@ -1737,7 +1799,7 @@ impl SandboxConfig {
                     merged_profiles.extend(file.profiles.clone());
 
                     let profile_name = if file.profile.is_empty() {
-                        "development"
+                        default_profile_name()
                     } else {
                         &file.profile
                     };
@@ -1749,10 +1811,11 @@ impl SandboxConfig {
                         .or_else(|| SandboxProfile::builtin(profile_name))
                         .unwrap_or_else(|| {
                             warn!(
-                                "Workspace references unknown profile '{}', using development",
-                                profile_name
+                                "Workspace references unknown profile '{}', using '{}'",
+                                profile_name,
+                                default_profile_name()
                             );
-                            SandboxProfile::development()
+                            SandboxProfile::for_platform()
                         });
 
                     let config = Self {
@@ -3582,7 +3645,7 @@ max_cpu_seconds = 32
     fn test_default_config() {
         let config = SandboxConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.profile, "development");
+        assert_eq!(config.profile, default_profile_name());
         assert!(config.deny_read.contains(&"~/.ssh".to_string()));
     }
 
@@ -3626,12 +3689,14 @@ max_cpu_seconds = 32
         let strict = SandboxConfig::from_profile("strict");
         assert_eq!(strict.profile, "strict");
 
-        // Unknown profiles keep their name but use development settings
+        // Unknown profiles keep their name but fall back to the platform default
+        // profile's settings (development on non-macOS, development-macos on
+        // macOS, where the namespace isolations are unenforceable).
+        let fallback = SandboxProfile::for_platform();
         let unknown = SandboxConfig::from_profile("unknown");
         assert_eq!(unknown.profile, "unknown");
-        // But should have development's settings
-        assert!(unknown.isolate_pid); // development has isolate_pid=true
-        assert!(!unknown.isolate_network); // development has isolate_network=false
+        assert_eq!(unknown.isolate_pid, fallback.isolate_pid);
+        assert_eq!(unknown.isolate_network, fallback.isolate_network);
     }
 
     #[test]
@@ -3741,11 +3806,13 @@ profile = "nonexistent"
         let file: SandboxConfigFile = toml::from_str(toml_content).unwrap();
         let config: SandboxConfig = file.into();
 
-        // Unknown profile keeps its name but uses development settings
+        // Unknown profile keeps its name but falls back to the platform default
+        // profile's settings (development on non-macOS, development-macos on
+        // macOS, where the namespace isolations are unenforceable).
+        let fallback = SandboxProfile::for_platform();
         assert_eq!(config.profile, "nonexistent");
-        // Verify it got development's settings
-        assert!(config.isolate_pid); // development has isolate_pid=true
-        assert!(!config.isolate_network); // development has isolate_network=false
+        assert_eq!(config.isolate_pid, fallback.isolate_pid);
+        assert_eq!(config.isolate_network, fallback.isolate_network);
     }
 
     #[test]

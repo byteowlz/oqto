@@ -93,7 +93,7 @@ pub fn compile_profile(config: &SandboxConfig, workspace: &Path) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HomeAccess, NetworkConfig, ReadPolicy};
+    use crate::config::{HomeAccess, NetworkConfig, ReadPolicy, SandboxProfile};
 
     fn mac_config() -> SandboxConfig {
         SandboxConfig {
@@ -122,6 +122,35 @@ mod tests {
             assert!(validate_config(&SandboxConfig::from_profile(profile)).is_err());
         }
         assert!(validate_config(&mac_config()).is_ok());
+        // The shipped macOS profile is explicitly compatible, unlike the Linux
+        // profiles above.
+        assert!(validate_config(&SandboxConfig::from_profile("development-macos")).is_ok());
+    }
+
+    #[test]
+    fn development_macos_keeps_the_development_path_policy() {
+        let mut profile = SandboxProfile::development_macos();
+        // The guarantees Seatbelt cannot provide are dropped...
+        assert!(!profile.isolate_pid);
+        assert!(!profile.disable_userns);
+        assert!(!profile.no_new_privs);
+        assert!(!profile.overlay_enabled);
+        assert!(profile.overlay_paths.is_empty());
+        assert_eq!(profile.seccomp_mode, SeccompMode::Off);
+        assert_eq!(profile.landlock_mode, LandlockMode::Off);
+        // ...while the path allowlist/denylist and workspace scoping that
+        // Seatbelt does enforce are kept.
+        let dev = SandboxProfile::development();
+        assert_eq!(profile.read_policy, dev.read_policy);
+        assert_eq!(profile.home_access, dev.home_access);
+        assert_eq!(profile.deny_read, dev.deny_read);
+        assert_eq!(profile.allow_write, dev.allow_write);
+        assert_eq!(profile.deny_write, dev.deny_write);
+        assert!(profile.deny_read.contains(&"~/.ssh".to_string()));
+        // SSH destination grants are dropped (macOS rejects them), so every
+        // sign request prompts rather than silently granting.
+        let ssh = profile.ssh.take().expect("ssh proxy config");
+        assert!(ssh.allowed_hosts.is_empty());
     }
 
     #[test]
