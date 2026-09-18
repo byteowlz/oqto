@@ -17,7 +17,9 @@ Source material: `design-exploration/Mockups/20260918_oqto_UI_mockups_layout_des
 | **Card mode** | A side panel as an inset column inside the gap rhythm, like any other pane. Splittable into rows. |
 | **Primary area** | The columns between the side panels. Each column is an independent Container by default; three columns are three sessions side by side. |
 | **Strip** | A top or bottom Lane (ADR-0042) that is either **spanning** (one Container across all primary columns) or **per column** (one Container under or over each primary column). |
-| **Layout switch** | The chrome control that cycles or picks presets. A Slot, never Content. |
+| **Layout switch** | The chrome control that opens the layout modal. A Slot, never Content. |
+| **Layout modal** | The picker: a Pinned tab (the user's rotation) and an All tab (every available preset, with pin toggles). |
+| **Pinned** | A preset in the user's rotation. Cycling and jump keys operate on pinned presets only. |
 
 ## Context
 
@@ -72,9 +74,16 @@ Reversal is exact for the same Content set: classic → columns → classic rest
 
 The shipped names and recipes are `classic`, `center-stage`, `double`, `columns`, `command-center`, `gallery`, in that order, matching the mockups; `classic` is the default. The list lives with the Screen Mode's presentation data so ADR-0040 Customizations can add or reorder presets without host changes. The active preset name persists with the Arrangement; when a user edits the grid by hand the Arrangement is simply "custom" until a preset is applied again.
 
-### The layout switch is a Slot
+### The layout switch is a Slot that opens a modal
 
-The layout switch is chrome: a button in the status bar slot (desktop and web), and in the mobile Screen Mode's toolbar. It cycles the preset list on activation, cycles backwards with the modifier, and opens a picker on secondary activation showing each preset as a miniature of its solved geometry plus the side-panel mode toggles. Keyboard bindings select presets directly. Agents may request a preset through the typed control surface of ADR-0041 with the same disruption limits as `reveal`; they cannot toggle the picker.
+The layout switch is chrome: a button in the status bar Slot (desktop and web) and in the mobile Screen Mode's toolbar. Activating it, or the layout shortcut, opens the **layout modal**. The modal has two tabs:
+
+- **Pinned:** the user's rotation, in the user's order, each preset drawn as a miniature of its solved geometry with its jump key. Activating one applies it and closes the modal.
+- **All:** every available preset — the shipped six plus any ADR-0040 Customization presets — with a pin toggle on each. Pinning appends to the rotation; unpinning removes it. The shipped six are pinned by default.
+
+Cycling commands (keyboard, and Agent requests) iterate **the pinned set only**, in pinned order; jump keys select pinned slots one through nine. Within the modal, arrow and vim keys move, a single key toggles the pin, Enter applies, Escape closes.
+
+Pins and their order persist as presentation data for the user and Screen Mode, never in the layout document, so they survive Arrangement switches and Workspace changes. Whether the modal is open is host state: not persisted, not part of the layout document, and not something an Agent can toggle. Agents may request a preset through the typed control surface of ADR-0041 with the same disruption limits as `reveal`.
 
 ### Content kinds are open
 
@@ -98,4 +107,5 @@ Columns are Containers and hold any Content: sessions, files, git, trx, terminal
 1. Kernel: for each of the eight mockups a recipe whose compiled topology matches a golden placement table.
 2. Kernel: property tests over random Content sets that `apply_recipe` preserves every Content reference and active tab, and that applying the previous recipe restores the previous placements.
 3. Corpus: a preset-cycle trace consumed by both the TypeScript kernel and the Rust port.
-4. Host: with three sessions open, cycling every preset never ends a session or loses composer text; split controls are disabled on a sidebar-mode panel.
+4. Host: with three sessions open, cycling every pinned preset never ends a session or loses composer text; split controls are disabled on a sidebar-mode panel.
+5. Host: pins survive a relaunch and an Arrangement switch; unpinning the active preset keeps it active and drops it from the rotation.
