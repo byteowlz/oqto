@@ -30,7 +30,7 @@ The 2026-09-18 mockups settle the family. Every desktop layout keeps one frame a
 | Mockup | Primary columns | Top strip | Bottom strip |
 | --- | --- | --- | --- |
 | classic | 1 | – | – |
-| classic, sidebar as card | 1 | – | – |
+| classic card (sidebar as inset card) | 1 | – | – |
 | center stage | 1 | spanning | spanning |
 | center stage double | 2 | spanning | spanning |
 | column rows 1 | 3 | – | per column |
@@ -72,14 +72,14 @@ Reversal is exact for the same Content set: classic → columns → classic rest
 
 ### Named presets are data
 
-The shipped names and recipes are `classic`, `center-stage`, `double`, `columns`, `command-center`, `gallery`, in that order, matching the mockups; `classic` is the default. The list lives with the Screen Mode's presentation data so ADR-0040 Customizations can add or reorder presets without host changes. The active preset name persists with the Arrangement; when a user edits the grid by hand the Arrangement is simply "custom" until a preset is applied again.
+The shipped names and recipes are `classic`, `classic-card`, `center-stage`, `double`, `columns`, `command-center`, `gallery`, in that order, matching the mockups; `classic` is the default. `classic-card` (the sidebar as an inset card) is its own preset rather than a mode toggle on `classic`: whether the sidebar is flush is a layout the user chooses, and it should be pinnable and cyclable like any other. The list lives with the Screen Mode's presentation data so ADR-0040 Customizations can add or reorder presets without host changes. The active preset name persists with the Arrangement; when a user edits the grid by hand the Arrangement is simply "custom" until a preset is applied again.
 
 ### The layout switch is a Slot that opens a modal
 
 The layout switch is chrome: a button in the status bar Slot (desktop and web) and in the mobile Screen Mode's toolbar. Activating it, or the layout shortcut, opens the **layout modal**. The modal has two tabs:
 
 - **Pinned:** the user's rotation, in the user's order, each preset drawn as a miniature of its solved geometry with its jump key. Activating one applies it and closes the modal.
-- **All:** every available preset — the shipped six plus any ADR-0040 Customization presets — with a pin toggle on each. Pinning appends to the rotation; unpinning removes it. The shipped six are pinned by default.
+- **All:** every available preset — the shipped seven plus any ADR-0040 Customization presets — with a pin toggle on each. Pinning appends to the rotation; unpinning removes it. The shipped seven are pinned by default.
 
 Cycling commands (keyboard, and Agent requests) iterate **the pinned set only**, in pinned order; jump keys select pinned slots one through nine. Within the modal, arrow and vim keys move, a single key toggles the pin, Enter applies, Escape closes.
 
