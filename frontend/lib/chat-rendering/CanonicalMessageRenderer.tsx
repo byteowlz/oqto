@@ -266,6 +266,84 @@ function withoutMentionOnlyLines(content: string): string {
 }
 
 const ChatFileAdapterContext = createContext<ChatFileAdapter | null>(null);
+/**
+ * A message shows images in three places — markdown, an image part, and a
+ * file reference's preview — and all three should enlarge. The handler
+ * reaches them by context so each one does not need its own prop chain.
+ */
+const ChatImageOpenContext = createContext<ImageOpenHandler | undefined>(
+	undefined,
+);
+
+/**
+ * The preview inside a file reference card. It keeps its own load and error
+ * handlers, so it cannot go through OpenableImage; the affordance wraps it.
+ */
+function ZoomableCardImage({
+	src,
+	alt,
+	hidden,
+	onLoaded,
+	onFailed,
+}: {
+	src: string;
+	alt: string;
+	hidden: boolean;
+	onLoaded: () => void;
+	onFailed: () => void;
+}) {
+	const onImageOpen = useContext(ChatImageOpenContext);
+	const picture = (
+		<img
+			src={src}
+			alt={alt}
+			className={cn("max-w-full h-auto", hidden && "hidden")}
+			onLoad={onLoaded}
+			onError={onFailed}
+		/>
+	);
+	if (!onImageOpen) return picture;
+	return (
+		<button
+			type="button"
+			className="block w-full cursor-zoom-in border-0 bg-transparent p-0"
+			onClick={() => onImageOpen({ src, alt }, [{ src, alt }])}
+			aria-label={`${alt} — enlarge`}
+		>
+			{picture}
+		</button>
+	);
+}
+
+/** Wraps an image in the affordance to open it, when the host offers one. */
+function OpenableImage({
+	src,
+	alt,
+	className,
+	siblings,
+}: {
+	src: string;
+	alt: string;
+	className?: string;
+	siblings?: MarkdownImage[];
+}) {
+	const onImageOpen = useContext(ChatImageOpenContext);
+	const image = { src, alt };
+	const picture = (
+		<img src={src} alt={alt} className={className} loading="lazy" />
+	);
+	if (!onImageOpen) return picture;
+	return (
+		<button
+			type="button"
+			className="block max-w-full cursor-zoom-in border-0 bg-transparent p-0"
+			onClick={() => onImageOpen(image, siblings ?? [image])}
+			aria-label={alt ? `${alt} — enlarge` : "Enlarge image"}
+		>
+			{picture}
+		</button>
+	);
+}
 type FileReferenceOpenHandler = (filePath: string, range?: FileRange) => void;
 /** Which image was activated, and the others in the same message. */
 export type ImageOpenHandler = (
@@ -1091,7 +1169,9 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		return (
 			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
 				<ChatFileAdapterContext.Provider value={fileAdapter}>
-					{messageCard}
+					<ChatImageOpenContext.Provider value={onImageOpen}>
+						{messageCard}
+					</ChatImageOpenContext.Provider>
 				</ChatFileAdapterContext.Provider>
 			</FileReferenceOpenContext.Provider>
 		);
@@ -1100,28 +1180,30 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	return (
 		<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
 			<ChatFileAdapterContext.Provider value={fileAdapter}>
-				<ContextMenu>
-					<ContextMenuTrigger className="contents">
-						{messageCard}
-					</ContextMenuTrigger>
-					<ContextMenuContent>
-						{isUser && onForkHere && (
-							<ContextMenuItem onClick={() => onForkHere()} className="gap-2">
-								<GitBranch className="w-4 h-4" />
-								{t("chat.forkHere", "Fork here")}
-							</ContextMenuItem>
-						)}
-						{allTextContent && (
-							<ContextMenuItem
-								onClick={() => navigator.clipboard?.writeText(allTextContent)}
-								className="gap-2"
-							>
-								<Copy className="w-4 h-4" />
-								{t("chat.copyAll")}
-							</ContextMenuItem>
-						)}
-					</ContextMenuContent>
-				</ContextMenu>
+				<ChatImageOpenContext.Provider value={onImageOpen}>
+					<ContextMenu>
+						<ContextMenuTrigger className="contents">
+							{messageCard}
+						</ContextMenuTrigger>
+						<ContextMenuContent>
+							{isUser && onForkHere && (
+								<ContextMenuItem onClick={() => onForkHere()} className="gap-2">
+									<GitBranch className="w-4 h-4" />
+									{t("chat.forkHere", "Fork here")}
+								</ContextMenuItem>
+							)}
+							{allTextContent && (
+								<ContextMenuItem
+									onClick={() => navigator.clipboard?.writeText(allTextContent)}
+									className="gap-2"
+								>
+									<Copy className="w-4 h-4" />
+									{t("chat.copyAll")}
+								</ContextMenuItem>
+							)}
+						</ContextMenuContent>
+					</ContextMenu>
+				</ChatImageOpenContext.Provider>
 			</ChatFileAdapterContext.Provider>
 		</FileReferenceOpenContext.Provider>
 	);
@@ -1477,11 +1559,10 @@ function PiPartRenderer({
 			}
 			if (!src) return null;
 			return (
-				<img
+				<OpenableImage
 					src={src}
 					alt={imgPart.alt ?? "Attached content"}
 					className="max-w-[300px] max-h-[300px] rounded-md border border-border object-contain"
-					loading="lazy"
 				/>
 			);
 		}
@@ -2402,18 +2483,15 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 							{error}
 						</div>
 					) : (
-						<img
+						<ZoomableCardImage
 							src={fileUrl ?? ""}
 							alt={fileName}
-							className={cn(
-								"max-w-full h-auto",
-								isLoading && !imageLoaded && "hidden",
-							)}
-							onLoad={() => {
+							hidden={isLoading && !imageLoaded}
+							onLoaded={() => {
 								setImageLoaded(true);
 								setIsLoading(false);
 							}}
-							onError={() => {
+							onFailed={() => {
 								setError("Failed to load image");
 								setIsLoading(false);
 							}}
