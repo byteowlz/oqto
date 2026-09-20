@@ -18,6 +18,7 @@ import {
 	CopyButton,
 	MarkdownRenderer,
 } from "@/components/data-display";
+import type { MarkdownImage } from "@/components/data-display/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import {
 	ContextMenu,
@@ -55,6 +56,10 @@ import {
 	normalizeTokenCount,
 	parsePiSessionStats,
 } from "@/features/chat/utils/session-stats";
+import {
+	LightboxGallery,
+	type LightboxItem,
+} from "@/features/sessions/components/LightboxGallery";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import { useWorkspaceInstructions } from "@/hooks/use-workspace-instructions";
@@ -156,6 +161,29 @@ const LEGACY_CHAT_FILE_ADAPTER: ChatFileAdapter = {
 		<ReadAloudButton text={text} className="ml-1 flex-shrink-0" />
 	),
 };
+
+/**
+ * The lightbox reads files from the workspace, so a rendered image has to be
+ * turned back into the path it came from. The renderer built that URL with
+ * workspaceFileUrl, which carries the path in a query parameter, so this is
+ * that function's inverse rather than a guess about the URL's shape. An image
+ * from somewhere else keeps its URL as the path and the lightbox loads it
+ * directly.
+ */
+function toLightboxItem(image: MarkdownImage): LightboxItem {
+	let path = image.src;
+	try {
+		const parsed = new URL(image.src, window.location.origin);
+		path = parsed.searchParams.get("path") ?? image.src;
+	} catch {
+		// A relative or data URL: keep it as-is.
+	}
+	return {
+		type: "image",
+		path,
+		filename: image.alt || path.split("/").pop() || path,
+	};
+}
 
 function safeFileStem(value: string): string {
 	const stem = value
@@ -364,6 +392,29 @@ export function ChatView({
 		startTransition(() => setCanSendInput(!!value.trim()));
 	}, []);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+
+	/**
+	 * Images the reader opened from a message, and which of them to show
+	 * first. The whole message's images travel together so the lightbox's
+	 * next/previous walk the answer rather than dead-ending on one picture.
+	 */
+	const [lightbox, setLightbox] = useState<{
+		items: LightboxItem[];
+		index: number;
+	} | null>(null);
+
+	const openImage = useCallback(
+		(image: MarkdownImage, siblings: MarkdownImage[]) => {
+			const set = siblings.length > 0 ? siblings : [image];
+			const items = set.map(toLightboxItem);
+			const index = Math.max(
+				0,
+				set.findIndex((candidate) => candidate.src === image.src),
+			);
+			setLightbox({ items, index });
+		},
+		[],
+	);
 
 	// Consume pending file attachment from external source (e.g. canvas)
 	useEffect(() => {
@@ -2415,6 +2466,15 @@ export function ChatView({
 
 	return (
 		<>
+			{lightbox ? (
+				<LightboxGallery
+					open
+					items={lightbox.items}
+					initialIndex={lightbox.index}
+					workspacePath={workspacePath}
+					onClose={() => setLightbox(null)}
+				/>
+			) : null}
 			<ChatSelectionToolbar
 				onQuote={(passage) => {
 					const current = inputValueRef.current;
@@ -2526,6 +2586,7 @@ export function ChatView({
 													{modelChangeDivider}
 													<MessageGroupCard
 														group={group}
+														onImageOpen={openImage}
 														assistantName={assistantName}
 														tempIdLabel={tempIdLabel}
 														workspacePath={workspacePath}

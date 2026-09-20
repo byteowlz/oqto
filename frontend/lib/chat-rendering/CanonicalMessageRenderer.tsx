@@ -3,6 +3,7 @@ import { ToolCallCard, getToolIcon } from "@/components/chat/tool-call-card";
 import { ToolCallGroup } from "@/components/chat/tool-call-group";
 import { BrailleSpinner } from "@/components/common";
 import { MarkdownRenderer } from "@/components/data-display";
+import type { MarkdownImage } from "@/components/data-display/markdown-renderer";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -266,6 +267,11 @@ function withoutMentionOnlyLines(content: string): string {
 
 const ChatFileAdapterContext = createContext<ChatFileAdapter | null>(null);
 type FileReferenceOpenHandler = (filePath: string, range?: FileRange) => void;
+/** Which image was activated, and the others in the same message. */
+export type ImageOpenHandler = (
+	image: MarkdownImage,
+	siblings: MarkdownImage[],
+) => void;
 const FileReferenceOpenContext = createContext<
 	FileReferenceOpenHandler | undefined
 >(undefined);
@@ -282,6 +288,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator = false,
 	onForkHere,
 	onFileReferenceOpen,
+	onImageOpen,
 	hideRecoveredErrors = false,
 	freezeStreamingUpdates = false,
 	streamingPresentationMode = "raw",
@@ -298,6 +305,8 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 	onForkHere?: () => void;
 	onFileReferenceOpen?: FileReferenceOpenHandler;
+	/** Enlarge an image the reader clicked; the host decides where. */
+	onImageOpen?: ImageOpenHandler;
 	hideRecoveredErrors?: boolean;
 	freezeStreamingUpdates?: boolean;
 	streamingPresentationMode?: StreamingPresentationMode;
@@ -790,6 +799,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 								workspacePath={workspacePath}
 								locale={locale}
 								onFileReferenceOpen={onFileReferenceOpen}
+								onImageOpen={onImageOpen}
 								deferMermaidUntilFinal={
 									!isUser && (showWorkingIndicator || isGroupStreaming)
 								}
@@ -1960,6 +1970,7 @@ function TextWithFileReferences({
 	workspacePath,
 	locale = "en",
 	onFileReferenceOpen,
+	onImageOpen,
 	deferMermaidUntilFinal = false,
 	isStreaming = false,
 	freezeStreamingUpdates = false,
@@ -1969,6 +1980,7 @@ function TextWithFileReferences({
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 	onFileReferenceOpen?: FileReferenceOpenHandler;
+	onImageOpen?: ImageOpenHandler;
 	deferMermaidUntilFinal?: boolean;
 	isStreaming?: boolean;
 	freezeStreamingUpdates?: boolean;
@@ -2103,6 +2115,7 @@ function TextWithFileReferences({
 						endLine: reference.endLine,
 					})
 				}
+				onImageOpen={onImageOpen}
 			/>
 			{chipRefs.length > 0 && workspacePath && (
 				<div className="chat-chips">

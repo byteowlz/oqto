@@ -14,6 +14,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -31,12 +32,32 @@ interface MarkdownRendererProps {
 	enableMermaid?: boolean;
 	isStreaming?: boolean;
 	onFileReferenceOpen?: (reference: FileReferenceDetail) => void;
+	/**
+	 * Enlarge an image the reader clicked. The renderer reports which one and
+	 * which others share the message; where it opens — a lightbox, a Gallery
+	 * Content — is the host's decision, as with file references.
+	 */
+	onImageOpen?: (image: MarkdownImage, siblings: MarkdownImage[]) => void;
+}
+
+/** An image as it appears in rendered markdown. */
+export interface MarkdownImage {
+	src: string;
+	alt: string;
 }
 
 const MermaidEnabledContext = createContext(true);
 const FileReferenceOpenContext = createContext<
 	((reference: FileReferenceDetail) => void) | undefined
 >(undefined);
+const ImageOpenContext = createContext<
+	((image: MarkdownImage, siblings: MarkdownImage[]) => void) | undefined
+>(undefined);
+/**
+ * Every image in the current document, so a click can hand the host the whole
+ * set and an index into it rather than one orphaned picture.
+ */
+const ImageSetContext = createContext<MarkdownImage[]>([]);
 
 const CopyButton = memo(function CopyButton({
 	text,
@@ -495,7 +516,44 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 const remarkPlugins = [remarkGfm];
 
 // Define components outside component to avoid recreation on every render
+/**
+ * An inline image the reader can open.
+ *
+ * It stays an <img> wrapped in a button rather than becoming one: a button
+ * with a background image would lose the intrinsic sizing that keeps the
+ * markdown flow honest, and the alt text would stop being the accessible
+ * name of the picture. The button only adds the affordance.
+ */
+function MarkdownImageView({ src, alt }: { src: string; alt: string }) {
+	const onImageOpen = useContext(ImageOpenContext);
+	const siblings = useContext(ImageSetContext);
+	const image = { src, alt };
+
+	if (!onImageOpen) {
+		return <img src={src} alt={alt} loading="lazy" decoding="async" />;
+	}
+
+	return (
+		<button
+			type="button"
+			className="markdown-image block max-w-full cursor-zoom-in border-0 bg-transparent p-0"
+			onClick={() => onImageOpen(image, siblings)}
+			aria-label={alt ? `${alt} — enlarge` : "Enlarge image"}
+		>
+			<img src={src} alt={alt} loading="lazy" decoding="async" />
+		</button>
+	);
+}
+
 const markdownComponents: Components = {
+	img({ src, alt }) {
+		return (
+			<MarkdownImageView
+				src={typeof src === "string" ? src : ""}
+				alt={typeof alt === "string" ? alt : ""}
+			/>
+		);
+	},
 	code({ className, children }) {
 		return (
 			<CodeBlockWithTheme className={className}>{children}</CodeBlockWithTheme>
@@ -624,6 +682,25 @@ function stripPiCitations(content: string) {
 		.trimEnd();
 }
 
+/** Markdown image syntax, outside fenced code. */
+function collectImages(content: string): MarkdownImage[] {
+	const withoutFences = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, "");
+	const found: MarkdownImage[] = [];
+	const seen = new Set<string>();
+	const pattern = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?[^)]*\)/g;
+	for (
+		let match = pattern.exec(withoutFences);
+		match !== null;
+		match = pattern.exec(withoutFences)
+	) {
+		const src = match[2];
+		if (!src || seen.has(src)) continue;
+		seen.add(src);
+		found.push({ src, alt: match[1] ?? "" });
+	}
+	return found;
+}
+
 function resolveHyphenationLang() {
 	if (typeof document !== "undefined") {
 		const htmlLang = document.documentElement.lang.trim();
@@ -645,9 +722,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	enableMermaid = true,
 	isStreaming = false,
 	onFileReferenceOpen,
+	onImageOpen,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
 	const hyphenationLang = resolveHyphenationLang();
+	const images = useMemo(
+		() => collectImages(sanitizedContent),
+		[sanitizedContent],
+	);
 	return (
 		<div
 			className={cn(
@@ -658,14 +740,18 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 			lang={hyphenationLang}
 		>
 			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
-				<MermaidEnabledContext.Provider value={enableMermaid}>
-					<ReactMarkdown
-						remarkPlugins={remarkPlugins}
-						components={markdownComponents}
-					>
-						{sanitizedContent}
-					</ReactMarkdown>
-				</MermaidEnabledContext.Provider>
+				<ImageOpenContext.Provider value={onImageOpen}>
+					<ImageSetContext.Provider value={images}>
+						<MermaidEnabledContext.Provider value={enableMermaid}>
+							<ReactMarkdown
+								remarkPlugins={remarkPlugins}
+								components={markdownComponents}
+							>
+								{sanitizedContent}
+							</ReactMarkdown>
+						</MermaidEnabledContext.Provider>
+					</ImageSetContext.Provider>
+				</ImageOpenContext.Provider>
 			</FileReferenceOpenContext.Provider>
 		</div>
 	);
