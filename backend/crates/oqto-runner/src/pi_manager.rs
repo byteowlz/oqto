@@ -48,6 +48,8 @@ use oqto_sandbox::{EgressGuard, SandboxConfig, build_sandbox_command, configure_
 ///
 /// Absence is meaningful — an unsandboxed session talking to the user's own
 /// agent must not see it, or a loader would refuse to add keys it could.
+/// Presence follows the work directory's gate rather than a live proxy, so a
+/// session with nothing granted yet can still ask for a key.
 const OQTO_SSH_AGENT: &str = "OQTO_SSH_AGENT";
 const OQTO_SSH_AGENT_PROXY: &str = "proxy";
 
@@ -900,6 +902,11 @@ impl PiSessionManager {
         // SSH agent proxy, when the work directory was granted keys. Held in
         // the session so the socket and process die with it.
         let mut ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy> = None;
+        // Whether key access here goes through oqto's grant at all, which is
+        // not the same question as whether a proxy is currently running: a
+        // work directory with the proxy enabled but nothing granted yet gets
+        // no proxy, and that is exactly when a session needs to ask for one.
+        let mut ssh_proxy_gated = false;
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
@@ -941,6 +948,7 @@ impl PiSessionManager {
                     .prepare_egress()
                     .context("Failed to prepare network egress")?;
                 if let Some(ref ssh_config) = effective_config.ssh {
+                    ssh_proxy_gated = ssh_config.enabled;
                     ssh_agent_proxy =
                         crate::ssh_agent_proxy::spawn(ssh_config, &session_socket_dir)
                             .context("Failed to start SSH agent proxy")?;
@@ -992,9 +1000,19 @@ impl PiSessionManager {
             {
                 cmd.env("GIT_SSH_COMMAND", git_ssh_command);
             }
-            // Nothing on the agent wire distinguishes the proxy from a real
-            // agent, so a key loader in the session would try to ssh-add and
-            // be refused without knowing why. Say so in the environment.
+        }
+        // Declare the gate, not the socket.
+        //
+        // Nothing on the agent wire distinguishes the proxy from a real agent,
+        // so a key loader in the session would try to ssh-add and be refused
+        // without knowing why. It is told here instead.
+        //
+        // This is deliberately keyed to the work directory being gated rather
+        // than to a running proxy. With nothing granted yet no proxy starts at
+        // all, and that is precisely the case where a session needs to ask for
+        // a key: keying on the socket would leave the request path dark in the
+        // one situation it exists for.
+        if ssh_proxy_gated {
             if !config.env.contains_key(OQTO_SSH_AGENT) {
                 cmd.env(OQTO_SSH_AGENT, OQTO_SSH_AGENT_PROXY);
             }
