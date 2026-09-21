@@ -38,6 +38,44 @@ use oqto_sandbox::{EgressGuard, SandboxConfig, build_sandbox_command, configure_
 // Configuration
 // ============================================================================
 
+/// Tells a session its agent is the proxy rather than a real ssh-agent.
+///
+/// The proxy forwards signature requests for granted keys and refuses
+/// ADD_IDENTITY, but nothing on the agent wire distinguishes it, so a loader
+/// inside the session cannot know that adding a key is futile. This variable
+/// is the whole signal: the session learns nothing about socket naming or the
+/// agent protocol, and how a grant is obtained can change without it.
+///
+/// Absence is meaningful — an unsandboxed session talking to the user's own
+/// agent must not see it, or a loader would refuse to add keys it could.
+const OQTO_SSH_AGENT: &str = "OQTO_SSH_AGENT";
+const OQTO_SSH_AGENT_PROXY: &str = "proxy";
+
+/// Optional entry point a session may call to request a key grant.
+const OQTO_SSH_GRANT_CMD: &str = "OQTO_SSH_GRANT_CMD";
+
+/// The grant command, taken from the runner's own environment.
+///
+/// Passed through rather than configured: nothing in this repo provides such
+/// a command yet, and a config field for one would be configuration that does
+/// not match runtime truth. A relative path is refused, since it would resolve
+/// against the session's working directory rather than the operator's.
+fn inherited_ssh_grant_cmd() -> Option<String> {
+    ssh_grant_cmd_from(std::env::var(OQTO_SSH_GRANT_CMD).ok().as_deref())
+}
+
+fn ssh_grant_cmd_from(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !Path::new(trimmed).is_absolute() {
+        warn!("Ignoring {OQTO_SSH_GRANT_CMD}: {trimmed:?} is not an absolute path");
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// Configuration for the Pi session manager.
 #[derive(Debug, Clone)]
 pub struct PiManagerConfig {
@@ -953,6 +991,17 @@ impl PiSessionManager {
                 && let Some(git_ssh_command) = proxy.git_ssh_command()
             {
                 cmd.env("GIT_SSH_COMMAND", git_ssh_command);
+            }
+            // Nothing on the agent wire distinguishes the proxy from a real
+            // agent, so a key loader in the session would try to ssh-add and
+            // be refused without knowing why. Say so in the environment.
+            if !config.env.contains_key(OQTO_SSH_AGENT) {
+                cmd.env(OQTO_SSH_AGENT, OQTO_SSH_AGENT_PROXY);
+            }
+            if !config.env.contains_key(OQTO_SSH_GRANT_CMD)
+                && let Some(grant_cmd) = inherited_ssh_grant_cmd()
+            {
+                cmd.env(OQTO_SSH_GRANT_CMD, grant_cmd);
             }
         }
 
@@ -5094,6 +5143,32 @@ fn model_available_for_provider(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grant_command_is_ignored_unless_absolute() {
+        // A relative path would resolve against the session's working
+        // directory, not the operator's, so it is refused rather than guessed.
+        assert_eq!(
+            ssh_grant_cmd_from(Some("/usr/local/bin/oqto-ssh-grant")).as_deref(),
+            Some("/usr/local/bin/oqto-ssh-grant")
+        );
+        assert_eq!(
+            ssh_grant_cmd_from(Some("  /opt/oqto-ssh-grant  ")).as_deref(),
+            Some("/opt/oqto-ssh-grant")
+        );
+        assert_eq!(ssh_grant_cmd_from(Some("oqto-ssh-grant")), None);
+        assert_eq!(ssh_grant_cmd_from(Some("./oqto-ssh-grant")), None);
+        assert_eq!(ssh_grant_cmd_from(Some("   ")), None);
+        assert_eq!(ssh_grant_cmd_from(None), None);
+    }
+
+    #[test]
+    fn the_proxy_signal_names_the_proxy() {
+        // The loader keys off this exact pair; a rename is a contract change.
+        assert_eq!(OQTO_SSH_AGENT, "OQTO_SSH_AGENT");
+        assert_eq!(OQTO_SSH_AGENT_PROXY, "proxy");
+        assert_eq!(OQTO_SSH_GRANT_CMD, "OQTO_SSH_GRANT_CMD");
+    }
+
     use super::*;
 
     #[derive(Debug, Clone, Copy)]
