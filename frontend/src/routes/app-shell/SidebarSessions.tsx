@@ -65,6 +65,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { HistorySession } from "./MachineHistory";
 import { SidebarMachines } from "./SidebarMachines";
 
 export interface SessionsByProject {
@@ -129,6 +130,8 @@ export interface SidebarSessionsProps {
 	onProjectOverview: (directory: string) => void;
 	onSessionClick: (sessionId: string) => void;
 	onNewChatInProject: (directory: string) => void;
+	/** Continue a chat stored on another machine, in the main chat view. */
+	onResumeMachineSession?: (session: HistorySession) => void;
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
@@ -183,6 +186,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onProjectOverview,
 	onSessionClick,
 	onNewChatInProject,
+	onResumeMachineSession,
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
@@ -1293,7 +1297,11 @@ export const SidebarSessions = memo(function SidebarSessions({
 				</div>
 			)}
 			<div className="px-1">
-				<SidebarMachines onNewSessionInDirectory={onNewChatInProject} />
+				<SidebarMachines
+					onNewSessionInDirectory={onNewChatInProject}
+					onResumeMachineSession={onResumeMachineSession}
+					isMobile={isMobile}
+				/>
 			</div>
 		</div>
 	);

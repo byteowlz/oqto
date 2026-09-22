@@ -8,7 +8,7 @@ import {
 	parseRunnerTargets,
 } from "../../oqto-ui/platform/runner-targets";
 import { MachineChats } from "./MachineChats";
-import type { HistoryCommand } from "./MachineHistory";
+import type { HistoryCommand, HistorySession } from "./MachineHistory";
 import { MachineProviders } from "./MachineProviders";
 
 function historyPort(scope: string, targetId: string) {
@@ -41,7 +41,14 @@ function historyPort(scope: string, targetId: string) {
 /** Original-shell adapter for Account-authorized inventory and explicit login grants. */
 export function SidebarMachines({
 	onNewSessionInDirectory,
-}: { onNewSessionInDirectory?: (directory: string) => void } = {}) {
+	onResumeMachineSession,
+	isMobile = false,
+}: {
+	onNewSessionInDirectory?: (directory: string) => void;
+	onResumeMachineSession?: (session: HistorySession) => void;
+	/** The sidebar's own decision, so machine rows size like the hub's. */
+	isMobile?: boolean;
+} = {}) {
 	const { data: user } = useCurrentUser();
 	if (!user) return null;
 	const scope = `original:${controlPlaneApiUrl("/api/runner-targets")}:${user.id}`;
@@ -50,21 +57,24 @@ export function SidebarMachines({
 			key={scope}
 			scope={scope}
 			onNewSessionInDirectory={onNewSessionInDirectory}
+			onResumeMachineSession={onResumeMachineSession}
+			isMobile={isMobile}
 		/>
 	);
 }
 function AccountMachines({
 	scope,
 	onNewSessionInDirectory,
+	onResumeMachineSession,
+	isMobile,
 }: {
 	scope: string;
+	isMobile: boolean;
 	onNewSessionInDirectory?: (directory: string) => void;
+	onResumeMachineSession?: (session: HistorySession) => void;
 }) {
 	const { t } = useTranslation();
 	const [selected, setSelected] = useState<RunnerTarget | null>(null);
-	const isMobile =
-		typeof window !== "undefined" &&
-		window.matchMedia("(max-width: 767px)").matches;
 	const roster = useQuery({
 		queryKey: ["oqto-runner-targets", scope],
 		queryFn: async () => {
@@ -96,6 +106,11 @@ function AccountMachines({
 						isMobile={isMobile}
 						onNewSession={
 							target.sessionCreation ? onNewSessionInDirectory : undefined
+						}
+						onResumeSession={
+							target.sessionCreation && target.connection === "online"
+								? onResumeMachineSession
+								: undefined
 						}
 						onOpenProviders={
 							target.providerLogin && target.connection === "online"

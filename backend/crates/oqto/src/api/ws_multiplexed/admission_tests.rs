@@ -478,3 +478,40 @@ async fn validating_a_machine_workspace_does_not_stat_this_host() {
             .is_err()
     );
 }
+
+mod read_probe_hint {
+    use super::super::agent::read_probe_workspace_hint;
+    use oqto_protocol::commands::CommandPayload;
+
+    fn parse(json: &str) -> CommandPayload {
+        serde_json::from_str(json).expect("payload parses")
+    }
+
+    #[test]
+    fn a_bare_probe_still_parses_and_carries_no_hint() {
+        // Clients that predate the hint send exactly this.
+        assert_eq!(
+            read_probe_workspace_hint(&parse(r#"{"cmd":"get_messages"}"#)),
+            None
+        );
+        assert_eq!(
+            read_probe_workspace_hint(&parse(r#"{"cmd":"get_state"}"#)),
+            None
+        );
+    }
+
+    #[test]
+    fn read_probes_offer_an_absolute_path() {
+        let payload = parse(r#"{"cmd":"get_messages","workspace_path":"/Users/me/oqto"}"#);
+        assert_eq!(read_probe_workspace_hint(&payload), Some("/Users/me/oqto"));
+        let relative = parse(r#"{"cmd":"get_state","workspace_path":"oqto"}"#);
+        assert_eq!(read_probe_workspace_hint(&relative), None);
+    }
+
+    #[test]
+    fn mutating_commands_never_contribute_a_hint() {
+        // Where a prompt goes is decided by the connection and the store.
+        let prompt = parse(r#"{"cmd":"prompt","message":"hi","workspace_path":"/elsewhere"}"#);
+        assert_eq!(read_probe_workspace_hint(&prompt), None);
+    }
+}

@@ -1,3 +1,4 @@
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
@@ -54,6 +55,7 @@ export function MachineChats({
 	online,
 	isMobile,
 	onNewSession,
+	onResumeSession,
 	onOpenProviders,
 	providersLabel,
 }: {
@@ -64,12 +66,39 @@ export function MachineChats({
 	isMobile: boolean;
 	/** Only supplied when this machine carries an execution grant. */
 	onNewSession?: (directory: string) => void;
+	/**
+	 * Continue a stored chat on this machine. Only supplied when the machine
+	 * is online and carries an execution grant; otherwise a click shows the
+	 * read-only snapshot, which can still render from cache while offline.
+	 */
+	onResumeSession?: (session: HistorySession) => void;
 	/** Only supplied when this machine carries a provider-login grant. */
 	onOpenProviders?: () => void;
 	providersLabel?: string;
 }) {
-	const [expanded, setExpanded] = useState(false);
-	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+	// Remembered per machine and per account (the scope carries both), so the
+	// sidebar reopens exactly as it was left — on a phone especially, where it
+	// is dismissed and reopened constantly.
+	const [expanded, setExpanded] = useLocalStorage<boolean>(
+		`oqto:sidebar:machine:${scope}:expanded`,
+		false,
+		{ deserialize: (raw) => JSON.parse(raw) === true },
+	);
+	const [openGroups, setOpenGroups] = useLocalStorage<Set<string>>(
+		`oqto:sidebar:machine:${scope}:groups`,
+		() => new Set<string>(),
+		{
+			deserialize: (raw) => {
+				const parsed: unknown = JSON.parse(raw);
+				return new Set(
+					Array.isArray(parsed)
+						? parsed.filter((key): key is string => typeof key === "string")
+						: [],
+				);
+			},
+			serialize: (value) => JSON.stringify([...value]),
+		},
+	);
 	const [reading, setReading] = useState<HistorySession | null>(null);
 	const catalog = useQuery({
 		queryKey: ["machine-history", scope, "catalog"],
@@ -185,10 +214,15 @@ export function MachineChats({
 												isMobile ? "w-4 h-4" : "w-3.5 h-3.5",
 											)}
 										/>
-										<span className="font-medium text-foreground truncate text-xs">
+										<span
+											className={cn(
+												"font-medium text-foreground truncate",
+												isMobile ? "text-sm" : "text-xs",
+											)}
+										>
 											{group.name}
 										</span>
-										<span className="text-[10px] text-muted-foreground">
+										<span className="text-xs text-muted-foreground">
 											({group.chats.length})
 										</span>
 									</button>
@@ -210,7 +244,11 @@ export function MachineChats({
 											<div key={chat.id} className={isMobile ? "pl-4" : "pl-3"}>
 												<button
 													type="button"
-													onClick={() => setReading(chat)}
+													onClick={() =>
+														onResumeSession
+															? onResumeSession(chat)
+															: setReading(chat)
+													}
 													className={cn(
 														"w-full px-2 text-left transition-colors flex items-start gap-1.5 border border-transparent",
 														isMobile ? "py-2" : "py-1",
@@ -226,7 +264,12 @@ export function MachineChats({
 														)}
 													/>
 													<span className="flex-1 min-w-0">
-														<span className="block truncate font-medium text-xs">
+														<span
+															className={cn(
+																"block truncate font-medium",
+																isMobile ? "text-sm" : "text-xs",
+															)}
+														>
 															{chat.title || "Untitled chat"}
 														</span>
 														{chat.updated_at && (
