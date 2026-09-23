@@ -1,0 +1,61 @@
+{
+	"format": "oqto-chat-stream",
+	"formatVersion": 1,
+	"name": "text-around-a-call",
+	"why": "Text on either side of a tool call is two blocks, not one: what the agent says after running something is a new block.",
+	"events": [
+		{
+			"type": "message_start",
+			"message": {
+				"role": "assistant",
+				"content": []
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "text_delta",
+				"contentIndex": 0,
+				"delta": "Checking the table."
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_end",
+				"contentIndex": 1,
+				"toolCall": {
+					"id": "c1",
+					"name": "read",
+					"arguments": {
+						"path": "sicherungen.csv"
+					}
+				}
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "text_delta",
+				"contentIndex": 2,
+				"delta": "F.11 carries the Mauerkasten."
+			}
+		}
+	],
+	"expect": {
+		"blocks": [
+			{
+				"type": "text",
+				"text": "Checking the table."
+			},
+			{
+				"type": "tool_call",
+				"name": "read"
+			},
+			{
+				"type": "text",
+				"text": "F.11 carries the Mauerkasten."
+			}
+		]
+	}
+}

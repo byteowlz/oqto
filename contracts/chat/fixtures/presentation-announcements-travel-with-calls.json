@@ -1,0 +1,42 @@
+{
+	"format": "oqto-chat-presentation",
+	"formatVersion": 1,
+	"name": "announcements-travel-with-calls",
+	"why": "An announcement ending in a colon (or one short line) that immediately precedes a tool call is that call's label, not answer text; at the minimal level it moves into the step list with its call instead of being stranded in the answer.",
+	"level": 1,
+	"blocks": [
+		{
+			"type": "text",
+			"text": "Let me check how the frame reads files:"
+		},
+		{
+			"type": "tool_call",
+			"name": "read",
+			"arguments": {
+				"path": "frame.ts"
+			}
+		},
+		{
+			"type": "text",
+			"text": "Scaffold created. Let me review it:"
+		},
+		{
+			"type": "tool_call",
+			"name": "read",
+			"arguments": {
+				"path": "manifest.toml"
+			}
+		},
+		{
+			"type": "text",
+			"text": "Fertig — die App ist gebaut und getestet."
+		}
+	],
+	"expect": {
+		"answer": ["Fertig — die App ist gebaut und getestet."],
+		"steps": [
+			"Let me check how the frame reads files",
+			"Scaffold created. Let me review it"
+		]
+	}
+}

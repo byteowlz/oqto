@@ -1,0 +1,21 @@
+{
+	"format": "oqto-chat-presentation",
+	"formatVersion": 1,
+	"name": "level-governs-work-not-answer",
+	"why": "The detail level decides how much of the work is shown — thinking and tool calls — and never touches the answer: a less technical reader gets the same text, not a shorter one.",
+	"level": 1,
+	"blocks": [
+		{
+			"type": "thinking",
+			"text": "Mapping the fuse table onto the actor groups."
+		},
+		{
+			"type": "text",
+			"text": "Danach reicht ein Reload."
+		}
+	],
+	"expect": {
+		"answer": ["Danach reicht ein Reload."],
+		"hidden": ["Mapping the fuse table onto the actor groups."]
+	}
+}
