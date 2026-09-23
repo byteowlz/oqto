@@ -20,6 +20,8 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::SubscribeStdout(_)) => super::process::handle_request(runner, req).await,
 
         req @ (RunnerRequest::ReadFile(_)
+        | RunnerRequest::SearchFiles(_)
+        | RunnerRequest::PreviewFile(_)
         | RunnerRequest::WriteFile(_)
         | RunnerRequest::ListDirectory(_)
         | RunnerRequest::Stat(_)

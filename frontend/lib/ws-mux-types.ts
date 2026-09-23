@@ -69,6 +69,24 @@ export type AgentWsCommand = {
 export type FilesWsCommand =
 	| ({
 			channel: "files";
+			type: "search";
+			workspace_path: string;
+			path: string;
+			query: string;
+			mode: "name" | "content";
+			include_hidden?: boolean;
+	  } & WsCommandBase)
+	| ({
+			channel: "files";
+			type: "preview";
+			workspace_path: string;
+			path: string;
+			offset: number;
+			limit: number;
+			expected_version?: string | null;
+	  } & WsCommandBase)
+	| ({
+			channel: "files";
 			type: "tree";
 			path: string;
 			depth?: number;
@@ -431,6 +449,36 @@ export type FileTreeNode = {
 
 /** Files channel events */
 export type FilesWsEvent =
+	| ({
+			channel: "files";
+			type: "search_result";
+			workspace_path: string;
+			result: {
+				matches: {
+					path: string;
+					is_dir: boolean;
+					line: number | null;
+					snippet: string | null;
+					size: number;
+					version: string;
+				}[];
+				truncated: boolean;
+			};
+	  } & WsEventBase)
+	| ({
+			channel: "files";
+			type: "preview_result";
+			workspace_path: string;
+			result: {
+				path: string;
+				size: number;
+				version: string;
+				modified_at_ms: number;
+				content: string | null;
+				unavailable: string | null;
+				truncated: boolean;
+			};
+	  } & WsEventBase)
 	| ({
 			channel: "files";
 			type: "tree_result";

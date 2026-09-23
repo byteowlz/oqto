@@ -1,6 +1,185 @@
 //! Extracted channel handlers from ws_multiplexed.
 
 use super::*;
+use oqto_runner::protocol::{FileSearchMode, PreviewFileRequest, SearchFilesRequest};
+
+// Account ownership is established from the user's session records, not by
+// probing the backend host's filesystem (which may not contain remote paths).
+fn ensure_shared_discovery_target(
+    shared_workspace_id: Option<&str>,
+    target: &ExecutionTarget,
+) -> anyhow::Result<()> {
+    if let Some(expected) = shared_workspace_id {
+        anyhow::ensure!(
+            matches!(target, ExecutionTarget::SharedWorkspace { workspace_id }
+            if workspace_id == expected),
+            "shared Workspace membership required"
+        );
+    }
+    Ok(())
+}
+
+fn validate_remote_discovery_placement(
+    user_id: &str,
+    workspace_path: &str,
+    target: &ExecutionTarget,
+    loc: &crate::session::WorkspaceLocation,
+    record: &oqto_placement::PlacementRecord,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        loc.kind != "local" && loc.is_active == 1,
+        "remote location inactive"
+    );
+    anyhow::ensure!(
+        loc.path == workspace_path && loc.user_id == user_id,
+        "remote Work directory belongs to another Account"
+    );
+    anyhow::ensure!(
+        record.workspace_id == loc.workspace_id
+            && loc.runner_id.as_deref() == Some(record.id.0.as_str()),
+        "remote placement identity mismatch"
+    );
+    match target {
+        ExecutionTarget::Personal => anyhow::ensure!(
+            record.account_id == user_id,
+            "remote placement belongs to another Account"
+        ),
+        ExecutionTarget::SharedWorkspace { workspace_id } => anyhow::ensure!(
+            &loc.workspace_id == workspace_id,
+            "shared Workspace placement mismatch"
+        ),
+    }
+    Ok(())
+}
+
+enum Discovery {
+    Search {
+        path: String,
+        query: String,
+        mode: FileSearchMode,
+        include_hidden: bool,
+    },
+    Preview {
+        path: String,
+        offset: u64,
+        limit: u32,
+        expected_version: Option<String>,
+    },
+}
+
+async fn handle_discovery(
+    id: Option<String>,
+    workspace_path: String,
+    user_id: &str,
+    state: &AppState,
+    operation: Discovery,
+) -> WsEvent {
+    let result: anyhow::Result<FilesWsEvent> = async {
+        anyhow::ensure!(
+            std::path::Path::new(&workspace_path).is_absolute(),
+            "absolute Work directory required"
+        );
+        let sessions = state.sessions.for_user(user_id).list_sessions().await?;
+        anyhow::ensure!(
+            sessions
+                .iter()
+                .any(|session| session.workspace_path == workspace_path),
+            "Work directory is not owned by this Account"
+        );
+        let target = resolve_target_for_workspace_path(state, user_id, &workspace_path).await?;
+        if let Some(shared) = state.shared_workspaces.as_ref()
+            && let Some(workspace) = shared
+                .repo()
+                .find_workspace_for_path(&workspace_path)
+                .await?
+        {
+            ensure_shared_discovery_target(Some(&workspace.id), &target)?;
+        }
+        let location = state
+            .sessions
+            .workspace_locations()
+            .get_active_location(user_id, &workspace_path)
+            .await?;
+        // A remote location must have a live placement record bound to the
+        // authenticated Account. Never fall back to the backend-host runner.
+        let runner = if location.as_ref().is_some_and(|loc| loc.kind != "local") {
+            let loc = location
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("remote location unavailable"))?;
+            let record = state
+                .placement_store
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("remote placement unavailable"))?
+                .workspace_record(&loc.workspace_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("remote placement revoked or unavailable"))?;
+            validate_remote_discovery_placement(user_id, &workspace_path, &target, loc, &record)?;
+            let runner = RunnerClient::from_endpoint(&record.runner_endpoint)?;
+            runner.ensure_ready_with_recovery().await?;
+            runner
+        } else {
+            crate::api::handlers::trx::validate_workspace_path(state, user_id, &workspace_path)
+                .await
+                .map_err(|err| anyhow::anyhow!("Work directory validation failed: {err}"))?;
+            resolve_runner_for_target(state, user_id, &target)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("owning runner unavailable"))?
+        };
+        let root = std::path::PathBuf::from(&workspace_path);
+        Ok(match operation {
+            Discovery::Search {
+                path,
+                query,
+                mode,
+                include_hidden,
+            } => {
+                let result = runner
+                    .search_files(SearchFilesRequest {
+                        root,
+                        path: path.into(),
+                        query,
+                        mode,
+                        include_hidden,
+                    })
+                    .await?;
+                FilesWsEvent::SearchResult {
+                    id: id.clone(),
+                    workspace_path,
+                    result,
+                }
+            }
+            Discovery::Preview {
+                path,
+                offset,
+                limit,
+                expected_version,
+            } => {
+                let result = runner
+                    .preview_file(PreviewFileRequest {
+                        root,
+                        path: path.into(),
+                        offset,
+                        limit,
+                        expected_version,
+                    })
+                    .await?;
+                FilesWsEvent::PreviewResult {
+                    id: id.clone(),
+                    workspace_path,
+                    result,
+                }
+            }
+        })
+    }
+    .await;
+    WsEvent::Files(match result {
+        Ok(event) => event,
+        Err(err) => FilesWsEvent::Error {
+            id,
+            error: format!("file discovery unavailable: {err:#}"),
+        },
+    })
+}
 
 pub(super) async fn handle_files_command(
     cmd: FilesWsCommand,
@@ -9,7 +188,9 @@ pub(super) async fn handle_files_command(
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
     let id = match &cmd {
-        FilesWsCommand::Tree { id, .. }
+        FilesWsCommand::Search { id, .. }
+        | FilesWsCommand::Preview { id, .. }
+        | FilesWsCommand::Tree { id, .. }
         | FilesWsCommand::Read { id, .. }
         | FilesWsCommand::Write { id, .. }
         | FilesWsCommand::List { id, .. }
@@ -23,6 +204,59 @@ pub(super) async fn handle_files_command(
         | FilesWsCommand::WatchFiles { id, .. }
         | FilesWsCommand::UnwatchFiles { id, .. } => id.clone(),
     };
+
+    // Discovery has its own authorization and placement path. Never route it
+    // through the legacy host-bound UserPlane or unrestricted Read command.
+    if let FilesWsCommand::Search {
+        id,
+        workspace_path,
+        path,
+        query,
+        mode,
+        include_hidden,
+    } = cmd
+    {
+        return Some(
+            handle_discovery(
+                id,
+                workspace_path,
+                user_id,
+                state,
+                Discovery::Search {
+                    path,
+                    query,
+                    mode,
+                    include_hidden,
+                },
+            )
+            .await,
+        );
+    }
+    if let FilesWsCommand::Preview {
+        id,
+        workspace_path,
+        path,
+        offset,
+        limit,
+        expected_version,
+    } = cmd
+    {
+        return Some(
+            handle_discovery(
+                id,
+                workspace_path,
+                user_id,
+                state,
+                Discovery::Preview {
+                    path,
+                    offset,
+                    limit,
+                    expected_version,
+                },
+            )
+            .await,
+        );
+    }
 
     // Handle WatchFiles/UnwatchFiles early -- they need conn_state access.
     if let FilesWsCommand::WatchFiles { id, workspace_path } = cmd {
@@ -64,7 +298,9 @@ pub(super) async fn handle_files_command(
         | FilesWsCommand::Rename { workspace_path, .. }
         | FilesWsCommand::Copy { workspace_path, .. }
         | FilesWsCommand::Move { workspace_path, .. } => workspace_path.clone(),
-        FilesWsCommand::CopyToWorkspace { .. }
+        FilesWsCommand::Search { .. }
+        | FilesWsCommand::Preview { .. }
+        | FilesWsCommand::CopyToWorkspace { .. }
         | FilesWsCommand::WatchFiles { .. }
         | FilesWsCommand::UnwatchFiles { .. } => unreachable!(),
     };
@@ -699,7 +935,9 @@ pub(super) async fn handle_files_command(
             }
         }
         // These are handled by early returns before this match block
-        FilesWsCommand::CopyToWorkspace { .. }
+        FilesWsCommand::Search { .. }
+        | FilesWsCommand::Preview { .. }
+        | FilesWsCommand::CopyToWorkspace { .. }
         | FilesWsCommand::WatchFiles { .. }
         | FilesWsCommand::UnwatchFiles { .. } => unreachable!(),
     }
@@ -1074,4 +1312,171 @@ pub(super) async fn start_terminal_task(
     });
 
     Ok((command_tx, task))
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use oqto_placement::{PlacementId, PlacementKind, PlacementRecord};
+    use oqto_runner::transport::RunnerEndpointConfig;
+
+    fn location() -> crate::session::WorkspaceLocation {
+        crate::session::WorkspaceLocation {
+            id: "location".into(),
+            user_id: "account-1".into(),
+            workspace_id: "work-1".into(),
+            location_id: "location-1".into(),
+            kind: "remote".into(),
+            path: "/work/project".into(),
+            runner_id: Some("placement-1".into()),
+            repo_fingerprint: None,
+            is_active: 1,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn placement() -> PlacementRecord {
+        PlacementRecord {
+            id: PlacementId("placement-1".into()),
+            workspace_id: "work-1".into(),
+            account_id: "account-1".into(),
+            kind: PlacementKind::LocalProcess,
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: "/fake/remote/runner.sock".into(),
+            },
+            runtime_name: "fake-remote".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_remote_runner_receives_discovery_instead_of_host_filesystem() -> anyhow::Result<()>
+    {
+        use oqto_runner::protocol::{FileSearchResponse, RunnerRequest, RunnerResponse};
+        use oqto_runner::wire::{read_json_frame, write_json_frame};
+        let temp = tempfile::tempdir()?;
+        let socket = temp.path().join("remote.sock");
+        let listener = tokio::net::UnixListener::bind(&socket)?;
+        let record = PlacementRecord {
+            runner_endpoint: RunnerEndpointConfig::Unix { path: socket },
+            ..placement()
+        };
+        validate_remote_discovery_placement(
+            "account-1",
+            "/work/project",
+            &ExecutionTarget::Personal,
+            &location(),
+            &record,
+        )?;
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let mut stream = tokio::io::BufReader::new(stream);
+            let request: RunnerRequest = read_json_frame(&mut stream)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("missing search request"))?;
+            match request {
+                RunnerRequest::SearchFiles(req) => {
+                    anyhow::ensure!(req.root == std::path::Path::new("/work/project"));
+                    anyhow::ensure!(req.query == "needle");
+                    write_json_frame(
+                        stream.get_mut(),
+                        &RunnerResponse::FileSearch(FileSearchResponse {
+                            matches: Vec::new(),
+                            truncated: false,
+                        }),
+                    )
+                    .await?;
+                }
+                _ => anyhow::bail!("unexpected runner request"),
+            }
+            anyhow::Ok(())
+        });
+        let client = RunnerClient::from_endpoint(&record.runner_endpoint)?;
+        let result = client
+            .search_files(SearchFilesRequest {
+                root: "/work/project".into(),
+                path: ".".into(),
+                query: "needle".into(),
+                mode: FileSearchMode::Content,
+                include_hidden: false,
+            })
+            .await?;
+        assert!(result.matches.is_empty());
+        server.await??;
+        Ok(())
+    }
+
+    #[test]
+    fn fake_remote_placement_is_bound_to_work_directory_account_and_principal() -> anyhow::Result<()>
+    {
+        let loc = location();
+        let record = placement();
+        validate_remote_discovery_placement(
+            "account-1",
+            "/work/project",
+            &ExecutionTarget::Personal,
+            &loc,
+            &record,
+        )?;
+        let client = RunnerClient::from_endpoint(&record.runner_endpoint)?;
+        assert!(
+            client
+                .endpoint_description()
+                .contains("/fake/remote/runner.sock")
+        );
+        assert!(
+            validate_remote_discovery_placement(
+                "forged",
+                "/work/project",
+                &ExecutionTarget::Personal,
+                &loc,
+                &record
+            )
+            .is_err()
+        );
+        assert!(
+            validate_remote_discovery_placement(
+                "account-1",
+                "/work/other",
+                &ExecutionTarget::Personal,
+                &loc,
+                &record
+            )
+            .is_err()
+        );
+        assert!(
+            ensure_shared_discovery_target(Some("work-1"), &ExecutionTarget::Personal).is_err()
+        );
+        ensure_shared_discovery_target(
+            Some("work-1"),
+            &ExecutionTarget::SharedWorkspace {
+                workspace_id: "work-1".into(),
+            },
+        )?;
+        let mut stale = loc.clone();
+        stale.runner_id = Some("revoked-placement".into());
+        assert!(
+            validate_remote_discovery_placement(
+                "account-1",
+                "/work/project",
+                &ExecutionTarget::Personal,
+                &stale,
+                &record
+            )
+            .is_err()
+        );
+        assert!(
+            validate_remote_discovery_placement(
+                "account-1",
+                "/work/project",
+                &ExecutionTarget::SharedWorkspace {
+                    workspace_id: "not-a-member".into()
+                },
+                &loc,
+                &record
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 }

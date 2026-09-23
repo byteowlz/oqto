@@ -220,6 +220,25 @@ pub enum WsCommand {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilesWsCommand {
+    /// Runner-local bounded search in an authorized Work directory.
+    Search {
+        id: Option<String>,
+        workspace_path: String,
+        path: String,
+        query: String,
+        mode: oqto_runner::protocol::FileSearchMode,
+        #[serde(default)]
+        include_hidden: bool,
+    },
+    /// Runner-local bounded text preview, never the unrestricted Read command.
+    Preview {
+        id: Option<String>,
+        workspace_path: String,
+        path: String,
+        offset: u64,
+        limit: u32,
+        expected_version: Option<String>,
+    },
     Tree {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -475,6 +494,16 @@ pub enum WsEvent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilesWsEvent {
+    SearchResult {
+        id: Option<String>,
+        workspace_path: String,
+        result: oqto_runner::protocol::FileSearchResponse,
+    },
+    PreviewResult {
+        id: Option<String>,
+        workspace_path: String,
+        result: oqto_runner::protocol::FilePreviewResponse,
+    },
     TreeResult {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -1412,11 +1441,19 @@ async fn handle_ws_command(
 ) -> Option<WsEvent> {
     // SECURITY: Validate workspace paths belong to this user before processing
     {
-        let (_, _, workspace_path) = ws_command_summary(&cmd);
-        if let Some(err_event) =
-            validate_workspace_path_for_user(workspace_path.as_deref(), user_id, state).await
-        {
-            return Some(err_event);
+        // Discovery uses exact Account-owned Work directory records and the owning
+        // runner; host-local canonicalization would reject remote placements.
+        let discovery = matches!(
+            &cmd,
+            WsCommand::Files(FilesWsCommand::Search { .. } | FilesWsCommand::Preview { .. })
+        );
+        if !discovery {
+            let (_, _, workspace_path) = ws_command_summary(&cmd);
+            if let Some(err_event) =
+                validate_workspace_path_for_user(workspace_path.as_deref(), user_id, state).await
+            {
+                return Some(err_event);
+            }
         }
     }
 
@@ -1482,7 +1519,9 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
     match cmd {
         WsCommand::Agent(agent_cmd) => agent_cmd.id.clone(),
         WsCommand::Files(files_cmd) => match files_cmd {
-            FilesWsCommand::Tree { id, .. }
+            FilesWsCommand::Search { id, .. }
+            | FilesWsCommand::Preview { id, .. }
+            | FilesWsCommand::Tree { id, .. }
             | FilesWsCommand::Read { id, .. }
             | FilesWsCommand::Write { id, .. }
             | FilesWsCommand::List { id, .. }
@@ -1576,6 +1615,8 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
         }
         WsCommand::Files(files_cmd) => {
             let label = match files_cmd {
+                FilesWsCommand::Search { .. } => "files.search",
+                FilesWsCommand::Preview { .. } => "files.preview",
                 FilesWsCommand::Tree { .. } => "files.tree",
                 FilesWsCommand::Read { .. } => "files.read",
                 FilesWsCommand::Write { .. } => "files.write",
@@ -1591,6 +1632,8 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::UnwatchFiles { .. } => "files.unwatch",
             };
             let workspace_path = match files_cmd {
+                FilesWsCommand::Search { workspace_path, .. }
+                | FilesWsCommand::Preview { workspace_path, .. } => Some(workspace_path.clone()),
                 FilesWsCommand::Tree { workspace_path, .. }
                 | FilesWsCommand::Read { workspace_path, .. }
                 | FilesWsCommand::Write { workspace_path, .. }

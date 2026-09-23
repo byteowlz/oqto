@@ -18,4 +18,4 @@ pub use service::{
     BrowserAction, ContainerStatsReport, SessionContainerStats, SessionService,
     SessionServiceConfig,
 };
-pub use workspace_locations::WorkspaceLocationInput;
+pub use workspace_locations::{WorkspaceLocation, WorkspaceLocationInput};

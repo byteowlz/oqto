@@ -11,6 +11,8 @@ pub trait PlacementStore: Send + Sync {
     async fn put(&self, placement: PlacementRecord) -> Result<()>;
     async fn get(&self, id: &PlacementId) -> Result<Option<PlacementRecord>>;
     async fn resolve_workspace(&self, workspace_id: &str) -> Result<Option<RunnerEndpointConfig>>;
+    /// Full record for authorization at placement-boundary entry points.
+    async fn workspace_record(&self, workspace_id: &str) -> Result<Option<PlacementRecord>>;
     async fn remove(&self, id: &PlacementId) -> Result<()>;
 }
 
@@ -72,12 +74,19 @@ impl PlacementStore for JsonPlacementStore {
 
     async fn resolve_workspace(&self, workspace_id: &str) -> Result<Option<RunnerEndpointConfig>> {
         Ok(self
+            .workspace_record(workspace_id)
+            .await?
+            .map(|record| record.runner_endpoint))
+    }
+
+    async fn workspace_record(&self, workspace_id: &str) -> Result<Option<PlacementRecord>> {
+        Ok(self
             .records
             .read()
             .await
             .values()
             .find(|record| record.workspace_id == workspace_id)
-            .map(|record| record.runner_endpoint.clone()))
+            .cloned())
     }
 
     async fn remove(&self, id: &PlacementId) -> Result<()> {

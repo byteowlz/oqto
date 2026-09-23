@@ -484,6 +484,22 @@ impl RunnerClient {
         }
     }
 
+    /// Search on the owning runner. The caller must authorize the work directory first.
+    pub async fn search_files(&self, req: SearchFilesRequest) -> Result<FileSearchResponse> {
+        match self.request(&RunnerRequest::SearchFiles(req)).await? {
+            RunnerResponse::FileSearch(result) => Ok(result),
+            _ => anyhow::bail!("unexpected response to search_files"),
+        }
+    }
+
+    /// Bounded text preview; distinct from the unrestricted read_file route.
+    pub async fn preview_file(&self, req: PreviewFileRequest) -> Result<FilePreviewResponse> {
+        match self.request(&RunnerRequest::PreviewFile(req)).await? {
+            RunnerResponse::FilePreview(result) => Ok(result),
+            _ => anyhow::bail!("unexpected response to preview_file"),
+        }
+    }
+
     /// Write a file to the user's workspace.
     pub async fn write_file(
         &self,

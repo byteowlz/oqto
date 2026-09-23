@@ -75,6 +75,12 @@ pub enum RunnerRequest {
     /// Read a file from the user's workspace.
     ReadFile(ReadFileRequest),
 
+    /// Bounded discovery within an authenticated work directory.
+    SearchFiles(SearchFilesRequest),
+
+    /// Explicit bounded text preview; never use ReadFile for previews.
+    PreviewFile(PreviewFileRequest),
+
     /// Write a file to the user's workspace.
     WriteFile(WriteFileRequest),
 
@@ -355,6 +361,12 @@ pub enum RunnerResponse {
     /// File content (base64 encoded for binary safety).
     FileContent(FileContentResponse),
 
+    /// Bounded discovery results.
+    FileSearch(FileSearchResponse),
+
+    /// Bounded text preview or explicit unsupported response.
+    FilePreview(FilePreviewResponse),
+
     /// File written successfully.
     FileWritten(FileWrittenResponse),
 
@@ -623,6 +635,61 @@ pub struct ReadFileRequest {
     /// Optional maximum bytes to read.
     #[serde(default)]
     pub limit: Option<u64>,
+}
+
+/// Both operations take a server-authorized work directory root and a relative path.
+/// Limits are fixed on the runner, not negotiated by the client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchFilesRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub query: String,
+    pub mode: FileSearchMode,
+    #[serde(default)]
+    pub include_hidden: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileSearchMode {
+    Name,
+    Content,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSearchMatch {
+    pub path: String,
+    pub is_dir: bool,
+    pub line: Option<u64>,
+    pub snippet: Option<String>,
+    pub size: u64,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSearchResponse {
+    pub matches: Vec<FileSearchMatch>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewFileRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub offset: u64,
+    pub limit: u32,
+    pub expected_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilePreviewResponse {
+    pub path: String,
+    pub size: u64,
+    pub version: String,
+    pub modified_at_ms: i64,
+    pub content: Option<String>,
+    pub unavailable: Option<String>,
+    pub truncated: bool,
 }
 
 /// Request to write a file.
