@@ -3912,14 +3912,28 @@ impl Runner {
                         && ConnectionAccess::is_files(&req)
                     {
                         let files = Arc::clone(files);
-                        let resp =
-                            match tokio::task::spawn_blocking(move || files.execute(req)).await {
-                                Ok(resp) => resp,
-                                Err(error) => error_response(
-                                    ErrorCode::Internal,
-                                    format!("scoped Files worker failed: {error}"),
-                                ),
-                            };
+                        let resp = match files.acquire_slot().await {
+                            Ok(slot) => {
+                                match tokio::task::spawn_blocking(move || {
+                                    // A disconnected requester must not release the limit
+                                    // before its blocking filesystem operation finishes.
+                                    let _slot = slot;
+                                    files.execute(req)
+                                })
+                                .await
+                                {
+                                    Ok(resp) => resp,
+                                    Err(error) => error_response(
+                                        ErrorCode::Internal,
+                                        format!("scoped Files worker failed: {error}"),
+                                    ),
+                                }
+                            }
+                            Err(error) => error_response(
+                                ErrorCode::Internal,
+                                format!("scoped Files admission failed: {error}"),
+                            ),
+                        };
                         let Ok(line) = Self::serialize_response_line(&resp) else {
                             break;
                         };

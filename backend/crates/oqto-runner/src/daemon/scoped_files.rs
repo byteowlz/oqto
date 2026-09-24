@@ -5,9 +5,13 @@
 use anyhow::{Context, Result, ensure};
 use base64::Engine;
 use cap_std::ambient_authority;
+#[cfg(unix)]
+use cap_std::fs::OpenOptionsExt;
 use cap_std::fs::{Dir, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::protocol::{
     CreateDirectoryRequest, DeletePathRequest, DirEntry, DirectoryCreatedResponse,
@@ -19,6 +23,7 @@ use crate::protocol::{
 const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_WRITE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 10_000;
+const MAX_CONCURRENT_FILE_OPERATIONS: usize = 8;
 
 struct Root {
     absolute: PathBuf,
@@ -29,6 +34,7 @@ struct Root {
 /// runner's current working directory, nor against the backend host.
 pub struct ScopedFiles {
     roots: Vec<Root>,
+    slots: Arc<Semaphore>,
 }
 
 impl ScopedFiles {
@@ -58,7 +64,14 @@ impl ScopedFiles {
                 handle,
             });
         }
-        Ok(Self { roots: opened })
+        Ok(Self {
+            roots: opened,
+            slots: Arc::new(Semaphore::new(MAX_CONCURRENT_FILE_OPERATIONS)),
+        })
+    }
+
+    pub async fn acquire_slot(&self) -> Result<OwnedSemaphorePermit> {
+        Ok(Arc::clone(&self.slots).acquire_owned().await?)
     }
 
     fn resolve<'a>(&'a self, path: &'a Path) -> Result<(&'a Dir, &'a Path)> {
@@ -92,7 +105,11 @@ impl ScopedFiles {
             limit <= MAX_READ_BYTES,
             "file read limit exceeds runner maximum"
         );
-        let mut file = root.open(relative)?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+        let mut file = root.open_with(relative, &options)?;
         let meta = file.metadata()?;
         ensure!(meta.is_file(), "only regular files may be read");
         let offset = request.offset.unwrap_or(0);
@@ -126,8 +143,15 @@ impl ScopedFiles {
             root.create_dir_all(parent)?;
         }
         let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
         let mut file = root.open_with(relative, &options)?;
+        ensure!(
+            file.metadata()?.is_file(),
+            "only regular files may be written"
+        );
+        file.set_len(0)?;
         file.write_all(&bytes)?;
         Ok(RunnerResponse::FileWritten(FileWrittenResponse {
             path: request.path,
