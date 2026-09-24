@@ -40,6 +40,15 @@ struct Args {
     tls_key: Option<PathBuf>,
     #[arg(long, requires = "listen_tls")]
     tls_client_ca: Option<PathBuf>,
+    /// Grant one canonical absolute Files root on the mTLS endpoint. Repeat
+    /// for additional roots. This is supervisor policy, never agent-editable
+    /// config.toml; omit to keep the network endpoint inventory-only.
+    #[arg(
+        long = "remote-file-root",
+        requires = "listen_tls",
+        value_name = "ABSOLUTE_PATH"
+    )]
+    remote_file_roots: Vec<PathBuf>,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -130,14 +139,11 @@ async fn main() -> Result<()> {
         });
     }
 
-    let config_path = args
+    let user_config = args
         .config
         .clone()
-        .unwrap_or_else(RunnerUserConfig::default_config_path);
-    if args.listen_tls.is_some() {
-        RunnerUserConfig::validate_network_config(&config_path)?;
-    }
-    let user_config = RunnerUserConfig::load_from_path(config_path);
+        .map(RunnerUserConfig::load_from_path)
+        .unwrap_or_else(RunnerUserConfig::load);
 
     let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
 
@@ -240,7 +246,6 @@ async fn main() -> Result<()> {
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),
         runner_id: user_config.runner_id.clone(),
-        remote_roots: user_config.remote_roots.clone(),
         workspace_dir: user_config.workspace_dir.clone(),
         pi_sessions_dir: user_config.pi_sessions_dir.clone(),
         memories_dir: user_config.memories_dir.clone(),
@@ -248,7 +253,7 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
     };
-    let remote_access = if legacy_user_config.remote_roots.is_empty() {
+    let remote_access = if args.remote_file_roots.is_empty() {
         ConnectionAccess::RemoteInventory
     } else {
         ensure!(
@@ -257,11 +262,11 @@ async fn main() -> Result<()> {
         );
         info!(
             "Enforcing runner-owned network Files roots: {:?}",
-            legacy_user_config.remote_roots
+            args.remote_file_roots
         );
         if let Some(home) = dirs::home_dir()
-            && legacy_user_config
-                .remote_roots
+            && args
+                .remote_file_roots
                 .iter()
                 .any(|root| home.starts_with(root))
         {
@@ -269,9 +274,7 @@ async fn main() -> Result<()> {
                 "A configured runner Files root contains the entire home directory, including credentials; use narrower roots to exclude secrets"
             );
         }
-        ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(
-            &legacy_user_config.remote_roots,
-        )?))
+        ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(&args.remote_file_roots)?))
     };
     let runner = Runner::new(
         sandbox_config,
@@ -305,5 +308,37 @@ async fn main() -> Result<()> {
         runner.run_transport(&listener, remote_access).await
     } else {
         runner.run(&socket_path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_files_roots_require_explicit_supervisor_arguments() -> Result<()> {
+        let inventory = Args::try_parse_from(["oqto-runner", "--listen-tls", "127.0.0.1:39444"])?;
+        assert!(inventory.remote_file_roots.is_empty());
+        assert!(
+            Args::try_parse_from(["oqto-runner", "--remote-file-root", "/home/alice/projects",])
+                .is_err()
+        );
+        let scoped = Args::try_parse_from([
+            "oqto-runner",
+            "--listen-tls",
+            "127.0.0.1:39444",
+            "--remote-file-root",
+            "/home/alice/projects",
+            "--remote-file-root",
+            "/home/alice/shared",
+        ])?;
+        assert_eq!(
+            scoped.remote_file_roots,
+            vec![
+                PathBuf::from("/home/alice/projects"),
+                PathBuf::from("/home/alice/shared"),
+            ]
+        );
+        Ok(())
     }
 }

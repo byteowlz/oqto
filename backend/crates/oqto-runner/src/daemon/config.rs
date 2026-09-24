@@ -15,9 +15,6 @@ pub struct RunnerUserConfig {
     pub ttyd_binary: String,
     pub pi_binary: String,
     pub runner_id: String,
-    /// Explicit filesystem grants for the mutual-TLS endpoint. Empty keeps
-    /// network access at inventory-only authority.
-    pub remote_roots: Vec<PathBuf>,
     pub workspace_dir: PathBuf,
     pub pi_sessions_dir: PathBuf,
     pub memories_dir: PathBuf,
@@ -79,10 +76,8 @@ struct LinuxUsersSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct RunnerSection {
-    /// No implicit root from HOME or local.workspace_dir.
-    remote_roots: Vec<String>,
     provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     history_read: Option<crate::history_read::HistoryReadConfig>,
     runner_id: Option<String>,
@@ -103,16 +98,6 @@ impl RunnerUserConfig {
                 PathBuf::from(home).join(".config")
             });
         config_dir.join("oqto").join("config.toml")
-    }
-
-    /// Network-facing startup must fail on invalid/unsupported runner config
-    /// instead of silently discarding an intended grant after a parse error.
-    pub fn validate_network_config(path: &Path) -> anyhow::Result<()> {
-        if path.exists() {
-            let contents = std::fs::read_to_string(path)?;
-            let _: ConfigFile = toml::from_str(&contents)?;
-        }
-        Ok(())
     }
 
     pub fn load_from_path(path: PathBuf) -> Self {
@@ -164,12 +149,6 @@ impl RunnerUserConfig {
             terminal_enabled: config_file.local.terminal_enabled,
             pi_binary,
             runner_id,
-            remote_roots: config_file
-                .runner
-                .remote_roots
-                .iter()
-                .map(|root| Self::expand_path(root, &home))
-                .collect(),
             workspace_dir: Self::expand_path(&config_file.local.workspace_dir, &home),
             pi_sessions_dir: config_file
                 .runner
@@ -380,28 +359,6 @@ mod tests {
         let cfg = ConfigFile::default();
         assert!(!cfg.local.single_user);
         assert!(!cfg.local.linux_users.enabled);
-    }
-
-    #[test]
-    fn network_file_roots_are_explicit_and_never_default_to_workspace_dir() -> anyhow::Result<()> {
-        let defaults = ConfigFile::default();
-        assert!(defaults.runner.remote_roots.is_empty());
-        let parsed: ConfigFile = toml::from_str(
-            "[local]\nworkspace_dir = '/home/alice/work'\nsingle_user = true\n[runner]\nremote_roots = ['/home/alice/projects']",
-        )?;
-        assert_eq!(parsed.runner.remote_roots, vec!["/home/alice/projects"]);
-        Ok(())
-    }
-
-    #[test]
-    fn network_config_rejects_unknown_runner_access_options() -> anyhow::Result<()> {
-        let temp = tempfile::tempdir()?;
-        let config = temp.path().join("config.toml");
-        std::fs::write(&config, "[runner]\nremote_root = '/home/alice'")?;
-        assert!(RunnerUserConfig::validate_network_config(&config).is_err());
-        std::fs::write(&config, "[runner]\nremote_roots = ['/home/alice']")?;
-        assert!(RunnerUserConfig::validate_network_config(&config).is_ok());
-        Ok(())
     }
 
     #[test]
