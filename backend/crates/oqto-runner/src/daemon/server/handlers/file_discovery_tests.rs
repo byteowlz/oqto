@@ -52,6 +52,20 @@ async fn preview_is_bounded_and_rejects_stale_and_media() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
+async fn preview_preserves_valid_utf8_prefix_at_byte_cap() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    std::fs::write(root.path().join("unicode.txt"), "abc€xyz")?;
+    let result = run_preview(preview(root.path(), "unicode.txt", 4, None)).await?;
+    assert_eq!(result.content.as_deref(), Some("abc"));
+    assert!(result.truncated);
+    let mut middle = preview(root.path(), "unicode.txt", 4, None);
+    middle.offset = 4;
+    let result = run_preview(middle).await?;
+    assert!(result.content.is_none(), "a range starting inside a code point is invalid UTF-8");
+    Ok(())
+}
+
+#[tokio::test]
 async fn odd_filenames_are_arguments_not_shell() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let name = "odd ; $(touch oqto-search-unsafe) ' file.txt";

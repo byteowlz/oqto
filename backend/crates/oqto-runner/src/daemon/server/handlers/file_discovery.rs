@@ -356,8 +356,15 @@ async fn run_preview(req: PreviewFileRequest) -> Result<FilePreviewResponse> {
         {
             bail!("stale preview version");
         }
-        match String::from_utf8(bytes) {
-            Ok(text) if !text.contains('\0') => (Some(text), None),
+        // A bounded read may stop inside the final UTF-8 code point. Return the
+        // complete prefix, but never conceal an invalid byte inside the range.
+        let valid_len = match std::str::from_utf8(&bytes) {
+            Ok(_) => Some(bytes.len()),
+            Err(error) if error.error_len().is_none() => Some(error.valid_up_to()),
+            Err(_) => None,
+        };
+        match valid_len.and_then(|len| std::str::from_utf8(&bytes[..len]).ok()) {
+            Some(text) if !text.contains('\0') => (Some(text.to_string()), None),
             _ => (None, Some("binary or invalid UTF-8 content".to_string())),
         }
     } else {
