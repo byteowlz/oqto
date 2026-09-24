@@ -105,6 +105,26 @@ async fn list_workspace_hash_dirs(user_home: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Resolve a request-facing ID to the store's session key before projecting
+/// turns. An alias collision must not silently return another session's chat.
+async fn projection_session_id(pool: &sqlx::SqlitePool, any_id: &str) -> Option<String> {
+    let candidates = sqlx::query_scalar::<_, String>(
+        "SELECT session_id FROM oqto_log_sessions \
+         WHERE session_id = ? OR platform_id = ? OR external_id = ? LIMIT 2",
+    )
+    .bind(any_id)
+    .bind(any_id)
+    .bind(any_id)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    if candidates.len() == 1 {
+        candidates.into_iter().next()
+    } else {
+        None
+    }
+}
+
 async fn project_session_messages_in_db(
     db_path: &Path,
     session_id: &str,
@@ -119,16 +139,8 @@ async fn project_session_messages_in_db(
         .await
         .ok()?;
 
-    let exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
-            .bind(session_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-    if exists <= 0 {
-        return None;
-    }
+    let canonical_id = projection_session_id(&pool, session_id).await?;
+    let session_id = canonical_id.as_str();
 
     let query = format!(
         r#"
@@ -198,16 +210,8 @@ async fn project_session_messages_page_in_db(
         .await
         .ok()?;
 
-    let exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
-            .bind(session_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-    if exists <= 0 {
-        return None;
-    }
+    let canonical_id = projection_session_id(&pool, session_id).await?;
+    let session_id = canonical_id.as_str();
 
     let cursor_filter = if before.is_some() {
         "AND (t.turn_version < ? OR (t.turn_version = ? AND m.seq < ?))"
@@ -752,7 +756,10 @@ mod tests {
 
     use oqto_protocol::projection::ProjectedChatMessagePage;
 
-    use super::{extract_client_id_from_payload_json, project_session_messages_for_workspace};
+    use super::{
+        extract_client_id_from_payload_json, project_session_messages_auto,
+        project_session_messages_for_workspace, project_session_messages_page_auto,
+    };
     use crate::oqto_log::store::{PiJsonlMessageRecord, replace_session_with_pi_jsonl_records};
 
     fn test_message(role: &str, content: &str, timestamp: Option<u64>) -> AgentMessage {
@@ -836,6 +843,24 @@ mod tests {
         assert_eq!(projected[0].created_at, 1_779_363_330_601);
         assert_eq!(projected[1].created_at, 1_779_363_330_656);
         assert!(projected[0].created_at < projected[1].created_at);
+
+        // Runner Pi uses a request-facing external ID while oqto-log records
+        // a distinct canonical session ID. Both must resolve to the same
+        // durable messages, including when the Desktop asks for a page.
+        for alias in [session_id, "oqto-platform-1", "external-1"] {
+            let automatic = project_session_messages_auto(user_home, alias, None)
+                .await
+                .expect("auto project")
+                .expect("session resolved");
+            assert_eq!(automatic.len(), 2, "alias {alias}");
+            assert_eq!(automatic[0].session_id, session_id);
+            let page = project_session_messages_page_auto(user_home, alias, 2, None)
+                .await
+                .expect("page project")
+                .expect("paged session resolved");
+            assert_eq!(page.messages.len(), 2, "paged alias {alias}");
+            assert_eq!(page.messages[0].session_id, session_id);
+        }
     }
 
     #[tokio::test]
