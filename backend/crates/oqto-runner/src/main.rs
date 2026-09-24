@@ -271,6 +271,7 @@ async fn main() -> Result<()> {
     validate_remote_pi_grant(args.remote_full_principal_pi, &args.remote_file_roots)?;
     let client_pins =
         parse_remote_client_pins(&args.remote_client_pins, !args.remote_file_roots.is_empty())?;
+    validate_personal_client_count(args.remote_full_principal_pi, client_pins.len())?;
     let remote_access = if args.remote_file_roots.is_empty() {
         ConnectionAccess::RemoteInventory
     } else {
@@ -365,6 +366,14 @@ fn parse_remote_client_pins(pins: &[String], has_grant: bool) -> Result<Arc<Hash
     Ok(Arc::new(out))
 }
 
+fn validate_personal_client_count(full_principal: bool, pins: usize) -> Result<()> {
+    ensure!(
+        !full_principal || pins == 1,
+        "personal Pi requires exactly one pinned client identity until per-session ownership is implemented"
+    );
+    Ok(())
+}
+
 fn validate_remote_pi_grant(full_principal: bool, roots: &[PathBuf]) -> Result<()> {
     ensure!(
         !full_principal || roots.iter().any(|root| root == std::path::Path::new("/")),
@@ -441,6 +450,10 @@ mod tests {
         let enrolled = parse_remote_client_pins(&["a".repeat(64)], true)?;
         assert!(enrolled.contains(&[0xaa; 32]));
         assert!(parse_remote_client_pins(&[], false)?.is_empty());
+        assert!(validate_personal_client_count(true, 0).is_err());
+        assert!(validate_personal_client_count(true, 1).is_ok());
+        assert!(validate_personal_client_count(true, 2).is_err());
+        assert!(validate_personal_client_count(false, 2).is_ok());
         Ok(())
     }
 }
