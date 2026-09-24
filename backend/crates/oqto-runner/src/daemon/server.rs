@@ -33,6 +33,9 @@ pub enum ConnectionAccess {
     /// Explicit, capability-confined Files roots. Session/process operations
     /// stay denied until the runner can enforce their separate execution scope.
     RemoteFiles(Arc<ScopedFiles>),
+    /// Explicit single-user full-OS-principal Pi authority. Requires an
+    /// operator-owned '/' Files root; narrower roots cannot confine Pi yet.
+    RemotePersonalPi(Arc<ScopedFiles>),
 }
 
 impl ConnectionAccess {
@@ -48,17 +51,64 @@ impl ConnectionAccess {
         )
     }
 
+    fn is_personal_pi(request: &RunnerRequest) -> bool {
+        matches!(
+            request,
+            RunnerRequest::PiCreateSession(_)
+                | RunnerRequest::PiCloseSession(_)
+                | RunnerRequest::PiDeleteSession(_)
+                | RunnerRequest::PiNewSession(_)
+                | RunnerRequest::PiSwitchSession(_)
+                | RunnerRequest::PiListSessions
+                | RunnerRequest::PiSubscribe(_)
+                | RunnerRequest::PiUnsubscribe(_)
+                | RunnerRequest::PiPrompt(_)
+                | RunnerRequest::PiSteer(_)
+                | RunnerRequest::PiFollowUp(_)
+                | RunnerRequest::PiAbort(_)
+                | RunnerRequest::PiGetState(_)
+                | RunnerRequest::PiGetMessages(_)
+                | RunnerRequest::PiGetSessionStats(_)
+                | RunnerRequest::PiGetLastAssistantText(_)
+                | RunnerRequest::PiSetModel(_)
+                | RunnerRequest::PiCycleModel(_)
+                | RunnerRequest::PiGetAvailableModels(_)
+                | RunnerRequest::PiSetThinkingLevel(_)
+                | RunnerRequest::PiCycleThinkingLevel(_)
+                | RunnerRequest::PiCompact(_)
+                | RunnerRequest::PiSetAutoCompaction(_)
+                | RunnerRequest::PiSetSteeringMode(_)
+                | RunnerRequest::PiSetFollowUpMode(_)
+                | RunnerRequest::PiSetAutoRetry(_)
+                | RunnerRequest::PiAbortRetry(_)
+                | RunnerRequest::PiFork(_)
+                | RunnerRequest::PiGetForkMessages(_)
+                | RunnerRequest::PiSetSessionName(_)
+                | RunnerRequest::PiExportHtml(_)
+                | RunnerRequest::AgentGetCommands(_)
+                | RunnerRequest::PiBash(_)
+                | RunnerRequest::PiAbortBash(_)
+                | RunnerRequest::PiExtensionUiResponse(_)
+                | RunnerRequest::GetWorkspaceChatMessages(_)
+                | RunnerRequest::ListWorkspaceChatSessions(_)
+                | RunnerRequest::GetWorkspaceChatSession(_)
+                | RunnerRequest::GetWorkspaceChatSessionMessages(_)
+        )
+    }
+
     fn permits(&self, request: &RunnerRequest) -> bool {
         match self {
             Self::LocalSocket => true,
-            Self::RemoteInventory | Self::RemoteFiles(_) => {
+            Self::RemoteInventory | Self::RemoteFiles(_) | Self::RemotePersonalPi(_) => {
                 matches!(
                     request,
                     RunnerRequest::Ping
                         | RunnerRequest::GetCapabilities
                         | RunnerRequest::HistoryRead(_)
                         | RunnerRequest::ProviderLogin(_)
-                ) || matches!(self, Self::RemoteFiles(_)) && Self::is_files(request)
+                ) || matches!(self, Self::RemoteFiles(_) | Self::RemotePersonalPi(_))
+                    && Self::is_files(request)
+                    || matches!(self, Self::RemotePersonalPi(_)) && Self::is_personal_pi(request)
             }
         }
     }
@@ -3908,7 +3958,8 @@ impl Runner {
                         continue;
                     }
 
-                    if let ConnectionAccess::RemoteFiles(files) = &access
+                    if let ConnectionAccess::RemoteFiles(files)
+                    | ConnectionAccess::RemotePersonalPi(files) = &access
                         && ConnectionAccess::is_files(&req)
                     {
                         let files = Arc::clone(files);
@@ -3941,6 +3992,31 @@ impl Runner {
                             break;
                         }
                         continue;
+                    }
+
+                    if let ConnectionAccess::RemotePersonalPi(files) = &access
+                        && let RunnerRequest::PiCreateSession(create) = &req
+                    {
+                        let cwd = create.config.cwd.clone();
+                        let files = Arc::clone(files);
+                        let admitted = tokio::task::spawn_blocking(move || {
+                            files.authorize_work_directory(&cwd)
+                        })
+                        .await;
+                        if !matches!(admitted, Ok(Ok(()))) {
+                            warn!("network Pi work directory denied");
+                            let response = error_response(
+                                ErrorCode::PermissionDenied,
+                                "Pi work directory is not an authorized absolute directory",
+                            );
+                            let Ok(line) = Self::serialize_response_line(&response) else {
+                                break;
+                            };
+                            if writer.write_all(line.as_bytes()).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                     }
 
                     // Handle PiSubscribe specially since it streams
@@ -4488,6 +4564,28 @@ mod tests {
         })));
         assert!(!access.permits(&RunnerRequest::PiListSessions));
         assert!(!access.permits(&RunnerRequest::Shutdown));
+        Ok(())
+    }
+
+    #[test]
+    fn only_explicit_full_principal_connection_allows_pi_commands() -> Result<()> {
+        let files = Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?);
+        let access = ConnectionAccess::RemotePersonalPi(files);
+        let create = RunnerRequest::PiCreateSession(PiCreateSessionRequest {
+            session_id: "personal".into(),
+            config: crate::protocol::PiSessionConfig {
+                cwd: PathBuf::from("/tmp"),
+                ..Default::default()
+            },
+        });
+        assert!(access.permits(&create));
+        assert!(access.permits(&RunnerRequest::PiBash(PiBashRequest {
+            session_id: "personal".into(),
+            command: "pwd".into(),
+        })));
+        for denied in [RunnerRequest::Shutdown, RunnerRequest::ListProcesses] {
+            assert!(!access.permits(&denied), "{denied:?} must be denied");
+        }
         Ok(())
     }
 

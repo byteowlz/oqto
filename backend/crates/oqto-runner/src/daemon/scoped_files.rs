@@ -98,6 +98,15 @@ impl ScopedFiles {
         ))
     }
 
+    /// Admission for a Pi work directory. This validates the resolved handle,
+    /// not only the spelling of its path. Process confinement is separate;
+    /// callers must never use this to admit a narrow-root process alone.
+    pub fn authorize_work_directory(&self, path: &Path) -> Result<()> {
+        let (root, relative) = self.resolve(path)?;
+        let _directory = root.open_dir(relative)?;
+        Ok(())
+    }
+
     fn read(&self, request: ReadFileRequest) -> Result<RunnerResponse> {
         let (root, relative) = self.resolve(&request.path)?;
         let limit = request.limit.unwrap_or(MAX_READ_BYTES);
@@ -407,6 +416,12 @@ mod tests {
     fn explicit_filesystem_root_grants_access_outside_the_default_work_directory() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let files = ScopedFiles::new(&[PathBuf::from("/")])?;
+        assert!(files.authorize_work_directory(temp.path()).is_ok());
+        assert!(
+            files
+                .authorize_work_directory(Path::new("relative"))
+                .is_err()
+        );
         let response = files.execute(RunnerRequest::ListDirectory(ListDirectoryRequest {
             path: std::fs::canonicalize(temp.path())?,
             include_hidden: true,

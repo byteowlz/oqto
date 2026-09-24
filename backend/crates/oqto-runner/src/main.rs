@@ -49,6 +49,11 @@ struct Args {
         value_name = "ABSOLUTE_PATH"
     )]
     remote_file_roots: Vec<PathBuf>,
+    /// Explicit personal Pi access as this runner's full OS principal. The
+    /// operator must also grant '/' to Files; narrower process roots are NOT
+    /// inferred from cwd and remain fail-closed.
+    #[arg(long, requires = "listen_tls")]
+    remote_full_principal_pi: bool,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -253,6 +258,7 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
     };
+    validate_remote_pi_grant(args.remote_full_principal_pi, &args.remote_file_roots)?;
     let remote_access = if args.remote_file_roots.is_empty() {
         ConnectionAccess::RemoteInventory
     } else {
@@ -274,7 +280,15 @@ async fn main() -> Result<()> {
                 "A configured runner Files root contains the entire home directory, including credentials; use narrower roots to exclude secrets"
             );
         }
-        ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(&args.remote_file_roots)?))
+        let files = Arc::new(ScopedFiles::new(&args.remote_file_roots)?);
+        if args.remote_full_principal_pi {
+            log::warn!(
+                "Personal network Pi execution enabled with full OS-principal authority; any mTLS client accepted by this listener can control Pi Sessions and run PiBash. Sandbox policy, if present, still applies to Pi children."
+            );
+            ConnectionAccess::RemotePersonalPi(files)
+        } else {
+            ConnectionAccess::RemoteFiles(files)
+        }
     };
     let runner = Runner::new(
         sandbox_config,
@@ -311,6 +325,14 @@ async fn main() -> Result<()> {
     }
 }
 
+fn validate_remote_pi_grant(full_principal: bool, roots: &[PathBuf]) -> Result<()> {
+    ensure!(
+        !full_principal || roots.iter().any(|root| root == std::path::Path::new("/")),
+        "personal Pi execution requires an explicit --remote-file-root /; narrow-root process confinement is not implemented"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +361,7 @@ mod tests {
     fn network_files_roots_require_explicit_supervisor_arguments() -> Result<()> {
         let inventory = Args::try_parse_from(["oqto-runner", "--listen-tls", "127.0.0.1:39444"])?;
         assert!(inventory.remote_file_roots.is_empty());
+        assert!(!inventory.remote_full_principal_pi);
         assert!(
             Args::try_parse_from(["oqto-runner", "--remote-file-root", "/home/alice/projects",])
                 .is_err()
@@ -359,6 +382,18 @@ mod tests {
                 PathBuf::from("/home/alice/shared"),
             ]
         );
+        assert!(validate_remote_pi_grant(true, &scoped.remote_file_roots).is_err());
+        assert!(validate_remote_pi_grant(false, &scoped.remote_file_roots).is_ok());
+        let personal = Args::try_parse_from([
+            "oqto-runner",
+            "--listen-tls",
+            "127.0.0.1:39444",
+            "--remote-file-root",
+            "/",
+            "--remote-full-principal-pi",
+        ])?;
+        assert!(personal.remote_full_principal_pi);
+        assert!(validate_remote_pi_grant(true, &personal.remote_file_roots).is_ok());
         Ok(())
     }
 }
