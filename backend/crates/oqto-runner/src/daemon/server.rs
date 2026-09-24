@@ -27,8 +27,8 @@ mod handlers;
 pub enum ConnectionAccess {
     /// Existing local socket behavior; OS socket access remains the boundary.
     LocalSocket,
-    /// Network clients can probe explicitly configured read-only machine
-    /// features, but cannot exercise filesystem, session or process actions.
+    /// Network clients can probe inventory and use separately configured
+    /// history/provider-login features, but not Files, sessions or processes.
     RemoteInventory,
     /// Explicit, capability-confined Files roots. Session/process operations
     /// stay denied until the runner can enforce their separate execution scope.
