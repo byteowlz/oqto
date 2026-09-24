@@ -55,7 +55,7 @@ async fn mac_runner_spawns_generic_and_pi_processes_through_seatbelt() -> Result
     // PiManager supplies RPC argv and inherits the same file policy as spawn.
     std::fs::write(
         &harness,
-        "#!/bin/sh\nprintf '%s\\n' \"$$\" > pi-pid\n{ printf '%s\\n' \"$@\"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\\nDONE\\n'; } > pi-proof\nwhile :; do sleep 1; done\n",
+        "#!/bin/sh\nif test \"$1\" = --version; then printf 'pi 0.85.1\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > pi-pid\n{ printf '%s\\n' \"$@\"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\\nDONE\\n'; } > pi-proof\nwhile :; do sleep 1; done\n",
     )?;
     std::fs::set_permissions(&harness, std::fs::Permissions::from_mode(0o700))?;
     let config = format!(
