@@ -4464,11 +4464,11 @@ mod tests {
     #[test]
     fn remote_files_grants_only_mediated_file_operations() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let access = ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(&[temp
-            .path()
-            .to_path_buf()])?));
+        let root = std::fs::canonicalize(temp.path())?;
+        let access =
+            ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(std::slice::from_ref(&root))?));
         assert!(access.permits(&RunnerRequest::ReadFile(ReadFileRequest {
-            path: temp.path().join("file"),
+            path: root.join("file"),
             offset: None,
             limit: None,
         })));
