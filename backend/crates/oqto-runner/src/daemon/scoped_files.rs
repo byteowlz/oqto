@@ -282,8 +282,9 @@ mod tests {
     #[test]
     fn rejects_traversal_relative_paths_and_symlink_escape() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let allowed = temp.path().join("allowed");
-        let other = temp.path().join("other");
+        let base = std::fs::canonicalize(temp.path())?;
+        let allowed = base.join("allowed");
+        let other = base.join("other");
         std::fs::create_dir_all(&allowed)?;
         std::fs::create_dir_all(&other)?;
         std::fs::write(other.join("secret"), b"private")?;
@@ -349,9 +350,10 @@ mod tests {
     #[test]
     fn replacing_the_root_path_does_not_rebind_the_open_grant() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let allowed = temp.path().join("allowed");
-        let moved = temp.path().join("moved");
-        let outside = temp.path().join("outside");
+        let base = std::fs::canonicalize(temp.path())?;
+        let allowed = base.join("allowed");
+        let moved = base.join("moved");
+        let outside = base.join("outside");
         std::fs::create_dir(&allowed)?;
         std::fs::create_dir(&outside)?;
         std::fs::write(allowed.join("inside"), b"granted")?;
@@ -380,7 +382,7 @@ mod tests {
     #[test]
     fn scoped_file_writes_and_reads_stay_inside_root() -> Result<()> {
         let temp = tempfile::tempdir()?;
-        let root = temp.path().join("root");
+        let root = std::fs::canonicalize(temp.path())?.join("root");
         std::fs::create_dir(&root)?;
         let files = ScopedFiles::new(std::slice::from_ref(&root))?;
         let path = root.join("nested/data.txt");
