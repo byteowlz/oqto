@@ -316,6 +316,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_editable_config_cannot_mint_network_files_roots() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config = temp.path().join("config.toml");
+        std::fs::write(
+            &config,
+            "[local]\nsingle_user = true\n[runner]\nremote_roots = ['/']",
+        )?;
+        let args = Args::try_parse_from(vec![
+            "oqto-runner".to_string(),
+            "--listen-tls".to_string(),
+            "127.0.0.1:39444".to_string(),
+            "--config".to_string(),
+            config.to_string_lossy().into_owned(),
+        ])?;
+        assert!(RunnerUserConfig::load_from_path(config).single_user);
+        assert!(args.remote_file_roots.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn network_files_roots_require_explicit_supervisor_arguments() -> Result<()> {
         let inventory = Args::try_parse_from(["oqto-runner", "--listen-tls", "127.0.0.1:39444"])?;
         assert!(inventory.remote_file_roots.is_empty());
