@@ -3354,7 +3354,7 @@ dependencies = [
 [[package]]
 name = "mmry-core"
 version = "0.13.4"
-source = "git+https://github.com/byteowlz/mmry?branch=main#49c428266212773ce643ace464c2662b0315c43a"
+source = "git+https://github.com/byteowlz/mmry?rev=49c428266212773ce643ace464c2662b0315c43a#49c428266212773ce643ace464c2662b0315c43a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6797,7 +6797,7 @@ dependencies = [
 [[package]]
 name = "trx-core"
 version = "0.6.0"
-source = "git+https://github.com/byteowlz/trx?branch=master#a97cf289d7b70a04c01025cdaed0cf8d100df9fd"
+source = "git+https://github.com/byteowlz/trx?rev=a97cf289d7b70a04c01025cdaed0cf8d100df9fd#a97cf289d7b70a04c01025cdaed0cf8d100df9fd"
 dependencies = [
  "anyhow",
  "automerge",

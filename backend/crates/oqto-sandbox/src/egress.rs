@@ -23,11 +23,13 @@
 //!   exhaustively unit-testable without privileges;
 //! - `apply`/`teardown` execute those commands and require `CAP_NET_ADMIN`.
 
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 
@@ -466,6 +468,7 @@ pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
 /// namespace via `setns` in a pre-exec hook (so it sees the agent's DNAT) and
 /// is told its listen address and the eavs endpoint via env. Requires the relay
 /// binary to be resolvable; fails closed otherwise.
+#[cfg(target_os = "linux")]
 fn spawn_relay(plan: &EgressPlan) -> Result<Child> {
     let bin = crate::egress_relay::resolve_relay_binary().context(
         "oqto-egress-relay binary not found (set OQTO_EGRESS_RELAY_BIN or install it on PATH); \
@@ -513,6 +516,11 @@ fn spawn_relay(plan: &EgressPlan) -> Result<Child> {
         plan.eavs_endpoint()
     );
     Ok(child)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_relay(_plan: &EgressPlan) -> Result<Child> {
+    bail!("network namespace egress relay requires Linux")
 }
 
 /// Lowest `/30` block index not currently backed by a live `oqto-egr-*`
@@ -579,6 +587,14 @@ mod tests {
             tcp_port: 8443,
             dns_port: 5353,
         }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn namespace_egress_relay_fails_closed_off_linux() -> Result<()> {
+        let plan = EgressPlan::new(0, proxy(), vec![])?;
+        assert!(spawn_relay(&plan).is_err());
+        Ok(())
     }
 
     #[test]
