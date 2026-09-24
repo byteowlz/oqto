@@ -114,6 +114,7 @@ pub struct TcpTlsRunnerConnector {
     address: SocketAddr,
     server_name: String,
     connector: TlsConnector,
+    expected_server_cert_sha256: Option<[u8; 32]>,
 }
 
 impl std::fmt::Debug for TcpTlsRunnerConnector {
@@ -136,7 +137,15 @@ impl TcpTlsRunnerConnector {
             address,
             server_name: server_name.into(),
             connector: TlsConnector::from(config),
+            expected_server_cert_sha256: None,
         }
+    }
+
+    /// Require this exact server leaf in addition to normal CA/name checks.
+    /// Certificate rotation requires an explicit re-enrollment.
+    pub fn pinned_server_certificate(mut self, fingerprint: [u8; 32]) -> Self {
+        self.expected_server_cert_sha256 = Some(fingerprint);
+        self
     }
 }
 
@@ -154,6 +163,16 @@ impl RunnerConnector for TcpTlsRunnerConnector {
                 .connect(server_name, tcp)
                 .await
                 .with_context(|| format!("authenticating runner at {}", self.address))?;
+            if let Some(expected) = self.expected_server_cert_sha256 {
+                let certificate = stream
+                    .get_ref()
+                    .1
+                    .peer_certificates()
+                    .and_then(|certificates| certificates.first())
+                    .context("authenticated runner has no server leaf certificate")?;
+                let actual: [u8; 32] = Sha256::digest(certificate.as_ref()).into();
+                anyhow::ensure!(actual == expected, "runner server certificate pin mismatch");
+            }
             Ok(Box::new(stream) as BoxedRunnerIo)
         })
     }
@@ -271,8 +290,11 @@ mod tests {
         let server_config = server_config(&identity.cert, &identity.cert, &identity.key)?;
         let client_config = client_config(&identity.cert, &identity.cert, &identity.key)?;
         let listener = TcpTlsRunnerListener::bind("127.0.0.1:0".parse()?, server_config).await?;
+        let server_fingerprint: [u8; 32] =
+            Sha256::digest(load_certificates(&identity.cert)?[0].as_ref()).into();
         let connector =
-            TcpTlsRunnerConnector::new(listener.local_addr(), "localhost", client_config);
+            TcpTlsRunnerConnector::new(listener.local_addr(), "localhost", client_config)
+                .pinned_server_certificate(server_fingerprint);
 
         let server_task = tokio::spawn(async move {
             let accepted = listener.accept().await?;
@@ -292,6 +314,34 @@ mod tests {
         let response: Option<String> = read_json_frame(&mut stream).await?;
         assert_eq!(response.as_deref(), Some("ack:ping"));
         server_task.await.context("joining mTLS server")??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn valid_ca_and_name_cannot_override_a_wrong_server_leaf_pin() -> Result<()> {
+        let identity = identity_files()?;
+        let listener = TcpTlsRunnerListener::bind(
+            "127.0.0.1:0".parse()?,
+            server_config(&identity.cert, &identity.cert, &identity.key)?,
+        )
+        .await?;
+        let connector = TcpTlsRunnerConnector::new(
+            listener.local_addr(),
+            "localhost",
+            client_config(&identity.cert, &identity.cert, &identity.key)?,
+        )
+        .pinned_server_certificate([0; 32]);
+        let server = tokio::spawn(async move { listener.accept().await.map(|_| ()) });
+        let error = connector
+            .connect()
+            .await
+            .err()
+            .context("wrong server leaf pin was accepted")?;
+        anyhow::ensure!(
+            error.to_string().contains("pin mismatch"),
+            "unexpected error: {error:#}"
+        );
+        server.await.context("joining pinned listener")??;
         Ok(())
     }
 
