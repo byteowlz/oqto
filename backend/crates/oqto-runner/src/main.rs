@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, ensure};
 // Used only by the non-Linux guards below, which are compiled out on Linux.
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
@@ -15,7 +15,8 @@ use oqto_runner::daemon::bootstrap::{
     load_env_file, load_sandbox_config, log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
-use oqto_runner::daemon::server::{Runner, SessionBinaries};
+use oqto_runner::daemon::scoped_files::ScopedFiles;
+use oqto_runner::daemon::server::{ConnectionAccess, Runner, SessionBinaries};
 use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
@@ -235,12 +236,38 @@ async fn main() -> Result<()> {
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),
         runner_id: user_config.runner_id.clone(),
+        remote_roots: user_config.remote_roots.clone(),
         workspace_dir: user_config.workspace_dir.clone(),
         pi_sessions_dir: user_config.pi_sessions_dir.clone(),
         memories_dir: user_config.memories_dir.clone(),
         single_user: user_config.single_user,
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
+    };
+    let remote_access = if legacy_user_config.remote_roots.is_empty() {
+        ConnectionAccess::RemoteInventory
+    } else {
+        ensure!(
+            legacy_user_config.single_user && !legacy_user_config.linux_users_enabled,
+            "network Files roots require a dedicated single-user runner"
+        );
+        info!(
+            "Enforcing runner-owned network Files roots: {:?}",
+            legacy_user_config.remote_roots
+        );
+        if let Some(home) = dirs::home_dir()
+            && legacy_user_config
+                .remote_roots
+                .iter()
+                .any(|root| home.starts_with(root))
+        {
+            log::warn!(
+                "A configured runner Files root contains the entire home directory, including credentials; use narrower roots to exclude secrets"
+            );
+        }
+        ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(
+            &legacy_user_config.remote_roots,
+        )?))
     };
     let runner = Runner::new(
         sandbox_config,
@@ -271,7 +298,7 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
         let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
         let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
-        runner.run_transport(&listener).await
+        runner.run_transport(&listener, remote_access).await
     } else {
         runner.run(&socket_path).await
     }

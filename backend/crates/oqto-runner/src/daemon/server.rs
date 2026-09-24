@@ -11,6 +11,7 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::daemon::config::RunnerUserConfig;
+use crate::daemon::scoped_files::ScopedFiles;
 use crate::daemon::state::{ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent};
 use crate::pi_manager::PiSessionManager;
 use crate::protocol::*;
@@ -19,6 +20,49 @@ use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
+
+/// Authority of the transport, not the TLS certificate alone. New remote
+/// request variants remain denied until a runner-owned grant authorizes them.
+#[derive(Clone)]
+pub enum ConnectionAccess {
+    /// Existing local socket behavior; OS socket access remains the boundary.
+    LocalSocket,
+    /// Network clients can probe explicitly configured read-only machine
+    /// features, but cannot exercise filesystem, session or process actions.
+    RemoteInventory,
+    /// Explicit, capability-confined Files roots. Session/process operations
+    /// stay denied until the runner can enforce their separate execution scope.
+    RemoteFiles(Arc<ScopedFiles>),
+}
+
+impl ConnectionAccess {
+    fn is_files(request: &RunnerRequest) -> bool {
+        matches!(
+            request,
+            RunnerRequest::ReadFile(_)
+                | RunnerRequest::WriteFile(_)
+                | RunnerRequest::ListDirectory(_)
+                | RunnerRequest::Stat(_)
+                | RunnerRequest::DeletePath(_)
+                | RunnerRequest::CreateDirectory(_)
+        )
+    }
+
+    fn permits(&self, request: &RunnerRequest) -> bool {
+        match self {
+            Self::LocalSocket => true,
+            Self::RemoteInventory | Self::RemoteFiles(_) => {
+                matches!(
+                    request,
+                    RunnerRequest::Ping
+                        | RunnerRequest::GetCapabilities
+                        | RunnerRequest::HistoryRead(_)
+                        | RunnerRequest::ProviderLogin(_)
+                ) || matches!(self, Self::RemoteFiles(_)) && Self::is_files(request)
+            }
+        }
+    }
+}
 
 /// Configuration for session service binaries.
 #[derive(Debug, Clone)]
@@ -3820,7 +3864,7 @@ impl Runner {
     }
 
     /// Handle a client connection over any established bidirectional stream.
-    async fn handle_connection<S>(&self, stream: S)
+    async fn handle_connection<S>(&self, stream: S, access: ConnectionAccess)
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -3845,6 +3889,45 @@ impl Runner {
                 }
                 Ok(Some(req)) => {
                     debug!("Received request: {:?}", req);
+
+                    // Authorize before special streaming paths, dispatch, or side effects.
+                    // A mutual-TLS certificate authenticates a peer; it does not
+                    // confer arbitrary filesystem or execution authority.
+                    if !access.permits(&req) {
+                        warn!("runner remote request denied: {}", Self::request_kind(&req));
+                        let resp = error_response(
+                            ErrorCode::PermissionDenied,
+                            "runner transport is limited to explicitly granted capabilities",
+                        );
+                        let Ok(line) = Self::serialize_response_line(&resp) else {
+                            break;
+                        };
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if let ConnectionAccess::RemoteFiles(files) = &access
+                        && ConnectionAccess::is_files(&req)
+                    {
+                        let files = Arc::clone(files);
+                        let resp =
+                            match tokio::task::spawn_blocking(move || files.execute(req)).await {
+                                Ok(resp) => resp,
+                                Err(error) => error_response(
+                                    ErrorCode::Internal,
+                                    format!("scoped Files worker failed: {error}"),
+                                ),
+                            };
+                        let Ok(line) = Self::serialize_response_line(&resp) else {
+                            break;
+                        };
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
 
                     // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
@@ -4018,7 +4101,7 @@ impl Runner {
         }
     }
 
-    async fn serve_listener<L>(&self, listener: &L)
+    async fn serve_listener<L>(&self, listener: &L, access: ConnectionAccess)
     where
         L: RunnerListener,
     {
@@ -4042,8 +4125,9 @@ impl Runner {
                                 expose_dir: self.expose_dir.clone(),
                                 exposed_ports: Arc::clone(&self.exposed_ports),
                             };
+                            let connection_access = access.clone();
                             tokio::spawn(async move {
-                                runner.handle_connection(stream).await;
+                                runner.handle_connection(stream, connection_access).await;
                             });
                         }
                         Err(error) => {
@@ -4060,7 +4144,7 @@ impl Runner {
     }
 
     /// Serve any authenticated runner transport until shutdown.
-    pub async fn run_transport<L>(&self, listener: &L) -> Result<()>
+    pub async fn run_transport<L>(&self, listener: &L, access: ConnectionAccess) -> Result<()>
     where
         L: RunnerListener,
     {
@@ -4112,7 +4196,7 @@ impl Runner {
                 }
             });
         }
-        self.serve_listener(listener).await;
+        self.serve_listener(listener, access).await;
         self.cleanup_managed_processes().await;
         Ok(())
     }
@@ -4137,7 +4221,8 @@ impl Runner {
         let listener = UnixListener::from_std(listener)
             .context("adopting inherited listener into the runtime")?;
         let listener = UnixRunnerListener::new(listener, "<inherited-fd-3>");
-        self.run_transport(&listener).await
+        self.run_transport(&listener, ConnectionAccess::LocalSocket)
+            .await
     }
 
     /// Run the daemon, listening on the given socket path.
@@ -4181,7 +4266,8 @@ impl Runner {
             .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
 
         let listener = UnixRunnerListener::new(listener, socket_path);
-        self.run_transport(&listener).await?;
+        self.run_transport(&listener, ConnectionAccess::LocalSocket)
+            .await?;
 
         // Remove socket file
         let _ = tokio::fs::remove_file(socket_path).await;
@@ -4358,6 +4444,38 @@ fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_inventory_rejects_file_and_execution_requests() {
+        let access = ConnectionAccess::RemoteInventory;
+        assert!(access.permits(&RunnerRequest::Ping));
+        assert!(access.permits(&RunnerRequest::GetCapabilities));
+        let read = RunnerRequest::ReadFile(ReadFileRequest {
+            path: PathBuf::from("/home/alice/.ssh/id_ed25519"),
+            offset: None,
+            limit: None,
+        });
+        for request in [read, RunnerRequest::PiListSessions, RunnerRequest::Shutdown] {
+            assert!(!access.permits(&request), "{request:?} must be denied");
+            assert!(ConnectionAccess::LocalSocket.permits(&request));
+        }
+    }
+
+    #[test]
+    fn remote_files_grants_only_mediated_file_operations() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let access = ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(&[temp
+            .path()
+            .to_path_buf()])?));
+        assert!(access.permits(&RunnerRequest::ReadFile(ReadFileRequest {
+            path: temp.path().join("file"),
+            offset: None,
+            limit: None,
+        })));
+        assert!(!access.permits(&RunnerRequest::PiListSessions));
+        assert!(!access.permits(&RunnerRequest::Shutdown));
+        Ok(())
+    }
 
     #[test]
     fn fork_copy_validation_matches_pi_position_before_semantics() -> Result<()> {
