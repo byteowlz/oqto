@@ -130,10 +130,14 @@ async fn main() -> Result<()> {
         });
     }
 
-    let user_config = args
+    let config_path = args
         .config
-        .map(RunnerUserConfig::load_from_path)
-        .unwrap_or_else(RunnerUserConfig::load);
+        .clone()
+        .unwrap_or_else(RunnerUserConfig::default_config_path);
+    if args.listen_tls.is_some() {
+        RunnerUserConfig::validate_network_config(&config_path)?;
+    }
+    let user_config = RunnerUserConfig::load_from_path(config_path);
 
     let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
 

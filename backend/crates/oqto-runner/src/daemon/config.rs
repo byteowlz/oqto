@@ -79,7 +79,7 @@ struct LinuxUsersSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct RunnerSection {
     /// No implicit root from HOME or local.workspace_dir.
     remote_roots: Vec<String>,
@@ -103,6 +103,16 @@ impl RunnerUserConfig {
                 PathBuf::from(home).join(".config")
             });
         config_dir.join("oqto").join("config.toml")
+    }
+
+    /// Network-facing startup must fail on invalid/unsupported runner config
+    /// instead of silently discarding an intended grant after a parse error.
+    pub fn validate_network_config(path: &Path) -> anyhow::Result<()> {
+        if path.exists() {
+            let contents = std::fs::read_to_string(path)?;
+            let _: ConfigFile = toml::from_str(&contents)?;
+        }
+        Ok(())
     }
 
     pub fn load_from_path(path: PathBuf) -> Self {
@@ -380,6 +390,17 @@ mod tests {
             "[local]\nworkspace_dir = '/home/alice/work'\nsingle_user = true\n[runner]\nremote_roots = ['/home/alice/projects']",
         )?;
         assert_eq!(parsed.runner.remote_roots, vec!["/home/alice/projects"]);
+        Ok(())
+    }
+
+    #[test]
+    fn network_config_rejects_unknown_runner_access_options() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config, "[runner]\nremote_root = '/home/alice'")?;
+        assert!(RunnerUserConfig::validate_network_config(&config).is_err());
+        std::fs::write(&config, "[runner]\nremote_roots = ['/home/alice']")?;
+        assert!(RunnerUserConfig::validate_network_config(&config).is_ok());
         Ok(())
     }
 
