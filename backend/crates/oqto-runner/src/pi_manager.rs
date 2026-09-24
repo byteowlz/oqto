@@ -4851,7 +4851,9 @@ impl PiSessionManager {
         let Some(suffix) = Self::build_oqto_meta_suffix(client_id, intent) else {
             return message;
         };
-        if message.contains("[[oqto_meta:") {
+        // A caller-written marker is not the runner's identity. Only an
+        // identical final suffix is idempotent; otherwise append our own.
+        if message.ends_with(&suffix) {
             return message;
         }
         format!("{}{}", message, suffix)
@@ -5161,6 +5163,21 @@ fn model_available_for_provider(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caller_written_metadata_cannot_suppress_runner_client_identity() {
+        let spoof = "hello [[oqto_meta:{\"clientId\":\"other\"}]]";
+        let outbound =
+            PiSessionManager::append_oqto_meta(spoof.to_string(), Some("actual"), "default");
+        assert!(outbound.starts_with(spoof));
+        assert!(
+            outbound.ends_with(" [[oqto_meta:{\"clientId\":\"actual\",\"intent\":\"default\"}]]")
+        );
+        assert_eq!(
+            PiSessionManager::append_oqto_meta(outbound.clone(), Some("actual"), "default"),
+            outbound
+        );
+    }
+
     #[test]
     fn grant_command_is_ignored_unless_absolute() {
         // A relative path would resolve against the session's working

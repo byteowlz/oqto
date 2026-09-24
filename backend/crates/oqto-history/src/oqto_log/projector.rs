@@ -63,6 +63,21 @@ async fn open_pool_for_workspace(user_home: &Path, workspace_id: &str) -> Result
     Ok(pool)
 }
 
+/// Pi persists the runner's optimistic identity as a final JSON suffix on
+/// user text. Only a syntactically valid *trailing* marker is metadata; text
+/// elsewhere, including a user-written lookalike, remains visible.
+fn user_text_client_id_suffix(text: &str) -> Option<(&str, String)> {
+    let body = text.strip_suffix("]]")?;
+    let start = body.rfind(" [[oqto_meta:")?;
+    let metadata: serde_json::Value =
+        serde_json::from_str(&body[start + " [[oqto_meta:".len()..]).ok()?;
+    let client_id = metadata.get("clientId")?.as_str()?.trim();
+    if client_id.is_empty() || client_id.len() > 256 || client_id.chars().any(char::is_control) {
+        return None;
+    }
+    Some((&body[..start], client_id.to_string()))
+}
+
 fn extract_client_id_from_payload_json(payload: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
     let obj = value.as_object()?;
@@ -719,13 +734,22 @@ fn row_to_projected_message(
     let created_at: i64 = row.try_get("created_at_ms").unwrap_or(0);
     let fallback_content: Option<String> = row.try_get("content").ok();
     let json_payload: Option<String> = row.try_get("json_payload").ok();
-    let fallback_client_id = json_payload
+    let mut client_id = json_payload
         .as_deref()
         .and_then(extract_client_id_from_payload_json);
     let role: String = row.get("role");
 
-    let parts =
+    let mut parts =
         projected_parts_from_payload(&msg_id, &role, fallback_content, json_payload.as_deref());
+    if role == "user"
+        && let Some(part) = parts.iter_mut().rev().find(|part| part.part_type == "text")
+        && let Some((visible_text, suffix_client_id)) =
+            part.text.as_deref().and_then(user_text_client_id_suffix)
+    {
+        part.text = Some(visible_text.to_string());
+        // A structured oqto-log client ID, if present, takes precedence.
+        client_id.get_or_insert(suffix_client_id);
+    }
 
     ProjectedChatMessage {
         id: msg_id.clone(),
@@ -742,7 +766,7 @@ fn row_to_projected_message(
         tokens_output: None,
         tokens_reasoning: None,
         cost: None,
-        client_id: fallback_client_id,
+        client_id,
         parts,
     }
 }
@@ -759,6 +783,7 @@ mod tests {
     use super::{
         extract_client_id_from_payload_json, project_session_messages_auto,
         project_session_messages_for_workspace, project_session_messages_page_auto,
+        user_text_client_id_suffix,
     };
     use crate::oqto_log::store::{PiJsonlMessageRecord, replace_session_with_pi_jsonl_records};
 
@@ -800,6 +825,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_suffix_only_removes_valid_final_runner_metadata() {
+        let text =
+            "user [[oqto_meta:{\"clientId\":\"spoof\"}]] [[oqto_meta:{\"clientId\":\"real\"}]]";
+        let (visible, client_id) = user_text_client_id_suffix(text).expect("valid final marker");
+        assert_eq!(visible, "user [[oqto_meta:{\"clientId\":\"spoof\"}]]");
+        assert_eq!(client_id, "real");
+        assert!(user_text_client_id_suffix("message [[oqto_meta:not-json]]").is_none());
+        assert!(user_text_client_id_suffix("message [[oqto_meta:{\"clientId\":\"\"}]]").is_none());
+    }
+
     #[tokio::test]
     async fn projection_uses_pi_jsonl_source_timestamps() {
         let temp = tempfile::tempdir().expect("create temp home");
@@ -811,7 +847,11 @@ mod tests {
                 source_entry_id: "entry-user".to_string(),
                 parent_source_entry_id: None,
                 source_sequence: 0,
-                message: test_message("user", "hi", Some(1_779_363_330_601)),
+                message: test_message(
+                    "user",
+                    "hi [[oqto_meta:{\"clientId\":\"cid-proof\",\"intent\":\"default\"}]]",
+                    Some(1_779_363_330_601),
+                ),
             },
             PiJsonlMessageRecord {
                 source_entry_id: "entry-assistant".to_string(),
@@ -840,6 +880,8 @@ mod tests {
                 .expect("project session messages");
 
         assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].client_id.as_deref(), Some("cid-proof"));
+        assert_eq!(projected[0].parts[0].text.as_deref(), Some("hi"));
         assert_eq!(projected[0].created_at, 1_779_363_330_601);
         assert_eq!(projected[1].created_at, 1_779_363_330_656);
         assert!(projected[0].created_at < projected[1].created_at);
