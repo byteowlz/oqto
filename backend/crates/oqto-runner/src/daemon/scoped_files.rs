@@ -404,6 +404,21 @@ mod tests {
     }
 
     #[test]
+    fn explicit_filesystem_root_grants_access_outside_the_default_work_directory() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let files = ScopedFiles::new(&[PathBuf::from("/")])?;
+        let response = files.execute(RunnerRequest::ListDirectory(ListDirectoryRequest {
+            path: std::fs::canonicalize(temp.path())?,
+            include_hidden: true,
+        }));
+        assert!(
+            matches!(response, RunnerResponse::DirectoryListing(_)),
+            "{response:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn scoped_file_writes_and_reads_stay_inside_root() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let root = std::fs::canonicalize(temp.path())?.join("root");
