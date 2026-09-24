@@ -140,6 +140,17 @@ async fn projection_session_id(pool: &sqlx::SqlitePool, any_id: &str) -> Option<
     }
 }
 
+/// Keep Pi-native shell records and aborted assistant turns in raw
+/// oqto-log for provenance, but never misrepresent them as chat answers.
+/// Apply before pagination so cursors/has_more describe visible chat only.
+fn visible_chat_payload_sql() -> &'static str {
+    r#"NOT (t.role = 'assistant' AND CASE
+        WHEN json_valid(m.json_payload) THEN
+            COALESCE(json_extract(m.json_payload, '$.role'), '') = 'bashExecution'
+            OR COALESCE(json_extract(m.json_payload, '$.stopReason'), '') = 'aborted'
+        ELSE 0 END)"#
+}
+
 async fn project_session_messages_in_db(
     db_path: &Path,
     session_id: &str,
@@ -168,10 +179,11 @@ async fn project_session_messages_in_db(
               {} AS created_at_ms
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ?
+            WHERE t.session_id = ? AND {}
             ORDER BY t.turn_version ASC, m.seq ASC
             "#,
         projected_created_at_ms_sql(),
+        visible_chat_payload_sql(),
     );
     let mut rows = sqlx::query(&query)
         .bind(session_id)
@@ -246,12 +258,13 @@ async fn project_session_messages_page_in_db(
               m.seq AS seq
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ?
+            WHERE t.session_id = ? AND {}
             {}
             ORDER BY t.turn_version DESC, m.seq DESC
             LIMIT ?
             "#,
         projected_created_at_ms_sql(),
+        visible_chat_payload_sql(),
         cursor_filter,
     );
 
@@ -903,6 +916,70 @@ mod tests {
             assert_eq!(page.messages.len(), 2, "paged alias {alias}");
             assert_eq!(page.messages[0].session_id, session_id);
         }
+    }
+
+    #[tokio::test]
+    async fn chat_projection_excludes_bash_and_aborted_empty_assistant_records() {
+        let temp = tempfile::tempdir().expect("create temp home");
+        let home = temp.path();
+        let workspace = "/tmp/oqto-chat-only-projection-test";
+        let session = "session-chat-only";
+        let mut aborted = test_message("assistant", "", Some(4));
+        aborted.content = serde_json::json!([]);
+        aborted.stop_reason = Some("aborted".to_string());
+        let messages = [
+            test_message("bashExecution", "", Some(1)),
+            test_message("user", "hi", Some(2)),
+            aborted,
+            test_message("assistant", "answer", Some(5)),
+        ];
+        let records = messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| PiJsonlMessageRecord {
+                source_entry_id: format!("entry-{index}"),
+                parent_source_entry_id: (index > 0).then(|| format!("entry-{}", index - 1)),
+                source_sequence: index as i64,
+                message,
+            })
+            .collect::<Vec<_>>();
+        replace_session_with_pi_jsonl_records(
+            home,
+            "user-1",
+            workspace,
+            session,
+            "oqto-chat-only",
+            Some("external-chat"),
+            "external-chat",
+            &records,
+        )
+        .await
+        .expect("replace session from Pi-authored records");
+        let full = project_session_messages_auto(home, "oqto-chat-only", None)
+            .await
+            .expect("full projection")
+            .expect("session present");
+        assert_eq!(
+            full.iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            ["user", "assistant"]
+        );
+        assert_eq!(full[1].parts[0].text.as_deref(), Some("answer"));
+        let page = project_session_messages_page_auto(home, "external-chat", 2, None)
+            .await
+            .expect("paged projection")
+            .expect("session present");
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            full.iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(!page.has_more);
     }
 
     #[tokio::test]
