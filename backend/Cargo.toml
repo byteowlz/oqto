@@ -112,13 +112,13 @@ tonic = "0.14"
 prost = "0.14"
 
 # External crates
-trx-core = { git = "https://github.com/byteowlz/trx", branch = "master" }
+trx-core = { git = "https://github.com/byteowlz/trx", rev = "a97cf289d7b70a04c01025cdaed0cf8d100df9fd" }
 # default-features off: oqto only uses the embedded MemoryFile (jsonl) +
 # memory/agent_ctx types, not the `service` backend. The default `service`
 # feature pulls rig-core -> fastembed -> ort (ONNX Runtime, C++), which both
 # bloats the binary and breaks the cargo-zigbuild glibc-floor link (undefined
 # C++ stdlib symbols). See scripts/dist/stage-binaries.sh.
-mmry-core = { git = "https://github.com/byteowlz/mmry", branch = "main", default-features = false }
+mmry-core = { git = "https://github.com/byteowlz/mmry", rev = "49c428266212773ce643ace464c2662b0315c43a", default-features = false }
 
 [profile.release]
 lto = true
