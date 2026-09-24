@@ -6,6 +6,7 @@ use clap::Parser;
 use log::info;
 #[cfg(not(target_os = "linux"))]
 use log::warn;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,6 +50,15 @@ struct Args {
         value_name = "ABSOLUTE_PATH"
     )]
     remote_file_roots: Vec<PathBuf>,
+    /// SHA-256 of an enrolled client's DER leaf certificate (64 hex digits).
+    /// Repeat for independently enrolled clients. Required for any network
+    /// Files/Pi grant; a CA-valid but unpinned client gets inventory only.
+    #[arg(
+        long = "remote-client-cert-sha256",
+        requires = "listen_tls",
+        value_name = "64_HEX"
+    )]
+    remote_client_pins: Vec<String>,
     /// Explicit personal Pi access as this runner's full OS principal. The
     /// operator must also grant '/' to Files; narrower process roots are NOT
     /// inferred from cwd and remain fail-closed.
@@ -259,6 +269,8 @@ async fn main() -> Result<()> {
         terminal_enabled: user_config.terminal_enabled,
     };
     validate_remote_pi_grant(args.remote_full_principal_pi, &args.remote_file_roots)?;
+    let client_pins =
+        parse_remote_client_pins(&args.remote_client_pins, !args.remote_file_roots.is_empty())?;
     let remote_access = if args.remote_file_roots.is_empty() {
         ConnectionAccess::RemoteInventory
     } else {
@@ -281,13 +293,17 @@ async fn main() -> Result<()> {
             );
         }
         let files = Arc::new(ScopedFiles::new(&args.remote_file_roots)?);
-        if args.remote_full_principal_pi {
+        let grant = if args.remote_full_principal_pi {
             log::warn!(
-                "Personal network Pi execution enabled with full OS-principal authority; any mTLS client accepted by this listener can control Pi Sessions and run PiBash. Sandbox policy, if present, still applies to Pi children."
+                "Personal network Pi execution enabled with full OS-principal authority; every explicitly pinned mTLS client can control Pi Sessions and run PiBash. Sandbox policy, if present, still applies to Pi children."
             );
             ConnectionAccess::RemotePersonalPi(files)
         } else {
             ConnectionAccess::RemoteFiles(files)
+        };
+        ConnectionAccess::Pinned {
+            fingerprints: client_pins,
+            grant: Box::new(grant),
         }
     };
     let runner = Runner::new(
@@ -323,6 +339,30 @@ async fn main() -> Result<()> {
     } else {
         runner.run(&socket_path).await
     }
+}
+
+fn parse_remote_client_pins(pins: &[String], has_grant: bool) -> Result<Arc<HashSet<[u8; 32]>>> {
+    ensure!(
+        !has_grant || !pins.is_empty(),
+        "network Files/Pi grants require at least one --remote-client-cert-sha256 pin"
+    );
+    ensure!(
+        has_grant || pins.is_empty(),
+        "client certificate pins require a network Files/Pi grant"
+    );
+    let mut out = HashSet::new();
+    for pin in pins {
+        ensure!(
+            pin.len() == 64 && pin.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "client certificate pin must contain exactly 64 hex digits (SHA-256 of DER leaf)"
+        );
+        let bytes = hex::decode(pin)?;
+        let fingerprint: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid SHA-256 fingerprint size"))?;
+        ensure!(out.insert(fingerprint), "duplicate client certificate pin");
+    }
+    Ok(Arc::new(out))
 }
 
 fn validate_remote_pi_grant(full_principal: bool, roots: &[PathBuf]) -> Result<()> {
@@ -394,6 +434,13 @@ mod tests {
         ])?;
         assert!(personal.remote_full_principal_pi);
         assert!(validate_remote_pi_grant(true, &personal.remote_file_roots).is_ok());
+        assert!(parse_remote_client_pins(&personal.remote_client_pins, true).is_err());
+        assert!(parse_remote_client_pins(&["a".repeat(64)], false).is_err());
+        assert!(parse_remote_client_pins(&["g".repeat(64)], true).is_err());
+        assert!(parse_remote_client_pins(&["a".repeat(64), "A".repeat(64)], true).is_err());
+        let enrolled = parse_remote_client_pins(&["a".repeat(64)], true)?;
+        assert!(enrolled.contains(&[0xaa; 32]));
+        assert!(parse_remote_client_pins(&[], false)?.is_empty());
         Ok(())
     }
 }

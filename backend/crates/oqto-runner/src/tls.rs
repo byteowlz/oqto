@@ -1,6 +1,7 @@
 //! Mutually authenticated TCP/TLS runner transport.
 
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::BufReader;
 use std::net::SocketAddr;
@@ -13,7 +14,8 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use crate::transport::{
-    AcceptFuture, BoxedRunnerIo, ConnectFuture, RunnerConnector, RunnerListener,
+    AcceptFuture, AcceptedRunnerConnection, BoxedRunnerIo, ConnectFuture, RunnerConnector,
+    RunnerListener,
 };
 
 fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
@@ -210,7 +212,17 @@ impl RunnerListener for TcpTlsRunnerListener {
                 .accept(tcp)
                 .await
                 .with_context(|| format!("authenticating runner TLS peer {peer}"))?;
-            Ok(Box::new(stream) as BoxedRunnerIo)
+            let certificate = stream
+                .get_ref()
+                .1
+                .peer_certificates()
+                .and_then(|certificates| certificates.first())
+                .context("authenticated TLS peer has no leaf certificate")?;
+            let fingerprint: [u8; 32] = Sha256::digest(certificate.as_ref()).into();
+            Ok(AcceptedRunnerConnection {
+                stream: Box::new(stream),
+                client_cert_sha256: Some(fingerprint),
+            })
         })
     }
 
@@ -263,8 +275,11 @@ mod tests {
             TcpTlsRunnerConnector::new(listener.local_addr(), "localhost", client_config);
 
         let server_task = tokio::spawn(async move {
-            let stream = listener.accept().await?;
-            let mut stream = BufReader::new(stream);
+            let accepted = listener.accept().await?;
+            let expected: [u8; 32] =
+                Sha256::digest(load_certificates(&identity.cert)?[0].as_ref()).into();
+            assert_eq!(accepted.client_cert_sha256, Some(expected));
+            let mut stream = BufReader::new(accepted.stream);
             let request: String = read_json_frame(&mut stream)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("client closed before request"))?;

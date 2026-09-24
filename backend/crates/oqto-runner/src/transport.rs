@@ -25,8 +25,16 @@ pub type BoxedRunnerIo = Box<dyn RunnerIo>;
 /// Future returned while establishing a runner connection.
 pub type ConnectFuture<'a> = Pin<Box<dyn Future<Output = Result<BoxedRunnerIo>> + Send + 'a>>;
 
+/// Identity comes from the transport handshake, never from a wire request.
+/// Unix sockets deliberately have no TLS peer; their local OS policy is separate.
+pub struct AcceptedRunnerConnection {
+    pub stream: BoxedRunnerIo,
+    pub client_cert_sha256: Option<[u8; 32]>,
+}
+
 /// Future returned while accepting an inbound runner connection.
-pub type AcceptFuture<'a> = Pin<Box<dyn Future<Output = Result<BoxedRunnerIo>> + Send + 'a>>;
+pub type AcceptFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<AcceptedRunnerConnection>> + Send + 'a>>;
 
 /// Serializable endpoint selected by placement routing.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -154,7 +162,10 @@ impl RunnerListener for UnixRunnerListener {
                     self.socket_path.display()
                 )
             })?;
-            Ok(Box::new(stream) as BoxedRunnerIo)
+            Ok(AcceptedRunnerConnection {
+                stream: Box::new(stream),
+                client_cert_sha256: None,
+            })
         })
     }
 

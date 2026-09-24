@@ -25,6 +25,12 @@ mod handlers;
 /// request variants remain denied until a runner-owned grant authorizes them.
 #[derive(Clone)]
 pub enum ConnectionAccess {
+    /// Grant operations only after the transport has authenticated a pinned
+    /// client leaf certificate. An unlisted but CA-valid peer gets inventory.
+    Pinned {
+        fingerprints: Arc<std::collections::HashSet<[u8; 32]>>,
+        grant: Box<ConnectionAccess>,
+    },
     /// Existing local socket behavior; OS socket access remains the boundary.
     LocalSocket,
     /// Network clients can probe inventory and use separately configured
@@ -39,6 +45,29 @@ pub enum ConnectionAccess {
 }
 
 impl ConnectionAccess {
+    fn for_peer(&self, certificate: Option<[u8; 32]>) -> Self {
+        match self {
+            Self::Pinned {
+                fingerprints,
+                grant,
+            } => {
+                if certificate.is_some_and(|fingerprint| fingerprints.contains(&fingerprint)) {
+                    grant.as_ref().clone()
+                } else {
+                    Self::RemoteInventory
+                }
+            }
+            // Local socket permissions must not accidentally become TLS grants,
+            // and unpinned TLS peers cannot use a Files/Pi grant by mistake.
+            Self::LocalSocket | Self::RemoteFiles(_) | Self::RemotePersonalPi(_)
+                if certificate.is_some() =>
+            {
+                Self::RemoteInventory
+            }
+            _ => self.clone(),
+        }
+    }
+
     fn is_files(request: &RunnerRequest) -> bool {
         matches!(
             request,
@@ -98,6 +127,7 @@ impl ConnectionAccess {
 
     fn permits(&self, request: &RunnerRequest) -> bool {
         match self {
+            Self::Pinned { .. } => false,
             Self::LocalSocket => true,
             Self::RemoteInventory | Self::RemoteFiles(_) | Self::RemotePersonalPi(_) => {
                 matches!(
@@ -4201,7 +4231,7 @@ impl Runner {
             tokio::select! {
                 result = listener.accept() => {
                     match result {
-                        Ok(stream) => {
+                        Ok(accepted) => {
                             debug!("New client connection on {}", listener.endpoint_description());
                             let runner = Runner {
                                 state: Arc::clone(&self.state),
@@ -4215,9 +4245,9 @@ impl Runner {
                                 expose_dir: self.expose_dir.clone(),
                                 exposed_ports: Arc::clone(&self.exposed_ports),
                             };
-                            let connection_access = access.clone();
+                            let connection_access = access.for_peer(accepted.client_cert_sha256);
                             tokio::spawn(async move {
-                                runner.handle_connection(stream, connection_access).await;
+                                runner.handle_connection(accepted.stream, connection_access).await;
                             });
                         }
                         Err(error) => {
@@ -4287,6 +4317,9 @@ impl Runner {
             });
         }
         self.serve_listener(listener, access).await;
+        // Removing a supervisor-owned pin requires a runner restart. Do not
+        // leave previously admitted Pi processes running after that revoke.
+        self.pi_manager.shutdown().await;
         self.cleanup_managed_processes().await;
         Ok(())
     }
@@ -4586,6 +4619,31 @@ mod tests {
         for denied in [RunnerRequest::Shutdown, RunnerRequest::ListProcesses] {
             assert!(!access.permits(&denied), "{denied:?} must be denied");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn network_grants_require_a_transport_authenticated_enrolled_peer() -> Result<()> {
+        let files = Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?);
+        let pinned = ConnectionAccess::Pinned {
+            fingerprints: Arc::new(std::collections::HashSet::from([[0x11; 32]])),
+            grant: Box::new(ConnectionAccess::RemotePersonalPi(files)),
+        };
+        let request = RunnerRequest::PiListSessions;
+        assert!(!pinned.permits(&request));
+        assert!(pinned.for_peer(Some([0x11; 32])).permits(&request));
+        assert!(!pinned.for_peer(Some([0x22; 32])).permits(&request));
+        assert!(!pinned.for_peer(None).permits(&request));
+        assert!(
+            !ConnectionAccess::LocalSocket
+                .for_peer(Some([0x11; 32]))
+                .permits(&request)
+        );
+        assert!(
+            !ConnectionAccess::RemotePersonalPi(Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?))
+                .for_peer(Some([0x11; 32]))
+                .permits(&request)
+        );
         Ok(())
     }
 
