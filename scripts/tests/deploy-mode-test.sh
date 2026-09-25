@@ -49,6 +49,17 @@ if "$DEPLOY" --mode unsupported --config "$tmpdir/hosts.toml" >/dev/null 2>"$tmp
 fi
 grep -q "Invalid --mode 'unsupported'" "$tmpdir/error"
 
+printf 'not a release\n' > "$tmpdir/unverified.tar.gz"
+if "$DEPLOY" "${common[@]}" --mode release --artifact "$tmpdir/unverified.tar.gz" >"$tmpdir/unverified.out" 2>&1; then
+  echo "deploy accepted an artifact without independent checksum input" >&2
+  exit 1
+fi
+grep -q 'checksum' "$tmpdir/unverified.out"
+sha256sum "$tmpdir/unverified.tar.gz" > "$tmpdir/unverified.tar.gz.sha256"
+verified_output="$("$DEPLOY" "${common[@]}" --mode release \
+  --artifact "$tmpdir/unverified.tar.gz" --checksum "$tmpdir/unverified.tar.gz.sha256" 2>&1)"
+grep -q 'dependency gate: eavs >=' <<<"$verified_output"
+
 help_output="$($DEPLOY --help)"
 grep -q -- '--mode MODE' <<<"$help_output"
 

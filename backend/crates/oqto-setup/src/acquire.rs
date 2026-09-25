@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,8 +38,9 @@ impl Fetcher for CurlFetcher {
     }
 }
 
-/// Lowercase hex sha256 of `bytes`.
-pub fn sha256_hex(bytes: &[u8]) -> String {
+/// Lowercase hex sha256 of fixture bytes; production archives hash in chunks.
+#[cfg(test)]
+fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();
@@ -53,16 +55,41 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// Verify `artifact` against the sha256 recorded in `checksum_file` (the first
 /// whitespace token, `sha256sum` format), computing the digest in-process.
 pub fn verify_sha256(artifact: &Path, checksum_file: &Path) -> Result<()> {
-    let expected = std::fs::read_to_string(checksum_file)
-        .with_context(|| format!("Failed reading checksum {}", checksum_file.display()))?
-        .split_whitespace()
+    // A local checksum file is not a signature, but it must unambiguously
+    // identify this particular archive. Bound the metadata read separately
+    // from the archive, whose digest is streamed below.
+    let mut checksum_bytes = Vec::new();
+    std::fs::File::open(checksum_file)
+        .with_context(|| format!("Failed opening checksum {}", checksum_file.display()))?
+        .take(8193)
+        .read_to_end(&mut checksum_bytes)?;
+    if checksum_bytes.len() > 8192 {
+        bail!("checksum file is too large for one artifact");
+    }
+    let contents = std::str::from_utf8(&checksum_bytes).context("checksum file is not UTF-8")?;
+    let mut lines = contents.lines();
+    let line = lines.next().context("Checksum file missing hash")?;
+    if lines.next().is_some() {
+        bail!("checksum file must contain exactly one artifact");
+    }
+    let mut tokens = line.split_whitespace();
+    let expected = tokens.next().context("Checksum file missing hash")?;
+    let recorded = tokens
         .next()
-        .map(str::to_ascii_lowercase)
-        .context("Checksum file missing hash")?;
+        .context("Checksum file missing artifact filename")?;
+    if tokens.next().is_some()
+        || expected.len() != 64
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || Path::new(recorded.trim_start_matches('*')).file_name() != artifact.file_name()
+    {
+        bail!("checksum file does not uniquely identify this artifact");
+    }
+    let expected = expected.to_ascii_lowercase();
 
-    let bytes = std::fs::read(artifact)
-        .with_context(|| format!("Failed reading artifact {}", artifact.display()))?;
-    let actual = sha256_hex(&bytes);
+    let file = std::fs::File::open(artifact)
+        .with_context(|| format!("Failed opening artifact {}", artifact.display()))?;
+    let actual = sha256_reader(file)
+        .with_context(|| format!("Failed hashing artifact {}", artifact.display()))?;
 
     if actual != expected {
         bail!(
@@ -73,20 +100,39 @@ pub fn verify_sha256(artifact: &Path, checksum_file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Keep artifact verification memory bounded even for large archives. Hash
+/// matching proves byte integrity, not the publisher's identity.
+fn sha256_reader(mut source: impl Read) -> Result<String> {
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 /// Extract the lowercase sha256 recorded for `filename` from a combined
 /// `checksums.txt` body (`<sha256>  <filename>` lines, optional `*` binary
 /// marker). Errors if no line matches.
 pub fn checksum_for(checksums: &str, filename: &str) -> Result<String> {
+    let mut found = None;
     for line in checksums.lines() {
         let mut parts = line.split_whitespace();
         let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
             continue;
         };
         if name.trim_start_matches('*') == filename {
-            return Ok(hash.to_ascii_lowercase());
+            if found.is_some() {
+                bail!("checksums.txt has duplicate entries for {filename}");
+            }
+            found = Some(hash.to_ascii_lowercase());
         }
     }
-    bail!("checksums.txt has no entry for {filename}")
+    found.with_context(|| format!("checksums.txt has no entry for {filename}"))
 }
 
 /// Verify `artifact` against the sha256 recorded for `filename` in a combined
@@ -97,14 +143,22 @@ pub fn verify_against_checksums(
     checksums_file: &Path,
     filename: &str,
 ) -> Result<()> {
-    let checksums = std::fs::read_to_string(checksums_file)
-        .with_context(|| format!("Failed reading checksums {}", checksums_file.display()))?;
-    let expected = checksum_for(&checksums, filename)
+    let mut checksum_bytes = Vec::new();
+    std::fs::File::open(checksums_file)
+        .with_context(|| format!("Failed opening checksums {}", checksums_file.display()))?
+        .take(1_048_577)
+        .read_to_end(&mut checksum_bytes)?;
+    if checksum_bytes.len() > 1_048_576 {
+        bail!("combined checksums file is too large");
+    }
+    let checksums = std::str::from_utf8(&checksum_bytes).context("checksums file is not UTF-8")?;
+    let expected = checksum_for(checksums, filename)
         .with_context(|| format!("in {}", checksums_file.display()))?;
 
-    let bytes = std::fs::read(artifact)
-        .with_context(|| format!("Failed reading artifact {}", artifact.display()))?;
-    let actual = sha256_hex(&bytes);
+    let file = std::fs::File::open(artifact)
+        .with_context(|| format!("Failed opening artifact {}", artifact.display()))?;
+    let actual = sha256_reader(file)
+        .with_context(|| format!("Failed hashing artifact {}", artifact.display()))?;
 
     if actual != expected {
         bail!(
@@ -336,10 +390,50 @@ mod tests {
     }
 
     #[test]
+    fn release_hashing_never_requests_more_than_a_bounded_chunk() -> Result<()> {
+        struct BoundedReader(std::io::Cursor<Vec<u8>>);
+        impl Read for BoundedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if buffer.len() > 8192 {
+                    return Err(std::io::Error::other("unbounded archive read"));
+                }
+                self.0.read(buffer)
+            }
+        }
+        let bytes = vec![b'x'; 8192 * 3 + 1];
+        assert_eq!(
+            sha256_reader(BoundedReader(std::io::Cursor::new(bytes.clone())))?,
+            sha256_hex(&bytes)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn single_artifact_checksum_rejects_combined_or_oversized_metadata() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let artifact = root.path().join("release.tar.gz");
+        std::fs::write(&artifact, b"fixture")?;
+        let checksum = root.path().join("release.sha256");
+        let line = format!("{}  release.tar.gz\n", sha256_hex(b"fixture"));
+        std::fs::write(&checksum, format!("{line}{line}"))?;
+        assert!(verify_sha256(&artifact, &checksum).is_err());
+        std::fs::write(&checksum, format!("{line}{}", "x".repeat(8193)))?;
+        assert!(verify_sha256(&artifact, &checksum).is_err());
+        std::fs::write(&checksum, line)?;
+        verify_sha256(&artifact, &checksum)
+    }
+
+    #[test]
     fn checksum_for_picks_matching_line_and_rejects_missing() {
         let body = "aaaa  other.tar.gz\nbbbb  target.tar.gz\n";
         assert_eq!(checksum_for(body, "target.tar.gz").unwrap(), "bbbb");
         assert!(checksum_for(body, "absent.tar.gz").is_err());
+    }
+
+    #[test]
+    fn checksum_for_rejects_duplicate_release_entries() {
+        let body = "aaaa  target.tar.gz\nbbbb  target.tar.gz\n";
+        assert!(checksum_for(body, "target.tar.gz").is_err());
     }
 
     #[test]
