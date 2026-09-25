@@ -4,7 +4,7 @@
 # Run `just update-deps` to refresh this manifest from local repos and git tags.
 
 [oqto]
-version = "0.4.0"
+version = "0.5.0"
 description = "Main platform (this repo)"
 
 [byteowlz]
@@ -38,6 +38,7 @@ pi = "0.80.10"  # official standalone release; staged + RPC-verified before atom
 pi-linux-x64-sha256 = "ab6604f6c3f3d050783e7abbbdd1f79b775b20f3969833ce9721740685d01e13"
 pi-linux-arm64-sha256 = "dfe4340063dfe27406fa64aac99d904726fac079197c4579b9e8155175d05272"
 pi-extensions = "9884c7a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
+oqto-templates = "277fbdc"  # github.com/byteowlz/oqto-templates ref (pinned)
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv

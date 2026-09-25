@@ -227,18 +227,17 @@ run_setup_doctor() {
     apply_service_args+=(--apply-services)
   fi
 
-  if [[ -d "$SCRIPT_DIR/backend/crates/oqtoctl" ]]; then
-    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqtoctl -- doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}")
-    return $?
+  # An installed host should evaluate the *activated* contract, not compile
+  # whatever happens to be checked out in this source tree.
+  if ! command_exists oqtoctl; then
+    log_error "oqtoctl is not installed; install a release artifact before running setup doctor"
+    return 1
   fi
-
-  if command_exists oqtoctl && oqtoctl doctor --help 2>/dev/null | grep -q -- '--contract'; then
-    oqtoctl doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}"
-    return $?
+  if ! oqtoctl doctor --help 2>/dev/null | grep -q -- '--contract'; then
+    log_error "installed oqtoctl does not support --contract; refuse source-build fallback"
+    return 1
   fi
-
-  log_error "oqtoctl with doctor --contract is not installed and backend source is unavailable; cannot run setup doctor"
-  return 1
+  oqtoctl doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}"
 }
 
 run_setup_plan() {
@@ -251,18 +250,15 @@ run_setup_plan() {
     json_args+=(--json)
   fi
 
-  if [[ -d "$SCRIPT_DIR/backend/crates/oqto-setup" ]]; then
-    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqto-setup -- plan --profile "$profile" "${json_args[@]}")
-    return $?
+  if ! command_exists oqto-setup; then
+    log_error "oqto-setup is not installed; install a release artifact before rendering setup plan"
+    return 1
   fi
-
-  if command_exists oqto-setup && oqto-setup --help 2>/dev/null | grep -q 'plan'; then
-    oqto-setup plan --profile "$profile" "${json_args[@]}"
-    return $?
+  if ! oqto-setup --help 2>/dev/null | grep -q 'plan'; then
+    log_error "installed oqto-setup does not support plan; refuse source-build fallback"
+    return 1
   fi
-
-  log_error "oqto-setup is not installed and backend source is unavailable; cannot render setup plan"
-  return 1
+  oqto-setup plan --profile "$profile" "${json_args[@]}"
 }
 
 main() {

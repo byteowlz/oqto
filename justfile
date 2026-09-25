@@ -834,6 +834,18 @@ test-deploy-mode:
 test-install-matrix:
     ./scripts/e2e/tests/test-install-update-matrix.sh
 
+# Installed plan/doctor must never compile checkout sources or accept stale binaries
+test-setup-installed-doctor:
+    ./scripts/tests/test-setup-installed-doctor.sh
+
+# Release dependency pin must equal the declared Cargo workspace version
+test-release-version-sync:
+    python3 scripts/tests/test-release-version-sync.py
+
+# Dist sources resolve to pinned refs, preserving dirty or unknown local caches
+test-dist-sync-pins:
+    ./scripts/tests/test-dist-sync-pins.sh
+
 # Deploy only backend binaries (skip frontend)
 deploy-backend *ARGS:
     ./scripts/deploy.sh --skip-frontend {{ARGS}}
