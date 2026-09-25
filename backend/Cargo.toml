@@ -103,6 +103,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 
 # Dev dependencies
 tempfile = "3"
+flate2 = "1"
+tar = "0.4"
 axum-test = "17"
 
 # gRPC

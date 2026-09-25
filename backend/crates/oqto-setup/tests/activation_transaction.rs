@@ -74,6 +74,38 @@ fn install(
     Ok(output)
 }
 
+fn crafted_bundle(root: &Path, id: &str, variant: &str) -> Result<std::path::PathBuf> {
+    let name = format!("oqto-{id}-x86_64-unknown-linux-gnu");
+    let artifact = root.join(format!("{name}.tar.gz"));
+    let script = r#"
+import io,sys,tarfile
+artifact,root,variant = sys.argv[1:]
+def file(tar,name,data,mode=0o644):
+    item=tarfile.TarInfo(name); item.size=len(data); item.mode=mode
+    tar.addfile(item,io.BytesIO(data))
+with tarfile.open(artifact,'w:gz') as tar:
+    file(tar,root+'/manifest.toml',b'manifest_version = 1\nid = "oqto-dist"\n[release]\ntarget = "full"\n')
+    for name in ['oqto','oqtoctl','oqto-setup','oqto-runner','oqto-files','oqto-sandbox','oqto-usermgr','pi-bridge']:
+        file(tar,root+'/immutable/bin/'+name,b'#!/bin/true\n',0o755)
+    if variant=='traversal': file(tar,root+'/../../outside',b'outside')
+    if variant=='second-root': file(tar,'unrelated/other',b'other')
+    if variant=='duplicate': file(tar,root+'/manifest.toml',b'manifest_version = 1\nid = "oqto-dist"\n[release]\ntarget = "full"\n')
+    if variant=='symlink':
+        entry=tarfile.TarInfo(root+'/escape'); entry.type=tarfile.SYMTYPE; entry.linkname='../outside'
+        tar.addfile(entry); file(tar,root+'/escape/payload',b'outside')
+    if variant=='hardlink':
+        entry=tarfile.TarInfo(root+'/copy'); entry.type=tarfile.LNKTYPE; entry.linkname='../outside'
+        tar.addfile(entry)
+"#;
+    let output = Command::new("python3")
+        .args(["-c", script])
+        .arg(&artifact)
+        .args([&name, variant])
+        .output()?;
+    ensure!(output.status.success(), "failed to build crafted archive");
+    Ok(artifact)
+}
+
 fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     let dir = root.join("fake-doctor");
     fs::create_dir_all(&dir)?;
@@ -81,6 +113,111 @@ fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     fs::write(&path, "#!/bin/sh\nexit 1\n")?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     Ok(dir)
+}
+
+#[test]
+fn corrupt_archive_does_not_leave_an_unreferenced_stage() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let releases = root.path().join("releases");
+    let artifact = root
+        .path()
+        .join("oqto-test-corrupt-x86_64-unknown-linux-gnu.tar.gz");
+    fs::write(&artifact, b"not a gzip tar archive")?;
+    let output = install(
+        &artifact,
+        &releases,
+        &root.path().join("bin"),
+        &rejecting_doctor(root.path())?,
+        false,
+    )?;
+    ensure!(!output.status.success());
+    ensure!(
+        !releases
+            .join("oqto-test-corrupt-x86_64-unknown-linux-gnu")
+            .exists(),
+        "failed archive extraction left a staged release"
+    );
+    ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+    Ok(())
+}
+
+#[test]
+fn truncated_gzip_and_oversized_entry_leave_no_stage() -> Result<()> {
+    for variant in ["truncated", "oversized"] {
+        let root = tempfile::tempdir()?;
+        let id = format!("bad-{variant}");
+        let name = format!("oqto-{id}-x86_64-unknown-linux-gnu");
+        let artifact = root.path().join(format!("{name}.tar.gz"));
+        if variant == "truncated" {
+            bundle(root.path(), &id)?;
+            let bytes = fs::read(&artifact)?;
+            fs::write(&artifact, &bytes[..bytes.len() - 8])?;
+        } else {
+            let script = "import gzip,sys,tarfile\nname,path=sys.argv[1:]\n".to_string()
+                + "item=tarfile.TarInfo(name+'/oversized'); item.size=2147483649\n"
+                + "with gzip.open(path,'wb') as out: out.write(item.tobuf()+bytes(1024))\n";
+            ensure!(
+                Command::new("python3")
+                    .args(["-c", &script, &name])
+                    .arg(&artifact)
+                    .status()?
+                    .success()
+            );
+        }
+        let releases = root.path().join("releases");
+        let output = install(
+            &artifact,
+            &releases,
+            &root.path().join("bin"),
+            &rejecting_doctor(root.path())?,
+            false,
+        )?;
+        ensure!(!output.status.success(), "{variant} archive was activated");
+        ensure!(
+            !releases.join(&name).exists(),
+            "{variant} left a staged release"
+        );
+        ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn unsafe_or_ambiguous_archive_never_activates_or_writes_outside_stage() -> Result<()> {
+    for variant in [
+        "traversal",
+        "second-root",
+        "duplicate",
+        "symlink",
+        "hardlink",
+    ] {
+        let root = tempfile::tempdir()?;
+        let id = format!("unsafe-{variant}");
+        let artifact = crafted_bundle(root.path(), &id, variant)?;
+        let releases = root.path().join("releases");
+        let binaries = root.path().join("bin");
+        let output = install(
+            &artifact,
+            &releases,
+            &binaries,
+            &rejecting_doctor(root.path())?,
+            false,
+        )?;
+        ensure!(!output.status.success(), "{variant} archive was activated");
+        ensure!(
+            !releases
+                .join(format!("oqto-{id}-x86_64-unknown-linux-gnu"))
+                .exists(),
+            "{variant} archive left a stage"
+        );
+        ensure!(
+            !root.path().join("outside").exists(),
+            "{variant} escaped the stage"
+        );
+        ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+        ensure!(fs::symlink_metadata(binaries.join("oqto")).is_err());
+    }
+    Ok(())
 }
 
 #[test]
