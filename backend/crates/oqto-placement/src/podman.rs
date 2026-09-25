@@ -459,6 +459,47 @@ mod tests {
         }
     }
 
+    struct UnavailableEngine;
+
+    #[async_trait]
+    impl CommandRunner for UnavailableEngine {
+        async fn run(&self, _program: &str, _args: &[OsString]) -> Result<CommandOutput> {
+            anyhow::bail!("socket path and private host diagnostics must not be advertised")
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_engine_probe_is_unverified_and_cannot_mutate_host() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let spec = PlacementSpec {
+            workspace_id: "workspace".to_string(),
+            account_id: "account".to_string(),
+            image: "localhost/oqto:test".to_string(),
+            workspace_dir: temp.path().join("workspace"),
+            state_dir: temp.path().join("state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: temp.path().join("runtime/runner.sock"),
+            },
+            server_tls: None,
+            environment: Default::default(),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        let supervisor = PodmanSupervisor::with_command_runner(UnavailableEngine);
+        let report = supervisor.probe_read_only_at(100, 200).await;
+        assert_eq!(
+            report.effective_rootless,
+            ProbeEvidence::Unverified("Podman info probe failed".into())
+        );
+        assert!(!report.evaluate_at(150).available);
+        let serialized = serde_json::to_string(&report)?;
+        assert!(!serialized.contains("private host diagnostics"));
+        assert!(supervisor.start(&spec).await.is_err());
+        assert!(!spec.workspace_dir.exists());
+        assert!(!spec.state_dir.exists());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn rootless_probe_precedes_pod_creation() -> Result<()> {
         let temp = tempfile::tempdir()?;
