@@ -586,28 +586,28 @@ impl Runner {
     async fn get_stdout_receiver(
         &self,
         process_id: &str,
-    ) -> Result<(broadcast::Receiver<StdoutEvent>, Vec<String>), RunnerResponse> {
+    ) -> Result<(broadcast::Receiver<StdoutEvent>, Vec<String>), Box<RunnerResponse>> {
         let state = self.state.read().await;
 
         let Some(proc) = state.processes.get(process_id) else {
-            return Err(error_response(
+            return Err(Box::new(error_response(
                 ErrorCode::ProcessNotFound,
                 format!("Process '{}' not found", process_id),
-            ));
+            )));
         };
 
         if !proc.is_rpc {
-            return Err(error_response(
+            return Err(Box::new(error_response(
                 ErrorCode::NotRpcProcess,
                 format!("Process '{}' is not an RPC process", process_id),
-            ));
+            )));
         }
 
         let Some(ref tx) = proc.stdout_tx else {
-            return Err(error_response(
+            return Err(Box::new(error_response(
                 ErrorCode::IoError,
                 "stdout channel not available",
-            ));
+            )));
         };
 
         // Get any buffered lines first
@@ -4154,6 +4154,78 @@ fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stdout_subscription_errors_and_buffered_replay() -> Result<()> {
+        let runner = Runner::new(
+            None,
+            SessionBinaries {
+                fileserver: String::new(),
+                ttyd: String::new(),
+            },
+            RunnerUserConfig::default(),
+            PiSessionManager::new(Default::default()),
+        );
+        let missing = runner.get_stdout_receiver("missing").await.err();
+        assert!(
+            matches!(missing.as_deref(), Some(RunnerResponse::Error(e)) if e.code == ErrorCode::ProcessNotFound)
+        );
+
+        let child = Command::new("sleep").arg("30").kill_on_drop(true).spawn()?;
+        let (tx, _) = broadcast::channel(8);
+        let buffer = Arc::new(Mutex::new(StdoutBuffer {
+            lines: vec!["before subscribe".to_string()],
+            closed: false,
+            exit_code: None,
+        }));
+        runner.state.write().await.processes.insert(
+            "process".to_string(),
+            ManagedProcess {
+                id: "process".to_string(),
+                pid: child.id().unwrap_or_default(),
+                binary: "sleep".to_string(),
+                cwd: PathBuf::new(),
+                child,
+                is_rpc: false,
+                stdout_buffer: Some(buffer),
+                stdout_tx: Some(tx.clone()),
+                _reader_handle: None,
+            },
+        );
+        let non_rpc = runner.get_stdout_receiver("process").await.err();
+        assert!(
+            matches!(non_rpc.as_deref(), Some(RunnerResponse::Error(e)) if e.code == ErrorCode::NotRpcProcess)
+        );
+        {
+            let mut state = runner.state.write().await;
+            let process = state
+                .processes
+                .get_mut("process")
+                .ok_or_else(|| anyhow::anyhow!("missing test process"))?;
+            process.is_rpc = true;
+            process.stdout_tx = None;
+        }
+        let no_stdout = runner.get_stdout_receiver("process").await.err();
+        assert!(
+            matches!(no_stdout.as_deref(), Some(RunnerResponse::Error(e)) if e.code == ErrorCode::IoError)
+        );
+        runner
+            .state
+            .write()
+            .await
+            .processes
+            .get_mut("process")
+            .ok_or_else(|| anyhow::anyhow!("missing test process"))?
+            .stdout_tx = Some(tx.clone());
+        let (mut rx, lines) = runner
+            .get_stdout_receiver("process")
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(lines, ["before subscribe"]);
+        tx.send(StdoutEvent::Line("live".to_string()))?;
+        assert!(matches!(rx.recv().await?, StdoutEvent::Line(line) if line == "live"));
+        Ok(())
+    }
 
     #[test]
     fn fork_copy_validation_matches_pi_position_before_semantics() -> Result<()> {
