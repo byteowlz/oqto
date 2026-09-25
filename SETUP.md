@@ -38,9 +38,10 @@ release-artifact matrix can be preflighted safely as described next.
 
 Use **one isolated, snapshotted Linux VM per profile/scenario**. Plan and
 preflight are read-only; preflight validates the host state, matching target,
-bundle hash and matching embedded `oqto-setup` without installing anything.
-The `--snapshot-id` is an operator attestation, **not** a Proxmox snapshot
-lookup. The installer currently needs a per-artifact SHA-256 line; combined
+bundle hash, matching embedded `oqto-setup`, and its required glibc version
+without installing anything. A snapshot ID is optional for read-only preflight
+and required for execute; it is an operator attestation, **not** a Proxmox
+snapshot lookup. The installer currently needs a per-artifact SHA-256 line; combined
 `checksums.txt` is rejected rather than misread as a different artifact.
 
 ```bash

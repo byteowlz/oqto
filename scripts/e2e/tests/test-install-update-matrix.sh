@@ -15,7 +15,7 @@ esac
 name="oqto-v9.8.7-${target}.tar.gz"
 staging="${name%.tar.gz}"
 mkdir -p "$scratch/bundle/$staging/bin"
-printf '#!/bin/sh\nexit 0\n' > "$scratch/bundle/$staging/bin/oqto-setup"
+cp /usr/bin/true "$scratch/bundle/$staging/bin/oqto-setup"
 chmod 0755 "$scratch/bundle/$staging/bin/oqto-setup"
 tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
@@ -46,11 +46,12 @@ grep -Fq 'read-only plan' "$scratch/plan"
 grep -Fq 'no source build' "$scratch/plan"
 pass 'default plan does not install or build'
 
-args=(--scenario "$scenario" --snapshot-id isolated-vm-before-install --profiles personal
+args=(--scenario "$scenario" --profiles personal
   --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256")
 "$matrix" --preflight "${args[@]}" > "$scratch/positive"
 grep -Fq 'read-only preflight passed' "$scratch/positive"
-pass 'matching, checksummed bundle with embedded installer is accepted without executing it'
+grep -Fq 'snapshot=not-provided' "$scratch/positive"
+pass 'matching, checksummed bundle is preflighted without claiming a VM snapshot'
 
 mkdir -p "$scratch/quoted path's"
 cp "$scratch/$name" "$scratch/quoted path's/$name"
@@ -61,8 +62,7 @@ cp "$scratch/$name" "$scratch/quoted path's/$name"
 grep -Fq 'read-only preflight passed' "$scratch/quoted-path-result"
 pass 'artifact path with whitespace and shell quotes is handled literally'
 
-rejects 'missing snapshot' 'provide --snapshot-id' --preflight --scenario "$scenario" \
-  --profiles personal --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
+rejects 'missing snapshot for execute' 'provide --snapshot-id' --execute "${args[@]}"
 rejects 'two profiles on one snapshot' 'one profile per isolated VM' \
   --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
   --profiles 'personal team' --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
@@ -112,6 +112,13 @@ if PATH="$scratch/mockbin:$PATH" "$matrix" --preflight "${args[@]}" > "$scratch/
 fi
 grep -Fq 'macOS activation is not implemented' "$scratch/output"
 pass 'macOS activation fails closed until a native installer exists'
+
+printf 'GLIBC_999.0\n' >> "$scratch/bundle/$staging/bin/oqto-setup"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+rejects 'newer-glibc embedded installer' 'requires GLIBC_999.0' \
+  --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
+  --profiles personal --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
 
 rm "$scratch/bundle/$staging/bin/oqto-setup"
 ln -s /etc/passwd "$scratch/bundle/$staging/bin/oqto-setup"

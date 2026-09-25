@@ -23,7 +23,7 @@ Options:
   --preflight               Validate an artifact and target without changing anything
   --execute                 Install on a SNAPSHOTTED, isolated test VM (never source-build)
   --scenario fresh|upgrade  Required for preflight/execute
-  --snapshot-id REF         Operator-provided VM snapshot reference (not independently verified)
+  --snapshot-id REF         Required for execute: operator VM snapshot reference (not verified)
   --profiles "personal"     Exactly one profile for preflight/execute; plan may show both
   --artifact FILE           Target-matched release bundle containing bin/oqto-setup
   --checksum FILE           Single-artifact SHA-256 line for that exact bundle
@@ -86,7 +86,7 @@ if [[ "$MODE" != plan ]]; then
   [[ "$(uname -s)" == Linux ]] || fail 'macOS activation is not implemented; native Mac tests must not run this Linux installer'
   [[ ${#PROFILES[@]} -eq 1 ]] || fail 'one profile per isolated VM/snapshot; do not install personal and team sequentially'
   [[ "$SCENARIO" == fresh || "$SCENARIO" == upgrade ]] || fail 'choose --scenario fresh or upgrade'
-  [[ -n "$SNAPSHOT_ID" ]] || fail 'provide --snapshot-id for the operator-created VM snapshot'
+  [[ "$MODE" != execute || -n "$SNAPSHOT_ID" ]] || fail 'provide --snapshot-id for the operator-created VM snapshot'
   [[ -n "$ARTIFACT" && -n "$CHECKSUM" ]] || fail 'provide a release --artifact and per-artifact --checksum; source builds are not an install test'
   [[ -f "$ARTIFACT" && -f "$CHECKSUM" ]] || fail 'release artifact or checksum does not exist'
 
@@ -117,8 +117,17 @@ if [[ "$MODE" != plan ]]; then
   [[ "$member_count" == 1 ]] || fail "verified bundle must contain exactly one ${setup_member}"
   member_metadata="$(tar -tvzf "$ARTIFACT" "$setup_member")"
   [[ "${member_metadata:0:1}" == - ]] || fail 'embedded oqto-setup must be a regular file, not a link'
+  command -v strings >/dev/null || fail 'binutils strings is required for read-only Linux runtime compatibility preflight'
+  required_glibc="$(tar -xOf "$ARTIFACT" "$setup_member" | LC_ALL=C strings | grep -E '^GLIBC_[0-9]+(\.[0-9]+){1,2}$' | sort -Vu | tail -1 || true)"
+  if [[ -n "$required_glibc" ]]; then
+    host_glibc="$(getconf GNU_LIBC_VERSION)"
+    [[ "$host_glibc" == 'glibc '* ]] || fail 'cannot determine host glibc version'
+    host_glibc="${host_glibc#glibc }"
+    oldest="$(printf '%s\n%s\n' "$host_glibc" "${required_glibc#GLIBC_}" | sort -V | head -1)"
+    [[ "$oldest" == "${required_glibc#GLIBC_}" ]] || fail "embedded oqto-setup requires ${required_glibc}, host has GLIBC_${host_glibc}"
+  fi
   printf '[matrix] read-only preflight passed: scenario=%s profile=%s target=%s snapshot=%s\n' \
-    "$SCENARIO" "${PROFILES[0]}" "$TARGET" "$SNAPSHOT_ID"
+    "$SCENARIO" "${PROFILES[0]}" "$TARGET" "${SNAPSHOT_ID:-not-provided}"
 fi
 
 if [[ "$MODE" == preflight ]]; then
