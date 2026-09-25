@@ -847,8 +847,15 @@ fn release_id_from_artifact(artifact: &Path) -> Result<String> {
 }
 
 fn extract_tarball(artifact: &Path, dst: &Path) -> Result<()> {
-    const MAX_ENTRIES: usize = 100_000;
-    const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    extract_tarball_with_limits(artifact, dst, 100_000, 2 * 1024 * 1024 * 1024)
+}
+
+fn extract_tarball_with_limits(
+    artifact: &Path,
+    dst: &Path,
+    max_entries: usize,
+    max_unpacked_bytes: u64,
+) -> Result<()> {
     let root = release_id_from_artifact(artifact)?;
     let source = File::open(artifact)
         .with_context(|| format!("Failed opening release artifact {}", artifact.display()))?;
@@ -879,14 +886,14 @@ fn extract_tarball(artifact: &Path, dst: &Path) -> Result<()> {
         if relative.as_os_str().is_empty() && !kind.is_dir() {
             anyhow::bail!("Invalid release archive: root must be a directory");
         }
-        if !seen.insert(relative.clone()) || seen.len() > MAX_ENTRIES {
+        if !seen.insert(relative.clone()) || seen.len() > max_entries {
             anyhow::bail!("Invalid release archive: duplicate or excessive members");
         }
         let size = entry.size();
         total_bytes = total_bytes
             .checked_add(size)
             .context("Release archive size overflow")?;
-        if total_bytes > MAX_UNPACKED_BYTES {
+        if total_bytes > max_unpacked_bytes {
             anyhow::bail!("Invalid release archive: unpacked content exceeds limit");
         }
         let mode = entry.header().mode().context("Invalid release file mode")?;
@@ -1120,6 +1127,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn release_extractor_denies_excessive_entry_count_without_large_fixture() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let artifact = root.path().join("oqto-count-test.tar.gz");
+        let encoded =
+            flate2::write::GzEncoder::new(File::create(&artifact)?, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoded);
+        for name in ["first", "second", "third"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, format!("oqto-count-test/{name}"), io::empty())?;
+        }
+        builder.into_inner()?.finish()?;
+        let stage = root.path().join("stage");
+        fs::create_dir(&stage)?;
+        let error = extract_tarball_with_limits(&artifact, &stage, 2, u64::MAX)
+            .expect_err("third entry must exceed the configured count");
+        assert!(error.to_string().contains("excessive members"));
+        assert!(!stage.join("third").exists());
+        Ok(())
     }
 
     #[test]
