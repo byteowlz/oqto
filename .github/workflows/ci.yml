@@ -20,6 +20,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test plan and preflight without privileges
         run: ./scripts/e2e/tests/test-install-update-matrix.sh
+      - name: Test installed setup doctor/plan without source builds
+        run: ./scripts/tests/test-setup-installed-doctor.sh
+      - name: Check release dependency pin against Cargo version
+        run: python3 scripts/tests/test-release-version-sync.py
+      - name: Check pinned dist inputs and cache preservation
+        run: ./scripts/tests/test-dist-sync-pins.sh
 
   # ---------------------------------------------------------------------------
   # Backend: check, clippy, fmt, test

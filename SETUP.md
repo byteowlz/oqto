@@ -68,7 +68,10 @@ A host with an existing active Oqto release is an **upgrade** candidate, not
 a clean-install host. macOS setup is not implemented and this Linux matrix
 fails closed on macOS. An execution run does not yet prove Pi/provider,
 sandbox profile, rollback or Windows Desktop behavior; those require separate
-functional gates. See `docs/agents/install-matrix-safety.md`.
+functional gates. `./setup.sh --personal --doctor` and `--plan` use the installed
+`oqtoctl`/`oqto-setup` and fail closed if incompatible; they do not silently
+compile checkout sources. For a deliberate development-only source run, invoke
+`cargo run` explicitly from `backend/`. See `docs/agents/install-matrix-safety.md`.
 
 
 ### Option 1: Interactive Setup Script (Development/Local)

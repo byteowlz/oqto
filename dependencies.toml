@@ -38,5 +38,6 @@ pi = "1.0.0"  # accepted baseline; integrate runner/history/extensions against t
 pi-linux-x64-sha256 = "8fd5543a52a889d60ad57ccbf6c969e73c75c5240aae18ac40b506947a63dc38"
 pi-linux-arm64-sha256 = "b60b3fda830a43c1dc3f5edb5fc7b681f22a0a930b48cdac13b97570c6045819"
 pi-extensions = "e9f158619aa11a92f050baf75340298755bc686a"  # github.com/byteowlz/pi-agent-extensions ref (pinned)
+oqto-templates = "277fbdc"  # github.com/byteowlz/oqto-templates ref (pinned)
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv
