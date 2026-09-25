@@ -50,7 +50,7 @@ args=(--scenario "$scenario" --profiles personal
   --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256")
 "$matrix" --preflight "${args[@]}" > "$scratch/positive"
 grep -Fq 'read-only preflight passed' "$scratch/positive"
-grep -Fq 'snapshot=not-provided' "$scratch/positive"
+grep -Fq 'recovery=not-provided' "$scratch/positive"
 pass 'matching, checksummed bundle is preflighted without claiming a VM snapshot'
 
 mkdir -p "$scratch/quoted path's"
@@ -62,8 +62,17 @@ cp "$scratch/$name" "$scratch/quoted path's/$name"
 grep -Fq 'read-only preflight passed' "$scratch/quoted-path-result"
 pass 'artifact path with whitespace and shell quotes is handled literally'
 
-rejects 'missing snapshot for execute' 'provide --snapshot-id' --execute "${args[@]}"
-rejects 'two profiles on one snapshot' 'one profile per isolated VM' \
+rejects 'missing recovery choice for execute' 'execute requires --snapshot-id or --disposable-vm' --execute "${args[@]}"
+test_host="$(uname -n)"
+test_host="${test_host%%.*}"
+"$matrix" --preflight --disposable-vm "$test_host" "${args[@]}" > "$scratch/disposable"
+grep -Fq "recovery=disposable:$test_host" "$scratch/disposable"
+pass 'explicit hostname-matched throwaway VM needs no snapshot for read-only preflight'
+rejects 'mismatched disposable hostname' 'disposable VM hostname mismatch' \
+  --execute --disposable-vm wrong-test-host "${args[@]}"
+rejects 'conflicting recovery choices' 'either --snapshot-id or --disposable-vm' \
+  --execute --snapshot-id test-snapshot --disposable-vm "$test_host" "${args[@]}"
+rejects 'two profiles on one host' 'one profile per isolated VM' \
   --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
   --profiles 'personal team' --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
 rejects 'source-build default forbidden on execute' 'provide a release --artifact' \
