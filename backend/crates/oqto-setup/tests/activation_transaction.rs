@@ -29,7 +29,12 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
     };
     for name in names {
         let binary = staging.join("immutable/bin").join(name);
-        fs::write(&binary, format!("#!/bin/sh\nprintf '%s\\n' '{id}'\n"))?;
+        let body = if name == &"oqtoctl" {
+            format!("#!/bin/sh\n[ \"$1\" != doctor ] || exit 1\nprintf '%s\\n' '{id}'\n")
+        } else {
+            format!("#!/bin/sh\nprintf '%s\\n' '{id}'\n")
+        };
+        fs::write(&binary, body)?;
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
     }
     if complete {
@@ -113,6 +118,82 @@ fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     fs::write(&path, "#!/bin/sh\nexit 1\n")?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     Ok(dir)
+}
+
+#[test]
+fn strict_doctor_does_not_use_an_unrelated_host_binary() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let id = "strict-wrong-binary";
+    let artifact = bundle(root.path(), id)?;
+    let name = format!("oqto-{id}-x86_64-unknown-linux-gnu");
+    let staged = root.path().join("stage").join(&name);
+    let ctl = staged.join("immutable/bin/oqtoctl");
+    // Still executable in the archive, but cannot be spawned (missing shebang).
+    fs::write(&ctl, "#!/definitely/missing/interpreter\n")?;
+    fs::set_permissions(&ctl, fs::Permissions::from_mode(0o755))?;
+    ensure!(
+        Command::new("tar")
+            .arg("-C")
+            .arg(root.path().join("stage"))
+            .arg("-czf")
+            .arg(&artifact)
+            .arg(&name)
+            .status()?
+            .success()
+    );
+    let external = root.path().join("unrelated-doctor");
+    fs::create_dir(&external)?;
+    fs::write(external.join("oqtoctl"), "#!/bin/sh\nexit 0\n")?;
+    fs::set_permissions(external.join("oqtoctl"), fs::Permissions::from_mode(0o755))?;
+    let output = install(&artifact, &releases, &bins, &external, true)?;
+    ensure!(
+        !output.status.success(),
+        "ambient oqtoctl falsely verified a broken staged binary"
+    );
+    ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+    ensure!(fs::symlink_metadata(bins.join("oqtoctl")).is_err());
+    Ok(())
+}
+
+#[test]
+fn strict_doctor_runs_the_staged_binary_even_when_path_rejects() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let id = "strict-staged";
+    let artifact = bundle(root.path(), id)?;
+    let name = format!("oqto-{id}-x86_64-unknown-linux-gnu");
+    let staged = root.path().join("stage").join(&name);
+    let ctl = staged.join("immutable/bin/oqtoctl");
+    fs::write(&ctl, "#!/bin/sh\n[ \"$1\" = doctor ] || exit 1\nexit 0\n")?;
+    fs::set_permissions(&ctl, fs::Permissions::from_mode(0o755))?;
+    ensure!(
+        Command::new("tar")
+            .arg("-C")
+            .arg(root.path().join("stage"))
+            .arg("-czf")
+            .arg(&artifact)
+            .arg(&name)
+            .status()?
+            .success()
+    );
+    let output = install(
+        &artifact,
+        &releases,
+        &bins,
+        &rejecting_doctor(root.path())?,
+        true,
+    )?;
+    ensure!(
+        output.status.success(),
+        "staged doctor was ignored: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ensure!(fs::read_link(releases.join("current"))? == releases.join(&name));
+    ensure!(fs::read_link(releases.join("last-good"))? == releases.join(&name));
+    Ok(())
 }
 
 #[test]

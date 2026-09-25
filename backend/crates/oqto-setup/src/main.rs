@@ -632,7 +632,7 @@ fn activate_release(
     let activation = (|| {
         relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
         if doctor_strict {
-            run_doctor_strict()?;
+            run_doctor_strict(release_dir)?;
         }
         Ok::<(), anyhow::Error>(())
     })();
@@ -1072,21 +1072,29 @@ fn relink_bins(bin_src: &Path, bin_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_doctor_strict() -> Result<()> {
-    let output = ProcessCommand::new("oqtoctl")
+fn run_doctor_strict(release_dir: &Path) -> Result<()> {
+    // Do not trust PATH (or a stale host binary) for the activation gate. The
+    // staged executable is the one being promoted; a missing interpreter or
+    // failed spawn must roll the transaction back, never turn strict into a
+    // best-effort warning. Doctor output may contain host details or secrets.
+    let staged = release_dir.join("immutable/bin/oqtoctl");
+    let output = ProcessCommand::new(&staged)
         .args(["doctor", "--contract", "--profile", "auto", "--strict"])
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            println!("Post-activation doctor strict passed");
-            Ok(())
-        }
-        Ok(_) => anyhow::bail!("Post-activation doctor strict failed"),
-        Err(_) => {
-            println!("Warning: oqtoctl not available; skipping post-activation doctor");
-            Ok(())
-        }
+        .output()
+        .with_context(|| {
+            format!(
+                "Post-activation doctor could not start {}",
+                staged.display()
+            )
+        })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "Post-activation doctor strict failed (status: {})",
+            output.status
+        );
     }
+    println!("Post-activation doctor strict passed");
+    Ok(())
 }
 
 #[cfg(test)]
