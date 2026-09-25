@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
@@ -782,8 +782,8 @@ fn validate_staged_release(release_dir: &Path) -> Result<()> {
             );
         }
         let meta = fs::symlink_metadata(entry.path())?;
-        if !meta.file_type().is_file() {
-            anyhow::bail!("Invalid artifact: binary must be a regular file: {name}");
+        if !meta.file_type().is_file() || meta.permissions().mode() & 0o111 == 0 {
+            anyhow::bail!("Invalid artifact: binary must be a regular executable file: {name}");
         }
         seen.insert(name.into_owned());
     }
@@ -1023,7 +1023,9 @@ mod tests {
         let bin = release.join("immutable/bin");
         fs::create_dir_all(&bin).unwrap();
         if let Some(b) = binary {
-            fs::write(bin.join(b), b"#!/bin/true\n").unwrap();
+            let binary = bin.join(b);
+            fs::write(&binary, b"#!/bin/true\n").unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
             if b == "oqto" {
                 fs::write(
                     release.join("manifest.toml"),
@@ -1039,7 +1041,9 @@ mod tests {
                     "oqto-usermgr",
                     "pi-bridge",
                 ] {
-                    fs::write(bin.join(name), b"#!/bin/true\n").unwrap();
+                    let binary = bin.join(name);
+                    fs::write(&binary, b"#!/bin/true\n").unwrap();
+                    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
                 }
             }
         }
@@ -1187,6 +1191,16 @@ mod tests {
         let candidate = root.path().join("candidate");
         fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
         symlink("/usr/bin/true", candidate.join("immutable/bin/pi-bridge")).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_non_executable_binary() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        let binary = candidate.join("immutable/bin/pi-bridge");
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o644)).unwrap();
         assert!(validate_staged_release(&candidate).is_err());
     }
 
