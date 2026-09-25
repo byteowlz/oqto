@@ -2,6 +2,7 @@
 //! All installation paths are redirected into a temporary directory.
 
 use anyhow::{Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 fn bundle(root: &Path, id: &str) -> Result<std::path::PathBuf> {
@@ -62,10 +63,20 @@ fn install(
     doctor: &Path,
     strict: bool,
 ) -> Result<std::process::Output> {
+    // Fixtures generate their own checksums; production callers must obtain
+    // theirs from an independent trusted release source.
+    let checksum = artifact.with_file_name(format!(
+        "{}.sha256",
+        artifact.file_name().unwrap().to_string_lossy()
+    ));
+    let digest = Sha256::digest(fs::read(artifact)?);
+    fs::write(&checksum, format!("{digest:x}  {}\n", artifact.display()))?;
     let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
         .arg("install")
         .arg("--artifact")
         .arg(artifact)
+        .arg("--checksum")
+        .arg(&checksum)
         .arg("--releases-root")
         .arg(releases)
         .arg("--bin-dir")
@@ -118,6 +129,92 @@ fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     fs::write(&path, "#!/bin/sh\nexit 1\n")?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     Ok(dir)
+}
+
+#[test]
+fn install_without_checksum_fails_before_release_mutation() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let artifact = bundle(root.path(), "missing-checksum")?;
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
+        .arg("install")
+        .arg("--artifact")
+        .arg(&artifact)
+        .arg("--releases-root")
+        .arg(&releases)
+        .arg("--bin-dir")
+        .arg(&bins)
+        .args(["--doctor-strict", "false"])
+        .output()?;
+    ensure!(
+        !output.status.success(),
+        "missing checksum activated an unverified artifact"
+    );
+    ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+    ensure!(fs::symlink_metadata(bins.join("oqto")).is_err());
+    Ok(())
+}
+
+#[test]
+fn mismatched_checksum_fails_before_release_mutation() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let artifact = bundle(root.path(), "bad-checksum")?;
+    let checksum = root.path().join("wrong.sha256");
+    fs::write(
+        &checksum,
+        format!("{}  {}\n", "0".repeat(64), artifact.display()),
+    )?;
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
+        .arg("install")
+        .arg("--artifact")
+        .arg(&artifact)
+        .arg("--checksum")
+        .arg(&checksum)
+        .arg("--releases-root")
+        .arg(&releases)
+        .arg("--bin-dir")
+        .arg(&bins)
+        .args(["--doctor-strict", "false"])
+        .output()?;
+    ensure!(
+        !output.status.success(),
+        "mismatched checksum activated an artifact"
+    );
+    ensure!(!releases.exists(), "checksum mismatch created release root");
+    ensure!(fs::symlink_metadata(bins.join("oqto")).is_err());
+    Ok(())
+}
+
+#[test]
+fn checksum_for_different_filename_cannot_verify_a_release() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let artifact = bundle(root.path(), "wrong-checksum-name")?;
+    let checksum = root.path().join("ambiguous.sha256");
+    let digest = Sha256::digest(fs::read(&artifact)?);
+    fs::write(&checksum, format!("{digest:x}  another-release.tar.gz\n"))?;
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
+        .arg("install")
+        .arg("--artifact")
+        .arg(&artifact)
+        .arg("--checksum")
+        .arg(&checksum)
+        .arg("--releases-root")
+        .arg(&releases)
+        .arg("--bin-dir")
+        .arg(&bins)
+        .args(["--doctor-strict", "false"])
+        .output()?;
+    ensure!(
+        !output.status.success(),
+        "wrong-named checksum verified an artifact"
+    );
+    ensure!(!releases.exists());
+    Ok(())
 }
 
 #[test]

@@ -45,9 +45,9 @@ enum Command {
         /// Path to release tarball (e.g. oqto-<version>-<target>.tar.gz)
         #[arg(long)]
         artifact: PathBuf,
-        /// Optional path to sha256 file for the artifact.
+        /// SHA-256 file independently obtained for the exact artifact.
         #[arg(long)]
-        checksum: Option<PathBuf>,
+        checksum: PathBuf,
         /// Releases root directory.
         #[arg(long, default_value = "/var/lib/oqto/releases")]
         releases_root: PathBuf,
@@ -187,7 +187,7 @@ fn main() -> Result<()> {
             keep_releases,
         } => install_release(
             &artifact,
-            checksum.as_deref(),
+            &checksum,
             &releases_root,
             &bin_dir,
             doctor_strict,
@@ -518,7 +518,7 @@ fn merge_tables(target: &mut toml::value::Table, updates: toml::value::Table) {
 /// activation so the transaction itself stays subprocess-free and testable.
 fn install_release(
     artifact: &Path,
-    checksum: Option<&Path>,
+    checksum: &Path,
     releases_root: &Path,
     bin_dir: &Path,
     doctor_strict: bool,
@@ -528,9 +528,7 @@ fn install_release(
         anyhow::bail!("Artifact not found: {}", artifact.display());
     }
 
-    if let Some(checksum_path) = checksum {
-        verify_checksum(artifact, checksum_path)?;
-    }
+    verify_checksum(artifact, checksum)?;
 
     fs::create_dir_all(releases_root)
         .with_context(|| format!("Failed creating releases root {}", releases_root.display()))?;

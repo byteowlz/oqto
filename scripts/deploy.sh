@@ -114,7 +114,7 @@ Options:
                            (current + last-good always preserved). 0 disables.
                            Default: 3. Also: OQTO_KEEP_RELEASES env var.
   --artifact FILE          Use oqto-setup install with this artifact tarball
-  --checksum FILE          Optional checksum file for --artifact
+  --checksum FILE          Required independent checksum file for --artifact
   --allow-legacy-path      Allow old prepare/activate deploy path (default: disabled)
   --dry-run                Print actions without executing
   --config FILE            Use alternate hosts config
@@ -192,10 +192,13 @@ if [[ -n "$DEPLOY_ARTIFACT" ]]; then
         err "Artifact not found: $DEPLOY_ARTIFACT"
         exit 1
     fi
-    if [[ -n "$DEPLOY_CHECKSUM" && ! -f "$DEPLOY_CHECKSUM" ]]; then
-        err "Checksum file not found: $DEPLOY_CHECKSUM"
+    if [[ -z "$DEPLOY_CHECKSUM" || ! -f "$DEPLOY_CHECKSUM" ]]; then
+        err "--artifact requires an existing --checksum file from a trusted independent source"
         exit 1
     fi
+elif [[ -n "$DEPLOY_CHECKSUM" ]]; then
+    err "--checksum requires an explicit --artifact"
+    exit 1
 fi
 
 prepare_default_artifact_if_needed() {
@@ -1918,17 +1921,15 @@ deploy_via_oqto_setup_install() {
     artifact_basename="$(basename "$DEPLOY_ARTIFACT")"
     remote_artifact="/tmp/${artifact_basename}"
 
-    # Path of the artifact (+ optional checksum) on the host that runs install.
+    # Paths of the artifact and its mandatory checksum on the target host.
     local artifact_path checksum_path=""
     if [[ "$is_local" == "true" ]]; then
         artifact_path="$DEPLOY_ARTIFACT"
-        [[ -n "$DEPLOY_CHECKSUM" ]] && checksum_path="$DEPLOY_CHECKSUM"
+        checksum_path="$DEPLOY_CHECKSUM"
     else
         artifact_path="$remote_artifact"
-        if [[ -n "$DEPLOY_CHECKSUM" ]]; then
-            remote_checksum="/tmp/$(basename "$DEPLOY_CHECKSUM")"
-            checksum_path="$remote_checksum"
-        fi
+        remote_checksum="/tmp/$(basename "$DEPLOY_CHECKSUM")"
+        checksum_path="$remote_checksum"
     fi
 
     # Install using the oqto-setup shipped INSIDE the artifact, run by absolute
@@ -1953,19 +1954,19 @@ chmod +x "\$setup"
 # phase (restart_services_ordered) and validates with health_check_host. Running
 # the gate here fails premature on a fresh host (and misdetects the profile as
 # single-user on a not-yet-configured multi-user host). deploy owns health.
-"\$setup" install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}
+"\$setup" install --doctor-strict false --artifact '$artifact_path' --checksum '$checksum_path'
 REMOTE_EOF
 )"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
-        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}"
+        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --doctor-strict false --artifact '$artifact_path' --checksum '$checksum_path'"
         return 0
     fi
 
     if [[ "$is_local" != "true" ]]; then
         scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
-        [[ -n "$DEPLOY_CHECKSUM" ]] && scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
+        scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
     fi
 
     host_exec_sudo "$is_local" "$ssh_target" "$script"
