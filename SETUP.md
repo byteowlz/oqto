@@ -36,12 +36,13 @@ release-artifact matrix can be preflighted safely as described next.
 
 ### Install/update validation matrix
 
-Use **one isolated, snapshotted Linux VM per profile/scenario**. Plan and
+Use **one isolated Linux VM per profile/scenario**, either snapshotted or
+explicitly disposable (`--disposable-vm` with its real hostname). Plan and
 preflight are read-only; preflight validates the host state, matching target,
 bundle hash, matching embedded `oqto-setup`, and its required glibc version
-without installing anything. A snapshot ID is optional for read-only preflight
-and required for execute; it is an operator attestation, **not** a Proxmox
-snapshot lookup. The installer currently needs a per-artifact SHA-256 line; combined
+without installing anything. Execute requires **one** recovery choice: a
+snapshot reference (operator attestation, not a Proxmox lookup) or the actual
+hostname of a user-authorized throwaway VM. Neither is needed for preflight. The installer currently needs a per-artifact SHA-256 line; combined
 `checksums.txt` is rejected rather than misread as a different artifact.
 
 ```bash
@@ -53,10 +54,12 @@ checksum=dist/out/oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
 ./scripts/e2e/install-update-matrix.sh --preflight \
   --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
   --artifact "$artifact" --checksum "$checksum"
-# Only after reviewing preflight and the VM snapshot, on that VM:
+# Only after reviewing preflight, on the snapshotted VM:
 ./scripts/e2e/install-update-matrix.sh --execute \
   --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
   --artifact "$artifact" --checksum "$checksum"
+# Alternative ONLY if the operator explicitly designates this VM disposable:
+# replace --snapshot-id "$snapshot_id" with --disposable-vm "$(hostname -s)".
 ```
 
 A host with an existing active Oqto release is an **upgrade** candidate, not

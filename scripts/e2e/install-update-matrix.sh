@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Artifact-based install/update validation for oqto-vemr.8.
 # Plan and preflight are read-only. Execute is intentionally VM-only and
-# requires an operator snapshot reference; it never builds from source.
+# requires a snapshot reference OR an explicitly named throwaway VM; never source-builds.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -11,6 +11,7 @@ MODE=plan
 PROFILE_SET="personal team"
 SCENARIO=""
 SNAPSHOT_ID=""
+DISPOSABLE_HOST=""
 ARTIFACT=""
 CHECKSUM=""
 ACTIVE_RELEASE=/var/lib/oqto/releases/current
@@ -21,9 +22,10 @@ Usage: scripts/e2e/install-update-matrix.sh [options]
 
 Options:
   --preflight               Validate an artifact and target without changing anything
-  --execute                 Install on a SNAPSHOTTED, isolated test VM (never source-build)
+  --execute                 Install on an isolated test VM (never source-build)
   --scenario fresh|upgrade  Required for preflight/execute
-  --snapshot-id REF         Required for execute: operator VM snapshot reference (not verified)
+  --snapshot-id REF         Operator VM snapshot reference (not independently verified)
+  --disposable-vm HOSTNAME  No-snapshot alternative: hostname must match this throwaway VM
   --profiles "personal"     Exactly one profile for preflight/execute; plan may show both
   --artifact FILE           Target-matched release bundle containing bin/oqto-setup
   --checksum FILE           Single-artifact SHA-256 line for that exact bundle
@@ -35,7 +37,8 @@ Examples:
     --snapshot-id before-upgrade --profiles personal \
     --artifact oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --checksum artifact.sha256
 
-The VM must be snapshotted separately. Do not run --execute on a working host.
+For --execute, provide exactly one recovery choice: --snapshot-id or
+--disposable-vm matching the current hostname. Never execute on a working host.
 See docs/agents/install-matrix-safety.md.
 EOF
 }
@@ -53,11 +56,12 @@ while [[ $# -gt 0 ]]; do
     --preflight|--execute)
       [[ "$MODE" == plan ]] || fail 'choose only one of --preflight and --execute'
       MODE="${1#--}"; shift ;;
-    --scenario|--snapshot-id|--profiles|--artifact|--checksum)
+    --scenario|--snapshot-id|--disposable-vm|--profiles|--artifact|--checksum)
       [[ $# -ge 2 ]] || fail "missing value for $1"
       case "$1" in
         --scenario) SCENARIO="$2" ;;
         --snapshot-id) SNAPSHOT_ID="$2" ;;
+        --disposable-vm) DISPOSABLE_HOST="$2" ;;
         --profiles) PROFILE_SET="$2" ;;
         --artifact) ARTIFACT="$2" ;;
         --checksum) CHECKSUM="$2" ;;
@@ -84,16 +88,24 @@ done
 
 if [[ "$MODE" != plan ]]; then
   [[ "$(uname -s)" == Linux ]] || fail 'macOS activation is not implemented; native Mac tests must not run this Linux installer'
-  [[ ${#PROFILES[@]} -eq 1 ]] || fail 'one profile per isolated VM/snapshot; do not install personal and team sequentially'
+  [[ ${#PROFILES[@]} -eq 1 ]] || fail 'one profile per isolated VM/reset; do not install personal and team sequentially'
   [[ "$SCENARIO" == fresh || "$SCENARIO" == upgrade ]] || fail 'choose --scenario fresh or upgrade'
-  [[ "$MODE" != execute || -n "$SNAPSHOT_ID" ]] || fail 'provide --snapshot-id for the operator-created VM snapshot'
+  [[ -z "$SNAPSHOT_ID" || -z "$DISPOSABLE_HOST" ]] || fail 'choose either --snapshot-id or --disposable-vm, not both'
+  if [[ -n "$DISPOSABLE_HOST" ]]; then
+    local_host="$(uname -n)"
+    local_host="${local_host%%.*}"
+    [[ "$DISPOSABLE_HOST" == "$local_host" ]] || fail "disposable VM hostname mismatch: expected $local_host"
+  fi
+  if [[ "$MODE" == execute ]]; then
+    [[ -n "$SNAPSHOT_ID" || -n "$DISPOSABLE_HOST" ]] || fail 'execute requires --snapshot-id or --disposable-vm HOSTNAME'
+  fi
   [[ -n "$ARTIFACT" && -n "$CHECKSUM" ]] || fail 'provide a release --artifact and per-artifact --checksum; source builds are not an install test'
   [[ -f "$ARTIFACT" && -f "$CHECKSUM" ]] || fail 'release artifact or checksum does not exist'
 
   artifact_name="$(basename "$ARTIFACT")"
   [[ "$artifact_name" == oqto-v*"-${TARGET}.tar.gz" ]] || fail "release artifact does not match host target ${TARGET}: ${artifact_name}"
   if [[ -e "$ACTIVE_RELEASE" || -L "$ACTIVE_RELEASE" ]]; then
-    [[ "$SCENARIO" == upgrade ]] || fail "fresh-install test refused: ${ACTIVE_RELEASE} already exists; reset a VM snapshot"
+    [[ "$SCENARIO" == upgrade ]] || fail "fresh-install test refused: ${ACTIVE_RELEASE} already exists; reset the test VM"
     [[ -d "$ACTIVE_RELEASE" ]] || fail "active release pointer is broken: ${ACTIVE_RELEASE}"
   else
     [[ "$SCENARIO" == fresh ]] || fail 'upgrade test requires an existing active release'
@@ -126,8 +138,11 @@ if [[ "$MODE" != plan ]]; then
     oldest="$(printf '%s\n%s\n' "$host_glibc" "${required_glibc#GLIBC_}" | sort -V | head -1)"
     [[ "$oldest" == "${required_glibc#GLIBC_}" ]] || fail "embedded oqto-setup requires ${required_glibc}, host has GLIBC_${host_glibc}"
   fi
-  printf '[matrix] read-only preflight passed: scenario=%s profile=%s target=%s snapshot=%s\n' \
-    "$SCENARIO" "${PROFILES[0]}" "$TARGET" "${SNAPSHOT_ID:-not-provided}"
+  recovery=not-provided
+  [[ -z "$SNAPSHOT_ID" ]] || recovery="snapshot:$SNAPSHOT_ID"
+  [[ -z "$DISPOSABLE_HOST" ]] || recovery="disposable:$DISPOSABLE_HOST"
+  printf '[matrix] read-only preflight passed: scenario=%s profile=%s target=%s recovery=%s\n' \
+    "$SCENARIO" "${PROFILES[0]}" "$TARGET" "$recovery"
 fi
 
 if [[ "$MODE" == preflight ]]; then
@@ -140,7 +155,7 @@ if [[ "$MODE" == plan ]]; then
     printf '[matrix] obtain a target-matched release bundle and its per-artifact SHA-256 before preflight/execute\n'
   fi
   for profile in "${PROFILES[@]}"; do
-    printf '[matrix] %s: take VM snapshot; preflight with --scenario fresh|upgrade --snapshot-id REF; then execute on that VM\n' "$profile"
+    printf '[matrix] %s: snapshot or name disposable VM; preflight with --scenario fresh|upgrade; then execute there\n' "$profile"
     show_cmd oqtoctl doctor --contract --profile "$profile" --strict
   done
   exit 0
