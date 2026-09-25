@@ -43,6 +43,11 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
             staging.join("manifest.toml"),
             "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
         )?;
+        fs::create_dir_all(staging.join("immutable/frontend/dist"))?;
+        fs::write(
+            staging.join("immutable/frontend/dist/index.html"),
+            b"<!doctype html><main>Oqto</main>",
+        )?;
     }
     let artifact = root.join(format!("{name}.tar.gz"));
     let status = Command::new("tar")
@@ -129,6 +134,45 @@ fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     fs::write(&path, "#!/bin/sh\nexit 1\n")?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     Ok(dir)
+}
+
+#[test]
+fn full_release_without_frontend_fails_before_deferred_activation() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let artifact = bundle(root.path(), "no-frontend")?;
+    let archive_root = "oqto-no-frontend-x86_64-unknown-linux-gnu";
+    fs::remove_file(
+        root.path()
+            .join("stage")
+            .join(archive_root)
+            .join("immutable/frontend/dist/index.html"),
+    )?;
+    let status = Command::new("tar")
+        .arg("-C")
+        .arg(root.path().join("stage"))
+        .arg("-czf")
+        .arg(&artifact)
+        .arg(archive_root)
+        .status()?;
+    ensure!(
+        status.success(),
+        "failed creating frontend-negative test artifact"
+    );
+    let releases = root.path().join("releases");
+    let bins = root.path().join("bin");
+    let output = install(
+        &artifact,
+        &releases,
+        &bins,
+        &rejecting_doctor(root.path())?,
+        false,
+    )?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("frontend"), "{stderr}");
+    assert!(!releases.join("current").exists());
+    assert!(!bins.join("oqto").exists());
+    Ok(())
 }
 
 #[test]
