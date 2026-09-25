@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deterministically stage, verify, and optionally promote an official Pi binary.
-# No LLM and no package-manager resolution is involved.
+# Provider login/model readiness is a later first-run gate, not a prerequisite
+# for installing Pi on an unconfigured host. No LLM or package manager is used.
 set -euo pipefail
 
 VERSION=""
@@ -55,7 +56,7 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "pi-runtime: unsupported deployment platform: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
 esac
 
-for command in curl sha256sum tar timeout python3; do
+for command in curl sha256sum tar timeout python3 env; do
   command -v "$command" >/dev/null || {
     echo "pi-runtime: required command not found: $command" >&2
     exit 1
@@ -85,7 +86,17 @@ CANDIDATE="$TMP/pi/pi"
 
 verify_runtime() {
   local binary="$1" label="$2" actual_version
-  actual_version="$($binary --version 2>/dev/null | head -1)"
+  mkdir -p "$TMP/probe-home/agent" "$TMP/probe-home/config" "$TMP/probe-home/data" "$TMP/probe-home/cache"
+  # Even --version is executed without the invoking user's credentials or
+  # profile: only the signed/verified candidate may inspect its scratch HOME.
+  actual_version="$(env -i \
+    HOME="$TMP/probe-home" \
+    PI_CODING_AGENT_DIR="$TMP/probe-home/agent" \
+    XDG_CONFIG_HOME="$TMP/probe-home/config" \
+    XDG_DATA_HOME="$TMP/probe-home/data" \
+    XDG_CACHE_HOME="$TMP/probe-home/cache" \
+    PATH="${PATH:-/usr/bin:/bin}" \
+    "$binary" --version 2>/dev/null | head -1)"
   [[ "$actual_version" == "$VERSION" ]] || {
     echo "pi-runtime: $label version mismatch expected=$VERSION actual=${actual_version:-unavailable}" >&2
     return 1
@@ -93,7 +104,9 @@ verify_runtime() {
 
   # Keep stdin open until the correlated response arrives. A simple pipe can
   # deliver EOF during Pi startup and race the command in a clean CI HOME.
-  python3 - "$binary" "${HOME:-}" <<'PY'
+  # Pi may create auth.json even for a model-list RPC: never point binary
+  # verification at the operator's actual provider profile or environment.
+  python3 - "$binary" "$TMP/probe-home" <<'PY'
 import json
 import os
 import pathlib
@@ -103,12 +116,19 @@ import sys
 import time
 
 binary = sys.argv[1]
-home = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
-# `-ne` (no extensions): verification is about the Pi *binary's* health
-# (version + RPC model discovery), not the invoking user's extension state. A
-# stale/conflicting user extension must not fail binary verification (it would
-# abort startup with a tool conflict -> zero models). Provider checks below read
-# auth.json/settings.json, which are independent of extensions.
+probe_home = pathlib.Path(sys.argv[2])
+probe_env = {
+    "HOME": str(probe_home),
+    "PI_CODING_AGENT_DIR": str(probe_home / "agent"),
+    "XDG_CONFIG_HOME": str(probe_home / "config"),
+    "XDG_DATA_HOME": str(probe_home / "data"),
+    "XDG_CACHE_HOME": str(probe_home / "cache"),
+    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+}
+# `-ne` (no extensions): verify Pi's binary version and RPC transport without
+# importing arbitrary extensions from the invoking user's profile. A fresh
+# user legitimately has no models until provider OAuth/API-key setup. Model
+# availability and real chat belong to a separate post-login readiness gate.
 proc = subprocess.Popen(
     [binary, "-ne", "--mode", "rpc", "--no-session"],
     stdin=subprocess.PIPE,
@@ -116,7 +136,7 @@ proc = subprocess.Popen(
     stderr=subprocess.DEVNULL,
     text=True,
     bufsize=1,
-    env=os.environ.copy(),
+    env=probe_env,
 )
 models = None
 try:
@@ -140,12 +160,14 @@ try:
         except json.JSONDecodeError:
             continue
         if (row.get("type") == "response"
-                and row.get("id") == "oqto-pi-runtime-smoke"
-                and row.get("success") is True):
+                and row.get("id") == "oqto-pi-runtime-smoke"):
+            if row.get("success") is not True:
+                raise SystemExit("RPC model discovery response failed")
             candidate = (row.get("data") or {}).get("models")
-            if isinstance(candidate, list):
-                models = candidate
-                break
+            if not isinstance(candidate, list):
+                raise SystemExit("RPC model discovery response has invalid models")
+            models = candidate
+            break
 finally:
     proc.terminate()
     try:
@@ -154,32 +176,10 @@ finally:
         proc.kill()
         proc.wait(timeout=5)
 
-if not models:
-    raise SystemExit("RPC model discovery returned no models")
+if models is None:
+    raise SystemExit("RPC model discovery response was unavailable")
 
-providers = {str(model.get("provider", "")) for model in models}
-if home:
-    auth_path = home / ".pi" / "agent" / "auth.json"
-    if auth_path.exists():
-        try:
-            auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            auth = {}
-        if "openai-codex" in auth and "openai-codex" not in providers:
-            raise SystemExit("configured openai-codex provider missing from RPC discovery")
-
-    settings_path = home / ".pi" / "agent" / "settings.json"
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            settings = {}
-        packages = settings.get("packages") or []
-        if any(str(package).split("@", 1)[0] == "npm:pi-claude-bridge" for package in packages):
-            if "claude-bridge" not in providers:
-                raise SystemExit("configured claude-bridge provider missing from RPC discovery")
-
-print(f"models={len(models)} providers={len(providers)}")
+print(f"RPC verified; models reported={len(models)} (provider readiness not checked)")
 PY
   echo "pi-runtime: $label verified (version=$actual_version)"
 }

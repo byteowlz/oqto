@@ -286,7 +286,7 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 ./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
 
-This stages the pinned official standalone release, verifies its SHA-256 and RPC model discovery, then atomically promotes the root-owned deployment baseline. `just update-pi-local` maintains the preferred rootless channel under `~/.local/share/oqto/pi-runtimes/current` without Git changes. Neither path resolves npm dependencies or modifies user-global Bun packages.
+This stages the pinned official standalone release, verifies its SHA-256, version and successful Pi RPC response, then atomically promotes the root-owned deployment baseline. An **empty model list is valid at this binary-install step**: a fresh user cannot complete Pi provider OAuth until Pi is installed. `just update-pi-local` maintains the preferred rootless channel under `~/.local/share/oqto/pi-runtimes/current` without Git changes. Neither binary check proves model readiness or a real chat turn; those are separate post-login release gates (`oqto-vemr.9.1.3`). Neither path resolves npm dependencies or modifies user-global Bun packages.
 
 **Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
 
@@ -757,7 +757,7 @@ Key configuration sections:
 ## EAVS Setup and Models
 
 EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.).
-EAVS is required for Oqto; setup.sh always installs and configures it.
+The **current legacy `setup.sh` still requires and installs EAVS**. This is a documented implementation gap, not the desired personal-install contract: the first personal path must allow native Pi Codex/ChatGPT provider login without an EAVS service. EAVS remains an explicit optional gateway choice for personal installs (`oqto-vemr.9.1.3`); do not skip current strict doctor checks until the target-aware provisioning/doctor implementation and real chat proof exist.
 
 ### What setup.sh does
 
