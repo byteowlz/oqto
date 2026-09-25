@@ -3,6 +3,7 @@
 //! Product code asks this module where a Workspace runs. Concrete adapters own
 //! process/container lifecycle and return a typed runner endpoint.
 
+mod capability;
 mod local;
 mod podman;
 mod store;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub use capability::{PlacementAvailability, PlacementCapabilityReport, ProbeEvidence};
 pub use local::LocalProcessSupervisor;
 pub use podman::{CommandOutput, CommandRunner, PodmanSupervisor, TokioCommandRunner};
 pub use store::{JsonPlacementStore, PlacementStore};
@@ -88,7 +90,7 @@ pub struct RunnerServerTlsConfig {
     pub key: PathBuf,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PlacementKind {
     LocalProcess,
     RootlessPodman,

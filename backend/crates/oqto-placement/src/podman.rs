@@ -1,6 +1,6 @@
 use crate::{
-    PlacementHealth, PlacementId, PlacementKind, PlacementRecord, PlacementSpec,
-    PlacementSupervisor, runtime_name,
+    PlacementCapabilityReport, PlacementHealth, PlacementId, PlacementKind, PlacementRecord,
+    PlacementSpec, PlacementSupervisor, ProbeEvidence, runtime_name,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -8,6 +8,7 @@ use oqto_runner::client::RunnerClient;
 use oqto_runner::transport::RunnerEndpointConfig;
 use std::ffi::OsString;
 use std::process::ExitStatus;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 
 pub struct CommandOutput {
@@ -175,6 +176,56 @@ impl<R> PodmanSupervisor<R> {
         Ok(args)
     }
 
+    /// Read-only host-side discovery. A rootless `podman info` result is only
+    /// detection: the actual container launch, sandbox, and operator policy
+    /// remain separate, unverified gates. Callers must not turn this report
+    /// into an authorization without independently filling those gates.
+    pub async fn probe_read_only(&self) -> PlacementCapabilityReport
+    where
+        R: CommandRunner,
+    {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis() as u64);
+        self.probe_read_only_at(now, now.saturating_add(30_000))
+            .await
+    }
+
+    async fn probe_read_only_at(
+        &self,
+        observed_at_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> PlacementCapabilityReport
+    where
+        R: CommandRunner,
+    {
+        let rootless = match self
+            .checked(&[
+                "info".into(),
+                "--format".into(),
+                "{{.Host.Security.Rootless}}".into(),
+            ])
+            .await
+        {
+            Ok(output) => match std::str::from_utf8(&output.stdout).map(str::trim) {
+                Ok("true") => ProbeEvidence::Verified,
+                Ok("false") => ProbeEvidence::Denied("Podman engine is rootful".into()),
+                _ => ProbeEvidence::Unverified("Podman rootless state is unknown".into()),
+            },
+            Err(_) => ProbeEvidence::Unverified("Podman info probe failed".into()),
+        };
+        PlacementCapabilityReport {
+            backend: PlacementKind::RootlessPodman,
+            source: "host-side-podman-supervisor".into(),
+            observed_at_unix_ms,
+            expires_at_unix_ms,
+            effective_rootless: rootless,
+            container_launch: ProbeEvidence::Unverified("no launch canary was run".into()),
+            runner_sandbox: ProbeEvidence::Unverified("runner sandbox was not attested".into()),
+            operator_policy: ProbeEvidence::Unverified("operator policy was not checked".into()),
+        }
+    }
+
     /// Rootless Podman is the isolation owner for this placement. Probe the
     /// effective engine before creating host directories or a pod; a binary on
     /// PATH (or a rootful Docker-compatible socket) proves nothing about it.
@@ -182,17 +233,11 @@ impl<R> PodmanSupervisor<R> {
     where
         R: CommandRunner,
     {
-        let output = self
-            .checked(&[
-                "info".into(),
-                "--format".into(),
-                "{{.Host.Security.Rootless}}".into(),
-            ])
-            .await?;
-        match String::from_utf8_lossy(&output.stdout).trim() {
-            "true" => Ok(()),
-            "false" => anyhow::bail!("rootless Podman required for workspace placement"),
-            _ => anyhow::bail!("Podman rootless status could not be verified"),
+        match self.probe_read_only().await.effective_rootless {
+            ProbeEvidence::Verified => Ok(()),
+            ProbeEvidence::Denied(reason) | ProbeEvidence::Unverified(reason) => {
+                anyhow::bail!("rootless Podman required for workspace placement: {reason}")
+            }
         }
     }
 
@@ -384,6 +429,34 @@ mod tests {
             assert_eq!(calls[0][0], "info");
         }
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_only_probe_reports_rootless_without_claiming_placement_availability() {
+        for (reply, expected) in [
+            ("true\n", ProbeEvidence::Verified),
+            (
+                "false\n",
+                ProbeEvidence::Denied("Podman engine is rootful".into()),
+            ),
+            (
+                "unknown\n",
+                ProbeEvidence::Unverified("Podman rootless state is unknown".into()),
+            ),
+        ] {
+            let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
+                reply: reply.as_bytes().to_vec(),
+                calls: Mutex::new(Vec::new()),
+            });
+            let report = supervisor.probe_read_only_at(100, 200).await;
+            assert_eq!(report.effective_rootless, expected);
+            assert!(!report.evaluate_at(150).available);
+            assert!(report.container_launch != ProbeEvidence::Verified);
+            assert!(report.operator_policy != ProbeEvidence::Verified);
+            let calls = supervisor.command.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0][0], "info");
+        }
     }
 
     #[tokio::test]
