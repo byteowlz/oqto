@@ -23,7 +23,7 @@ This is an evidence ledger, **not** a release announcement. `oqto-log` is author
 
 ## Required before calling it a release
 
-1. Close `oqto-vemr.9.1`: complete/signed version-coherent Linux artifact, frontend, service supervisor units, Pi/model setup and preserve-first configuration; strict doctor must pass after healthy startup on fresh personal **and** team hosts.
+1. Close `oqto-vemr.9.1` and its preserve-first Pi-sync child `oqto-vemr.9.1.1`: complete/signed version-coherent Linux artifact, frontend, service supervisor units, Pi/model setup and backup/diff/merge-safe user configuration; strict doctor must pass after healthy startup on fresh personal **and** team hosts.
 2. Close `oqto-vemr.8` and `.9`: make published artifacts match the canonical manifest/installer, exercise fresh/update/rollback/uninstall and dependency installation from artifacts rather than source. Test both profiles on independently reset hosts. Treat the snapshot/`--disposable-vm` choice as operator authorization, not verification of a hypervisor snapshot.
 3. Prove runner sandbox policy, Files placement/race gates, session identity/revocation and durable reconnect before broad remote-client enrollment. Keep Mac Studio live runner unchanged without explicit operator grant.
 4. Run clean native macOS and Windows GUI/install/update/uninstall tests on VMs, including distribution signing/Gatekeeper for macOS and native Windows packaging. No VM evidence means **blocked**, not passed.
