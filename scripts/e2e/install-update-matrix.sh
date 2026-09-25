@@ -27,7 +27,7 @@ Options:
   --snapshot-id REF         Operator VM snapshot reference (not independently verified)
   --disposable-vm HOSTNAME  No-snapshot alternative: hostname must match this throwaway VM
   --profiles "personal"     Exactly one profile for preflight/execute; plan may show both
-  --artifact FILE           Target-matched release bundle containing bin/oqto-setup
+  --artifact FILE           Canonical dist bundle containing immutable/bin/oqto-setup
   --checksum FILE           Single-artifact SHA-256 line for that exact bundle
   -h, --help                Show help
 
@@ -124,9 +124,21 @@ if [[ "$MODE" != plan ]]; then
   [[ "${actual,,}" == "${expected,,}" ]] || fail 'release artifact checksum mismatch'
 
   staging="${artifact_name%.tar.gz}"
-  setup_member="${staging}/bin/oqto-setup"
-  member_count="$(tar -tzf "$ARTIFACT" | grep -Fxc "$setup_member" || true)"
-  [[ "$member_count" == 1 ]] || fail "verified bundle must contain exactly one ${setup_member}"
+  setup_member="${staging}/immutable/bin/oqto-setup"
+  # The old GitHub release workflow ships a flat bin/ layout without the
+  # canonical manifest. Do not activate it as a complete ADR-0016 release.
+  if ! members="$(tar -tzf "$ARTIFACT" 2>&1)"; then
+    fail 'verified bundle is not a valid gzip tar archive'
+  fi
+  for required in manifest.toml \
+    immutable/bin/oqto immutable/bin/oqtoctl immutable/bin/oqto-setup \
+    immutable/bin/oqto-runner immutable/bin/oqto-files \
+    immutable/bin/oqto-sandbox immutable/bin/oqto-usermgr \
+    immutable/bin/pi-bridge; do
+    member="${staging}/${required}"
+    member_count="$(grep -Fxc "$member" <<< "$members" || true)"
+    [[ "$member_count" == 1 ]] || fail "canonical release bundle must contain exactly one ${member}"
+  done
   member_metadata="$(tar -tvzf "$ARTIFACT" "$setup_member")"
   [[ "${member_metadata:0:1}" == - ]] || fail 'embedded oqto-setup must be a regular file, not a link'
   command -v strings >/dev/null || fail 'binutils strings is required for read-only Linux runtime compatibility preflight'
