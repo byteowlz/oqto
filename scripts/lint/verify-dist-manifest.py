@@ -13,7 +13,10 @@ except ModuleNotFoundError:
     try:
         import tomli as tomllib  # Python 3.10 (Ubuntu 22.04 release builders)
     except ModuleNotFoundError:
-        print("error: Python 3.11+ or the tomli package is required to validate dist/manifest.toml", file=sys.stderr)
+        print(
+            "error: Python 3.11+ or the tomli package is required to validate dist/manifest.toml",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from None
 
 ALLOWED_CLASSES = {"immutable_symlink", "mutable_copy_once", "runtime_generated"}

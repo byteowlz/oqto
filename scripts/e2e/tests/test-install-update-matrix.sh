@@ -14,9 +14,12 @@ esac
 
 name="oqto-v9.8.7-${target}.tar.gz"
 staging="${name%.tar.gz}"
-mkdir -p "$scratch/bundle/$staging/bin"
-cp /usr/bin/true "$scratch/bundle/$staging/bin/oqto-setup"
-chmod 0755 "$scratch/bundle/$staging/bin/oqto-setup"
+mkdir -p "$scratch/bundle/$staging/immutable/bin"
+printf 'manifest_version = 1\n' > "$scratch/bundle/$staging/manifest.toml"
+for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-usermgr pi-bridge; do
+  cp /usr/bin/true "$scratch/bundle/$staging/immutable/bin/$bin"
+  chmod 0755 "$scratch/bundle/$staging/immutable/bin/$bin"
+done
 tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
 
@@ -61,6 +64,14 @@ cp "$scratch/$name" "$scratch/quoted path's/$name"
   --checksum "$scratch/quoted path's/artifact.sha256" > "$scratch/quoted-path-result"
 grep -Fq 'read-only preflight passed' "$scratch/quoted-path-result"
 pass 'artifact path with whitespace and shell quotes is handled literally'
+
+mkdir -p "$scratch/legacy/$staging/bin"
+cp /usr/bin/true "$scratch/legacy/$staging/bin/oqto-setup"
+tar -C "$scratch/legacy" -czf "$scratch/legacy/$name" "$staging"
+(cd "$scratch/legacy" && sha256sum "$name" > artifact.sha256)
+rejects 'old flat-bin release layout' 'canonical release bundle must contain exactly one' \
+  --preflight --scenario "$scenario" --profiles personal \
+  --artifact "$scratch/legacy/$name" --checksum "$scratch/legacy/artifact.sha256"
 
 rejects 'missing recovery choice for execute' 'execute requires --snapshot-id or --disposable-vm' --execute "${args[@]}"
 test_host="$(uname -n)"
@@ -122,15 +133,22 @@ fi
 grep -Fq 'macOS activation is not implemented' "$scratch/output"
 pass 'macOS activation fails closed until a native installer exists'
 
-printf 'GLIBC_999.0\n' >> "$scratch/bundle/$staging/bin/oqto-setup"
+rm "$scratch/bundle/$staging/immutable/bin/oqto-files"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+rejects 'bundle missing required binary' 'canonical release bundle must contain exactly one' \
+  --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
+  --profiles personal --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
+cp /usr/bin/true "$scratch/bundle/$staging/immutable/bin/oqto-files"
+printf 'GLIBC_999.0\n' >> "$scratch/bundle/$staging/immutable/bin/oqto-setup"
 tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
 rejects 'newer-glibc embedded installer' 'requires GLIBC_999.0' \
   --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
   --profiles personal --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
 
-rm "$scratch/bundle/$staging/bin/oqto-setup"
-ln -s /etc/passwd "$scratch/bundle/$staging/bin/oqto-setup"
+rm "$scratch/bundle/$staging/immutable/bin/oqto-setup"
+ln -s /etc/passwd "$scratch/bundle/$staging/immutable/bin/oqto-setup"
 tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
 rejects 'embedded installer symlink' 'embedded oqto-setup must be a regular file' \
@@ -140,7 +158,7 @@ rejects 'embedded installer symlink' 'embedded oqto-setup must be a regular file
 printf 'test\n' > "$scratch/not-a-bundle"
 cp "$scratch/not-a-bundle" "$scratch/$name"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
-rejects 'verified bytes without installer member' 'verified bundle must contain exactly one' \
+rejects 'verified bytes without installer member' 'verified bundle is not a valid gzip tar archive' \
   --preflight --scenario "$scenario" --snapshot-id isolated-vm-before-install \
   --profiles personal --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
 

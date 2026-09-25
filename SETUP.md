@@ -43,7 +43,9 @@ bundle hash, matching embedded `oqto-setup`, and its required glibc version
 without installing anything. Execute requires **one** recovery choice: a
 snapshot reference (operator attestation, not a Proxmox lookup) or the actual
 hostname of a user-authorized throwaway VM. Neither is needed for preflight. The installer currently needs a per-artifact SHA-256 line; combined
-`checksums.txt` is rejected rather than misread as a different artifact.
+`checksums.txt` is rejected rather than misread as a different artifact. The
+matrix also rejects the old published flat `bin/` bundle: a canonical dist
+bundle must have `manifest.toml` and its required `immutable/bin/` executables.
 
 ```bash
 ./scripts/e2e/install-update-matrix.sh  # read-only overview
