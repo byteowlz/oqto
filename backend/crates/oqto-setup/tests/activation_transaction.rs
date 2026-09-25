@@ -5,13 +5,39 @@ use anyhow::{Result, ensure};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 fn bundle(root: &Path, id: &str) -> Result<std::path::PathBuf> {
+    bundle_with_layout(root, id, true)
+}
+
+fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path::PathBuf> {
     let name = format!("oqto-{id}-x86_64-unknown-linux-gnu");
     let stage_root = root.join("stage");
     let staging = stage_root.join(&name);
     fs::create_dir_all(staging.join("immutable/bin"))?;
-    let binary = staging.join("immutable/bin/oqto");
-    fs::write(&binary, format!("#!/bin/sh\nprintf '%s\\n' '{id}'\n"))?;
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
+    let names: &[&str] = if complete {
+        &[
+            "oqto",
+            "oqtoctl",
+            "oqto-setup",
+            "oqto-runner",
+            "oqto-files",
+            "oqto-sandbox",
+            "oqto-usermgr",
+            "pi-bridge",
+        ]
+    } else {
+        &["oqto"]
+    };
+    for name in names {
+        let binary = staging.join("immutable/bin").join(name);
+        fs::write(&binary, format!("#!/bin/sh\nprintf '%s\\n' '{id}'\n"))?;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
+    }
+    if complete {
+        fs::write(
+            staging.join("manifest.toml"),
+            "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+        )?;
+    }
     let artifact = root.join(format!("{name}.tar.gz"));
     let status = Command::new("tar")
         .arg("-C")
@@ -55,6 +81,25 @@ fn rejecting_doctor(root: &Path) -> Result<std::path::PathBuf> {
     fs::write(&path, "#!/bin/sh\nexit 1\n")?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     Ok(dir)
+}
+
+#[test]
+fn incomplete_bundle_cannot_activate_even_with_doctor_deferred() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let releases = root.path().join("releases");
+    let binaries = root.path().join("bin");
+    // A runner-only candidate or an arbitrary tar with just one executable
+    // must not masquerade as a full installation when doctor is deferred.
+    let artifact = bundle_with_layout(root.path(), "test-incomplete", false)?;
+    let doctor = rejecting_doctor(root.path())?;
+    let output = install(&artifact, &releases, &binaries, &doctor, false)?;
+    ensure!(
+        !output.status.success(),
+        "incomplete artifact was activated"
+    );
+    ensure!(fs::symlink_metadata(releases.join("current")).is_err());
+    ensure!(fs::symlink_metadata(binaries.join("oqto")).is_err());
+    Ok(())
 }
 
 #[test]

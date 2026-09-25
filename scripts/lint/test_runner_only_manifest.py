@@ -28,6 +28,12 @@ class RunnerArtifactTests(unittest.TestCase):
         text = text[:start] + text[end:]
         self.assertEqual(self.check_manifest(text).returncode, 0)
 
+    def test_full_manifest_rejects_missing_or_wrong_install_target(self):
+        text = MANIFEST.read_text()
+        for altered in (text.replace('target = "full"', 'target = "runner_only"'),
+                        text.replace('target = "full"\n', '')):
+            self.assertNotEqual(self.check_manifest(altered, "full").returncode, 0)
+
     def test_missing_runner_asset_rejected(self):
         text = MANIFEST.read_text().replace('id = "bin-oqto-runner"', 'id = "removed-runner"')
         self.assertNotEqual(self.check_manifest(text).returncode, 0)
