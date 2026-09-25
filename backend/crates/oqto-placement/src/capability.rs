@@ -18,6 +18,9 @@ pub struct PlacementCapabilityReport {
     /// Names the authority that observed the runtime, not an authorization
     /// credential. Only the host-side supervisor may produce this report.
     pub source: String,
+    /// Effective Podman engine version reported by the same read-only info
+    /// command as the rootless state. Missing/unparseable version is unverified.
+    pub runtime_version: Option<String>,
     pub observed_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     pub effective_rootless: ProbeEvidence,
@@ -39,6 +42,9 @@ impl PlacementCapabilityReport {
         let mut denial_reasons = Vec::new();
         if now_unix_ms < self.observed_at_unix_ms || now_unix_ms >= self.expires_at_unix_ms {
             denial_reasons.push("capability evidence is stale or not yet valid".to_string());
+        }
+        if self.backend == PlacementKind::RootlessPodman && self.runtime_version.is_none() {
+            denial_reasons.push("effective Podman runtime version is unverified".to_string());
         }
         for (name, evidence) in [
             ("effective rootless runtime", &self.effective_rootless),
@@ -68,6 +74,7 @@ mod tests {
         PlacementCapabilityReport {
             backend: PlacementKind::RootlessPodman,
             source: "host-side-podman-supervisor".into(),
+            runtime_version: Some("6.0.0".into()),
             observed_at_unix_ms: 100,
             expires_at_unix_ms: 200,
             effective_rootless: ProbeEvidence::Verified,
@@ -98,6 +105,23 @@ mod tests {
         assert!(evidence.evaluate_at(150).available);
         assert!(!evidence.evaluate_at(200).available);
         assert!(!evidence.evaluate_at(99).available);
+    }
+
+    #[test]
+    fn missing_runtime_version_cannot_be_promoted_by_other_evidence() {
+        let mut evidence = report();
+        evidence.runtime_version = None;
+        evidence.container_launch = ProbeEvidence::Verified;
+        evidence.runner_sandbox = ProbeEvidence::Verified;
+        evidence.operator_policy = ProbeEvidence::Verified;
+        let result = evidence.evaluate_at(150);
+        assert!(!result.available);
+        assert!(
+            result
+                .denial_reasons
+                .iter()
+                .any(|reason| reason.contains("version"))
+        );
     }
 
     #[test]

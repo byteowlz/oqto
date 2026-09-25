@@ -199,24 +199,50 @@ impl<R> PodmanSupervisor<R> {
     where
         R: CommandRunner,
     {
-        let rootless = match self
+        let (rootless, runtime_version) = match self
             .checked(&[
                 "info".into(),
                 "--format".into(),
-                "{{.Host.Security.Rootless}}".into(),
+                "{{.Host.Security.Rootless}} {{.Version.Version}}".into(),
             ])
             .await
         {
-            Ok(output) => match std::str::from_utf8(&output.stdout).map(str::trim) {
-                Ok("true") => ProbeEvidence::Verified,
-                Ok("false") => ProbeEvidence::Denied("Podman engine is rootful".into()),
-                _ => ProbeEvidence::Unverified("Podman rootless state is unknown".into()),
-            },
-            Err(_) => ProbeEvidence::Unverified("Podman info probe failed".into()),
+            Ok(output) => {
+                let fields = std::str::from_utf8(&output.stdout)
+                    .ok()
+                    .map(|value| value.split_ascii_whitespace().collect::<Vec<_>>());
+                match fields.as_deref() {
+                    Some([state, version])
+                        if version.len() <= 64
+                            && !version.is_empty()
+                            && version.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')
+                            }) =>
+                    {
+                        let status = match *state {
+                            "true" => ProbeEvidence::Verified,
+                            "false" => ProbeEvidence::Denied("Podman engine is rootful".into()),
+                            _ => {
+                                ProbeEvidence::Unverified("Podman rootless state is unknown".into())
+                            }
+                        };
+                        (status, Some((*version).to_string()))
+                    }
+                    _ => (
+                        ProbeEvidence::Unverified("Podman info response is incomplete".into()),
+                        None,
+                    ),
+                }
+            }
+            Err(_) => (
+                ProbeEvidence::Unverified("Podman info probe failed".into()),
+                None,
+            ),
         };
         PlacementCapabilityReport {
             backend: PlacementKind::RootlessPodman,
             source: "host-side-podman-supervisor".into(),
+            runtime_version,
             observed_at_unix_ms,
             expires_at_unix_ms,
             effective_rootless: rootless,
@@ -401,7 +427,13 @@ mod tests {
 
     #[tokio::test]
     async fn rootful_or_unverified_podman_is_rejected_before_host_mutation() -> Result<()> {
-        for reply in ["false\n", "\n", "unknown\n"] {
+        for reply in [
+            "false 3.4.4\n",
+            "\n",
+            "unknown 3.4.4\n",
+            "true\n",
+            "true bad/version\n",
+        ] {
             let temp = tempfile::tempdir()?;
             let spec = PlacementSpec {
                 workspace_id: "workspace".to_string(),
@@ -434,14 +466,18 @@ mod tests {
     #[tokio::test]
     async fn read_only_probe_reports_rootless_without_claiming_placement_availability() {
         for (reply, expected) in [
-            ("true\n", ProbeEvidence::Verified),
+            ("true 3.4.4\n", ProbeEvidence::Verified),
             (
-                "false\n",
+                "false 3.4.4\n",
                 ProbeEvidence::Denied("Podman engine is rootful".into()),
             ),
             (
-                "unknown\n",
+                "unknown 3.4.4\n",
                 ProbeEvidence::Unverified("Podman rootless state is unknown".into()),
+            ),
+            (
+                "true\n",
+                ProbeEvidence::Unverified("Podman info response is incomplete".into()),
             ),
         ] {
             let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
@@ -450,6 +486,10 @@ mod tests {
             });
             let report = supervisor.probe_read_only_at(100, 200).await;
             assert_eq!(report.effective_rootless, expected);
+            assert_eq!(
+                report.runtime_version.as_deref(),
+                reply.split_ascii_whitespace().nth(1)
+            );
             assert!(!report.evaluate_at(150).available);
             assert!(report.container_launch != ProbeEvidence::Verified);
             assert!(report.operator_policy != ProbeEvidence::Verified);
@@ -518,7 +558,7 @@ mod tests {
             memory_limit: None,
         };
         let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
-            reply: b"true\n".to_vec(),
+            reply: b"true 3.4.4\n".to_vec(),
             calls: Mutex::new(Vec::new()),
         });
         supervisor.start(&spec).await?;
