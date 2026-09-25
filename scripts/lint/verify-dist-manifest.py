@@ -101,6 +101,8 @@ def main() -> int:
             selected = required  # still report missing required assets
     else:
         selected = None
+        if data.get("release", {}).get("target") != "full":
+            fail(errors, "full release must explicitly declare release.target = full")
 
     for idx, asset in enumerate(assets):
         if selected is not None and isinstance(asset, dict) and asset.get("id") not in selected:

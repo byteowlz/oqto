@@ -3,6 +3,7 @@ id = "oqto-dist"
 description = "Oqto distribution manifest (draft)"
 
 [release]
+target = "full"
 layout = "transactional"
 root = "/var/lib/oqto/releases"
 current_symlink = "/var/lib/oqto/releases/current"

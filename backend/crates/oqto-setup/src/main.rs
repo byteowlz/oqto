@@ -725,31 +725,72 @@ fn rollback_fresh_activation(current: &Path, release: &Path, bin_dir: &Path) -> 
     Ok(())
 }
 
-/// Reject an extracted release whose layout cannot be activated (no shipped
-/// binaries to relink). Cheap fail-closed gate before we touch `current`.
+/// Only the explicit full release is activatable until the runner-only
+/// installer/doctor contract exists. This gate runs before switching `current`
+/// even when doctor is deferred by an orchestrator.
 fn validate_staged_release(release_dir: &Path) -> Result<()> {
-    let bin_src = release_dir.join("immutable/bin");
-    if !bin_src.is_dir() {
-        anyhow::bail!("Invalid artifact layout: missing {}", bin_src.display());
+    const REQUIRED_BINS: [&str; 8] = [
+        "oqto",
+        "oqtoctl",
+        "oqto-setup",
+        "oqto-runner",
+        "oqto-files",
+        "oqto-sandbox",
+        "oqto-usermgr",
+        "pi-bridge",
+    ];
+    let manifest_path = release_dir.join("manifest.toml");
+    let manifest_meta = fs::symlink_metadata(&manifest_path)
+        .with_context(|| format!("Invalid artifact: missing {}", manifest_path.display()))?;
+    if !manifest_meta.file_type().is_file() {
+        anyhow::bail!("Invalid artifact: manifest must be a regular file");
     }
-    let mut has_binary = false;
+    let contents = fs::read_to_string(&manifest_path)?;
+    let manifest: toml::Value = contents.parse().context("Invalid release manifest TOML")?;
+    if manifest
+        .get("manifest_version")
+        .and_then(toml::Value::as_integer)
+        != Some(1)
+        || manifest.get("id").and_then(toml::Value::as_str) != Some("oqto-dist")
+        || manifest
+            .get("release")
+            .and_then(|value| value.get("target"))
+            .and_then(toml::Value::as_str)
+            != Some("full")
+    {
+        anyhow::bail!("Invalid artifact: only the declared full release can be activated");
+    }
+
+    let bin_src = release_dir.join("immutable/bin");
+    if !fs::symlink_metadata(&bin_src).is_ok_and(|meta| meta.file_type().is_dir()) {
+        anyhow::bail!(
+            "Invalid artifact layout: missing regular directory {}",
+            bin_src.display()
+        );
+    }
+    let mut seen = std::collections::HashSet::new();
     for entry in
         fs::read_dir(&bin_src).with_context(|| format!("Failed reading {}", bin_src.display()))?
     {
         let entry = entry?;
-        if entry.file_name().to_string_lossy().starts_with('.') {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !REQUIRED_BINS.contains(&name.as_ref()) {
             anyhow::bail!(
-                "Invalid artifact: hidden bin entry {}",
+                "Invalid artifact: unexpected bin entry {}",
                 entry.path().display()
             );
         }
-        has_binary |= entry.path().is_file();
+        let meta = fs::symlink_metadata(entry.path())?;
+        if !meta.file_type().is_file() {
+            anyhow::bail!("Invalid artifact: binary must be a regular file: {name}");
+        }
+        seen.insert(name.into_owned());
     }
-    if !has_binary {
-        anyhow::bail!(
-            "Invalid artifact: no binaries staged in {}",
-            bin_src.display()
-        );
+    for name in REQUIRED_BINS {
+        if !seen.contains(name) {
+            anyhow::bail!("Invalid full release: missing required binary {name}");
+        }
     }
     Ok(())
 }
@@ -978,10 +1019,29 @@ mod tests {
     }
 
     fn mk_release_dir(root: &Path, name: &str, binary: Option<&str>) {
-        let bin = root.join(name).join("immutable/bin");
+        let release = root.join(name);
+        let bin = release.join("immutable/bin");
         fs::create_dir_all(&bin).unwrap();
         if let Some(b) = binary {
             fs::write(bin.join(b), b"#!/bin/true\n").unwrap();
+            if b == "oqto" {
+                fs::write(
+                    release.join("manifest.toml"),
+                    "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+                )
+                .unwrap();
+                for name in [
+                    "oqtoctl",
+                    "oqto-setup",
+                    "oqto-runner",
+                    "oqto-files",
+                    "oqto-sandbox",
+                    "oqto-usermgr",
+                    "pi-bridge",
+                ] {
+                    fs::write(bin.join(name), b"#!/bin/true\n").unwrap();
+                }
+            }
         }
     }
 
@@ -1098,6 +1158,36 @@ mod tests {
         // Valid layout with a staged binary.
         mk_release_dir(root.path(), "ok", Some("oqto"));
         assert!(validate_staged_release(&root.path().join("ok")).is_ok());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_deferred_doctor_runner_target_and_missing_assets() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        fs::write(
+            candidate.join("manifest.toml"),
+            "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"runner_only\"\n",
+        )
+        .unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+        fs::write(
+            candidate.join("manifest.toml"),
+            "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+        )
+        .unwrap();
+        fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_binary_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
+        symlink("/usr/bin/true", candidate.join("immutable/bin/pi-bridge")).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
     }
 
     #[test]
