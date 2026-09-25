@@ -175,6 +175,27 @@ impl<R> PodmanSupervisor<R> {
         Ok(args)
     }
 
+    /// Rootless Podman is the isolation owner for this placement. Probe the
+    /// effective engine before creating host directories or a pod; a binary on
+    /// PATH (or a rootful Docker-compatible socket) proves nothing about it.
+    async fn require_rootless(&self) -> Result<()>
+    where
+        R: CommandRunner,
+    {
+        let output = self
+            .checked(&[
+                "info".into(),
+                "--format".into(),
+                "{{.Host.Security.Rootless}}".into(),
+            ])
+            .await?;
+        match String::from_utf8_lossy(&output.stdout).trim() {
+            "true" => Ok(()),
+            "false" => anyhow::bail!("rootless Podman required for workspace placement"),
+            _ => anyhow::bail!("Podman rootless status could not be verified"),
+        }
+    }
+
     async fn checked(&self, args: &[OsString]) -> Result<CommandOutput>
     where
         R: CommandRunner,
@@ -197,6 +218,7 @@ where
 {
     async fn start(&self, spec: &PlacementSpec) -> Result<PlacementRecord> {
         spec.validate()?;
+        self.require_rootless().await?;
         tokio::fs::create_dir_all(&spec.workspace_dir).await?;
         tokio::fs::create_dir_all(&spec.state_dir).await?;
         let runtime_name = runtime_name(&spec.workspace_id);
@@ -312,6 +334,85 @@ mod tests {
         assert!(rendered.contains("oqto.placement=rootless-podman"));
         assert!(rendered.contains("--security-opt=no-new-privileges"));
         assert!(!rendered.contains("sh -c"));
+        Ok(())
+    }
+
+    struct RootlessProbeRunner {
+        reply: Vec<u8>,
+        calls: Mutex<Vec<Vec<OsString>>>,
+    }
+
+    #[async_trait]
+    impl CommandRunner for RootlessProbeRunner {
+        async fn run(&self, _program: &str, args: &[OsString]) -> Result<CommandOutput> {
+            self.calls.lock().unwrap().push(args.to_vec());
+            Ok(CommandOutput {
+                status: ExitStatus::from_raw(0),
+                stdout: self.reply.clone(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn rootful_or_unverified_podman_is_rejected_before_host_mutation() -> Result<()> {
+        for reply in ["false\n", "\n", "unknown\n"] {
+            let temp = tempfile::tempdir()?;
+            let spec = PlacementSpec {
+                workspace_id: "workspace".to_string(),
+                account_id: "account".to_string(),
+                image: "localhost/oqto:test".to_string(),
+                workspace_dir: temp.path().join("workspace"),
+                state_dir: temp.path().join("state"),
+                runner_endpoint: RunnerEndpointConfig::Unix {
+                    path: temp.path().join("runtime/runner.sock"),
+                },
+                server_tls: None,
+                environment: Default::default(),
+                cpu_limit: None,
+                memory_limit: None,
+            };
+            let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
+                reply: reply.as_bytes().to_vec(),
+                calls: Mutex::new(Vec::new()),
+            });
+            assert!(supervisor.start(&spec).await.is_err());
+            assert!(!spec.workspace_dir.exists());
+            assert!(!spec.state_dir.exists());
+            let calls = supervisor.command.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "no create/run command after denied probe");
+            assert_eq!(calls[0][0], "info");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rootless_probe_precedes_pod_creation() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let spec = PlacementSpec {
+            workspace_id: "workspace".to_string(),
+            account_id: "account".to_string(),
+            image: "localhost/oqto:test".to_string(),
+            workspace_dir: temp.path().join("workspace"),
+            state_dir: temp.path().join("state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: temp.path().join("runtime/runner.sock"),
+            },
+            server_tls: None,
+            environment: Default::default(),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
+            reply: b"true\n".to_vec(),
+            calls: Mutex::new(Vec::new()),
+        });
+        supervisor.start(&spec).await?;
+        let calls = supervisor.command.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0][0], "info");
+        assert_eq!(calls[1][0], "pod");
+        assert_eq!(calls[2][0], "run");
         Ok(())
     }
 }
