@@ -246,9 +246,13 @@ if [[ -z "$RELEASE_ID" ]]; then
 fi
 
 # Validate hosts config TOML once up front.
-if ! python3 - <<PY >/dev/null 2>&1
-import tomllib
-with open("$CONFIG", "rb") as f:
+if ! python3 - "$CONFIG" <<'PY' >/dev/null 2>&1
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+with open(sys.argv[1], "rb") as f:
     tomllib.load(f)
 PY
 then
@@ -450,15 +454,16 @@ load_dependency_requirements() {
         return 0
     fi
 
-    while IFS='=' read -r bin ver; do
-        [[ -z "$bin" || -z "$ver" ]] && continue
-        REQUIRED_DEP_BINARIES+=("$bin")
-        REQUIRED_DEP_VERSIONS["$bin"]="$ver"
-    done < <(python3 - <<PY
-import tomllib
+    local dependency_lines
+    dependency_lines="$(python3 - "$DEPENDENCY_POLICY_FILE" <<'PY'
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 from pathlib import Path
 
-p = Path(r"$DEPENDENCY_POLICY_FILE")
+p = Path(sys.argv[1])
 data = tomllib.loads(p.read_text())
 byteowlz = data.get("byteowlz", {})
 # Deploy/runtime-critical CLI dependencies. hstry is intentionally optional:
@@ -471,7 +476,12 @@ for key in keys:
         continue
     print(f"{key}={v}")
 PY
-)
+)" || { err "Cannot parse dependency policy file: $DEPENDENCY_POLICY_FILE"; return 1; }
+    while IFS='=' read -r bin ver; do
+        [[ -z "$bin" || -z "$ver" ]] && continue
+        REQUIRED_DEP_BINARIES+=("$bin")
+        REQUIRED_DEP_VERSIONS["$bin"]="$ver"
+    done <<< "$dependency_lines"
 }
 
 # Map tool names to their GitHub repo, cargo package, and language.
