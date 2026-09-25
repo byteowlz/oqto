@@ -515,7 +515,6 @@ fn merge_tables(target: &mut toml::value::Table, updates: toml::value::Table) {
 /// Stage and transactionally activate a release artifact: verify -> extract ->
 /// activate. Acquisition (checksum + tarball extraction) is separated from
 /// activation so the transaction itself stays subprocess-free and testable.
-#[allow(clippy::too_many_arguments)]
 fn install_release(
     artifact: &Path,
     checksum: Option<&Path>,
