@@ -289,9 +289,10 @@ update-pi-local:
     ./scripts/dist/check-agent-runtime.sh --install-user
     systemctl --user try-restart oqto-runner
 
-# Exercise the deterministic runtime installer against a local fake release
+# Exercise the deterministic runtime installer and read-only personal onboarding inventory
 _test-pi-runtime:
     ./scripts/dist/test-pi-runtime.sh
+    python3 -B scripts/dist/test-personal-pi-preflight.py
 
 # Re-verify installer behavior plus the currently pinned Pi runtime/checksums
 verify-agent-runtime: _test-pi-runtime
