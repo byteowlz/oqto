@@ -732,10 +732,19 @@ fn validate_staged_release(release_dir: &Path) -> Result<()> {
     if !bin_src.is_dir() {
         anyhow::bail!("Invalid artifact layout: missing {}", bin_src.display());
     }
-    let has_binary = fs::read_dir(&bin_src)
-        .with_context(|| format!("Failed reading {}", bin_src.display()))?
-        .filter_map(|entry| entry.ok())
-        .any(|entry| entry.path().is_file());
+    let mut has_binary = false;
+    for entry in
+        fs::read_dir(&bin_src).with_context(|| format!("Failed reading {}", bin_src.display()))?
+    {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            anyhow::bail!(
+                "Invalid artifact: hidden bin entry {}",
+                entry.path().display()
+            );
+        }
+        has_binary |= entry.path().is_file();
+    }
     if !has_binary {
         anyhow::bail!(
             "Invalid artifact: no binaries staged in {}",
@@ -1089,6 +1098,13 @@ mod tests {
         // Valid layout with a staged binary.
         mk_release_dir(root.path(), "ok", Some("oqto"));
         assert!(validate_staged_release(&root.path().join("ok")).is_ok());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_hidden_bin_placeholders() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "placeholder", Some(".gitkeep"));
+        assert!(validate_staged_release(&root.path().join("placeholder")).is_err());
     }
 
     #[test]

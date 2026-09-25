@@ -19,6 +19,9 @@ rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 
 cp -R dist/immutable "$STAGE_DIR/"
+# The tracked directory placeholder is not a binary and must never become
+# /usr/local/bin/.gitkeep when oqto-setup relinks staged entrypoints.
+rm -f "$STAGE_DIR/immutable/bin/.gitkeep"
 cp -R dist/mutable-templates "$STAGE_DIR/"
 cp dist/manifest.toml "$STAGE_DIR/manifest.toml"
 

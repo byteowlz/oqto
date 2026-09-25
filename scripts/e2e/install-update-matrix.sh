@@ -130,6 +130,11 @@ if [[ "$MODE" != plan ]]; then
   if ! members="$(tar -tzf "$ARTIFACT" 2>&1)"; then
     fail 'verified bundle is not a valid gzip tar archive'
   fi
+  while IFS= read -r member; do
+    case "$member" in
+      "$staging/immutable/bin/".*) fail 'canonical bundle must not ship hidden bin entries (including .gitkeep)' ;;
+    esac
+  done <<< "$members"
   for required in manifest.toml \
     immutable/bin/oqto immutable/bin/oqtoctl immutable/bin/oqto-setup \
     immutable/bin/oqto-runner immutable/bin/oqto-files \

@@ -56,6 +56,16 @@ grep -Fq 'read-only preflight passed' "$scratch/positive"
 grep -Fq 'recovery=not-provided' "$scratch/positive"
 pass 'matching, checksummed bundle is preflighted without claiming a VM snapshot'
 
+printf 'placeholder\n' > "$scratch/bundle/$staging/immutable/bin/.gitkeep"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+rejects 'placeholder shipped as executable entrypoint' 'canonical bundle must not ship hidden bin entries' \
+  --preflight --scenario "$scenario" --profiles personal \
+  --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
+rm "$scratch/bundle/$staging/immutable/bin/.gitkeep"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+
 mkdir -p "$scratch/quoted path's"
 cp "$scratch/$name" "$scratch/quoted path's/$name"
 (cd "$scratch/quoted path's" && sha256sum "$name" > artifact.sha256)
