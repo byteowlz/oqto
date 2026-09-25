@@ -538,6 +538,14 @@ fn install_release(
     let release_id = release_id_from_artifact(artifact)?;
     let release_dir = releases_root.join(&release_id);
 
+    if ["current", "last-good"].iter().any(|link| {
+        read_link_target(&releases_root.join(link)).as_deref() == Some(release_dir.as_path())
+    }) {
+        anyhow::bail!(
+            "refusing to overwrite an active or last-good release: {}",
+            release_dir.display()
+        );
+    }
     if release_dir.exists() {
         fs::remove_dir_all(&release_dir).with_context(|| {
             format!(
@@ -551,13 +559,26 @@ fn install_release(
 
     extract_tarball(artifact, &release_dir)?;
 
-    activate_release(
+    if let Err(activation_error) = activate_release(
         &release_dir,
         releases_root,
         bin_dir,
         doctor_strict,
         keep_releases,
-    )?;
+    ) {
+        // A failed staged release is disposable only after current/last-good
+        // have been restored. Preserve it for diagnosis if rollback failed.
+        let referenced = ["current", "last-good"].iter().any(|link| {
+            read_link_target(&releases_root.join(link)).as_deref() == Some(release_dir.as_path())
+        });
+        if !referenced && let Err(cleanup_error) = fs::remove_dir_all(&release_dir) {
+            anyhow::bail!(
+                "{activation_error}; also failed removing unreferenced stage {}: {cleanup_error}",
+                release_dir.display()
+            );
+        }
+        return Err(activation_error);
+    }
 
     println!("Installed release {}", release_id);
     Ok(())
@@ -583,36 +604,49 @@ fn activate_release(
     // can be rolled back to it (mirrors deploy.sh rollback_host).
     let current_link = releases_root.join("current");
     let previous = read_link_target(&current_link);
+    validate_bin_destinations(
+        &release_dir.join("immutable/bin"),
+        bin_dir,
+        &current_link,
+        previous.as_deref(),
+    )?;
 
     atomic_symlink(&current_link, release_dir)?;
-    relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
-
-    if doctor_strict && let Err(doctor_err) = run_doctor_strict() {
+    let activation = (|| {
+        relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
+        if doctor_strict {
+            run_doctor_strict()?;
+        }
+        Ok::<(), anyhow::Error>(())
+    })();
+    if let Err(cause) = activation {
         match previous.as_ref() {
             Some(prev) => {
-                // Best-effort rollback. A rollback error (e.g. the previous
-                // release predates the immutable/bin layout) must NOT mask the
-                // real cause — the doctor failure — so surface both.
-                let rollback = atomic_symlink(&current_link, prev).and_then(|_| {
-                    // Relink through `current` (now pointing at prev) so the
-                    // stable entrypoints stay consistent with the activation path.
-                    relink_bins(&current_link.join("immutable/bin"), bin_dir)
-                });
+                // Report BOTH errors if rollback also fails; never hide the
+                // original relink or doctor failure.
+                let rollback = atomic_symlink(&current_link, prev)
+                    .and_then(|_| relink_bins(&current_link.join("immutable/bin"), bin_dir));
                 match rollback {
                     Ok(()) => anyhow::bail!(
-                        "Activation failed ({doctor_err}); rolled back to {}",
+                        "Activation failed ({cause}); rolled back to {}",
                         prev.display()
                     ),
                     Err(rb_err) => anyhow::bail!(
-                        "Activation failed ({doctor_err}); rollback to {} ALSO failed \
+                        "Activation failed ({cause}); rollback to {} ALSO failed \
                          ({rb_err}) — bins may be inconsistent, manual intervention needed",
                         prev.display()
                     ),
                 }
             }
-            None => anyhow::bail!(
-                "Activation failed ({doctor_err}); no previous release to roll back to"
-            ),
+            None => match rollback_fresh_activation(&current_link, release_dir, bin_dir) {
+                Ok(()) => anyhow::bail!(
+                    "Activation failed ({cause}); removed fresh release pointer and entrypoints"
+                ),
+                Err(rollback_err) => anyhow::bail!(
+                    "Activation failed ({cause}); fresh rollback ALSO failed ({rollback_err}) \
+                     — release pointers or entrypoints may be inconsistent"
+                ),
+            },
         }
     }
 
@@ -627,6 +661,68 @@ fn activate_release(
         );
     }
 
+    Ok(())
+}
+
+/// A release can only take over entrypoints belonging to the active release.
+/// Refuse arbitrary files, directories and unrelated symlinks before changing
+/// either `current` or a destination in /usr/local/bin.
+fn validate_bin_destinations(
+    bin_src: &Path,
+    bin_dir: &Path,
+    current: &Path,
+    previous: Option<&Path>,
+) -> Result<()> {
+    for entry in fs::read_dir(bin_src)? {
+        let entry = entry?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let dst = bin_dir.join(entry.file_name());
+        match fs::symlink_metadata(&dst) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(meta) if previous.is_some() && meta.file_type().is_symlink() => {
+                let expected = current.join("immutable/bin").join(entry.file_name());
+                if fs::read_link(&dst)? != expected {
+                    anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display());
+                }
+            }
+            Ok(_) => anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display()),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Undo only entrypoints created by this fresh activation. Never unlink an
+/// unrelated file or symlink if the directory changed during activation.
+fn rollback_fresh_activation(current: &Path, release: &Path, bin_dir: &Path) -> Result<()> {
+    if read_link_target(current).as_deref() != Some(release) {
+        anyhow::bail!("current no longer points at the failed release");
+    }
+    for entry in fs::read_dir(release.join("immutable/bin"))? {
+        let entry = entry?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let dst = bin_dir.join(entry.file_name());
+        match fs::symlink_metadata(&dst) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let expected = current.join("immutable/bin").join(entry.file_name());
+                if fs::read_link(&dst)? != expected {
+                    anyhow::bail!(
+                        "managed entrypoint changed during rollback: {}",
+                        dst.display()
+                    );
+                }
+                fs::remove_file(&dst)?;
+            }
+            Ok(_) => anyhow::bail!("unexpected entrypoint during rollback: {}", dst.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    fs::remove_file(current)?;
     Ok(())
 }
 
@@ -833,12 +929,13 @@ fn relink_bins(bin_src: &Path, bin_dir: &Path) -> Result<()> {
         }
         let name = entry.file_name();
         let dst = bin_dir.join(name);
-        if let Ok(meta) = fs::symlink_metadata(&dst) {
-            if meta.file_type().is_dir() {
-                fs::remove_dir_all(&dst)?;
-            } else {
+        match fs::symlink_metadata(&dst) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(meta) if meta.file_type().is_symlink() && fs::read_link(&dst)? == path => {
                 fs::remove_file(&dst)?;
             }
+            Ok(_) => anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display()),
+            Err(error) => return Err(error.into()),
         }
         symlink(&path, &dst)
             .with_context(|| format!("Failed linking {} -> {}", dst.display(), path.display()))?;
@@ -1014,6 +1111,21 @@ mod tests {
                 Some(bin_src.join(b).as_path())
             );
         }
+    }
+
+    #[test]
+    fn relink_bins_never_removes_an_unmanaged_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let bin_src = root.path().join("rel/immutable/bin");
+        fs::create_dir_all(&bin_src).unwrap();
+        fs::write(bin_src.join("oqto"), b"release executable").unwrap();
+        let bin_dir = root.path().join("bin");
+        let unmanaged = bin_dir.join("oqto");
+        fs::create_dir_all(&unmanaged).unwrap();
+        fs::write(unmanaged.join("user-data"), b"preserve").unwrap();
+
+        assert!(relink_bins(&bin_src, &bin_dir).is_err());
+        assert_eq!(fs::read(unmanaged.join("user-data")).unwrap(), b"preserve");
     }
 
     #[test]
