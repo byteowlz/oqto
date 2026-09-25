@@ -835,6 +835,10 @@ test-deploy-mode:
 test-install-matrix:
     ./scripts/e2e/tests/test-install-update-matrix.sh
 
+# Runner-only manifest is a fail-closed candidate, not an install-ready artifact
+test-runner-only-manifest:
+    python3 -B scripts/lint/test_runner_only_manifest.py
+
 # Installed plan/doctor must never compile checkout sources or accept stale binaries
 test-setup-installed-doctor:
     ./scripts/tests/test-setup-installed-doctor.sh

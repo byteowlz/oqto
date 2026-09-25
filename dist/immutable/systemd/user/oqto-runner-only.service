@@ -1,0 +1,14 @@
+[Unit]
+Description=Oqto headless user runner
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/oqto-runner --socket %t/oqto-runner.sock
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h %t /tmp
+
+[Install]
+WantedBy=default.target

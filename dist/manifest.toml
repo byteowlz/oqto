@@ -7,6 +7,14 @@ layout = "transactional"
 root = "/var/lib/oqto/releases"
 current_symlink = "/var/lib/oqto/releases/current"
 
+# Candidate Linux artifact composition only; activation/doctor must explicitly opt in
+# before this target can be installed. Pi chat is mandatory and externally provisioned.
+[targets.runner_only]
+platform = "linux"
+transport = "user-systemd-socket"
+pi_runtime = "external-required"
+assets = ["bin-oqto-setup", "bin-oqto-runner", "bin-oqto-files", "systemd-user-oqto-runner-only"]
+
 # Canonical file classes:
 # - immutable_symlink: shipped in release, exposed via symlink, never edited in-place
 # - mutable_copy_once: seed once from defaults, then user/admin editable
@@ -143,6 +151,19 @@ owner = "root"
 group = "root"
 mode = "0644"
 profiles = ["personal", "team"]
+
+[[assets]]
+id = "systemd-user-oqto-runner-only"
+class = "immutable_symlink"
+kind = "unit-template"
+source = "dist/immutable/systemd/user/oqto-runner-only.service"
+stage_path = "systemd/user/oqto-runner-only.service"
+install_path = "/usr/local/share/oqto/systemd/oqto-runner-only.service"
+install_method = "copy"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["runner_only"]
 
 # ---------- Mutable admin config (copy once) ----------
 

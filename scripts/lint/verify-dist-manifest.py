@@ -26,7 +26,7 @@ ALLOWED_INSTALL_METHODS = {
     "copy_if_missing",
     "copy_template",
 }
-ALLOWED_PROFILES = {"personal", "team"}
+ALLOWED_PROFILES = {"personal", "team", "runner_only"}
 
 
 def fail(errors: list[str], message: str) -> None:
@@ -50,6 +50,10 @@ def main() -> int:
         action="store_true",
         help="Do not fail when [pi_agent_extensions] items are missing on disk "
         "(they are pulled from source at release time via scripts/dist/sync.sh)",
+    )
+    parser.add_argument(
+        "--target", choices=("full", "runner_only"), default="full",
+        help="Validate the full distribution or the explicit Linux runner-only artifact",
     )
     args = parser.parse_args()
 
@@ -84,8 +88,23 @@ def main() -> int:
         assets = []
 
     seen_ids: set[str] = set()
+    if args.target == "runner_only":
+        target = data.get("targets", {}).get("runner_only", {})
+        required = {"bin-oqto-setup", "bin-oqto-runner", "bin-oqto-files", "systemd-user-oqto-runner-only"}
+        declared = target.get("assets")
+        if (target.get("platform"), target.get("transport"), target.get("pi_runtime")) != (
+            "linux", "user-systemd-socket", "external-required"
+        ) or not isinstance(declared, list) or any(not isinstance(item, str) for item in declared) or set(declared) != required or len(declared) != len(required):
+            fail(errors, "runner_only target must declare exact Linux socket, Pi and asset contract")
+        selected = set(target.get("assets", [])) if isinstance(target.get("assets"), list) else set()
+        if selected != required:
+            selected = required  # still report missing required assets
+    else:
+        selected = None
 
     for idx, asset in enumerate(assets):
+        if selected is not None and isinstance(asset, dict) and asset.get("id") not in selected:
+            continue
         prefix = f"assets[{idx}]"
         if not isinstance(asset, dict):
             fail(errors, f"{prefix} must be a table")
@@ -132,6 +151,8 @@ def main() -> int:
                 fail(errors, f"{prefix}.source must live under dist/ (got {source})")
 
             source_path = repo_root / source
+            if ".." in pathlib.PurePosixPath(source).parts or source_path.is_symlink():
+                fail(errors, f"{prefix}.source must not escape the distribution")
             missing_source = not source_path.exists()
             kind = str(asset.get("kind", ""))
             is_binary = kind == "binary"
@@ -143,6 +164,12 @@ def main() -> int:
             )
             if missing_source and not exempt:
                 fail(errors, f"{prefix}.source does not exist: {source}")
+            if asset_id == "systemd-user-oqto-runner-only" and not missing_source:
+                unit = source_path.read_text()
+                if "ExecStart=/usr/local/bin/oqto-runner --socket %t/oqto-runner.sock" not in unit or any(
+                    dependency in unit for dependency in ("hstry.service", "eavs.service", "oqto.service")
+                ):
+                    fail(errors, "runner-only unit must bind the user socket without WebUI/EAVS/hstry dependencies")
 
         install_method = asset.get("install_method")
         if install_method not in ALLOWED_INSTALL_METHODS:
@@ -150,6 +177,9 @@ def main() -> int:
                 errors,
                 f"{prefix}.install_method must be one of {sorted(ALLOWED_INSTALL_METHODS)}",
             )
+
+    if selected is not None and seen_ids != selected:
+        fail(errors, f"runner_only assets missing: {sorted(selected - seen_ids)}")
 
     if errors:
         print("dist manifest validation failed:", file=sys.stderr)

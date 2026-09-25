@@ -26,6 +26,10 @@ jobs:
         run: python3 scripts/tests/test-release-version-sync.py
       - name: Check pinned dist inputs and cache preservation
         run: ./scripts/tests/test-dist-sync-pins.sh
+      - name: Check explicit runner-only target fails closed
+        run: python3 -B scripts/lint/test_runner_only_manifest.py
+      - name: Check read-only personal Pi onboarding inventory
+        run: python3 -B scripts/dist/test-personal-pi-preflight.py
 
   # ---------------------------------------------------------------------------
   # Backend: check, clippy, fmt, test
