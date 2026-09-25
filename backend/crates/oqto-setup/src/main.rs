@@ -810,6 +810,16 @@ fn validate_staged_release(release_dir: &Path) -> Result<()> {
             anyhow::bail!("Invalid full release: missing required binary {name}");
         }
     }
+    let frontend = release_dir.join("immutable/frontend/dist/index.html");
+    let frontend_meta = fs::symlink_metadata(&frontend).with_context(|| {
+        format!(
+            "Invalid full release: missing frontend index {}",
+            frontend.display()
+        )
+    })?;
+    if !frontend_meta.file_type().is_file() || frontend_meta.len() == 0 {
+        anyhow::bail!("Invalid full release: frontend index must be a nonempty regular file");
+    }
     Ok(())
 }
 
@@ -1027,6 +1037,13 @@ mod tests {
                 fs::write(
                     release.join("manifest.toml"),
                     "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+                )
+                .unwrap();
+                let frontend = release.join("immutable/frontend/dist");
+                fs::create_dir_all(&frontend).unwrap();
+                fs::write(
+                    frontend.join("index.html"),
+                    b"<!doctype html><main>Oqto</main>",
                 )
                 .unwrap();
                 for name in [
