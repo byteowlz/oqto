@@ -830,6 +830,9 @@ deploy-quick *ARGS:
 # Verify release/dev dependency policy behavior without deploying
 test-deploy-mode:
     ./scripts/tests/deploy-mode-test.sh
+    ./scripts/tests/test-deploy-private-staging.sh
+    ./scripts/tests/test-deploy-bootstrap-invocation.sh
+    python3 -B scripts/tests/test-verified-setup-bootstrap.py
 
 # Offline install/update matrix preflight regression checks (no root or host changes)
 test-install-matrix:

@@ -139,7 +139,7 @@ if [[ "$MODE" != plan ]]; then
     immutable/bin/oqto immutable/bin/oqtoctl immutable/bin/oqto-setup \
     immutable/bin/oqto-runner immutable/bin/oqto-files \
     immutable/bin/oqto-sandbox immutable/bin/oqto-usermgr \
-    immutable/bin/pi-bridge; do
+    immutable/bin/pi-bridge immutable/frontend/dist/index.html; do
     member="${staging}/${required}"
     member_count="$(grep -Fxc "$member" <<< "$members" || true)"
     [[ "$member_count" == 1 ]] || fail "canonical release bundle must contain exactly one ${member}"
@@ -188,8 +188,8 @@ chmod 0400 "$staged_artifact"
 staged_hash="$(sha256sum "$staged_artifact")"
 staged_hash="${staged_hash%% *}"
 [[ "${staged_hash,,}" == "${expected,,}" ]] || fail 'staged bundle changed since preflight; refusing privileged install'
-tar -xOf "$staged_artifact" "$setup_member" > "$tmpdir/oqto-setup"
-chmod 0500 "$tmpdir/oqto-setup"
+python3 "$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py" \
+  --artifact "$staged_artifact" --checksum "$CHECKSUM" --output "$tmpdir/oqto-setup"
 show_cmd sudo "$tmpdir/oqto-setup" install --artifact "$staged_artifact" --checksum "$CHECKSUM"
 sudo "$tmpdir/oqto-setup" install --artifact "$staged_artifact" --checksum "$CHECKSUM"
 

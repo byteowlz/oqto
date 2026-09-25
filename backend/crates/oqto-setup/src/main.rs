@@ -1,14 +1,16 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::collections::HashMap;
+use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+#[cfg(test)]
+use std::{fs::File, io};
 
 mod acquire;
+mod archive;
 mod deps;
 
 #[derive(Parser)]
@@ -845,98 +847,7 @@ fn release_id_from_artifact(artifact: &Path) -> Result<String> {
 }
 
 fn extract_tarball(artifact: &Path, dst: &Path) -> Result<()> {
-    extract_tarball_with_limits(artifact, dst, 100_000, 2 * 1024 * 1024 * 1024)
-}
-
-fn extract_tarball_with_limits(
-    artifact: &Path,
-    dst: &Path,
-    max_entries: usize,
-    max_unpacked_bytes: u64,
-) -> Result<()> {
-    let root = release_id_from_artifact(artifact)?;
-    let source = File::open(artifact)
-        .with_context(|| format!("Failed opening release artifact {}", artifact.display()))?;
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(source));
-    let mut seen = HashSet::new();
-    let mut total_bytes = 0_u64;
-    for entry in archive.entries().context("Invalid release archive")? {
-        let mut entry = entry.context("Invalid release archive entry")?;
-        let path = entry
-            .path()
-            .context("Invalid release archive path")?
-            .into_owned();
-        let mut components = path.components().filter(|part| *part != Component::CurDir);
-        if components.next() != Some(Component::Normal(root.as_ref())) {
-            anyhow::bail!("Invalid release archive: entry outside its declared root");
-        }
-        let mut relative = PathBuf::new();
-        for component in components {
-            match component {
-                Component::Normal(name) => relative.push(name),
-                _ => anyhow::bail!("Invalid release archive: unsafe member path"),
-            }
-        }
-        let kind = entry.header().entry_type();
-        if !kind.is_file() && !kind.is_dir() {
-            anyhow::bail!("Invalid release archive: links and special files are forbidden");
-        }
-        if relative.as_os_str().is_empty() && !kind.is_dir() {
-            anyhow::bail!("Invalid release archive: root must be a directory");
-        }
-        if !seen.insert(relative.clone()) || seen.len() > max_entries {
-            anyhow::bail!("Invalid release archive: duplicate or excessive members");
-        }
-        let size = entry.size();
-        total_bytes = total_bytes
-            .checked_add(size)
-            .context("Release archive size overflow")?;
-        if total_bytes > max_unpacked_bytes {
-            anyhow::bail!("Invalid release archive: unpacked content exceeds limit");
-        }
-        let mode = entry.header().mode().context("Invalid release file mode")?;
-        if mode & 0o7000 != 0 {
-            anyhow::bail!("Invalid release archive: privileged file mode");
-        }
-        if relative.as_os_str().is_empty() {
-            continue;
-        }
-        let target = dst.join(relative);
-        if kind.is_dir() {
-            if let Ok(existing) = fs::symlink_metadata(&target) {
-                if !existing.file_type().is_dir() {
-                    anyhow::bail!("Invalid release archive: directory collides with file");
-                }
-            } else {
-                fs::create_dir_all(&target)?;
-            }
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&target)?;
-            let copied = io::copy(&mut entry, &mut output)?;
-            if copied != size {
-                anyhow::bail!("Invalid release archive: truncated file data");
-            }
-            fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))?;
-        }
-    }
-    if seen.is_empty() {
-        anyhow::bail!("Invalid release archive: no members");
-    }
-    // Drain bounded tar padding to force the gzip CRC/trailer to be checked.
-    // `tar` stops at the end-of-archive marker, before a decoder necessarily
-    // observes a truncated or corrupt gzip footer.
-    let decoder = archive.into_inner();
-    let padding = io::copy(&mut decoder.take(1_048_577), &mut io::sink())?;
-    if padding > 1_048_576 {
-        anyhow::bail!("Invalid release archive: excessive trailing content");
-    }
-    Ok(())
+    archive::extract_release(artifact, dst, &release_id_from_artifact(artifact)?)
 }
 
 /// Atomically point `link` at `target` (write a sibling temp symlink, then
@@ -1153,8 +1064,9 @@ mod tests {
         builder.into_inner()?.finish()?;
         let stage = root.path().join("stage");
         fs::create_dir(&stage)?;
-        let error = extract_tarball_with_limits(&artifact, &stage, 2, u64::MAX)
-            .expect_err("third entry must exceed the configured count");
+        let error =
+            archive::extract_with_limits(&artifact, &stage, Some("oqto-count-test"), 2, u64::MAX)
+                .expect_err("third entry must exceed the configured count");
         assert!(error.to_string().contains("excessive members"));
         assert!(!stage.join("third").exists());
         Ok(())

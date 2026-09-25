@@ -231,22 +231,28 @@ fn is_executable(path: &Path) -> bool {
 /// byteowlz tool tarballs). `LICENSE`/`README` etc. are non-executable, skipped.
 fn pick_binaries(files: &[(PathBuf, bool)]) -> Vec<PathBuf> {
     // Files directly under a `bin/` dir, paired with that bin dir's depth.
-    let in_bin: Vec<(&PathBuf, usize)> = files
+    let in_bin: Vec<(&PathBuf, usize, bool)> = files
         .iter()
         .filter(|(p, _)| {
             p.parent()
                 .and_then(Path::file_name)
                 .is_some_and(|n| n == "bin")
         })
-        .map(|(p, _)| (p, p.parent().map_or(0, |d| d.components().count())))
+        .map(|(p, executable)| {
+            (
+                p,
+                p.parent().map_or(0, |d| d.components().count()),
+                *executable,
+            )
+        })
         .collect();
     // Prefer only the shallowest `bin/` (the bundle's top-level bin — never a
     // nested `lib/.../bin`, e.g. a bundled node helper).
-    if let Some(min) = in_bin.iter().map(|(_, depth)| *depth).min() {
+    if let Some(min) = in_bin.iter().map(|(_, depth, _)| *depth).min() {
         return in_bin
             .iter()
-            .filter(|(_, depth)| *depth == min)
-            .map(|(p, _)| (*p).clone())
+            .filter(|(_, depth, executable)| *depth == min && *executable)
+            .map(|(p, _, _)| (*p).clone())
             .collect();
     }
     // Flat tarballs: every executable regular file.
@@ -262,37 +268,34 @@ fn pick_binaries(files: &[(PathBuf, bool)]) -> Vec<PathBuf> {
 /// names. This is the single install step the duplicate acquisition paths
 /// (install.sh, docker, setup module 08, deploy remediate) converge on.
 pub fn install_staged(staged: &[PathBuf], bin_dir: &Path) -> Result<Vec<String>> {
-    std::fs::create_dir_all(bin_dir)
-        .with_context(|| format!("creating bin dir {}", bin_dir.display()))?;
     let mut installed = Vec::new();
     for tarball in staged {
-        let name = tarball
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("pkg");
-        let extract = tarball.with_file_name(format!(".extract-{name}"));
-        let _ = std::fs::remove_dir_all(&extract);
-        std::fs::create_dir_all(&extract)?;
-
-        let status = Command::new("tar")
-            .arg("-xzf")
-            .arg(tarball)
-            .arg("-C")
-            .arg(&extract)
-            .status()
-            .with_context(|| format!("spawning tar for {}", tarball.display()))?;
-        if !status.success() {
-            bail!("failed to extract {}", tarball.display());
-        }
+        // Never reuse or remove a predictable .extract-* tree in an untrusted
+        // download directory. A private tempdir cannot be replaced with a
+        // symlink into a host path by another principal.
+        let parent = tarball
+            .parent()
+            .context("staged tool archive has no parent")?;
+        let extract = tempfile::Builder::new()
+            .prefix(".oqto-acq-")
+            .tempdir_in(parent)?;
+        crate::archive::extract_tool_bundle(tarball, extract.path())
+            .with_context(|| format!("rejecting unsafe tool archive {}", tarball.display()))?;
 
         let mut files = Vec::new();
-        walk_files(&extract, &mut files)?;
+        walk_files(extract.path(), &mut files)?;
         let pairs: Vec<(PathBuf, bool)> = files
             .iter()
             .map(|p| (p.clone(), is_executable(p)))
             .collect();
 
-        for src in pick_binaries(&pairs) {
+        let binaries = pick_binaries(&pairs);
+        if binaries.is_empty() {
+            bail!("staged tool archive contains no executable binaries");
+        }
+        std::fs::create_dir_all(bin_dir)
+            .with_context(|| format!("creating bin dir {}", bin_dir.display()))?;
+        for src in binaries {
             let bin = src
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -320,7 +323,6 @@ pub fn install_staged(staged: &[PathBuf], bin_dir: &Path) -> Result<Vec<String>>
                 .with_context(|| format!("installing {bin} -> {}", dest.display()))?;
             installed.push(bin);
         }
-        let _ = std::fs::remove_dir_all(&extract);
     }
     Ok(installed)
 }
@@ -546,7 +548,83 @@ mod tests {
         );
     }
 
-    // Note: install_staged()'s IO (tar extract + copy + chmod) is verified
-    // end-to-end on a real host (the cargo-test sandbox lacks a usable tar);
-    // its selection logic is covered by pick_binaries_* above.
+    #[test]
+    fn staged_tool_archive_installs_only_executable_top_level_bin() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let tarball = root.path().join("tool.tar.gz");
+        let encoded = flate2::write::GzEncoder::new(
+            std::fs::File::create(&tarball)?,
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoded);
+        for (name, data, mode) in [
+            ("pkg/bin/tool", &b"tool"[..], 0o755),
+            ("pkg/bin/README", &b"docs"[..], 0o644),
+            ("pkg/lib/sub/bin/helper", &b"helper"[..], 0o755),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(data.len() as u64);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder.append_data(&mut header, name, data)?;
+        }
+        builder.into_inner()?.finish()?;
+        let bin_dir = root.path().join("installed-bin");
+        let installed = install_staged(&[tarball], &bin_dir)?;
+        assert_eq!(installed, vec!["tool"]);
+        assert_eq!(std::fs::read(bin_dir.join("tool"))?, b"tool");
+        assert!(!bin_dir.join("README").exists());
+        assert!(!bin_dir.join("helper").exists());
+        assert!(
+            std::fs::read_dir(root.path())?
+                .filter_map(std::result::Result::ok)
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".oqto-acq-"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn staged_tool_archive_rejects_symlink_to_host_file() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let outside = root.path().join("outside-secret");
+        std::fs::write(&outside, b"do not install host-owned files")?;
+        let tarball = root.path().join("tool.tar.gz");
+        let encoded = flate2::write::GzEncoder::new(
+            std::fs::File::create(&tarball)?,
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoded);
+        let mut binary = tar::Header::new_gnu();
+        binary.set_entry_type(tar::EntryType::Regular);
+        binary.set_size(5);
+        binary.set_mode(0o755);
+        binary.set_cksum();
+        builder.append_data(&mut binary, "bin/tool", &b"hello"[..])?;
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Symlink);
+        link.set_size(0);
+        link.set_mode(0o755);
+        link.set_link_name("../../outside-secret")?;
+        link.set_cksum();
+        builder.append_data(&mut link, "bin/escape", std::io::empty())?;
+        builder.into_inner()?.finish()?;
+        let bin_dir = root.path().join("installed-bin");
+        assert!(install_staged(&[tarball], &bin_dir).is_err());
+        assert_eq!(std::fs::read(outside)?, b"do not install host-owned files");
+        assert!(!bin_dir.join("escape").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn pick_binaries_does_not_promote_nonexecutable_bin_files() {
+        let files = vec![
+            (PathBuf::from("/x/app/bin/app"), true),
+            (PathBuf::from("/x/app/bin/README"), false),
+        ];
+        assert_eq!(pick_binaries(&files), vec![PathBuf::from("/x/app/bin/app")]);
+    }
 }

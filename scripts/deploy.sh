@@ -287,6 +287,42 @@ host_exec_sudo() {
     host_exec "$is_local" "$ssh_target" "sudo -n bash -lc $(printf '%q' "$inner")"
 }
 
+# Stage release bytes in a per-host, user-owned private directory instead of
+# predictable /tmp filenames. A failed copy never selects a PATH installer.
+stage_private_remote_release() {
+    local ssh_target="$1" remote_dir artifact_source checksum_source
+    local archive_name="${DEPLOY_ARTIFACT##*/}" checksum_name="${DEPLOY_CHECKSUM##*/}"
+    if [[ ! "$archive_name" =~ ^oqto-v[0-9][a-zA-Z0-9._+-]*-(x86_64|aarch64)-unknown-linux-gnu\.tar\.gz$ \
+        || ! "$checksum_name" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
+        err "unsafe release or checksum basename for remote staging"
+        return 1
+    fi
+    artifact_source="$(realpath -e -- "$DEPLOY_ARTIFACT")" || return 1
+    checksum_source="$(realpath -e -- "$DEPLOY_CHECKSUM")" || return 1
+    if [[ "${artifact_source##*/}" != "$archive_name" || "${checksum_source##*/}" != "$checksum_name" \
+        || "$artifact_source" == *:* || "$checksum_source" == *:* ]]; then
+        err "remote staging refuses ambiguous source paths"
+        return 1
+    fi
+    remote_dir="$(ssh "$ssh_target" 'umask 077; mktemp -d /tmp/oqto-deploy.XXXXXXXX')" || return 1
+    if [[ ! "$remote_dir" =~ ^/tmp/oqto-deploy\.[a-zA-Z0-9]{8}$ ]]; then
+        err "remote staging did not return a private canonical directory"
+        return 1
+    fi
+    if ! scp -- "$artifact_source" "$checksum_source" "$ssh_target:$remote_dir/" >/dev/null; then
+        ssh "$ssh_target" "rm -rf -- $(printf '%q' "$remote_dir")" >/dev/null 2>&1 || true
+        err "failed to stage release artifact and checksum privately"
+        return 1
+    fi
+    printf '%s\n' "$remote_dir"
+}
+
+cleanup_private_remote_release() {
+    local ssh_target="$1" remote_dir="$2"
+    [[ "$remote_dir" =~ ^/tmp/oqto-deploy\.[a-zA-Z0-9]{8}$ ]] || return 1
+    ssh "$ssh_target" "rm -rf -- $(printf '%q' "$remote_dir")"
+}
+
 SUDO_KEEPALIVE_PIDS=()
 
 stop_sudo_keepalive() {
@@ -510,41 +546,49 @@ acquire_managed_tools() {
     emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "start" "deps.acquire.start"
     log "  Acquiring managed tools via oqto-setup acquire on $name..."
 
-    # Make the artifact reachable on the target (local: in place; remote: copy).
-    local artifact_on_target=""
-    if [[ -n "${DEPLOY_ARTIFACT:-}" && -f "$DEPLOY_ARTIFACT" ]]; then
+    # The new staged binary is required when deploying an artifact. Only the
+    # explicit legacy/no-artifact path may use a previously installed binary.
+    local artifact_on_target="" checksum_on_target="" remote_dir=""
+    if [[ -n "${DEPLOY_ARTIFACT:-}" ]]; then
         if [[ "$is_local" == "true" ]]; then
             artifact_on_target="$DEPLOY_ARTIFACT"
+            checksum_on_target="$DEPLOY_CHECKSUM"
+        elif [[ "$DRY_RUN" == "true" ]]; then
+            artifact_on_target="/tmp/oqto-deploy.DRYRUN00/${DEPLOY_ARTIFACT##*/}"
+            checksum_on_target="/tmp/oqto-deploy.DRYRUN00/${DEPLOY_CHECKSUM##*/}"
         else
-            artifact_on_target="/tmp/$(basename "$DEPLOY_ARTIFACT")"
-            if ! scp "$DEPLOY_ARTIFACT" "$ssh_target:$artifact_on_target"; then
-                err "  failed to copy deploy artifact to $name"
-                return 1
-            fi
+            remote_dir="$(stage_private_remote_release "$ssh_target")" || return 1
+            artifact_on_target="$remote_dir/${DEPLOY_ARTIFACT##*/}"
+            checksum_on_target="$remote_dir/${DEPLOY_CHECKSUM##*/}"
         fi
     fi
 
-    local script
+    local script bootstrap_source artifact_literal checksum_literal name_literal
+    bootstrap_source="$(< "$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py")"
+    [[ -n "$bootstrap_source" ]] || { err "verified installer bootstrap missing"; return 1; }
+    printf -v artifact_literal '%q' "$artifact_on_target"
+    printf -v checksum_literal '%q' "$checksum_on_target"
+    printf -v name_literal '%q' "${DEPLOY_ARTIFACT##*/}"
     script="$(cat <<REMOTE_EOF
 set -euo pipefail
+umask 077
 tmpdir="\$(mktemp -d)"
-trap 'rm -rf "\$tmpdir"' EXIT
-
-# Prefer the oqto-setup shipped in the artifact being deployed (no version skew).
+trap 'rm -rf -- "\$tmpdir"' EXIT
 setup="oqto-setup"
-artifact="${artifact_on_target}"
-if [[ -n "\$artifact" && -f "\$artifact" ]]; then
-    if ! tar -xzf "\$artifact" -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
-        tar -xzf "\$artifact" -C "\$tmpdir" 2>/dev/null || true
-    fi
-    found="\$(find "\$tmpdir" -type f -name oqto-setup 2>/dev/null | head -1)"
-    if [[ -n "\$found" ]]; then chmod +x "\$found"; setup="\$found"; fi
-fi
-if [[ "\$setup" == "oqto-setup" ]] && ! command -v oqto-setup >/dev/null 2>&1; then
-    echo "oqto-setup not available on target (no artifact, none on PATH)" >&2
+artifact=$artifact_literal
+checksum=$checksum_literal
+release_name=$name_literal
+if [[ -n "\$artifact" ]]; then
+    cp -- "\$artifact" "\$tmpdir/\$release_name"
+    cp -- "\$checksum" "\$tmpdir/release.sha256"
+    python3 - --artifact "\$tmpdir/\$release_name" --checksum "\$tmpdir/release.sha256" --output "\$tmpdir/oqto-setup" <<'PY_BOOTSTRAP'
+$bootstrap_source
+PY_BOOTSTRAP
+    setup="\$tmpdir/oqto-setup"
+elif ! command -v oqto-setup >/dev/null 2>&1; then
+    echo 'oqto-setup not available on target without an artifact' >&2
     exit 1
 fi
-
 cat > "\$tmpdir/dependencies.toml" <<'DEPS_MANIFEST_EOF'
 $(cat "$manifest")
 DEPS_MANIFEST_EOF
@@ -558,15 +602,19 @@ esac
 REMOTE_EOF
 )"
 
-    if host_exec_sudo "$is_local" "$ssh_target" "$script"; then
+    local status=0
+    host_exec_sudo "$is_local" "$ssh_target" "$script" || status=$?
+    if [[ -n "$remote_dir" ]]; then
+        cleanup_private_remote_release "$ssh_target" "$remote_dir" || status=1
+    fi
+    if [[ "$status" -eq 0 ]]; then
         emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "pass" "deps.acquire.pass"
         ok "  Acquired managed tools on $name"
         return 0
-    else
-        emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "fail" "deps.acquire.fail"
-        err "  Failed to acquire managed tools on $name"
-        return 1
     fi
+    emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "fail" "deps.acquire.fail"
+    err "  Failed to acquire managed tools on $name"
+    return 1
 }
 
 
@@ -1926,60 +1974,62 @@ build_artifacts() {
 
 deploy_via_oqto_setup_install() {
     local name="$1" ssh_target="$2" is_local="$3"
-    local artifact_basename remote_artifact remote_checksum
-
-    artifact_basename="$(basename "$DEPLOY_ARTIFACT")"
-    remote_artifact="/tmp/${artifact_basename}"
-
-    # Paths of the artifact and its mandatory checksum on the target host.
-    local artifact_path checksum_path=""
+    local artifact_basename="${DEPLOY_ARTIFACT##*/}"
+    if [[ ! "$artifact_basename" =~ ^oqto-v[0-9][a-zA-Z0-9._+-]*-(x86_64|aarch64)-unknown-linux-gnu\.tar\.gz$ ]]; then
+        err "expected a canonical full Linux release artifact name"
+        return 1
+    fi
+    local artifact_path checksum_path remote_dir=""
     if [[ "$is_local" == "true" ]]; then
         artifact_path="$DEPLOY_ARTIFACT"
         checksum_path="$DEPLOY_CHECKSUM"
+    elif [[ "$DRY_RUN" == "true" ]]; then
+        artifact_path="/tmp/oqto-deploy.DRYRUN00/$artifact_basename"
+        checksum_path="/tmp/oqto-deploy.DRYRUN00/${DEPLOY_CHECKSUM##*/}"
     else
-        artifact_path="$remote_artifact"
-        remote_checksum="/tmp/$(basename "$DEPLOY_CHECKSUM")"
-        checksum_path="$remote_checksum"
+        remote_dir="$(stage_private_remote_release "$ssh_target")" || return 1
+        artifact_path="$remote_dir/$artifact_basename"
+        checksum_path="$remote_dir/${DEPLOY_CHECKSUM##*/}"
     fi
 
-    # Install using the oqto-setup shipped INSIDE the artifact, run by absolute
-    # path under sudo. A bare `sudo oqto-setup` is unreliable on a target that
-    # has no oqto-setup yet, or whose sudo secure_path excludes /usr/local/bin
-    # (observed: "sudo: oqto-setup: command not found"). The bundle ships
-    # bin/oqto-setup; extracting + running it also guarantees the deployed
-    # version does the install.
-    local script
+    # The single bootstrap verifies a private archive copy and emits only one
+    # bounded regular installer. oqto-setup remains the activation engine.
+    local script bootstrap_source artifact_literal checksum_literal name_literal
+    bootstrap_source="$(< "$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py")"
+    [[ -n "$bootstrap_source" ]] || { err "verified installer bootstrap missing"; return 1; }
+    printf -v artifact_literal '%q' "$artifact_path"
+    printf -v checksum_literal '%q' "$checksum_path"
+    printf -v name_literal '%q' "$artifact_basename"
     script="$(cat <<REMOTE_EOF
-set -e
+set -euo pipefail
+umask 077
+artifact=$artifact_literal
+checksum=$checksum_literal
+release_name=$name_literal
 tmpdir="\$(mktemp -d)"
-trap 'rm -rf "\$tmpdir"' EXIT
-if ! tar -xzf '$artifact_path' -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
-    tar -xzf '$artifact_path' -C "\$tmpdir"
-fi
-setup="\$(find "\$tmpdir" -type f -name oqto-setup | head -1)"
-[ -n "\$setup" ] || { echo 'oqto-setup not found in artifact' >&2; exit 1; }
-chmod +x "\$setup"
-# --doctor-strict false: the strict post-activation doctor requires the oqto
-# user services to be enabled+active, but deploy.sh starts them in the NEXT
-# phase (restart_services_ordered) and validates with health_check_host. Running
-# the gate here fails premature on a fresh host (and misdetects the profile as
-# single-user on a not-yet-configured multi-user host). deploy owns health.
-"\$setup" install --doctor-strict false --artifact '$artifact_path' --checksum '$checksum_path'
+trap 'rm -rf -- "\$tmpdir"' EXIT
+cp -- "\$artifact" "\$tmpdir/\$release_name"
+cp -- "\$checksum" "\$tmpdir/release.sha256"
+python3 - --artifact "\$tmpdir/\$release_name" --checksum "\$tmpdir/release.sha256" --output "\$tmpdir/oqto-setup" <<'PY_BOOTSTRAP'
+$bootstrap_source
+PY_BOOTSTRAP
+# Service startup and runtime Pi/sandbox health still require later gates.
+"\$tmpdir/oqto-setup" install --doctor-strict false --artifact "\$tmpdir/\$release_name" --checksum "\$tmpdir/release.sha256"
 REMOTE_EOF
 )"
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
-        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --doctor-strict false --artifact '$artifact_path' --checksum '$checksum_path'"
+        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} stage artifact and checksum in a private directory on $ssh_target"
+        echo -e "${YELLOW}  [dry-run]${NC} verify checksum and canonical archive, extract one bounded installer, then activate with oqto-setup (doctor deferred)"
         return 0
     fi
 
-    if [[ "$is_local" != "true" ]]; then
-        scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
-        scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
+    local status=0
+    host_exec_sudo "$is_local" "$ssh_target" "$script" || status=$?
+    if [[ -n "$remote_dir" ]]; then
+        cleanup_private_remote_release "$ssh_target" "$remote_dir" || status=1
     fi
-
-    host_exec_sudo "$is_local" "$ssh_target" "$script"
+    return "$status"
 }
 
 # Sync the agent runtime (pi + byteowlz pi-extensions) to the pinned versions

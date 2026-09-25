@@ -16,6 +16,8 @@ name="oqto-v9.8.7-${target}.tar.gz"
 staging="${name%.tar.gz}"
 mkdir -p "$scratch/bundle/$staging/immutable/bin"
 printf 'manifest_version = 1\n' > "$scratch/bundle/$staging/manifest.toml"
+mkdir -p "$scratch/bundle/$staging/immutable/frontend/dist"
+printf '<main>Oqto</main>\n' > "$scratch/bundle/$staging/immutable/frontend/dist/index.html"
 for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-usermgr pi-bridge; do
   cp /usr/bin/true "$scratch/bundle/$staging/immutable/bin/$bin"
   chmod 0755 "$scratch/bundle/$staging/immutable/bin/$bin"
@@ -63,6 +65,16 @@ rejects 'placeholder shipped as executable entrypoint' 'canonical bundle must no
   --preflight --scenario "$scenario" --profiles personal \
   --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
 rm "$scratch/bundle/$staging/immutable/bin/.gitkeep"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+
+rm "$scratch/bundle/$staging/immutable/frontend/dist/index.html"
+tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
+(cd "$scratch" && sha256sum "$name" > artifact.sha256)
+rejects 'full bundle missing frontend index' 'canonical release bundle must contain exactly one' \
+  --preflight --scenario "$scenario" --profiles personal \
+  --artifact "$scratch/$name" --checksum "$scratch/artifact.sha256"
+printf '<main>Oqto</main>\n' > "$scratch/bundle/$staging/immutable/frontend/dist/index.html"
 tar -C "$scratch/bundle" -czf "$scratch/$name" "$staging"
 (cd "$scratch" && sha256sum "$name" > artifact.sha256)
 
