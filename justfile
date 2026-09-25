@@ -830,6 +830,10 @@ deploy-quick *ARGS:
 test-deploy-mode:
     ./scripts/tests/deploy-mode-test.sh
 
+# Offline install/update matrix preflight regression checks (no root or host changes)
+test-install-matrix:
+    ./scripts/e2e/tests/test-install-update-matrix.sh
+
 # Deploy only backend binaries (skip frontend)
 deploy-backend *ARGS:
     ./scripts/deploy.sh --skip-frontend {{ARGS}}

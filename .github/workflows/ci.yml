@@ -13,6 +13,14 @@ permissions:
   contents: read
 
 jobs:
+  install-matrix-safety:
+    name: Install matrix / offline preflight safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test plan and preflight without privileges
+        run: ./scripts/e2e/tests/test-install-update-matrix.sh
+
   # ---------------------------------------------------------------------------
   # Backend: check, clippy, fmt, test
   # ---------------------------------------------------------------------------

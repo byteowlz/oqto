@@ -1,0 +1,10 @@
+# Installation matrix safety checklist
+
+Read ADR-0016 (file classes), ADR-0018 (one activation/acquisition engine), ADR-0020 (platform supervisors), ADR-0005 (oqto-log authority), and the current `oqto-vemr.8` tracker issue before editing install/deploy test paths.
+
+- Name the target host, OS/architecture, scenario (`fresh` or `upgrade`), **one** setup profile, and the operator's VM snapshot reference before privileged execution. A snapshot string is an operator attestation, not a verified Proxmox snapshot.
+- Plan/preflight must be read-only: never run sudo, install dependencies, build, restart services, or write user/admin config. Source builds are a separate explicit development path, not the release-install matrix.
+- Execute only a version/target-matched release artifact with a matching checksum obtained from a **trusted independent release source**; a hash generated locally from untrusted downloaded bytes proves nothing. Reject missing or ambiguous checksums and unsupported platforms before invoking the installer. A checksum checks integrity, not publisher authenticity; release signing remains a separate gate. Installation and rollback belong to `oqto-setup`, never a second shell implementation.
+- A `fresh` scenario must refuse a pre-existing active Oqto release; an `upgrade` scenario must require one. Run personal and team on **separately reset** test hosts/snapshots, not sequentially on one mutable host.
+- Preserve `/etc/oqto`, `~/.pi`, other user-owned state, existing services, and pre-existing tools until the operator authorizes an isolated VM mutation. Never touch hstry or treat its data as Oqto history.
+- Proof includes clean install, reinstall/idempotence, explicit upgrade, failing staged artifact, rollback to the prior release, strict doctor, Pi RPC/model discovery, and sandbox/profile process tests. A command preview is not install proof.

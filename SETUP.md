@@ -27,40 +27,42 @@ Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisit
 
 ### Bootstrap install (fresh machine, no repo clone)
 
-Use the bootstrap installer to fetch `oqto-setup` and a release artifact from
-GitHub Releases, verify checksums, install `oqto-setup`, and activate Oqto.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | bash
-```
-
-Pin a specific version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
-  bash -s -- --version v0.4.0
-```
-
-Run setup immediately if this repo is already checked out:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
-  bash -s -- --run-setup-sh -- --personal
-```
-
-Repository-clone/dev path still works and is documented below.
+**Not yet a verified release path.** `scripts/install.sh` currently expects a
+standalone `oqto-setup` asset and per-asset `.sha256` files, whereas the release
+workflow publishes a bundle and combined `checksums.txt`. Until the bootstrap
+path is reconciled and exercised on a clean VM, do not pipe it into a shell as
+installation advice. The repository-clone/dev path is documented below; the
+release-artifact matrix can be preflighted safely as described next.
 
 ### Install/update validation matrix
 
-Use the matrix runner to validate fresh artifact install + doctor strict + setup wrapper paths.
+Use **one isolated, snapshotted Linux VM per profile/scenario**. Plan and
+preflight are read-only; preflight validates the host state, matching target,
+bundle hash and matching embedded `oqto-setup` without installing anything.
+The `--snapshot-id` is an operator attestation, **not** a Proxmox snapshot
+lookup. The installer currently needs a per-artifact SHA-256 line; combined
+`checksums.txt` is rejected rather than misread as a different artifact.
 
 ```bash
-# Plan mode (prints commands)
-./scripts/e2e/install-update-matrix.sh
-
-# Execute for personal profile only
-./scripts/e2e/install-update-matrix.sh --execute --profiles "personal"
+./scripts/e2e/install-update-matrix.sh  # read-only overview
+# Set these to the operator-created snapshot and matching artifact/checksum:
+snapshot_id=before-oqto-install
+artifact=dist/out/oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+checksum=dist/out/oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
+./scripts/e2e/install-update-matrix.sh --preflight \
+  --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
+  --artifact "$artifact" --checksum "$checksum"
+# Only after reviewing preflight and the VM snapshot, on that VM:
+./scripts/e2e/install-update-matrix.sh --execute \
+  --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
+  --artifact "$artifact" --checksum "$checksum"
 ```
+
+A host with an existing active Oqto release is an **upgrade** candidate, not
+a clean-install host. macOS setup is not implemented and this Linux matrix
+fails closed on macOS. An execution run does not yet prove Pi/provider,
+sandbox profile, rollback or Windows Desktop behavior; those require separate
+functional gates. See `docs/agents/install-matrix-safety.md`.
 
 
 ### Option 1: Interactive Setup Script (Development/Local)
