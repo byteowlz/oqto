@@ -71,7 +71,7 @@ sandbox profile, rollback or Windows Desktop behavior; those require separate
 functional gates. `./setup.sh --personal --doctor` and `--plan` use the installed
 `oqtoctl`/`oqto-setup` and fail closed if incompatible; they do not silently
 compile checkout sources. For a deliberate development-only source run, invoke
-`cargo run` explicitly from `backend/`. See `docs/agents/install-matrix-safety.md`.
+`cargo run` explicitly from `backend/`. See `docs/agents/install-matrix-safety.md` for the checklist and `docs/release/readiness-matrix.md` for observed cross-platform evidence and blockers.
 
 
 ### Option 1: Interactive Setup Script (Development/Local)

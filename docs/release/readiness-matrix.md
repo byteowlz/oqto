@@ -1,0 +1,31 @@
+# Release readiness matrix (2026-09-25)
+
+This is an evidence ledger, **not** a release announcement. `oqto-log` is authoritative for runner chat history; hstry is outside Oqto. Candidate artifacts below were built locally from `feat/install-matrix-safety`, not published/signed releases. Do not deploy them to a working host.
+
+## Platform × placement × client
+
+| Platform / placement / client | Proven | Remaining release gate |
+| --- | --- | --- |
+| Ubuntu 22.04 x86_64, local personal, WebUI/CLI | Canonical source-built artifact validates and activates with **doctor deferred**; fail-closed strict fresh-install rollback and failed-update rollback proven on disposable `ubuntu-builder` (issue `oqto-vemr.3.1`). | Strict doctor has six errors: `oqto-runner`, `oqto`, `eavs` units not installed/enabled/active; package lacks frontend and Pi runtime. No functioning chat or GUI proof (`oqto-vemr.9.1`). |
+| Linux team, sandboxed runner, Workbench/Pi TUI | Runner/sandbox unit and native runner work exists on isolated branches; no clean team install executed here. | OS-backed narrow-root Pi confinement and escape tests; runner session ownership/revocation, coherent model/runtime provisioning; team setup/update/rollback/uninstall + Pi RPC within Herdr. |
+| macOS runner host + native Desktop personal client | Separate runner native-macOS tests and authenticated disposable transport proofs; Desktop branch `feat/personal-runner-client` passed Mac Studio `just check-all` and source-only integration review. | No macOS installer, clean VM, Developer ID/notarization, MacBook GUI → Studio deployment, or authorization to expose full-principal runner. Remote Files remains gated. |
+| Linux/macOS managed remote placement + WebUI | Protocol/mTLS and runner wire paths have isolated test evidence. | Per-enrolled-client ownership/revocation, placement/search/race-safe remote Files, sandbox narrow-root proof, reconnect/reload traces against durable `oqto-log`. |
+| Native Windows Desktop → managed/personal runner | No native Windows build/install/GUI proof. | Windows VM, native packaging and system integration, credential/config preservation, GUI session/Files/reconnect tests. Cross-compilation is insufficient. |
+
+## Linux installer evidence
+
+- Worktree: `/home/wismut/byteowlz/oqto-install-matrix-safety`, branch `feat/install-matrix-safety`. VM's original Oqto release is preserved under `/var/lib/oqto/releases.before-e2e-20260925`, with a root-only SHA-256-checked archive at `/var/backups/oqto-e2e-before-clean-20260925.tar.gz`. Original `~/.config/oqto` was copied, compared, and moved intact into the VM test workspace. No unrelated VM services were stopped.
+- Public `v0.5.0` release: published hash matches, but flat `bin/` bundle lacks canonical manifest/`immutable/bin/` and its embedded `oqto-setup` needs GLIBC_2.39; Ubuntu 22.04 has GLIBC_2.35. **Not a valid clean-install candidate**.
+- Local candidate: Cargo workspace 0.5.0 built on Ubuntu 22.04; `scripts/dist/sync.sh` used pinned template/extension commits; 30-asset dist manifest and per-artifact SHA-256 checked. The embedded installer needs only GLIBC_2.34. This proves compatibility with this test VM, **not** the declared wider Linux glibc floor or release authenticity.
+- Negative default-strict fresh install returned nonzero (service contract missing). After `oqto-vemr.3.1`, independent post-check found no `current`, `last-good`, failed stage, managed links, or `.gitkeep` in `/usr/local/bin`; prior user config was byte-identical. `oqto-setup install --doctor-strict false` succeeded only as an explicit orchestrator-deferred activation, **not** an end-to-end pass.
+- Upgrade with deferred doctor advanced `current` and `last-good` to the next candidate. A deliberate strict-doctor failure on the following candidate returned nonzero, restored the prior release and all eight entrypoints, and removed the failed stage. Reinstall of the active release ID refused to overwrite it; content-aware idempotence is still unimplemented. Clean uninstall was not exercised (no `oqto-setup uninstall` contract yet).
+- Gates run: `just test-install-matrix`, `just test-setup-installed-doctor`, `just test-release-version-sync`, `just test-dist-sync-pins`, `just test-deploy-mode`, strict manifest validation, `cargo test --release -p oqto-setup` (28 unit + 5 CLI integration), `cargo clippy --release -p oqto-setup --all-targets -- -D warnings`, `cargo fmt --all -- --check`, Rust AI guardrails. Real pinned Pi 0.80.10 download/hash probe failed clean-host RPC model discovery: no models; the runtime was **not** promoted.
+
+## Required before calling it a release
+
+1. Close `oqto-vemr.9.1`: complete/signed version-coherent Linux artifact, frontend, service supervisor units, Pi/model setup and preserve-first configuration; strict doctor must pass after healthy startup on fresh personal **and** team hosts.
+2. Close `oqto-vemr.8` and `.9`: make published artifacts match the canonical manifest/installer, exercise fresh/update/rollback/uninstall and dependency installation from artifacts rather than source. Test both profiles on independently reset hosts. Treat the snapshot/`--disposable-vm` choice as operator authorization, not verification of a hypervisor snapshot.
+3. Prove runner sandbox policy, Files placement/race gates, session identity/revocation and durable reconnect before broad remote-client enrollment. Keep Mac Studio live runner unchanged without explicit operator grant.
+4. Run clean native macOS and Windows GUI/install/update/uninstall tests on VMs, including distribution signing/Gatekeeper for macOS and native Windows packaging. No VM evidence means **blocked**, not passed.
+
+Installer-specific safety checklist: [`docs/agents/install-matrix-safety.md`](../agents/install-matrix-safety.md). Canonical design: ADR-0016, ADR-0018, ADR-0020, ADR-0021. Desktop source review lives in the separate Desktop repository; a textual merge does not resolve its collided trx IDs.
