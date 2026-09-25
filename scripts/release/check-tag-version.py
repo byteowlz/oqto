@@ -2,6 +2,7 @@
 """Fail a release before packaging if tag, Cargo and dependency versions diverge."""
 
 import argparse
+import json
 from pathlib import Path
 import re
 
@@ -11,16 +12,18 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 
-def check(tag: str, cargo_path: Path, deps_path: Path) -> None:
+def check(tag: str, cargo_path: Path, deps_path: Path, package_path: Path) -> None:
     if not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?", tag):
         raise ValueError("release requires an explicit v<semver> tag")
     cargo = tomllib.loads(cargo_path.read_text())
     deps = tomllib.loads(deps_path.read_text())
     declared = cargo["workspace"]["package"]["version"]
     pinned = deps["oqto"]["version"]
-    if declared != tag[1:] or pinned != tag[1:]:
+    frontend = json.loads(package_path.read_text())["version"]
+    if declared != tag[1:] or pinned != tag[1:] or frontend != tag[1:]:
         raise ValueError(
-            f"release tag {tag} does not match Cargo ({declared}) and dependency pin ({pinned})"
+            f"release tag {tag} does not match Cargo ({declared}), "
+            f"dependency pin ({pinned}) and frontend package ({frontend})"
         )
 
 
@@ -30,9 +33,10 @@ def main() -> None:
     parser.add_argument("--tag", required=True, help="Explicit release tag, e.g. v0.5.0")
     parser.add_argument("--cargo", type=Path, default=root / "backend/Cargo.toml")
     parser.add_argument("--dependencies", type=Path, default=root / "dependencies.toml")
+    parser.add_argument("--package", type=Path, default=root / "frontend/package.json")
     args = parser.parse_args()
     try:
-        check(args.tag, args.cargo, args.dependencies)
+        check(args.tag, args.cargo, args.dependencies, args.package)
     except (ValueError, KeyError, OSError, tomllib.TOMLDecodeError) as error:
         parser.exit(1, f"release preflight failed: {error}\n")
     print(f"release tag and declared versions agree: {args.tag}")
