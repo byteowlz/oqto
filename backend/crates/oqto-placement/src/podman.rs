@@ -127,10 +127,9 @@ impl<R> PodmanSupervisor<R> {
         if let Some(memory) = &spec.memory_limit {
             args.extend(["--memory".into(), memory.into()]);
         }
-        for (key, value) in &spec.environment {
-            args.extend(["--env".into(), format!("{key}={value}").into()]);
-        }
-
+        // Deliberately no --env: arbitrary values are visible in Podman
+        // inspect and command arguments, regardless of how innocuous their
+        // keys look. PlacementSpec::validate rejects nonempty inline maps.
         let runner_args: Vec<OsString> = match &spec.runner_endpoint {
             RunnerEndpointConfig::Unix { path } => {
                 let parent = path.parent().ok_or_else(|| {
@@ -404,6 +403,7 @@ mod tests {
         assert!(rendered.contains("oqto.workspace=workspace-A"));
         assert!(rendered.contains("oqto.placement=rootless-podman"));
         assert!(rendered.contains("--security-opt=no-new-privileges"));
+        assert!(!args.contains(&OsString::from("--env")));
         assert!(!rendered.contains("sh -c"));
         Ok(())
     }
@@ -460,6 +460,68 @@ mod tests {
             assert_eq!(calls.len(), 1, "no create/run command after denied probe");
             assert_eq!(calls[0][0], "info");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn inline_environment_is_denied_without_inspect_leak_or_mutation() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let spec = PlacementSpec {
+            workspace_id: "workspace".into(),
+            account_id: "account".into(),
+            image: "localhost/oqto:test".into(),
+            workspace_dir: temp.path().join("workspace"),
+            state_dir: temp.path().join("state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: temp.path().join("runtime/runner.sock"),
+            },
+            server_tls: None,
+            environment: [("AUTH_HEADER".into(), "private-value-123".into())]
+                .into_iter()
+                .collect(),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
+            reply: b"true 3.4.4\n".to_vec(),
+            calls: Mutex::new(Vec::new()),
+        });
+        let error = supervisor
+            .start(&spec)
+            .await
+            .expect_err("inline values must fail closed");
+        assert!(!error.to_string().contains("private-value-123"));
+        assert!(supervisor.command.calls.lock().unwrap().is_empty());
+        assert!(!spec.workspace_dir.exists());
+        assert!(!spec.state_dir.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn option_shaped_image_is_denied_before_any_engine_or_host_mutation() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let spec = PlacementSpec {
+            workspace_id: "workspace".into(),
+            account_id: "account".into(),
+            image: "--privileged".into(),
+            workspace_dir: temp.path().join("workspace"),
+            state_dir: temp.path().join("state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: temp.path().join("runtime/runner.sock"),
+            },
+            server_tls: None,
+            environment: Default::default(),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        let supervisor = PodmanSupervisor::with_command_runner(RootlessProbeRunner {
+            reply: b"true 3.4.4\n".to_vec(),
+            calls: Mutex::new(Vec::new()),
+        });
+        assert!(supervisor.start(&spec).await.is_err());
+        assert!(supervisor.command.calls.lock().unwrap().is_empty());
+        assert!(!spec.workspace_dir.exists());
+        assert!(!spec.state_dir.exists());
         Ok(())
     }
 

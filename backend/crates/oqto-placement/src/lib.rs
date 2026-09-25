@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use oqto_runner::transport::RunnerEndpointConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 pub use capability::{PlacementAvailability, PlacementCapabilityReport, ProbeEvidence};
 pub use local::LocalProcessSupervisor;
@@ -35,6 +35,9 @@ pub struct PlacementSpec {
     /// Client credentials remain exclusively in `runner_endpoint`.
     #[serde(default)]
     pub server_tls: Option<RunnerServerTlsConfig>,
+    /// Reserved for compatibility with serialized placement requests; no
+    /// inline environment values are accepted until a typed, non-inspectable
+    /// secret-provider contract exists. An empty map is the only valid value.
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
@@ -51,12 +54,18 @@ impl PlacementSpec {
         if self.account_id.trim().is_empty() {
             anyhow::bail!("account_id must not be empty");
         }
-        if self.image.trim().is_empty() {
-            anyhow::bail!("container image must not be empty");
+        // The image is passed as the first positional argument of `podman
+        // run`. A leading '-' would be interpreted as another engine option,
+        // potentially disabling the sandbox before the image is even chosen.
+        if self.image.trim().is_empty()
+            || self.image.starts_with('-')
+            || self.image.chars().any(char::is_whitespace)
+            || self.image.contains('\0')
+        {
+            anyhow::bail!("container image must be a non-option reference without whitespace");
         }
-        if !self.workspace_dir.is_absolute() || !self.state_dir.is_absolute() {
-            anyhow::bail!("workspace and state directories must be absolute");
-        }
+        validate_bind_source("workspace directory", &self.workspace_dir)?;
+        validate_bind_source("state directory", &self.state_dir)?;
         match (&self.runner_endpoint, &self.server_tls) {
             (RunnerEndpointConfig::Unix { .. }, None)
             | (RunnerEndpointConfig::TcpTls { .. }, Some(_)) => {}
@@ -67,19 +76,50 @@ impl PlacementSpec {
                 anyhow::bail!("TCP/TLS runner placement requires server TLS material");
             }
         }
-        for key in self.environment.keys() {
-            let upper = key.to_ascii_uppercase();
-            if ["TOKEN", "KEY", "PASSWORD", "SECRET"]
-                .iter()
-                .any(|sensitive| upper.contains(sensitive))
-            {
-                anyhow::bail!(
-                    "secret-like environment variable {key} must use the placement secret provider"
-                );
+        match &self.runner_endpoint {
+            RunnerEndpointConfig::Unix { path } => {
+                let socket_dir = path.parent().ok_or_else(|| {
+                    anyhow::anyhow!("Unix runner endpoint must have a parent directory")
+                })?;
+                validate_bind_source("runner socket directory", socket_dir)?;
             }
+            RunnerEndpointConfig::TcpTls { .. } => {
+                if let Some(tls) = &self.server_tls {
+                    for (name, path) in [
+                        ("client CA", &tls.client_ca),
+                        ("server certificate", &tls.certificate),
+                        ("server key", &tls.key),
+                    ] {
+                        validate_bind_source(name, path)?;
+                    }
+                }
+            }
+        }
+        if !self.environment.is_empty() {
+            anyhow::bail!(
+                "inline placement environment is not supported; use a typed secret provider"
+            );
         }
         Ok(())
     }
+}
+
+/// `podman --volume` uses colons as field separators. Validate every host
+/// path before host directories or pods are created so a path cannot silently
+/// become a different mount or an option (including through lossy display).
+fn validate_bind_source(name: &str, path: &Path) -> Result<()> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("{name} must be valid UTF-8"))?;
+    if !path.is_absolute()
+        || path.components().any(|part| part == Component::ParentDir)
+        || text
+            .bytes()
+            .any(|byte| matches!(byte, b':' | b'\0' | b'\r' | b'\n'))
+    {
+        anyhow::bail!("{name} must be absolute without traversal or Podman volume delimiters");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,6 +179,80 @@ pub fn runtime_name(workspace_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_spec_rejects_podman_option_and_bind_path_ambiguity() {
+        let mut spec = PlacementSpec {
+            workspace_id: "workspace".into(),
+            account_id: "account".into(),
+            image: "localhost/oqto:test".into(),
+            workspace_dir: PathBuf::from("/workspace"),
+            state_dir: PathBuf::from("/state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: PathBuf::from("/run/oqto/runner.sock"),
+            },
+            server_tls: None,
+            environment: BTreeMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        assert!(spec.validate().is_ok());
+        spec.image = "--privileged".into();
+        assert!(spec.validate().is_err(), "image must not become an option");
+        spec.image = "localhost/oqto:test".into();
+        spec.workspace_dir = PathBuf::from("/workspace:ro");
+        assert!(
+            spec.validate().is_err(),
+            "colon must not change --volume parsing"
+        );
+        spec.workspace_dir = PathBuf::from("/workspace");
+        spec.state_dir = PathBuf::from("/state/../wrong");
+        assert!(spec.validate().is_err(), "bind source must not traverse");
+        spec.state_dir = PathBuf::from("/state");
+        spec.runner_endpoint = RunnerEndpointConfig::Unix {
+            path: PathBuf::from("/run/oqto:rw/runner.sock"),
+        };
+        assert!(
+            spec.validate().is_err(),
+            "socket bind source must not reinterpret path"
+        );
+        spec.runner_endpoint = RunnerEndpointConfig::TcpTls {
+            address: "127.0.0.1:7443".parse().expect("fixed loopback address"),
+            server_name: "localhost".into(),
+            ca: PathBuf::from("/cert/client-ca.pem"),
+            certificate: PathBuf::from("/cert/client.pem"),
+            key: PathBuf::from("/cert/client-key.pem"),
+        };
+        spec.server_tls = Some(RunnerServerTlsConfig {
+            client_ca: PathBuf::from("/cert/server-ca.pem:ro"),
+            certificate: PathBuf::from("/cert/server.pem"),
+            key: PathBuf::from("/cert/server-key.pem"),
+        });
+        assert!(
+            spec.validate().is_err(),
+            "TLS bind source must not reinterpret path"
+        );
+    }
+
+    #[test]
+    fn placement_spec_rejects_inline_secrets_even_with_unremarkable_key() {
+        let spec = PlacementSpec {
+            workspace_id: "workspace".into(),
+            account_id: "account".into(),
+            image: "image".into(),
+            workspace_dir: PathBuf::from("/workspace"),
+            state_dir: PathBuf::from("/state"),
+            runner_endpoint: RunnerEndpointConfig::Unix {
+                path: PathBuf::from("/run/oqto/runner.sock"),
+            },
+            server_tls: None,
+            environment: BTreeMap::from([("AUTH_HEADER".into(), "private-value-123".into())]),
+            cpu_limit: None,
+            memory_limit: None,
+        };
+        let error = spec.validate().expect_err("inline values must be refused");
+        assert!(!error.to_string().contains("private-value-123"));
+    }
 
     #[test]
     fn placement_spec_rejects_inline_secrets() {
