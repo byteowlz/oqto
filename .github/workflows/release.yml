@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v0.1.0). Uses HEAD if empty.'
-        required: false
+        description: 'Existing tag to release (e.g., v0.5.0); must match Cargo and dependency versions.'
+        required: true
         type: string
 
 env:
@@ -19,11 +19,24 @@ permissions:
   contents: write
 
 jobs:
+  release-version:
+    name: Verify explicit tag and declared package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Refuse branch-only or mismatched release tags
+        run: |
+          git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}" >/dev/null
+          python3 -B scripts/release/check-tag-version.py --tag "$RELEASE_TAG"
+
   # ---------------------------------------------------------------------------
   # Backend binaries (Rust)
   # ---------------------------------------------------------------------------
   build-backend:
     name: Backend / ${{ matrix.target }}
+    needs: release-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -138,6 +151,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-frontend:
     name: Frontend
+    needs: release-version
     runs-on: ubuntu-latest
 
     steps:
@@ -188,6 +202,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Reject legacy or incomplete full Linux bundle before publishing
+        run: python3 -B scripts/release/check-release-assets.py --tag "$RELEASE_TAG" --directory artifacts
 
       - name: Prepare release assets
         run: |

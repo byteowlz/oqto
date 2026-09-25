@@ -847,6 +847,14 @@ test-setup-installed-doctor:
 test-release-version-sync:
     python3 scripts/tests/test-release-version-sync.py
 
+# Release workflow must refuse a tag that disagrees with Cargo or the dependency pin
+test-release-tag-version:
+    python3 -B scripts/tests/test-release-tag-version.py
+
+# Publication refuses flat, incomplete, non-full or unsafe Linux tar bundles
+test-release-assets:
+    python3 -B scripts/tests/test-release-assets.py
+
 # Dist sources resolve to pinned refs, preserving dirty or unknown local caches
 test-dist-sync-pins:
     ./scripts/tests/test-dist-sync-pins.sh
