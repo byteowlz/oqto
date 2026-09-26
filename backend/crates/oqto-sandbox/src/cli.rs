@@ -192,7 +192,33 @@ fn exec_sandboxed(
     workspace: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> String {
+    fn checked_policy_path(path: &str) -> Result<&str> {
+        // Paths are interpolated into quoted Seatbelt DSL strings. Until there
+        // is a tested platform encoder, reject characters that can terminate
+        // a literal or introduce another rule rather than broadening grants.
+        if path.is_empty()
+            || path.chars().any(|c| {
+                c == '"' || c == '\\' || c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+            })
+        {
+            anyhow::bail!("Seatbelt policy path contains unsafe characters");
+        }
+        Ok(path)
+    }
+
+    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<String> {
+        let workspace = workspace
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?;
+        let w = checked_policy_path(workspace)?;
+        for path in config
+            .allow_write
+            .iter()
+            .chain(&config.deny_read)
+            .chain(&config.deny_write)
+        {
+            checked_policy_path(path)?;
+        }
         let mut profile = String::new();
         profile.push_str("(version 1)\n");
         profile.push_str("(deny default)\n");
@@ -201,7 +227,6 @@ fn exec_sandboxed(
         profile.push_str("(allow signal)\n");
         profile.push_str("(allow file-read*)\n");
 
-        let w = workspace.to_string_lossy();
         profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
         profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
 
@@ -222,25 +247,25 @@ fn exec_sandboxed(
             profile.push_str("(allow network*)\n");
         }
 
-        profile
+        Ok(profile)
     }
 
     fn build_sandbox_exec_args(
         config: &SandboxConfig,
         workspace: &Path,
-    ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
+    ) -> Result<Option<(Vec<String>, tempfile::NamedTempFile)>> {
+        let profile_text = build_seatbelt_profile(config, workspace)?;
         if which::which("sandbox-exec").is_err() {
-            return None;
+            return Ok(None);
         }
-        let profile_text = build_seatbelt_profile(config, workspace);
-        let mut tmp = tempfile::NamedTempFile::new().ok()?;
+        let mut tmp = tempfile::NamedTempFile::new()?;
         use std::io::Write;
-        tmp.write_all(profile_text.as_bytes()).ok()?;
+        tmp.write_all(profile_text.as_bytes())?;
         let args = vec!["-f".to_string(), tmp.path().to_string_lossy().to_string()];
-        Some((args, tmp))
+        Ok(Some((args, tmp)))
     }
 
-    let (sandbox_args, _temp_file) = match build_sandbox_exec_args(config, workspace) {
+    let (sandbox_args, _temp_file) = match build_sandbox_exec_args(config, workspace)? {
         Some(result) => result,
         None => {
             error!("sandbox-exec not available, cannot sandbox");
@@ -258,7 +283,7 @@ fn exec_sandboxed(
     if dry_run {
         println!("sandbox-exec {}", full_args.join(" \\\n  "));
         println!("\n# Seatbelt profile:");
-        println!("{}", build_seatbelt_profile(config, workspace));
+        println!("{}", build_seatbelt_profile(config, workspace)?);
         return Ok(());
     }
 
@@ -325,4 +350,44 @@ pub fn run_cli() -> Result<()> {
     }
 
     exec_sandboxed(&config, &args.command, &workspace, args.dry_run)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod seatbelt_policy_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_workspace_policy_injection_before_any_launch() {
+        let config = SandboxConfig::from_profile("minimal");
+        let command = vec!["/bin/false".to_string()];
+        for path in [
+            "/tmp/ws\") (allow file-write* (subpath \"/\"))",
+            "/tmp/ws\\bad",
+            "/tmp/ws\n(allow network*)",
+        ] {
+            let error = exec_sandboxed(&config, &command, Path::new(path), false)
+                .expect_err("unsafe workspace path must fail closed");
+            assert!(error.to_string().contains("unsafe characters"));
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_grants_but_accepts_spaced_unicode_paths() -> anyhow::Result<()> {
+        let command = vec!["/bin/false".to_string()];
+        let workspace = Path::new("/tmp/Oqto workdir ü");
+        for grant in [
+            "/tmp/grant\") (allow file-write*)",
+            "/tmp/grant\\escape",
+            "/tmp/grant\n(allow network*)",
+        ] {
+            let mut config = SandboxConfig::from_profile("minimal");
+            config.allow_write = vec![grant.to_string()];
+            let error = exec_sandboxed(&config, &command, workspace, false)
+                .expect_err("unsafe allow_write path must fail closed");
+            assert!(error.to_string().contains("unsafe characters"));
+        }
+        let config = SandboxConfig::from_profile("minimal");
+        exec_sandboxed(&config, &command, workspace, true)?;
+        Ok(())
+    }
 }
