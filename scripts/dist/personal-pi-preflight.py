@@ -5,6 +5,8 @@ This deliberately does not start Pi: even a model-list RPC can create auth.json.
 No credential content is read, and no network/provider request is made.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
