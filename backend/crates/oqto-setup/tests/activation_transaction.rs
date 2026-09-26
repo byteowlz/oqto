@@ -1,5 +1,7 @@
 //! Transactional release activation through the real oqto-setup CLI.
+//! Linux-only until the macOS release has its own launchd/installer contract.
 //! All installation paths are redirected into a temporary directory.
+#![cfg(target_os = "linux")]
 
 use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
@@ -50,7 +52,10 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
         )?;
     }
     let artifact = root.join(format!("{name}.tar.gz"));
+    // macOS bsdtar otherwise inserts AppleDouble ._ members (provenance
+    // xattrs) outside the declared release root, which must stay forbidden.
     let status = Command::new("tar")
+        .env("COPYFILE_DISABLE", "1")
         .arg("-C")
         .arg(&stage_root)
         .arg("-czf")
@@ -148,6 +153,7 @@ fn full_release_without_frontend_fails_before_deferred_activation() -> Result<()
             .join("immutable/frontend/dist/index.html"),
     )?;
     let status = Command::new("tar")
+        .env("COPYFILE_DISABLE", "1")
         .arg("-C")
         .arg(root.path().join("stage"))
         .arg("-czf")

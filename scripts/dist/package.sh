@@ -34,7 +34,8 @@ find "$STAGE_DIR" -type f -name '.gitkeep' -delete
 TARBALL="$OUT_DIR/${NAME}.tar.gz"
 mkdir -p "$OUT_DIR"
 
-tar -C "$OUT_DIR" -czf "$TARBALL" "$NAME"
+# Avoid AppleDouble metadata on macOS while retaining archive leak validation.
+COPYFILE_DISABLE=1 tar -C "$OUT_DIR" -czf "$TARBALL" "$NAME"
 
 # Read the whole listing: `grep -q` would exit early, and the resulting
 # SIGPIPE plus `pipefail` would report a clean tarball no matter what leaked.
