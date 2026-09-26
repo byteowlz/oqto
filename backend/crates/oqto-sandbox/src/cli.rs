@@ -202,6 +202,17 @@ fn checked_policy_path(path: &str) -> Result<&str> {
 
 #[cfg(target_os = "macos")]
 fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<String> {
+    checked_policy_path(
+        workspace
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?,
+    )?;
+    // macOS reports `/var` and `/tmp` under `/private`; Seatbelt evaluates
+    // the resolved path. Granting only the symlink spelling silently denies
+    // even writes within the workspace. The workspace must already exist.
+    let workspace = workspace
+        .canonicalize()
+        .with_context(|| format!("resolving Seatbelt workspace {}", workspace.display()))?;
     let workspace = workspace
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?;
@@ -412,7 +423,10 @@ mod seatbelt_policy_tests {
     #[test]
     fn rejects_unsafe_grants_but_accepts_spaced_unicode_paths() -> anyhow::Result<()> {
         let command = vec!["/bin/false".to_string()];
-        let workspace = Path::new("/tmp/Oqto workdir ü");
+        let root = tempfile::tempdir()?;
+        let workspace = root.path().join("Oqto workdir ü");
+        std::fs::create_dir(&workspace)?;
+        let workspace = workspace.as_path();
         for grant in [
             "/tmp/grant\") (allow file-write*)",
             "/tmp/grant\\escape",
