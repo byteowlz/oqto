@@ -34,6 +34,6 @@ Build the **contracts** (Placement Supervisor trait, mount-source type, runner r
 ## Consequences
 
 - ADR-0002's "systemd owns local runner lifecycle" narrows to "systemd is the supervisor for the systemd-Linux placement."
-- `oqto-sandbox` becomes a portable, feature-gated, runtime-selected crate (Linux Landlock/seccomp/namespaces, macOS seatbelt, Windows best-effort) — see ADR-0019.
+- `oqto-sandbox` becomes a portable, feature-gated, runtime-selected crate (Linux Landlock/seccomp/namespaces, macOS seatbelt, Windows best-effort) — see ADR-0019. A host must never treat a compiled Linux-only mechanism as a working Mac capability: Proxy/netns and the seccomp compiler/egress relay fail closed outside Linux. On macOS local-process placement, Seatbelt profile path literals are UTF-8, unambiguous, home-expanded and resolved through the longest existing prefix (`/var` → `/private/var`); unsafe path characters fail before launch. Native synthetic allow-in-workspace/deny-outside/deny-sensitive-file canaries prove this local process boundary in an isolated checkout, **not** full runner narrow-root/full-principal confinement, signed release packaging, or multi-tenant placement (`oqto-3ezw.8/.9`).
 - Mac/Windows become reachable: cross-compiled runner + OCI (via `podman machine`) for multi-tenant, or `local-process` for single-tenant dev.
 - New cross-cutting requirement: anything platform-specific lives behind a backend trait; a lint/review gate should reject systemd/podman/path assumptions in core crates.
