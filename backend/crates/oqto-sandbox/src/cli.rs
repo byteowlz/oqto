@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, error, info};
-#[cfg(target_os = "macos")]
-use std::path::Path;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::path::{Component, Path};
 use std::process::Command;
 
 #[cfg(unix)]
@@ -200,31 +200,79 @@ fn checked_policy_path(path: &str) -> Result<&str> {
     Ok(path)
 }
 
+/// Resolve the longest existing prefix so Seatbelt sees the same canonical
+/// path as the kernel even for a not-yet-created denied/granted directory.
+/// Reject ambiguous/relative input instead of emitting a broader DSL rule.
 #[cfg(target_os = "macos")]
-fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<String> {
-    checked_policy_path(
+fn seatbelt_policy_path(raw: &str, home: &Path) -> Result<String> {
+    checked_policy_path(raw)?;
+    let expanded = if raw == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        home.join(rest)
+    } else {
+        PathBuf::from(raw)
+    };
+    if !expanded.is_absolute()
+        || expanded
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        anyhow::bail!("Seatbelt policy path must be absolute without dot segments");
+    }
+    let mut prefix = expanded.as_path();
+    let mut missing = Vec::new();
+    let canonical = loop {
+        match prefix.canonicalize() {
+            Ok(mut canonical) => {
+                for component in missing.iter().rev() {
+                    canonical.push(component);
+                }
+                break canonical;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    prefix
+                        .file_name()
+                        .ok_or_else(|| anyhow::anyhow!("Seatbelt path has no existing ancestor"))?
+                        .to_os_string(),
+                );
+                prefix = prefix
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("Seatbelt path has no parent"))?;
+            }
+            Err(error) => return Err(error).context("resolving Seatbelt policy path"),
+        }
+    };
+    let value = canonical
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Seatbelt policy path is not UTF-8"))?;
+    Ok(checked_policy_path(value)?.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path, home: &Path) -> Result<String> {
+    let w = seatbelt_policy_path(
         workspace
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?,
+            .ok_or_else(|| anyhow::anyhow!("Seatbelt workspace is not UTF-8"))?,
+        home,
     )?;
-    // macOS reports `/var` and `/tmp` under `/private`; Seatbelt evaluates
-    // the resolved path. Granting only the symlink spelling silently denies
-    // even writes within the workspace. The workspace must already exist.
-    let workspace = workspace
-        .canonicalize()
-        .with_context(|| format!("resolving Seatbelt workspace {}", workspace.display()))?;
-    let workspace = workspace
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?;
-    let w = checked_policy_path(workspace)?;
-    for path in config
+    let allow_write = config
         .allow_write
         .iter()
-        .chain(&config.deny_read)
-        .chain(&config.deny_write)
-    {
-        checked_policy_path(path)?;
-    }
+        .map(|path| seatbelt_policy_path(path, home))
+        .collect::<Result<Vec<_>>>()?;
+    let deny_read = config
+        .deny_read
+        .iter()
+        .map(|path| seatbelt_policy_path(path, home))
+        .collect::<Result<Vec<_>>>()?;
+    let deny_write = config
+        .deny_write
+        .iter()
+        .map(|path| seatbelt_policy_path(path, home))
+        .collect::<Result<Vec<_>>>()?;
     let mut profile = String::new();
     profile.push_str("(version 1)\n");
     profile.push_str("(deny default)\n");
@@ -236,14 +284,14 @@ fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<St
     profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
     profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
 
-    for path in &config.allow_write {
+    for path in &allow_write {
         profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
     }
-    for path in &config.deny_read {
+    for path in &deny_read {
         profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
         profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
     }
-    for path in &config.deny_write {
+    for path in &deny_write {
         profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
     }
 
@@ -267,7 +315,8 @@ fn exec_sandboxed(
         config: &SandboxConfig,
         workspace: &Path,
     ) -> Result<Option<(Vec<String>, tempfile::NamedTempFile)>> {
-        let profile_text = build_seatbelt_profile(config, workspace)?;
+        let home = dirs::home_dir().context("Seatbelt policy requires a home directory")?;
+        let profile_text = build_seatbelt_profile(config, workspace, &home)?;
         if which::which("sandbox-exec").is_err() {
             return Ok(None);
         }
@@ -296,7 +345,8 @@ fn exec_sandboxed(
     if dry_run {
         println!("sandbox-exec {}", full_args.join(" \\\n  "));
         println!("\n# Seatbelt profile:");
-        println!("{}", build_seatbelt_profile(config, workspace)?);
+        let home = dirs::home_dir().context("Seatbelt policy requires a home directory")?;
+        println!("{}", build_seatbelt_profile(config, workspace, &home)?);
         return Ok(());
     }
 
@@ -393,7 +443,7 @@ mod seatbelt_policy_tests {
         let denied = root.path().join("outside");
         let mut config = SandboxConfig::from_profile("minimal");
         config.allow_write.clear();
-        let profile = build_seatbelt_profile(&config, &workspace)?;
+        let profile = build_seatbelt_profile(&config, &workspace, root.path())?;
         let profile_file = root.path().join("policy.sb");
         std::fs::write(&profile_file, profile)?;
         let run = |output: &Path| -> anyhow::Result<std::process::Output> {
@@ -440,15 +490,21 @@ mod seatbelt_policy_tests {
                 .arg(&fixture)
                 .output()?)
         };
-        std::fs::write(&profile_file, build_seatbelt_profile(&config, &workspace)?)?;
+        std::fs::write(
+            &profile_file,
+            build_seatbelt_profile(&config, &workspace, &root.path().join("home"))?,
+        )?;
         let baseline = probe()?;
         assert!(
             baseline.status.success(),
             "baseline read failed: {}",
             String::from_utf8_lossy(&baseline.stderr)
         );
-        config.deny_read = vec![secrets.to_string_lossy().to_string()];
-        std::fs::write(&profile_file, build_seatbelt_profile(&config, &workspace)?)?;
+        config.deny_read = vec!["~/.ssh".to_string()];
+        std::fs::write(
+            &profile_file,
+            build_seatbelt_profile(&config, &workspace, &root.path().join("home"))?,
+        )?;
         let output = probe()?;
         assert!(
             !output.status.success(),
