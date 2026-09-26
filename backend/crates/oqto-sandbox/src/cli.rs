@@ -447,7 +447,7 @@ mod seatbelt_policy_tests {
         let profile_file = root.path().join("policy.sb");
         std::fs::write(&profile_file, profile)?;
         let run = |output: &Path| -> anyhow::Result<std::process::Output> {
-            Ok(Command::new("sandbox-exec")
+            Ok(Command::new("/usr/bin/sandbox-exec")
                 .arg("-f")
                 .arg(&profile_file)
                 .args(["/bin/sh", "-c", "printf canary > \"$1\"", "sh"])
@@ -483,7 +483,7 @@ mod seatbelt_policy_tests {
         config.deny_read.clear();
         let profile_file = root.path().join("deny-policy.sb");
         let probe = || -> anyhow::Result<std::process::Output> {
-            Ok(Command::new("sandbox-exec")
+            Ok(Command::new("/usr/bin/sandbox-exec")
                 .arg("-f")
                 .arg(&profile_file)
                 .args(["/bin/sh", "-c", "cat \"$1\"", "sh"])
