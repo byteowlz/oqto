@@ -2,7 +2,7 @@
 
 Status: proposed (grilled 2026-06-25). Generalizes ADR-0011 (placement contract) and **amends ADR-0002** (systemd is demoted from "the local supervisor" to one supervisor backend). Foundation for ADR-0019.
 
-Oqto must run across very different infrastructure: a single VPS, several VMs, a Kubernetes cluster, and developer machines on macOS/Windows. The temptation is to pick one mechanism (systemd, or podman, or k8s) and build on it. That repeats the ADR-0001 mistake at the deployment layer — baking one platform into the core. Instead we commit to portable abstractions and make every platform a swappable backend behind them. The runner already cross-compiles; what leaks platform assumptions is *how the runner is isolated and supervised*, so that is what we abstract.
+Oqto must run across very different infrastructure: a single VPS, several VMs, a Kubernetes cluster, and developer machines on macOS/Windows. The temptation is to pick one mechanism (systemd, or podman, or k8s) and build on it. That repeats the ADR-0001 mistake at the deployment layer — baking one platform into the core. Instead we commit to portable abstractions and make every platform a swappable backend behind them. The transport and protocol aim to be portable, but source portability alone does not prove a runner build or effective isolation on every host. Native Windows 11 MSVC at `6c5c221f` compiles protocol/provisioning, while setup and the sandbox dependency block runner builds on Unix filesystem/libc/fd assumptions (`oqto-vemr.8.5`). What leaks platform assumptions includes how the runner is isolated and supervised, so that seam must be explicit and fail closed.
 
 ## Decisions
 
