@@ -421,6 +421,33 @@ mod seatbelt_policy_tests {
     }
 
     #[test]
+    fn seatbelt_native_canary_denies_sensitive_path_behind_var_alias() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let workspace = root.path().join("workspace");
+        let secrets = root.path().join("home/.ssh");
+        std::fs::create_dir(&workspace)?;
+        std::fs::create_dir_all(&secrets)?;
+        let fixture = secrets.join("synthetic-key");
+        std::fs::write(&fixture, b"synthetic test data only")?;
+        let mut config = SandboxConfig::from_profile("minimal");
+        config.deny_read = vec![secrets.to_string_lossy().to_string()];
+        let profile = build_seatbelt_profile(&config, &workspace)?;
+        let profile_file = root.path().join("deny-policy.sb");
+        std::fs::write(&profile_file, profile)?;
+        let output = Command::new("sandbox-exec")
+            .arg("-f")
+            .arg(&profile_file)
+            .args(["/bin/sh", "-c", "cat \"$1\" >/dev/null", "sh"])
+            .arg(&fixture)
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "Seatbelt permitted read of a denied synthetic secret"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_unsafe_grants_but_accepts_spaced_unicode_paths() -> anyhow::Result<()> {
         let command = vec!["/bin/false".to_string()];
         let root = tempfile::tempdir()?;
