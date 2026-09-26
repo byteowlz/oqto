@@ -2153,7 +2153,7 @@ impl SandboxConfig {
                     "landlock enforce requested on non-Linux platform",
                 ));
             }
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]

@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{debug, error, info};
+#[cfg(target_os = "macos")]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -187,10 +189,10 @@ fn exec_sandboxed(
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
-    workspace: &PathBuf,
+    workspace: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &PathBuf) -> String {
+    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> String {
         let mut profile = String::new();
         profile.push_str("(version 1)\n");
         profile.push_str("(deny default)\n");
@@ -225,7 +227,7 @@ fn exec_sandboxed(
 
     fn build_sandbox_exec_args(
         config: &SandboxConfig,
-        workspace: &PathBuf,
+        workspace: &Path,
     ) -> Option<(Vec<String>, tempfile::NamedTempFile)> {
         if which::which("sandbox-exec").is_err() {
             return None;
