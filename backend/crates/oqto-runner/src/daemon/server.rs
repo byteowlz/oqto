@@ -654,10 +654,25 @@ impl Runner {
             );
         }
 
+        // This endpoint's sandboxed process spawn requires Linux bwrap,
+        // seccomp and Landlock. A macOS runner needs an explicit Seatbelt
+        // process-spawn contract; never silently launch it without confinement.
+        #[cfg(not(target_os = "linux"))]
+        if req.sandboxed {
+            return error_response(
+                ErrorCode::SandboxError,
+                "Sandboxed process spawn requires Linux; no macOS process-spawn policy is implemented".to_string(),
+            );
+        }
+
         // Build command - either direct or via oqto-sandbox
+        #[cfg(target_os = "linux")]
         let mut seccomp_file_for_spawn: Option<std::fs::File> = None;
+        #[cfg(target_os = "linux")]
         let mut set_no_new_privs = false;
+        #[cfg(target_os = "linux")]
         let mut landlock_cfg_for_spawn: Option<SandboxConfig> = None;
+        #[cfg(target_os = "linux")]
         let mut landlock_workspace_for_spawn: Option<PathBuf> = None;
 
         let (program, args, effective_binary) = if use_sandbox {
@@ -677,20 +692,23 @@ impl Runner {
                     full_args.push(req.binary.clone());
                     full_args.extend(req.args.iter().cloned());
 
-                    match sandbox_config.open_seccomp_bpf_file(None) {
-                        Ok(file) => {
-                            seccomp_file_for_spawn = file;
+                    #[cfg(target_os = "linux")]
+                    {
+                        match sandbox_config.open_seccomp_bpf_file(None) {
+                            Ok(file) => {
+                                seccomp_file_for_spawn = file;
+                            }
+                            Err(e) => {
+                                return error_response(
+                                    ErrorCode::SandboxError,
+                                    format!("Failed to prepare seccomp policy: {}", e),
+                                );
+                            }
                         }
-                        Err(e) => {
-                            return error_response(
-                                ErrorCode::SandboxError,
-                                format!("Failed to prepare seccomp policy: {}", e),
-                            );
-                        }
+                        set_no_new_privs = sandbox_config.no_new_privs;
+                        landlock_cfg_for_spawn = Some(sandbox_config.clone());
+                        landlock_workspace_for_spawn = Some(req.cwd.clone());
                     }
-                    set_no_new_privs = sandbox_config.no_new_privs;
-                    landlock_cfg_for_spawn = Some(sandbox_config.clone());
-                    landlock_workspace_for_spawn = Some(req.cwd.clone());
 
                     info!(
                         "Sandboxing process '{}' with {} bwrap args",
@@ -4154,6 +4172,41 @@ fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn sandboxed_process_spawn_never_falls_back_to_unsandboxed_on_mac() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let marker = root.path().join("must-not-run");
+        let runner = Runner::new(
+            Some(SandboxConfig::default()),
+            SessionBinaries {
+                fileserver: String::new(),
+                ttyd: String::new(),
+            },
+            RunnerUserConfig::default(),
+            PiSessionManager::new(Default::default()),
+        );
+        let reply = runner
+            .spawn_process(
+                SpawnProcessRequest {
+                    id: "sandbox-required".into(),
+                    binary: "/bin/sh".into(),
+                    args: vec!["-c".into(), format!("touch {}", marker.display())],
+                    cwd: root.path().to_path_buf(),
+                    env: Default::default(),
+                    sandboxed: true,
+                },
+                false,
+            )
+            .await;
+        assert!(
+            matches!(reply, RunnerResponse::Error(e) if e.code == ErrorCode::SandboxError && e.message.contains("no macOS process-spawn policy")),
+            "sandboxed process must fail closed"
+        );
+        assert!(!marker.exists(), "request executed without confinement");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn stdout_subscription_errors_and_buffered_replay() -> Result<()> {

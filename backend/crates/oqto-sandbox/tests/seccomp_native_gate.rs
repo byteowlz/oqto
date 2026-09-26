@@ -23,3 +23,15 @@ fn seccomp_compiler_refuses_non_linux_without_creating_output() -> Result<()> {
     assert!(!out.exists());
     Ok(())
 }
+
+#[test]
+fn egress_relay_refuses_non_linux_before_listening() -> Result<()> {
+    let output = Command::new(env!("CARGO_BIN_EXE_oqto-egress-relay")).output()?;
+    assert!(!output.status.success(), "non-Linux egress relay started");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("requires Linux"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
