@@ -229,6 +229,15 @@ fn acquire_bundle(
     install_bin: Option<&Path>,
     tools_only: bool,
 ) -> Result<()> {
+    if install_bin.is_some() {
+        let host = supported_host_target()?;
+        let requested = deps::Arch::from(arch).target();
+        if requested != host {
+            anyhow::bail!(
+                "unsupported release target: expected {host} for local tool install, requested {requested}"
+            );
+        }
+    }
     let contents = fs::read_to_string(manifest)
         .with_context(|| format!("Failed to read dependency manifest: {}", manifest.display()))?;
     let mut components = deps::parse_dependency_manifest(&contents)?;
@@ -605,14 +614,18 @@ fn install_release(
 /// A release target is a host capability, not an arbitrary filename chosen by
 /// a caller. macOS needs a separately declared launchd/installer contract;
 /// accepting a Linux tar there would strand unusable binaries as `current`.
-fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
-    let target = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
-        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+fn supported_host_target() -> Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
         _ => {
             anyhow::bail!("unsupported release target: no native installer contract for this host")
         }
-    };
+    }
+}
+
+fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
+    let target = supported_host_target()?;
     let name = artifact
         .file_name()
         .and_then(|name| name.to_str())
