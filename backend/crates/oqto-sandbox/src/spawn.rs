@@ -5,6 +5,7 @@ use crate::SandboxConfig;
 use crate::egress::EgressPlan;
 
 #[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 
 #[cfg(target_os = "linux")]

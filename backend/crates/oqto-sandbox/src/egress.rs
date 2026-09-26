@@ -23,11 +23,13 @@
 //!   exhaustively unit-testable without privileges;
 //! - `apply`/`teardown` execute those commands and require `CAP_NET_ADMIN`.
 
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 
@@ -433,6 +435,16 @@ pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
     if cfg.mode != NetworkMode::Proxy {
         return Ok(EgressGuard::inert());
     }
+    prepare_proxy(cfg)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_proxy(_cfg: &NetworkConfig) -> Result<EgressGuard> {
+    bail!("NetworkMode::Proxy requires Linux network namespaces; refusing to launch (fail-closed)");
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_proxy(cfg: &NetworkConfig) -> Result<EgressGuard> {
     if !privileged() {
         bail!(
             "NetworkMode::Proxy requires CAP_NET_ADMIN to build the egress namespace; \
@@ -466,6 +478,7 @@ pub fn prepare(cfg: Option<&NetworkConfig>) -> Result<EgressGuard> {
 /// namespace via `setns` in a pre-exec hook (so it sees the agent's DNAT) and
 /// is told its listen address and the eavs endpoint via env. Requires the relay
 /// binary to be resolvable; fails closed otherwise.
+#[cfg(target_os = "linux")]
 fn spawn_relay(plan: &EgressPlan) -> Result<Child> {
     let bin = crate::egress_relay::resolve_relay_binary().context(
         "oqto-egress-relay binary not found (set OQTO_EGRESS_RELAY_BIN or install it on PATH); \
@@ -638,6 +651,18 @@ mod tests {
             };
             assert!(EgressPlan::from_network_config(&cfg, 0).unwrap().is_none());
         }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn proxy_refuses_unsupported_os_before_namespace_mutation() {
+        let cfg = NetworkConfig {
+            mode: NetworkMode::Proxy,
+            proxy_tcp_port: Some(8443),
+            ..Default::default()
+        };
+        let error = prepare(Some(&cfg)).expect_err("Linux namespace cannot run on macOS");
+        assert!(error.to_string().contains("requires Linux"), "{error:#}");
     }
 
     #[test]

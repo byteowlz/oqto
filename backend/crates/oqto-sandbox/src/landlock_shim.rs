@@ -12,10 +12,13 @@
 //! The shim runs after namespace setup is complete, installs Landlock rules,
 //! then `execvp`s the real command.
 
-use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
+use anyhow::Result;
 use std::env;
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
 use crate::config::{LandlockMode, SandboxConfig};
 
 pub const SHIM_ENV: &str = "OQTO_SANDBOX_SHIM_MODE";

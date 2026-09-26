@@ -2145,6 +2145,9 @@ impl SandboxConfig {
 
         #[cfg(not(target_os = "linux"))]
         {
+            // These paths only participate in Linux Landlock rules; on other
+            // hosts the enforce request below is rejected instead.
+            let _ = (workspace, username);
             if self.landlock_mode == LandlockMode::Enforce {
                 return Err(std::io::Error::other(
                     "landlock enforce requested on non-Linux platform",
