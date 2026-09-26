@@ -28,7 +28,9 @@ cp dist/manifest.toml "$STAGE_DIR/manifest.toml"
 TARBALL="$OUT_DIR/${NAME}.tar.gz"
 mkdir -p "$OUT_DIR"
 
-tar -C "$OUT_DIR" -czf "$TARBALL" "$NAME"
+# macOS bsdtar otherwise emits AppleDouble ._ metadata members outside the
+# declared release root. The verified extractor must reject those members.
+COPYFILE_DISABLE=1 tar -C "$OUT_DIR" -czf "$TARBALL" "$NAME"
 sha256sum "$TARBALL" > "$TARBALL.sha256"
 
 echo "packaged: $TARBALL"

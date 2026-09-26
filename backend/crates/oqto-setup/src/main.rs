@@ -529,6 +529,7 @@ fn install_release(
     if !artifact.exists() {
         anyhow::bail!("Artifact not found: {}", artifact.display());
     }
+    ensure_supported_release_target(artifact)?;
 
     verify_checksum(artifact, checksum)?;
 
@@ -598,6 +599,27 @@ fn install_release(
     }
 
     println!("Installed release {}", release_id);
+    Ok(())
+}
+
+/// A release target is a host capability, not an arbitrary filename chosen by
+/// a caller. macOS needs a separately declared launchd/installer contract;
+/// accepting a Linux tar there would strand unusable binaries as `current`.
+fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
+    let target = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+        _ => {
+            anyhow::bail!("unsupported release target: no native installer contract for this host")
+        }
+    };
+    let name = artifact
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if !name.starts_with("oqto-") || !name.ends_with(&format!("-{target}.tar.gz")) {
+        anyhow::bail!("unsupported release target: expected {target} archive");
+    }
     Ok(())
 }
 
