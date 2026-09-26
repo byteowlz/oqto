@@ -430,16 +430,26 @@ mod seatbelt_policy_tests {
         let fixture = secrets.join("synthetic-key");
         std::fs::write(&fixture, b"synthetic test data only")?;
         let mut config = SandboxConfig::from_profile("minimal");
-        config.deny_read = vec![secrets.to_string_lossy().to_string()];
-        let profile = build_seatbelt_profile(&config, &workspace)?;
+        config.deny_read.clear();
         let profile_file = root.path().join("deny-policy.sb");
-        std::fs::write(&profile_file, profile)?;
-        let output = Command::new("sandbox-exec")
-            .arg("-f")
-            .arg(&profile_file)
-            .args(["/bin/sh", "-c", "cat \"$1\" >/dev/null", "sh"])
-            .arg(&fixture)
-            .output()?;
+        let probe = || -> anyhow::Result<std::process::Output> {
+            Ok(Command::new("sandbox-exec")
+                .arg("-f")
+                .arg(&profile_file)
+                .args(["/bin/sh", "-c", "cat \"$1\" >/dev/null", "sh"])
+                .arg(&fixture)
+                .output()?)
+        };
+        std::fs::write(&profile_file, build_seatbelt_profile(&config, &workspace)?)?;
+        let baseline = probe()?;
+        assert!(
+            baseline.status.success(),
+            "baseline read failed: {}",
+            String::from_utf8_lossy(&baseline.stderr)
+        );
+        config.deny_read = vec![secrets.to_string_lossy().to_string()];
+        std::fs::write(&profile_file, build_seatbelt_profile(&config, &workspace)?)?;
+        let output = probe()?;
         assert!(
             !output.status.success(),
             "Seatbelt permitted read of a denied synthetic secret"
