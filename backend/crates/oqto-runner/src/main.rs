@@ -1,6 +1,10 @@
 use anyhow::Result;
+#[cfg(not(target_os = "linux"))]
+use anyhow::bail;
 use clap::Parser;
 use log::info;
+#[cfg(not(target_os = "linux"))]
+use log::warn;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
