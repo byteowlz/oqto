@@ -186,70 +186,72 @@ fn exec_sandboxed(
 }
 
 #[cfg(target_os = "macos")]
+fn checked_policy_path(path: &str) -> Result<&str> {
+    // Paths are interpolated into quoted Seatbelt DSL strings. Until there
+    // is a tested platform encoder, reject characters that can terminate
+    // a literal or introduce another rule rather than broadening grants.
+    if path.is_empty()
+        || path.chars().any(|c| {
+            c == '"' || c == '\\' || c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+        })
+    {
+        anyhow::bail!("Seatbelt policy path contains unsafe characters");
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "macos")]
+fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<String> {
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?;
+    let w = checked_policy_path(workspace)?;
+    for path in config
+        .allow_write
+        .iter()
+        .chain(&config.deny_read)
+        .chain(&config.deny_write)
+    {
+        checked_policy_path(path)?;
+    }
+    let mut profile = String::new();
+    profile.push_str("(version 1)\n");
+    profile.push_str("(deny default)\n");
+    profile.push_str("(allow process-fork)\n");
+    profile.push_str("(allow process-exec)\n");
+    profile.push_str("(allow signal)\n");
+    profile.push_str("(allow file-read*)\n");
+
+    profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
+    profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
+
+    for path in &config.allow_write {
+        profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
+    }
+    for path in &config.deny_read {
+        profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
+        profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
+    }
+    for path in &config.deny_write {
+        profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
+    }
+
+    if config.isolate_network {
+        profile.push_str("(deny network*)\n");
+    } else {
+        profile.push_str("(allow network*)\n");
+    }
+
+    Ok(profile)
+}
+
+#[cfg(target_os = "macos")]
 fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
     workspace: &Path,
     dry_run: bool,
 ) -> Result<()> {
-    fn checked_policy_path(path: &str) -> Result<&str> {
-        // Paths are interpolated into quoted Seatbelt DSL strings. Until there
-        // is a tested platform encoder, reject characters that can terminate
-        // a literal or introduce another rule rather than broadening grants.
-        if path.is_empty()
-            || path.chars().any(|c| {
-                c == '"' || c == '\\' || c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
-            })
-        {
-            anyhow::bail!("Seatbelt policy path contains unsafe characters");
-        }
-        Ok(path)
-    }
-
-    fn build_seatbelt_profile(config: &SandboxConfig, workspace: &Path) -> Result<String> {
-        let workspace = workspace
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Seatbelt policy workspace is not UTF-8"))?;
-        let w = checked_policy_path(workspace)?;
-        for path in config
-            .allow_write
-            .iter()
-            .chain(&config.deny_read)
-            .chain(&config.deny_write)
-        {
-            checked_policy_path(path)?;
-        }
-        let mut profile = String::new();
-        profile.push_str("(version 1)\n");
-        profile.push_str("(deny default)\n");
-        profile.push_str("(allow process-fork)\n");
-        profile.push_str("(allow process-exec)\n");
-        profile.push_str("(allow signal)\n");
-        profile.push_str("(allow file-read*)\n");
-
-        profile.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", w));
-        profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", w));
-
-        for path in &config.allow_write {
-            profile.push_str(&format!("(allow file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_read {
-            profile.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", path));
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-        for path in &config.deny_write {
-            profile.push_str(&format!("(deny file-write* (subpath \"{}\"))\n", path));
-        }
-
-        if config.isolate_network {
-            profile.push_str("(deny network*)\n");
-        } else {
-            profile.push_str("(allow network*)\n");
-        }
-
-        Ok(profile)
-    }
-
     fn build_sandbox_exec_args(
         config: &SandboxConfig,
         workspace: &Path,
@@ -369,6 +371,42 @@ mod seatbelt_policy_tests {
                 .expect_err("unsafe workspace path must fail closed");
             assert!(error.to_string().contains("unsafe characters"));
         }
+    }
+
+    #[test]
+    fn seatbelt_native_canary_allows_workspace_and_denies_outside() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let workspace = root.path().join("Oqto work ü");
+        std::fs::create_dir(&workspace)?;
+        let allowed = workspace.join("allowed");
+        let denied = root.path().join("outside");
+        let mut config = SandboxConfig::from_profile("minimal");
+        config.allow_write.clear();
+        let profile = build_seatbelt_profile(&config, &workspace)?;
+        let profile_file = root.path().join("policy.sb");
+        std::fs::write(&profile_file, profile)?;
+        let run = |output: &Path| -> anyhow::Result<std::process::Output> {
+            Ok(Command::new("sandbox-exec")
+                .arg("-f")
+                .arg(&profile_file)
+                .args(["/bin/sh", "-c", "printf canary > \"$1\"", "sh"])
+                .arg(output)
+                .output()?)
+        };
+        let permit = run(&allowed)?;
+        assert!(
+            permit.status.success(),
+            "workspace write denied: {}",
+            String::from_utf8_lossy(&permit.stderr)
+        );
+        assert_eq!(std::fs::read(&allowed)?, b"canary");
+        let refused = run(&denied)?;
+        assert!(
+            !refused.status.success(),
+            "outside write unexpectedly permitted"
+        );
+        assert!(!denied.exists());
+        Ok(())
     }
 
     #[test]
