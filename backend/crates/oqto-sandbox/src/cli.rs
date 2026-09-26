@@ -486,7 +486,7 @@ mod seatbelt_policy_tests {
             Ok(Command::new("/usr/bin/sandbox-exec")
                 .arg("-f")
                 .arg(&profile_file)
-                .args(["/bin/sh", "-c", "cat \"$1\"", "sh"])
+                .args(["/bin/sh", "-c", "/bin/cat \"$1\"", "sh"])
                 .arg(&fixture)
                 .output()?)
         };
