@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -263,68 +264,238 @@ fn pick_binaries(files: &[(PathBuf, bool)]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Extract each staged tarball and install its binaries into `bin_dir` (mode
-/// `0755`), layout-aware via [`pick_binaries`]. Returns the installed binary
-/// names. This is the single install step the duplicate acquisition paths
-/// (install.sh, docker, setup module 08, deploy remediate) converge on.
-pub fn install_staged(staged: &[PathBuf], bin_dir: &Path) -> Result<Vec<String>> {
-    let mut installed = Vec::new();
-    for tarball in staged {
-        // Never reuse or remove a predictable .extract-* tree in an untrusted
-        // download directory. A private tempdir cannot be replaced with a
-        // symlink into a host path by another principal.
-        let parent = tarball
+/// A checksummed archive paired with its explicitly declared binary names.
+/// An archive cannot claim a platform executable or another tool's entrypoint.
+pub struct StagedTool<'a> {
+    pub name: &'a str,
+    pub archive: &'a Path,
+    pub binaries: &'a [String],
+}
+
+/// Reject path separators, dot components, and option-like names before using a
+/// manifest name or archive entry as a destination path.
+pub(crate) fn valid_bin_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && bytes.all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+}
+
+/// Platform executables are activated only by `oqto-setup install`, never by
+/// dependency acquisition. Check these even with a caller-supplied allowlist.
+pub(crate) fn platform_bin(name: &str) -> bool {
+    name.starts_with("oqto") || name == "pi-bridge"
+}
+
+/// Resolve a prior Oqto tool release without trusting an arbitrary symlink.
+fn current_tool_release(root: &Path) -> Result<Option<PathBuf>> {
+    let current = root.join("current");
+    match std::fs::symlink_metadata(&current) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("reading {}", current.display())),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let release = std::fs::read_link(&current)?;
+            if release.parent() != Some(root.join("releases").as_path())
+                || !std::fs::symlink_metadata(&release)?.file_type().is_dir()
+            {
+                bail!(
+                    "unrecognized Oqto tool release pointer: {}",
+                    current.display()
+                );
+            }
+            Ok(Some(release))
+        }
+        Ok(_) => bail!("unmanaged Oqto tool release pointer: {}", current.display()),
+    }
+}
+
+/// Install an entire verified set through one versioned directory and a single
+/// `current` pointer switch. Existing files/symlinks are never adopted. Only
+/// entrypoints already pointing to our managed release may be upgraded.
+/// A subsequent run rechecks identity rather than overwriting unrelated tools.
+pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<String>> {
+    if staged.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut extracted = Vec::with_capacity(staged.len());
+    let mut selected = Vec::new();
+    let mut names = BTreeSet::new();
+    for tool in staged {
+        if !valid_bin_name(tool.name) || tool.binaries.is_empty() {
+            bail!("missing or unsafe binary ownership for {}", tool.name);
+        }
+        let declared: BTreeSet<&str> = tool.binaries.iter().map(String::as_str).collect();
+        if declared.len() != tool.binaries.len()
+            || declared
+                .iter()
+                .any(|n| !valid_bin_name(n) || platform_bin(n))
+        {
+            bail!("duplicate or unsafe binary ownership for {}", tool.name);
+        }
+        let parent = tool
+            .archive
             .parent()
             .context("staged tool archive has no parent")?;
         let extract = tempfile::Builder::new()
             .prefix(".oqto-acq-")
             .tempdir_in(parent)?;
-        crate::archive::extract_tool_bundle(tarball, extract.path())
-            .with_context(|| format!("rejecting unsafe tool archive {}", tarball.display()))?;
-
+        crate::archive::extract_tool_bundle(tool.archive, extract.path())
+            .with_context(|| format!("rejecting unsafe tool archive {}", tool.archive.display()))?;
         let mut files = Vec::new();
         walk_files(extract.path(), &mut files)?;
-        let pairs: Vec<(PathBuf, bool)> = files
+        let pairs: Vec<_> = files
             .iter()
             .map(|p| (p.clone(), is_executable(p)))
             .collect();
-
         let binaries = pick_binaries(&pairs);
         if binaries.is_empty() {
-            bail!("staged tool archive contains no executable binaries");
+            bail!(
+                "staged tool archive contains no executable binaries: {}",
+                tool.name
+            );
         }
-        std::fs::create_dir_all(bin_dir)
-            .with_context(|| format!("creating bin dir {}", bin_dir.display()))?;
         for src in binaries {
             let bin = src
                 .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
-            let dest = bin_dir.join(&bin);
-            // Install atomically: copy to a temp file in the same dir, chmod,
-            // then rename over the target. A direct copy fails with ETXTBSY
-            // ("Text file busy") when the destination binary is currently running
-            // — e.g. a live systemd service like mmry-service. rename swaps the
-            // directory entry and the running process keeps its old inode until
-            // it is restarted.
-            let tmp = bin_dir.join(format!(".{bin}.new"));
-            let _ = std::fs::remove_file(&tmp);
-            std::fs::copy(&src, &tmp)
-                .with_context(|| format!("staging {bin} -> {}", tmp.display()))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perm = std::fs::metadata(&tmp)?.permissions();
-                perm.set_mode(0o755);
-                std::fs::set_permissions(&tmp, perm)?;
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if !declared.contains(bin) || !names.insert(bin.to_string()) {
+                bail!("undeclared or duplicate tool binary {bin} in {}", tool.name);
             }
-            std::fs::rename(&tmp, &dest)
-                .with_context(|| format!("installing {bin} -> {}", dest.display()))?;
-            installed.push(bin);
+            selected.push((bin.to_string(), src));
+        }
+        if !names.contains(tool.name) {
+            bail!("staged tool archive omits primary binary {}", tool.name);
+        }
+        extracted.push(extract);
+    }
+
+    match std::fs::symlink_metadata(bin_dir) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir_all(bin_dir)?,
+        Err(err) => return Err(err).with_context(|| format!("reading {}", bin_dir.display())),
+        Ok(meta) if meta.file_type().is_dir() => (),
+        Ok(_) => bail!(
+            "tool binary directory must be a real directory: {}",
+            bin_dir.display()
+        ),
+    }
+    let root = bin_dir.join(".oqto-tools");
+    match std::fs::symlink_metadata(&root) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // A first install must not even create state in a directory that
+            // already has an unmanaged executable at one of our destinations.
+            for bin in &names {
+                let dest = bin_dir.join(bin);
+                match std::fs::symlink_metadata(&dest) {
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(err) => {
+                        return Err(err).with_context(|| format!("reading {}", dest.display()));
+                    }
+                    Ok(_) => bail!("refusing unmanaged tool entrypoint: {}", dest.display()),
+                }
+            }
+            std::fs::create_dir(&root)?;
+        }
+        Err(err) => return Err(err).with_context(|| format!("reading {}", root.display())),
+        Ok(meta) if meta.file_type().is_dir() => (),
+        Ok(_) => bail!("unmanaged tool release directory: {}", root.display()),
+    }
+    let releases = root.join("releases");
+    match std::fs::symlink_metadata(&releases) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&releases)?,
+        Err(err) => return Err(err).with_context(|| format!("reading {}", releases.display())),
+        Ok(meta) if meta.file_type().is_dir() => (),
+        Ok(_) => bail!("unmanaged tool release store: {}", releases.display()),
+    }
+    use std::os::unix::fs::OpenOptionsExt;
+    let lock_path = root.join(".lock");
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&lock_path)?;
+    if !lock.metadata()?.file_type().is_file() {
+        bail!("unsafe tool release lock: {}", lock_path.display());
+    }
+    lock.lock().context("locking tool release state")?;
+
+    let previous = current_tool_release(&root)?;
+    let mut previous_names = BTreeSet::new();
+    if let Some(ref prior) = previous {
+        for entry in std::fs::read_dir(prior)? {
+            let entry = entry?;
+            let bin = entry.file_name().to_string_lossy().into_owned();
+            if !valid_bin_name(&bin) || !entry.file_type()?.is_file() {
+                bail!("unsafe managed tool release entry: {bin}");
+            }
+            previous_names.insert(bin);
         }
     }
-    Ok(installed)
+    let managed: BTreeSet<String> = previous_names.union(&names).cloned().collect();
+    for bin in &managed {
+        let dest = bin_dir.join(bin);
+        let expected = root.join("current").join(bin);
+        match std::fs::symlink_metadata(&dest) {
+            Err(err)
+                if err.kind() == std::io::ErrorKind::NotFound && !previous_names.contains(bin) => {}
+            Err(err) => return Err(err).with_context(|| format!("reading {}", dest.display())),
+            Ok(meta)
+                if previous_names.contains(bin)
+                    && meta.file_type().is_symlink()
+                    && std::fs::read_link(&dest)? == expected => {}
+            Ok(_) => bail!("refusing unmanaged tool entrypoint: {}", dest.display()),
+        }
+    }
+    let release = tempfile::Builder::new()
+        .prefix(".oqto-acq-")
+        .tempdir_in(&releases)?;
+    if let Some(ref prior) = previous {
+        for bin in &previous_names {
+            std::fs::copy(prior.join(bin), release.path().join(bin))?;
+        }
+    }
+    for (bin, src) in &selected {
+        let dst = release.path().join(bin);
+        std::fs::copy(src, &dst).with_context(|| format!("staging tool binary {bin}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755))?;
+        }
+    }
+    // Only newly introduced names need links. Old names already resolve via
+    // `current`; the final pointer switch upgrades them all together.
+    let mut added = Vec::new();
+    let result: Result<()> = (|| {
+        for bin in names.difference(&previous_names) {
+            let dest = bin_dir.join(bin);
+            let target = root.join("current").join(bin);
+            std::os::unix::fs::symlink(&target, &dest)
+                .with_context(|| format!("creating tool entrypoint {}", dest.display()))?;
+            added.push(dest);
+        }
+        let final_release = release.keep();
+        let next = tempfile::Builder::new()
+            .prefix(".oqto-pointer-")
+            .tempdir_in(&root)?;
+        let pending = next.path().join("current");
+        std::os::unix::fs::symlink(&final_release, &pending)?;
+        std::fs::rename(&pending, root.join("current")).context("switching active tool release")?;
+        Ok(())
+    })();
+    if let Err(err) = result {
+        for link in added {
+            if let Err(rollback) = std::fs::remove_file(&link) {
+                return Err(err).context(format!(
+                    "tool rollback ALSO failed for {}: {rollback}",
+                    link.display()
+                ));
+            }
+        }
+        return Err(err);
+    }
+    Ok(names.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -571,7 +742,15 @@ mod tests {
         }
         builder.into_inner()?.finish()?;
         let bin_dir = root.path().join("installed-bin");
-        let installed = install_staged(&[tarball], &bin_dir)?;
+        let allowed = vec!["tool".to_owned()];
+        let installed = install_staged(
+            &[StagedTool {
+                name: "tool",
+                archive: &tarball,
+                binaries: &allowed,
+            }],
+            &bin_dir,
+        )?;
         assert_eq!(installed, vec!["tool"]);
         assert_eq!(std::fs::read(bin_dir.join("tool"))?, b"tool");
         assert!(!bin_dir.join("README").exists());
@@ -584,6 +763,204 @@ mod tests {
                     .to_string_lossy()
                     .starts_with(".oqto-acq-"))
         );
+        Ok(())
+    }
+
+    fn tool_archive(path: &Path, names: &[(&str, &[u8])]) -> Result<()> {
+        let encoded = flate2::write::GzEncoder::new(
+            std::fs::File::create(path)?,
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoded);
+        for (name, bytes) in names {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, format!("pkg/bin/{name}"), *bytes)?;
+        }
+        builder.into_inner()?.finish()?;
+        Ok(())
+    }
+
+    #[test]
+    fn staged_tools_refuse_unmanaged_and_platform_entrypoints_before_mutation() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let bin = root.path().join("bin");
+        std::fs::create_dir(&bin)?;
+        std::fs::write(bin.join("tool"), b"user-owned")?;
+        std::fs::write(bin.join(".tool.new"), b"unrelated temporary file")?;
+        let archive = root.path().join("tool.tar.gz");
+        tool_archive(&archive, &[("tool", b"replacement")])?;
+        let allowed = vec!["tool".to_owned()];
+        assert!(
+            install_staged(
+                &[StagedTool {
+                    name: "tool",
+                    archive: &archive,
+                    binaries: &allowed
+                }],
+                &bin
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(bin.join("tool"))?, b"user-owned");
+        assert_eq!(
+            std::fs::read(bin.join(".tool.new"))?,
+            b"unrelated temporary file"
+        );
+        assert!(!bin.join(".oqto-tools").exists());
+
+        let malicious = root.path().join("malicious.tar.gz");
+        tool_archive(&malicious, &[("oqtoctl", b"malicious")])?;
+        std::fs::write(bin.join("oqtoctl"), b"platform-owned")?;
+        assert!(
+            install_staged(
+                &[StagedTool {
+                    name: "tool",
+                    archive: &malicious,
+                    binaries: &allowed
+                }],
+                &bin
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(bin.join("oqtoctl"))?, b"platform-owned");
+        Ok(())
+    }
+
+    #[test]
+    fn later_archive_failure_preserves_preexisting_tools_and_leaves_no_new_entries() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let bin = root.path().join("bin");
+        let first = root.path().join("first.tar.gz");
+        tool_archive(&first, &[("tool", b"first")])?;
+        let corrupt = root.path().join("corrupt.tar.gz");
+        std::fs::write(&corrupt, b"not a gzip")?;
+        let allowed = vec!["tool".to_owned()];
+        assert!(
+            install_staged(
+                &[
+                    StagedTool {
+                        name: "tool",
+                        archive: &first,
+                        binaries: &allowed
+                    },
+                    StagedTool {
+                        name: "tool",
+                        archive: &corrupt,
+                        binaries: &allowed
+                    },
+                ],
+                &bin
+            )
+            .is_err()
+        );
+        assert!(!bin.join("tool").exists());
+        assert!(!bin.join(".tool.new").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn staged_tool_refuses_unmanaged_symlink_and_release_store() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let bin = root.path().join("bin");
+        let outside = root.path().join("outside");
+        std::fs::create_dir(&bin)?;
+        std::fs::create_dir(&outside)?;
+        std::fs::write(outside.join("file"), b"preserve")?;
+        let archive = root.path().join("tool.tar.gz");
+        tool_archive(&archive, &[("tool", b"safe")])?;
+        let allowed = vec!["tool".to_owned()];
+        let input = [StagedTool {
+            name: "tool",
+            archive: &archive,
+            binaries: &allowed,
+        }];
+        std::os::unix::fs::symlink(outside.join("file"), bin.join("tool"))?;
+        assert!(install_staged(&input, &bin).is_err());
+        assert_eq!(std::fs::read(outside.join("file"))?, b"preserve");
+        std::fs::remove_file(bin.join("tool"))?;
+        std::os::unix::fs::symlink(&outside, bin.join(".oqto-tools"))?;
+        assert!(install_staged(&input, &bin).is_err());
+        assert_eq!(std::fs::read_dir(&outside)?.count(), 1);
+        assert!(!bin.join("tool").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn multi_archive_upgrade_switches_once_and_failed_next_upgrade_preserves_prior_set()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let bin = root.path().join("bin");
+        let first = root.path().join("tool-v1.tar.gz");
+        let second = root.path().join("other-v1.tar.gz");
+        tool_archive(&first, &[("tool", b"old tool")])?;
+        tool_archive(&second, &[("other", b"old other")])?;
+        let tool = vec!["tool".to_owned()];
+        let other = vec!["other".to_owned()];
+        let old = [
+            StagedTool {
+                name: "tool",
+                archive: &first,
+                binaries: &tool,
+            },
+            StagedTool {
+                name: "other",
+                archive: &second,
+                binaries: &other,
+            },
+        ];
+        assert_eq!(install_staged(&old, &bin)?, vec!["other", "tool"]);
+        assert_eq!(std::fs::read(bin.join("tool"))?, b"old tool");
+        assert_eq!(std::fs::read(bin.join("other"))?, b"old other");
+        let current = bin.join(".oqto-tools/current");
+        let previous = std::fs::read_link(&current)?;
+        let entrypoint = std::fs::read_link(bin.join("tool"))?;
+
+        let newer = root.path().join("tool-v2.tar.gz");
+        tool_archive(&newer, &[("tool", b"new tool")])?;
+        let corrupt = root.path().join("corrupt.tar.gz");
+        std::fs::write(&corrupt, b"not a gzip")?;
+        let failed = [
+            StagedTool {
+                name: "tool",
+                archive: &newer,
+                binaries: &tool,
+            },
+            StagedTool {
+                name: "other",
+                archive: &corrupt,
+                binaries: &other,
+            },
+        ];
+        assert!(install_staged(&failed, &bin).is_err());
+        assert_eq!(std::fs::read_link(&current)?, previous);
+        assert_eq!(std::fs::read(bin.join("tool"))?, b"old tool");
+        assert_eq!(std::fs::read(bin.join("other"))?, b"old other");
+        assert_eq!(std::fs::read_link(bin.join("tool"))?, entrypoint);
+
+        let other_new = root.path().join("other-v2.tar.gz");
+        tool_archive(&other_new, &[("other", b"new other")])?;
+        let upgrade = [
+            StagedTool {
+                name: "tool",
+                archive: &newer,
+                binaries: &tool,
+            },
+            StagedTool {
+                name: "other",
+                archive: &other_new,
+                binaries: &other,
+            },
+        ];
+        assert_eq!(install_staged(&upgrade, &bin)?, vec!["other", "tool"]);
+        assert_ne!(std::fs::read_link(&current)?, previous);
+        assert_eq!(std::fs::read(bin.join("tool"))?, b"new tool");
+        assert_eq!(std::fs::read(bin.join("other"))?, b"new other");
+        assert_eq!(std::fs::read_link(bin.join("tool"))?, entrypoint);
+        assert!(!bin.join(".tool.new").exists());
         Ok(())
     }
 
@@ -613,7 +990,18 @@ mod tests {
         builder.append_data(&mut link, "bin/escape", std::io::empty())?;
         builder.into_inner()?.finish()?;
         let bin_dir = root.path().join("installed-bin");
-        assert!(install_staged(&[tarball], &bin_dir).is_err());
+        let allowed = vec!["tool".to_owned()];
+        assert!(
+            install_staged(
+                &[StagedTool {
+                    name: "tool",
+                    archive: &tarball,
+                    binaries: &allowed
+                }],
+                &bin_dir
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(outside)?, b"do not install host-owned files");
         assert!(!bin_dir.join("escape").exists());
         Ok(())

@@ -22,6 +22,21 @@ sldr = "0.8.1"
 skdlr = "0.2.7"
 ignr = "0.1.3"
 
+# Exact entrypoint ownership for `oqto-setup acquire --install-bin`. These
+# binaries come from each tool's pinned byt.release.toml; unexpected archive
+# executables or claims on the platform's own bin names fail before mutation.
+[binary_owners]
+agntz = ["agntz"]
+eavs = ["eavs"]
+ignr = ["ignr"]
+mmry = ["mmry", "mmry-mcp", "mmry-service", "mmry-tui"]
+scrpr = ["scrpr"]
+skdlr = ["skdlr", "skdlr-api", "skdlr-mcp", "skdlr-service", "skdlr-tui"]
+sldr = ["sldr", "sldr-server"]
+sx = ["sx"]
+tmpltr = ["tmpltr"]
+trx = ["trx", "trx-tui", "trx-mcp", "trx-api"]
+
 [optional]
 # Voice mode — GPU-best; no prebuilt binaries published, build from source when
 # needed. Excluded from the managed acquisition set (oqto-setup acquire, ADR-0018).

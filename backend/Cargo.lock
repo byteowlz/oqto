@@ -4314,6 +4314,7 @@ dependencies = [
  "clap",
  "dirs 5.0.1",
  "flate2",
+ "libc",
  "oqto-provisioning",
  "serde",
  "serde_json",

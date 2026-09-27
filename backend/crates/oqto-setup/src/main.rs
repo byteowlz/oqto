@@ -241,6 +241,12 @@ fn acquire_bundle(
     let contents = fs::read_to_string(manifest)
         .with_context(|| format!("Failed to read dependency manifest: {}", manifest.display()))?;
     let mut components = deps::parse_dependency_manifest(&contents)?;
+    // Fail closed on incomplete/overlapping tool ownership before fetching a
+    // single byte. Artifact-only staging and `deps` planning stay available
+    // for cross-host packaging without local entrypoint mutation.
+    let owners = install_bin
+        .map(|_| deps::parse_binary_owners(&contents))
+        .transpose()?;
     if tools_only {
         // Drop the oqto platform bundle entirely: dependency remediation only
         // needs the byteowlz tools, and must not fail (or re-download the large
@@ -264,12 +270,22 @@ fn acquire_bundle(
     if let Some(bin) = install_bin {
         // The oqto platform bundle is a structured release installed via
         // `oqto-setup install` (transactional); flat-install only the tools.
-        let tool_tarballs: Vec<PathBuf> = components
+        let owners = owners.context("missing tool binary ownership for local install")?;
+        let tool_tarballs: Vec<_> = components
             .iter()
             .zip(&staged)
             .filter(|(c, _)| c.name != "oqto")
-            .map(|(_, p)| p.clone())
-            .collect();
+            .map(|(c, p)| {
+                let binaries = owners
+                    .get(&c.name)
+                    .context("tool has no binary owner declaration")?;
+                Ok(acquire::StagedTool {
+                    name: &c.name,
+                    archive: p,
+                    binaries,
+                })
+            })
+            .collect::<Result<_>>()?;
         let installed = acquire::install_staged(&tool_tarballs, bin)?;
         for b in &installed {
             println!("installed {} -> {}", b, bin.join(b).display());
