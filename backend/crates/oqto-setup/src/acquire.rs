@@ -447,6 +447,21 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
             Ok(_) => bail!("refusing unmanaged tool entrypoint: {}", dest.display()),
         }
     }
+    if let Some(ref prior) = previous {
+        let mut identical = true;
+        for (bin, source) in &selected {
+            if !previous_names.contains(bin)
+                || sha256_reader(std::fs::File::open(source)?)?
+                    != sha256_reader(std::fs::File::open(prior.join(bin))?)?
+            {
+                identical = false;
+                break;
+            }
+        }
+        if identical {
+            return Ok(names.into_iter().collect());
+        }
+    }
     let release = tempfile::Builder::new()
         .prefix(".oqto-acq-")
         .tempdir_in(&releases)?;
@@ -918,6 +933,16 @@ mod tests {
         let current = bin.join(".oqto-tools/current");
         let previous = std::fs::read_link(&current)?;
         let entrypoint = std::fs::read_link(bin.join("tool"))?;
+        assert_eq!(install_staged(&old, &bin)?, vec!["other", "tool"]);
+        assert_eq!(
+            std::fs::read_link(&current)?,
+            previous,
+            "idempotent reinstall changed the active release"
+        );
+        assert_eq!(
+            std::fs::read_dir(bin.join(".oqto-tools/releases"))?.count(),
+            1
+        );
 
         let newer = root.path().join("tool-v2.tar.gz");
         tool_archive(&newer, &[("tool", b"new tool")])?;
