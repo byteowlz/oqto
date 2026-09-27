@@ -635,15 +635,13 @@ install_managed_agent_tools() {
     ;;
   esac
 
-  local staging
-  staging="$(mktemp -d)"
+  # oqto-setup stages checked bytes privately under the installer's uid.
+  # Never hand a user-owned mktemp directory to a privileged installer.
   if sudo oqto-setup acquire --manifest "$manifest" --arch "$arch_arg" \
-    --dest "$staging" --install-bin "$TOOLS_INSTALL_DIR"; then
-    rm -rf "$staging"
+    --install-bin "$TOOLS_INSTALL_DIR"; then
     log_success "Managed agent tools installed to $TOOLS_INSTALL_DIR"
     return 0
   fi
-  rm -rf "$staging"
   log_error "oqto-setup acquire failed"
   return 1
 }

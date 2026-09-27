@@ -598,7 +598,7 @@ case "\$(uname -m)" in
     *) echo "unsupported architecture \$(uname -m)" >&2; exit 1 ;;
 esac
 "\$setup" acquire --manifest "\$tmpdir/dependencies.toml" --arch "\$arch_arg" \
-    --dest "\$tmpdir/acq" --install-bin /usr/local/bin --tools-only
+    --install-bin /usr/local/bin --tools-only
 REMOTE_EOF
 )"
 

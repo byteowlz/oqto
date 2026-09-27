@@ -69,8 +69,6 @@ fn incomplete_binary_owners_fail_before_download_or_mutation() -> Result<()> {
             "--base-url",
             "file:///no-such-tool-releases",
         ])
-        .arg("--dest")
-        .arg(&staged)
         .arg("--install-bin")
         .arg(&bin)
         .arg("--tools-only")
@@ -79,6 +77,53 @@ fn incomplete_binary_owners_fail_before_download_or_mutation() -> Result<()> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("binary_owners"), "{stderr}");
     assert!(!staged.exists());
+    assert!(!bin.exists());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_install_rejects_caller_supplied_stage_before_download() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let manifest = root.path().join("dependencies.toml");
+    fs::write(
+        &manifest,
+        "[oqto]\nversion = '0.5.0'\n[byteowlz]\nmmry = '0.13.4'\n[binary_owners]\nmmry = ['mmry']\n",
+    )?;
+    let stage = root.path().join("user-writable-stage");
+    fs::create_dir(&stage)?;
+    let outside = root.path().join("outside-user-file");
+    fs::write(&outside, b"preserve user content")?;
+    let arch = if std::env::consts::ARCH == "x86_64" {
+        "x86-64"
+    } else {
+        "aarch64"
+    };
+    let triple = if std::env::consts::ARCH == "x86_64" {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        "aarch64-unknown-linux-gnu"
+    };
+    let archive_name = format!("mmry-v0.13.4-{triple}.tar.gz");
+    std::os::unix::fs::symlink(&outside, stage.join(&archive_name))?;
+    let bin = root.path().join("not-created-bin");
+    let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
+        .args(["acquire", "--manifest"])
+        .arg(&manifest)
+        .args(["--arch", arch, "--base-url", "file:///never-download"])
+        .arg("--dest")
+        .arg(&stage)
+        .arg("--install-bin")
+        .arg(&bin)
+        .arg("--tools-only")
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--dest cannot be used with --install-bin"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read(outside)?, b"preserve user content");
     assert!(!bin.exists());
     Ok(())
 }
@@ -133,8 +178,6 @@ fn native_checked_tool_fixture_installs_without_clobbering_unmanaged_bin() -> Re
         .arg(&manifest)
         .args(["--arch", arch, "--base-url"])
         .arg(format!("file://{}", root.path().join("source").display()))
-        .arg("--dest")
-        .arg(root.path().join("staging"))
         .arg("--install-bin")
         .arg(&bin)
         .arg("--tools-only")
@@ -146,6 +189,7 @@ fn native_checked_tool_fixture_installs_without_clobbering_unmanaged_bin() -> Re
     );
     assert_eq!(fs::read(bin.join("mmry"))?, b"demo");
     assert_eq!(fs::read(bin.join("unmanaged"))?, b"preserved");
+    assert!(!root.path().join("staging").exists());
     assert!(!bin.join(".mmry.new").exists());
     Ok(())
 }

@@ -400,13 +400,11 @@ acquire-deps arch="x86-64":
         (cd backend && cargo build -q -p oqto-setup)
         SETUP="$(pwd)/backend/target/debug/oqto-setup"
     fi
-    STAGE="$(mktemp -d)"
-    trap 'rm -rf "$STAGE"' EXIT
     echo "Acquiring + installing prebuilt deps (arch={{arch}}) -> /usr/local/bin"
+    # The installer privately stages and checks the exact bytes it extracts.
     sudo "$SETUP" acquire \
         --manifest "$(pwd)/dependencies.toml" \
         --arch "{{arch}}" \
-        --dest "$STAGE" \
         --install-bin /usr/local/bin
 
 # Install/update all byteowlz dependencies from sibling source repos

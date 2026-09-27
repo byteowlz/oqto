@@ -170,6 +170,47 @@ pub fn verify_against_checksums(
     Ok(())
 }
 
+/// Create a short-lived installer-owned download stage under a root-owned,
+/// sticky system temp directory. A caller-owned `--dest` is *never* used for
+/// local tool installs: its owner could replace archives after checksum check.
+/// This also avoids trusting TMPDIR from an inherited environment.
+pub fn private_tool_stage() -> Result<tempfile::TempDir> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let base = if cfg!(target_os = "macos") {
+        Path::new("/private/tmp")
+    } else {
+        Path::new("/tmp")
+    };
+    let metadata = std::fs::symlink_metadata(base)
+        .with_context(|| format!("reading private stage parent {}", base.display()))?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != 0
+        || (metadata.mode() & 0o022 != 0 && metadata.mode() & 0o1000 == 0)
+    {
+        bail!("untrusted private stage parent: {}", base.display());
+    }
+    let stage = tempfile::Builder::new()
+        .prefix("oqto-tool-acquire-")
+        .tempdir_in(base)
+        .context("creating private tool acquisition stage")?;
+    // tempfile creates directories according to the caller's umask (possibly
+    // 0755); close that read/traverse window before writing any fetched bytes.
+    std::fs::set_permissions(stage.path(), std::fs::Permissions::from_mode(0o700))?;
+    let metadata = std::fs::symlink_metadata(stage.path())?;
+    // libc exposes the effective uid on both native Linux and macOS. Compare
+    // it with the fresh stage owner before any network or archive writes.
+    let uid = unsafe { libc::geteuid() };
+    if !metadata.file_type().is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+        bail!(
+            "private tool acquisition stage lacks exclusive ownership (owner {}, effective uid {}, mode {:o})",
+            metadata.uid(),
+            uid,
+            metadata.mode() & 0o777
+        );
+    }
+    Ok(stage)
+}
+
 /// Fetch every artifact in `plan` (and its release `checksums.txt`) into
 /// `dest_dir`, verifying each against the published sha256. Returns the staged
 /// tarball paths in plan order. Fail-closed: a download or checksum failure
@@ -563,6 +604,20 @@ mod tests {
             .into_bytes(),
         );
         files
+    }
+
+    #[test]
+    fn private_stage_is_owned_by_installer_and_removed_on_drop() -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let stage = private_tool_stage()?;
+        let path = stage.path().to_path_buf();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        assert!(metadata.file_type().is_dir());
+        assert_eq!(metadata.mode() & 0o077, 0);
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        drop(stage);
+        assert!(!path.exists());
+        Ok(())
     }
 
     #[test]

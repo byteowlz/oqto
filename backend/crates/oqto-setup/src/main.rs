@@ -95,9 +95,10 @@ enum Command {
         /// Base GitHub org URL the artifacts are published under.
         #[arg(long, default_value = "https://github.com/byteowlz")]
         base_url: String,
-        /// Directory to stage downloaded artifacts into.
-        #[arg(long, default_value = "dist/out")]
-        dest: PathBuf,
+        /// Directory for artifact-only staging (without --install-bin).
+        /// A local tool install always uses a private installer-owned stage.
+        #[arg(long)]
+        dest: Option<PathBuf>,
         /// If set, extract the staged bundle and install binaries into this dir
         /// (e.g. /usr/local/bin) — completes the acquire -> install path.
         #[arg(long)]
@@ -212,7 +213,7 @@ fn main() -> Result<()> {
             &manifest,
             arch,
             &base_url,
-            &dest,
+            dest.as_deref(),
             install_bin.as_deref(),
             tools_only,
         ),
@@ -225,7 +226,7 @@ fn acquire_bundle(
     manifest: &Path,
     arch: ArchArg,
     base_url: &str,
-    dest: &Path,
+    dest: Option<&Path>,
     install_bin: Option<&Path>,
     tools_only: bool,
 ) -> Result<()> {
@@ -235,6 +236,11 @@ fn acquire_bundle(
         if requested != host {
             anyhow::bail!(
                 "unsupported release target: expected {host} for local tool install, requested {requested}"
+            );
+        }
+        if dest.is_some() {
+            anyhow::bail!(
+                "--dest cannot be used with --install-bin; tool installation requires private installer-owned staging"
             );
         }
     }
@@ -257,15 +263,33 @@ fn acquire_bundle(
     let target = deps::Arch::from(arch).target();
     let plan = deps::plan_downloads(&components, base_url, target);
 
-    let staged = acquire::acquire_artifacts(&plan, dest, &acquire::CurlFetcher)?;
-    for path in &staged {
-        println!("staged {}", path.display());
+    // Keep this guard alive until install_staged returns: archive extraction
+    // must consume the bytes verified inside this installer-owned directory,
+    // not reopen a caller-controlled --dest pathname after verification.
+    let private_stage = install_bin
+        .map(|_| acquire::private_tool_stage())
+        .transpose()?;
+    let staged_dir = private_stage
+        .as_ref()
+        .map(tempfile::TempDir::path)
+        .or(dest)
+        .unwrap_or_else(|| Path::new("dist/out"));
+    let staged = acquire::acquire_artifacts(&plan, staged_dir, &acquire::CurlFetcher)?;
+    if private_stage.is_some() {
+        println!(
+            "Verified {} artifact(s) in private installer staging",
+            staged.len()
+        );
+    } else {
+        for path in &staged {
+            println!("staged {}", path.display());
+        }
+        println!(
+            "Acquired {} artifact(s) into {}",
+            staged.len(),
+            staged_dir.display()
+        );
     }
-    println!(
-        "Acquired {} artifact(s) into {}",
-        staged.len(),
-        dest.display()
-    );
 
     if let Some(bin) = install_bin {
         // The oqto platform bundle is a structured release installed via
