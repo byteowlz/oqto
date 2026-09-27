@@ -8,7 +8,7 @@
 //! unit-testable; the four former acquisition paths (install.sh, docker
 //! downloader, setup module 08, deploy remediate) converge on it.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -115,6 +115,8 @@ struct RawManifest {
     oqto: OqtoSection,
     #[serde(default)]
     byteowlz: BTreeMap<String, String>,
+    #[serde(default)]
+    binary_owners: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +138,35 @@ pub fn parse_dependency_manifest(toml_str: &str) -> Result<Vec<Component>> {
         components.push(Component::new(name, version));
     }
     Ok(components)
+}
+
+/// The manifest names every executable each pinned tool is allowed to install.
+/// Check *all* declarations before downloading, including components filtered
+/// by `--tools-only`; one tool may never claim another's or an Oqto binary.
+pub fn parse_binary_owners(toml_str: &str) -> Result<BTreeMap<String, Vec<String>>> {
+    let raw: RawManifest =
+        toml::from_str(toml_str).context("Failed to parse dependency manifest")?;
+    if raw.binary_owners.len() != raw.byteowlz.len() {
+        bail!("binary_owners must declare every byteowlz tool and no other components");
+    }
+    let mut claimed = std::collections::BTreeSet::new();
+    for (tool, allowed) in &raw.binary_owners {
+        if !raw.byteowlz.contains_key(tool) || allowed.is_empty() {
+            bail!("binary_owners contains an unknown or empty tool: {tool}");
+        }
+        for bin in allowed {
+            if !crate::acquire::valid_bin_name(bin)
+                || crate::acquire::platform_bin(bin)
+                || !claimed.insert(bin.as_str())
+            {
+                bail!("binary_owners has a duplicate or unsafe binary: {bin}");
+            }
+        }
+        if !allowed.iter().any(|bin| bin == tool) {
+            bail!("binary_owners omits the primary binary for {tool}");
+        }
+    }
+    Ok(raw.binary_owners)
 }
 
 #[cfg(test)]
@@ -193,6 +224,43 @@ pi = "latest"
             comps.iter().all(|c| c.name != "pi"),
             "[external] tools are excluded"
         );
+    }
+
+    #[test]
+    fn binary_owners_refuse_cross_tool_and_platform_claims() {
+        let good = "[oqto]\nversion = '0.5.0'\n[byteowlz]\nmmry = '0.13.4'\ntrx = '0.6.3'\n[binary_owners]\nmmry = ['mmry']\ntrx = ['trx', 'trx-mcp']\n";
+        let owners = parse_binary_owners(good).unwrap();
+        assert_eq!(owners["trx"], vec!["trx", "trx-mcp"]);
+        assert!(parse_binary_owners(&good.replace("'trx-mcp'", "'oqtoctl'")).is_err());
+        assert!(parse_binary_owners(&good.replace("'trx-mcp'", "'mmry'")).is_err());
+        assert!(parse_binary_owners(&good.replace("['mmry']", "['mmry', '../escape']")).is_err());
+        assert!(parse_binary_owners(&good.replace("mmry = ['mmry']\n", "")).is_err());
+    }
+
+    #[test]
+    fn pinned_binary_owners_do_not_claim_platform_manifest_entrypoints() -> Result<()> {
+        let pinned = include_str!("../../../../dependencies.toml");
+        let owners = parse_binary_owners(pinned)?;
+        assert_eq!(owners.len(), 10);
+        let platform: toml::Value = toml::from_str(include_str!("../../../../dist/manifest.toml"))?;
+        for asset in platform["assets"]
+            .as_array()
+            .context("dist assets must be an array")?
+        {
+            if asset["kind"].as_str() != Some("binary") {
+                continue;
+            }
+            let bin = asset["stage_path"]
+                .as_str()
+                .and_then(|path| path.strip_prefix("bin/"))
+                .context("platform binary must have a bin/ stage path")?;
+            assert!(
+                crate::acquire::platform_bin(bin),
+                "unreserved platform binary: {bin}"
+            );
+            assert!(!owners.values().flatten().any(|owned| owned == bin));
+        }
+        Ok(())
     }
 
     #[test]
