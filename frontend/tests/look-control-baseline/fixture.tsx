@@ -28,6 +28,81 @@ createRoot(root).render(
 			</Button>
 		</div>
 		<div
+			className="flex flex-wrap items-center gap-4 py-5"
+			data-fixture="additional-shared-button-variants-and-sizes"
+		>
+			<Button id="look-shared-default-sm" size="sm">
+				Primary small
+			</Button>
+			<Button
+				id="look-shared-default-icon"
+				size="icon"
+				aria-label="Primary icon"
+			>
+				<svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+					<path d="M2 8h12M8 2v12" stroke="currentColor" />
+				</svg>
+			</Button>
+			<Button id="look-shared-outline-sm" variant="outline" size="sm">
+				Outline small
+			</Button>
+			<Button
+				id="look-shared-outline-icon"
+				variant="outline"
+				size="icon"
+				aria-label="Outline icon"
+			>
+				<svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+					<path d="M2 8h12M8 2v12" stroke="currentColor" />
+				</svg>
+			</Button>
+			<Button id="look-shared-secondary-default" variant="secondary">
+				Secondary control
+			</Button>
+			<Button
+				id="look-shared-secondary-icon"
+				variant="secondary"
+				size="icon"
+				aria-label="Secondary icon"
+			>
+				<svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+					<path d="M2 8h12M8 2v12" stroke="currentColor" />
+				</svg>
+			</Button>
+			<Button id="look-shared-ghost-default" variant="ghost">
+				Ghost control
+			</Button>
+			<Button id="look-shared-ghost-sm" variant="ghost" size="sm">
+				Ghost small
+			</Button>
+			<Button
+				id="look-shared-ghost-icon"
+				variant="ghost"
+				size="icon"
+				aria-label="Ghost icon"
+			>
+				<svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+					<path d="M2 8h12M8 2v12" stroke="currentColor" />
+				</svg>
+			</Button>
+			<Button id="look-shared-destructive-default" variant="destructive">
+				Destructive control
+			</Button>
+			<Button id="look-shared-destructive-sm" variant="destructive" size="sm">
+				Destructive small
+			</Button>
+			<Button
+				id="look-shared-destructive-icon"
+				variant="destructive"
+				size="icon"
+				aria-label="Destructive icon"
+			>
+				<svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+					<path d="M2 8h12M8 2v12" stroke="currentColor" />
+				</svg>
+			</Button>
+		</div>
+		<div
 			className="wb-shell"
 			style={{ height: "100px", width: "300px" }}
 			data-fixture="workbench-control"

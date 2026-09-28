@@ -20,6 +20,18 @@ CONTROLS = {
     "shared-default": "#look-shared-default",
     "shared-outline": "#look-shared-outline",
     "shared-secondary-small": "#look-shared-secondary",
+    "shared-default-sm": "#look-shared-default-sm",
+    "shared-default-icon": "#look-shared-default-icon",
+    "shared-outline-sm": "#look-shared-outline-sm",
+    "shared-outline-icon": "#look-shared-outline-icon",
+    "shared-secondary-default": "#look-shared-secondary-default",
+    "shared-secondary-icon": "#look-shared-secondary-icon",
+    "shared-ghost-default": "#look-shared-ghost-default",
+    "shared-ghost-sm": "#look-shared-ghost-sm",
+    "shared-ghost-icon": "#look-shared-ghost-icon",
+    "shared-destructive-default": "#look-shared-destructive-default",
+    "shared-destructive-sm": "#look-shared-destructive-sm",
+    "shared-destructive-icon": "#look-shared-destructive-icon",
     "workbench-icon": "#look-workbench-icon",
 }
 SCHEMES = ("oqto-dark", "oqto-light")
@@ -108,6 +120,7 @@ def main():
         page.locator("#look-workbench-icon").wait_for()
         page.evaluate("document.fonts.ready")
         measurements = {}
+        screenshots = {}
         for scheme in SCHEMES:
             page.evaluate("""async scheme => {
               const {applyOqtoUiScheme} = await import('/src/oqto-ui/platform/base24-theme.ts');
@@ -118,9 +131,7 @@ def main():
             for name, selector in CONTROLS.items():
                 measurements[scheme][name] = {state: sample(page, selector, state) for state in STATES}
             if args.update:
-                shots = HERE / "screenshots"
-                shots.mkdir(exist_ok=True)
-                page.screenshot(path=str(shots / f"{scheme}.png"))
+                screenshots[scheme] = page.screenshot()
         result = {
             "environment": {"browser": "Chromium", "version": browser.version, "viewport": [1280, 720], "dpr": 1},
             "sourceHashes": source_hashes,
@@ -128,6 +139,20 @@ def main():
         }
         browser.close()
     if args.update:
+        if GOLDEN.exists():
+            previous = json.loads(GOLDEN.read_text())
+            for scheme, controls in previous["measurements"].items():
+                for name, states in controls.items():
+                    for state, pinned in states.items():
+                        measured = result["measurements"][scheme][name][state]
+                        if pinned != measured:
+                            changes = {key: [pinned.get(key), measured.get(key)] for key in pinned.keys() | measured.keys() if pinned.get(key) != measured.get(key)}
+                            raise AssertionError(f"refusing to change existing baseline {scheme}/{name}/{state}: {changes}")
+            print("PASS: all previously pinned measurements remain unchanged")
+        shots = HERE / "screenshots"
+        shots.mkdir(exist_ok=True)
+        for scheme, pixels in screenshots.items():
+            (shots / f"{scheme}.png").write_bytes(pixels)
         GOLDEN.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
         print(f"Pinned {len(SCHEMES)} schemes x {len(CONTROLS)} controls x {len(STATES)} states to {GOLDEN}")
     else:
