@@ -25,7 +25,7 @@ def check_artifact(artifact: Path, tag: str) -> None:
     root = f"oqto-{tag}-{TARGET}"
     if artifact.name != f"{root}.tar.gz":
         raise ValueError(f"unexpected release asset name: {artifact.name}")
-    required = {f"{root}/manifest.toml", f"{root}/immutable/frontend/dist/index.html"}
+    required = {f"{root}/manifest.toml", f"{root}/immutable/frontend/index.html"}
     required.update(f"{root}/immutable/bin/{name}" for name in REQUIRED_BINS)
     with tarfile.open(artifact, "r:gz") as archive:
         entries = {}

@@ -840,6 +840,17 @@ deploy-host-debug-dir name trace_dir *ARGS:
 deploy-quick *ARGS:
     ./scripts/deploy.sh --skip-build {{ARGS}}
 
+# Offline publication gate tests (no build, download, or deployment)
+test-release-publication-gates: test-release-tag-version test-release-assets
+
+# Verify tag matches Cargo, dependency pin, and frontend package versions
+test-release-tag-version:
+    python3 -B scripts/tests/test-release-tag-version.py
+
+# Reject incomplete or unsafe canonical Linux full release artifacts
+test-release-assets:
+    python3 -B scripts/tests/test-release-assets.py
+
 # Verify release/dev dependency policy behavior without deploying
 test-deploy-mode:
     ./scripts/tests/deploy-mode-test.sh

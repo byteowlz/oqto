@@ -19,14 +19,14 @@ PREFIX = f"oqto-{TAG}-{TARGET}"
 
 
 def bundle(root: Path, *, flat=False, frontend=True, target="full", extra=None,
-           executable=True, duplicate=False, symlink=False) -> Path:
+           executable=True, duplicate=False, symlink=False, legacy_frontend=False) -> Path:
     artifact = root / f"{PREFIX}.tar.gz"
     items = {f"{PREFIX}/manifest.toml":
              f'manifest_version = 1\nid = "oqto-dist"\n[release]\ntarget = "{target}"\n'.encode()}
     for name in module.REQUIRED_BINS:
         items[f"{PREFIX}/{'bin' if flat else 'immutable/bin'}/{name}"] = b"#!/bin/true\n"
     if frontend:
-        items[f"{PREFIX}/immutable/frontend/dist/index.html"] = b"<!doctype html>"
+        items[f"{PREFIX}/immutable/frontend/{'dist/' if legacy_frontend else ''}index.html"] = b"<!doctype html>"
     if extra:
         items[extra] = b"unsafe"
     with tarfile.open(artifact, "w:gz") as archive:
@@ -54,7 +54,7 @@ class ReleaseAssetTests(unittest.TestCase):
 
     def test_legacy_flat_and_missing_frontend_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            for options in ({"flat": True}, {"frontend": False}):
+            for options in ({"flat": True}, {"frontend": False}, {"legacy_frontend": True}):
                 with self.assertRaisesRegex(ValueError, "incomplete full release"):
                     module.check_artifact(bundle(Path(directory), **options), TAG)
 
