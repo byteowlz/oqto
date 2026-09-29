@@ -891,6 +891,10 @@ impl SandboxProfile {
                 "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -944,6 +948,10 @@ impl SandboxProfile {
                 "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -1003,6 +1011,7 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
             ],
             scoped_paths: vec![],
+
             // Session history is deliberately NOT scoped here. development is
             // the permissive profile; cross-workspace session visibility is
             // intended. strict scopes it (see session_shard_rules).
@@ -1082,6 +1091,10 @@ impl SandboxProfile {
                 "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -3669,6 +3682,48 @@ max_cpu_seconds = 32
         let strict = SandboxConfig::strict();
         assert!(strict.isolate_network);
         assert!(strict.isolate_pid);
+    }
+
+    #[test]
+    fn test_history_store_denied_and_development_sessions_sharded() {
+        let log_store = "~/.local/share/oqto/oqto-log".to_string();
+
+        // The transcript stores are the immutable authority (ADR-0005/0025);
+        // path exclusion is the only immutability control for same-user
+        // sandboxes, so every shipped profile denies them.
+        let minimal = SandboxConfig::minimal();
+        let development = SandboxConfig::from_profile("development");
+        let strict = SandboxConfig::strict();
+        for (name, config) in [
+            ("minimal", &minimal),
+            ("development", &development),
+            ("strict", &strict),
+        ] {
+            assert!(
+                config.deny_read.contains(&log_store),
+                "{name} profile must deny agent access to the oqto-log history store"
+            );
+        }
+
+        // Strict additionally shards harness session history to the current
+        // workspace (current shard writable, other workspaces hidden).
+        // Development deliberately does NOT: cross-workspace session
+        // visibility is a pinned permissive-profile decision
+        // (development_does_not_scope_session_history).
+        assert!(
+            SandboxProfile::strict()
+                .scoped_paths
+                .iter()
+                .any(|rule| rule.name.starts_with("session-shard:")),
+            "strict profile must keep harness session sharding"
+        );
+        assert!(
+            !SandboxProfile::development()
+                .scoped_paths
+                .iter()
+                .any(|rule| rule.base_path.contains("agent/sessions")),
+            "development cross-workspace session visibility is pinned; change deliberately, not accidentally"
+        );
     }
 
     #[test]
