@@ -16,6 +16,8 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface UseDictationOptions {
+	/** Composer identity; changing it cancels capture and fences queued delivery. */
+	scopeKey?: string;
 	config: VoiceConfig | null;
 	onTranscript: (text: string) => void;
 	vadTimeoutMs?: number;
@@ -72,6 +74,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const sttRef = useRef<STTService | null>(null);
 	const tokenRef = useRef(0);
 	const activeRef = useRef(false);
+	const runningScopeRef = useRef<string | undefined>(undefined);
 	const runningRecognitionRef = useRef<RecognitionSettings | null>(null);
 	const finishingRef = useRef(false);
 	const smoothVolumeRef = useRef(0);
@@ -103,6 +106,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const cancel = useCallback(() => {
 		tokenRef.current++;
 		activeRef.current = false;
+		runningScopeRef.current = undefined;
 		runningRecognitionRef.current = null;
 		finishingRef.current = false;
 		clearAutoSend();
@@ -131,6 +135,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		setPreparation("Preparing speech recognition…");
 		setIsActive(true);
 		activeRef.current = true;
+		runningScopeRef.current = current.scopeKey;
 		runningRecognitionRef.current = selected;
 		try {
 			if (selected.provider === "ears" && !current.config?.stt_url)
@@ -141,7 +146,10 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 				selected,
 			);
 			sttRef.current = service;
-			const isCurrent = () => token === tokenRef.current && activeRef.current;
+			const isCurrent = () =>
+				token === tokenRef.current &&
+				activeRef.current &&
+				current.scopeKey === latest.current.options.scopeKey;
 			service.setCallbacks({
 				onPreview: (text) => {
 					if (isCurrent()) setLiveTranscript(text);
@@ -224,6 +232,12 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		(language: RecognitionLanguage) => changeRecognition({ language }),
 		[changeRecognition],
 	);
+
+	// useeffect-guardrail: allow — composer identity changes release the old capture; callbacks also fence synchronously.
+	useEffect(() => {
+		if (activeRef.current && runningScopeRef.current !== options.scopeKey)
+			cancel();
+	}, [options.scopeKey, cancel]);
 
 	// useeffect-guardrail: allow — cross-tab settings changes must stop the old audio destination.
 	useEffect(() => {

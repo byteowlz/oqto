@@ -78,6 +78,30 @@ A missing prerequisite is a visible error, not permission to upload speech. Ther
 is no shipped single-thread fallback. Downloaded model caches may be evicted by
 the browser; this is not a promise of unconditional offline operation.
 
+## Composer lifecycle follow-up
+
+`oqto-qyh4` binds recognition to the unsanitized workspace/session composer
+identity, independently of the persistence key. A scope change stops capture,
+clears queued auto-send, and fences final delivery even before passive cleanup.
+Auto-send targets the originating composer's button ref, not the first matching
+button elsewhere in the document. A late Finish from an old scope cannot stop a
+new capture.
+
+`oqto-bqwq` treats completed speech as committed draft content: insertion writes
+through the same best-effort draft storage helper as typed edits and clears an
+older pending typed snapshot so it cannot overwrite speech. Previews never write
+to draft storage; Finish still does not auto-send. Reload retention depends on
+browser storage availability, as it does for typed drafts.
+
+The follow-up retains the explicitly scoped frontend gate debt in `oqto-d0pc.1`:
+comparison against unchanged `e6ce13a8` reproduced identical 180 full TypeScript
+error signatures, the same 14 Biome errors/two warnings, and the same four
+unapproved effects outside the speech files. These are not successful full gates;
+they remain deferred rather than suppressed by this fix. The existing Node
+deprecation and production chunk-size warnings are likewise retained. No live
+microphone/chat/deployment acceptance is implied by mocked capture regression
+tests or the production build.
+
 ## Proof and limitations
 
 - SDK: 14 lifecycle/protocol/resampling/artifact tests, strict typecheck and browser

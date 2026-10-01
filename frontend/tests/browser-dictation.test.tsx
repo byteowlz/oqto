@@ -1,5 +1,6 @@
 import { DictationOverlay } from "@/components/voice/DictationOverlay";
 import { RecognitionControls } from "@/components/voice/RecognitionControls";
+import { appendCompletedDraft } from "@/features/chat/hooks/draft-storage";
 import { useDictation } from "@/features/voice/hooks/useDictation";
 import type {
 	STTCallbacks,
@@ -12,6 +13,7 @@ import {
 	renderHook,
 	screen,
 } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const instances: FakeService[] = [];
@@ -69,6 +71,89 @@ beforeEach(() => {
 });
 
 describe("standalone Oqto dictation", () => {
+	it("stops capture and fences finals and scheduled sends when the composer scope changes", async () => {
+		vi.useFakeTimers();
+		const insert = vi.fn();
+		const send = vi.fn();
+		const { result, rerender } = renderHook(
+			({ scopeKey }) =>
+				useDictation({
+					scopeKey,
+					config: null,
+					onTranscript: insert,
+					autoSendOnFinal: true,
+					autoSendDelayMs: 50,
+					onAutoSend: send,
+				}),
+			{ initialProps: { scopeKey: "workspace-a:session-a" } },
+		);
+		await act(() => result.current.start());
+		act(() => instances[0]?.callbacks.onFinal?.("completed in A"));
+		rerender({ scopeKey: "workspace-a:session-b" });
+		act(() => {
+			instances[0]?.callbacks.onPreview?.("late preview");
+			instances[0]?.callbacks.onFinal?.("late final");
+			vi.advanceTimersByTime(50);
+		});
+		expect(result.current.isActive).toBe(false);
+		expect(instances[0]?.listening).toBe(false);
+		expect(result.current.liveTranscript).toBe("");
+		expect(insert).toHaveBeenCalledExactlyOnceWith("completed in A");
+		expect(send).not.toHaveBeenCalled();
+	});
+	it("fences old finals during layout before passive scope cleanup", async () => {
+		const insert = vi.fn();
+		const { result, rerender } = renderHook(
+			({ scopeKey }) => {
+				const dictation = useDictation({
+					scopeKey,
+					config: null,
+					onTranscript: insert,
+				});
+				useLayoutEffect(() => {
+					if (scopeKey === "B") instances[0]?.callbacks.onFinal?.("old result");
+				}, [scopeKey]);
+				return dictation;
+			},
+			{ initialProps: { scopeKey: "A" } },
+		);
+		await act(() => result.current.start());
+		rerender({ scopeKey: "B" });
+		expect(insert).not.toHaveBeenCalled();
+		expect(instances[0]?.listening).toBe(false);
+		await act(() => result.current.start());
+		act(() => instances[1]?.callbacks.onFinal?.("new result"));
+		expect(insert).toHaveBeenCalledExactlyOnceWith("new result");
+	});
+	it("a finishing old engine cannot deliver into or cancel a new composer capture", async () => {
+		const insert = vi.fn();
+		const { result, rerender } = renderHook(
+			({ scopeKey }) =>
+				useDictation({ scopeKey, config: null, onTranscript: insert }),
+			{ initialProps: { scopeKey: "A" } },
+		);
+		await act(() => result.current.start());
+		let finish!: () => void;
+		const oldService = instances[0];
+		if (!oldService) throw new Error("Capture service was not created");
+		vi.spyOn(oldService, "finishListening").mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				}),
+		);
+		act(() => result.current.stop());
+		rerender({ scopeKey: "B" });
+		await act(() => result.current.start());
+		await act(async () => {
+			instances[0]?.callbacks.onFinal?.("stale drained final");
+			finish();
+			await Promise.resolve();
+		});
+		expect(insert).not.toHaveBeenCalled();
+		expect(result.current.isActive).toBe(true);
+		expect(instances[1]?.listening).toBe(true);
+	});
 	it("starts local recognition without voice config; previews never insert or auto-send", async () => {
 		const insert = vi.fn();
 		const send = vi.fn();
@@ -91,6 +176,36 @@ describe("standalone Oqto dictation", () => {
 		act(() => instances[0]?.callbacks.onFinal?.("late"));
 		expect(insert).not.toHaveBeenCalled();
 		expect(result.current.isActive).toBe(false);
+	});
+	it("retains completed speech on reload after Finish without persisting previews", async () => {
+		const key = "workspace:session:a:draft";
+		const otherKey = "workspace:session:b:draft";
+		localStorage.setItem(key, "typed draft");
+		localStorage.setItem(otherKey, "other draft");
+		let draft = localStorage.getItem(key) ?? "";
+		const send = vi.fn();
+		const { result, unmount } = renderHook(() =>
+			useDictation({
+				scopeKey: key,
+				config: null,
+				onTranscript: (text) => {
+					draft = appendCompletedDraft(key, draft, text);
+				},
+				autoSendOnFinal: true,
+				onAutoSend: send,
+			}),
+		);
+		await act(() => result.current.start());
+		act(() => instances[0]?.callbacks.onPreview?.("wrong preview"));
+		expect(localStorage.getItem(key)).toBe("typed draft");
+		await act(async () => {
+			result.current.stop();
+			await Promise.resolve();
+		});
+		unmount();
+		expect(localStorage.getItem(key)).toBe("typed draft engine final");
+		expect(localStorage.getItem(otherKey)).toBe("other draft");
+		expect(send).not.toHaveBeenCalled();
 	});
 	it("inserts a drained engine final once, without auto-send on manual Finish", async () => {
 		const insert = vi.fn();

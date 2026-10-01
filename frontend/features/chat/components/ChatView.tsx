@@ -49,8 +49,10 @@ import type { Features, PiModelInfo } from "@/features/chat/api";
 import { InstructionsPinnedMessage } from "@/features/chat/components/InstructionsPinnedMessage";
 import { TimelineTreeView } from "@/features/chat/components/TimelineTreeView";
 import {
+	appendCompletedDraft,
 	buildLegacyDraftStorageKey,
 	buildSessionDraftStorageKey,
+	writeChatDraft,
 } from "@/features/chat/hooks/draft-storage";
 import {
 	normalizeTokenCount,
@@ -1275,24 +1277,30 @@ export function ChatView({
 	}, [gaugeTokens, contextWindowLimit, onTokenUsageChange]);
 
 	// Dictation hook
+	const dictationSendRef = useRef<HTMLButtonElement>(null);
 	const dictation = useDictation({
+		scopeKey: JSON.stringify([
+			resolvedStorageKeyPrefix,
+			selectedSessionId ?? null,
+		]),
 		config: voiceConfig,
 		onTranscript: useCallback(
 			(text: string) => {
-				const prev = inputValueRef.current;
-				setInput(prev ? `${prev} ${text}` : text);
+				// A pending typed snapshot must not overwrite completed speech.
+				if (draftSaveTimeoutRef.current) {
+					clearTimeout(draftSaveTimeoutRef.current);
+					draftSaveTimeoutRef.current = null;
+				}
+				setInput(
+					appendCompletedDraft(draftStorageKey, inputValueRef.current, text),
+				);
 			},
-			[setInput],
+			[draftStorageKey, setInput],
 		),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
 		autoSendOnFinal: true,
 		autoSendDelayMs: 50,
-		onAutoSend: () => {
-			const sendBtn = document.querySelector(
-				"[data-dictation-send]",
-			) as HTMLButtonElement | null;
-			sendBtn?.click();
-		},
+		onAutoSend: () => dictationSendRef.current?.click(),
 	});
 
 	useEffect(() => {
@@ -2130,15 +2138,8 @@ export function ChatView({
 				clearTimeout(draftSaveTimeoutRef.current);
 			}
 			draftSaveTimeoutRef.current = setTimeout(() => {
-				try {
-					if (value.trim()) {
-						localStorage.setItem(draftStorageKey, value);
-					} else {
-						localStorage.removeItem(draftStorageKey);
-					}
-				} catch {
-					// Ignore localStorage errors
-				}
+				draftSaveTimeoutRef.current = null;
+				writeChatDraft(draftStorageKey, value);
 			}, 300);
 
 			// Defer all React state updates to avoid blocking typing
@@ -3092,6 +3093,7 @@ export function ChatView({
 						<Button
 							type="button"
 							data-dictation-send
+							ref={dictationSendRef}
 							onClick={handleSendClick}
 							onPointerDown={handleSendPointerDown}
 							onPointerUp={handleSendPointerUp}
