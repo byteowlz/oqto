@@ -1,5 +1,6 @@
 import type { SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import type { AgentInfo } from "@/lib/agent-client";
 import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
 import type { ChatSession, SearchHit } from "@/lib/control-plane-client";
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { HistorySession } from "./MachineHistory";
 import {
 	type SessionHierarchy,
 	type SessionsByProject,
@@ -72,6 +74,7 @@ export interface MobileMenuProps {
 	onProjectOverview: (directory: string) => void;
 	onSessionClick: (sessionId: string) => void;
 	onNewChatInProject: (directory: string) => void;
+	onResumeMachineSession?: (session: HistorySession) => void;
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
@@ -120,6 +123,50 @@ export interface MobileMenuProps {
 	) => void;
 }
 
+const MOBILE_SCROLL_KEY = "oqto:sidebar:mobileScroll";
+
+/**
+ * Keeps the mobile menu where it was left. The menu is dismissed and reopened
+ * constantly on a phone, and landing back at the top every time means
+ * scrolling past the whole Hub again to reach anything below it.
+ *
+ * The list fills in asynchronously, so the saved offset can be taller than the
+ * content on the first frame. It is re-applied as the content grows, until
+ * either it fits or the reader scrolls on their own.
+ */
+function rememberScrollPosition(node: HTMLElement | null): () => void {
+	if (!node) return () => {};
+	let saved = 0;
+	try {
+		saved = Number(window.localStorage.getItem(MOBILE_SCROLL_KEY)) || 0;
+	} catch {
+		saved = 0;
+	}
+	let restoring = saved > 0;
+	const restore = () => {
+		if (!restoring) return;
+		node.scrollTop = saved;
+		if (node.scrollTop >= saved - 1) restoring = false;
+	};
+	const observer = new ResizeObserver(restore);
+	for (const child of Array.from(node.children)) observer.observe(child);
+	restore();
+	const onScroll = () => {
+		if (restoring && Math.abs(node.scrollTop - saved) > 1) restoring = false;
+		if (restoring) return;
+		try {
+			window.localStorage.setItem(MOBILE_SCROLL_KEY, String(node.scrollTop));
+		} catch {
+			// Storage off: the position just is not remembered.
+		}
+	};
+	node.addEventListener("scroll", onScroll, { passive: true });
+	return () => {
+		observer.disconnect();
+		node.removeEventListener("scroll", onScroll);
+	};
+}
+
 export const MobileMenu = memo(function MobileMenu({
 	locale,
 	isDark,
@@ -155,6 +202,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onProjectOverview,
 	onSessionClick,
 	onNewChatInProject,
+	onResumeMachineSession,
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
@@ -190,7 +238,14 @@ export const MobileMenu = memo(function MobileMenu({
 }: MobileMenuProps) {
 	const { t } = useTranslation();
 	const [sharedSectionExpanded, setSharedSectionExpanded] = useState(true);
-	const [sessionsSectionExpanded, setSessionsSectionExpanded] = useState(true);
+	const [sessionsSectionExpanded, setSessionsSectionExpanded] =
+		useLocalStorage<boolean>(
+			// One key for the desktop sidebar and the mobile menu, so collapsing
+			// Hub in one is still collapsed in the other and after a reload.
+			"oqto:sidebar:hubExpanded",
+			true,
+			{ deserialize: (raw) => JSON.parse(raw) !== false },
+		);
 
 	return (
 		<div
@@ -224,7 +279,10 @@ export const MobileMenu = memo(function MobileMenu({
 				<div className="h-px w-full bg-primary/50" />
 			</div>
 
-			<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
+			<nav
+				ref={rememberScrollPosition}
+				className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden"
+			>
 				<SidebarSessions
 					locale={locale}
 					chatHistory={chatHistory}
@@ -253,6 +311,7 @@ export const MobileMenu = memo(function MobileMenu({
 					onProjectOverview={onProjectOverview}
 					onSessionClick={onSessionClick}
 					onNewChatInProject={onNewChatInProject}
+					onResumeMachineSession={onResumeMachineSession}
 					onPinSession={onPinSession}
 					onRenameSession={onRenameSession}
 					onDeleteSession={onDeleteSession}

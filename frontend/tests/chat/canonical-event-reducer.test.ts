@@ -31,6 +31,23 @@ function feed(
 	}
 }
 
+/** The same, but carrying the block number the harness sends. */
+function feedIndexed(
+	target: DisplayMessage,
+	stream: ReadonlyArray<["text" | "thinking", number, string]>,
+): void {
+	let counter = 0;
+	for (const [partType, contentIndex, delta] of stream) {
+		appendDeltaPart({
+			message: target,
+			delta,
+			partType,
+			contentIndex,
+			nextPartId: () => `part-${++counter}`,
+		});
+	}
+}
+
 function textOf(target: DisplayMessage, type: "text" | "thinking"): string[] {
 	return target.parts
 		.filter((part) => part.type === type)
@@ -59,10 +76,7 @@ describe("streamed deltas", () => {
 			["thinking", "first"],
 			["text", "second"],
 		]);
-		expect(target.parts.map((part) => part.type)).toEqual([
-			"thinking",
-			"text",
-		]);
+		expect(target.parts.map((part) => part.type)).toEqual(["thinking", "text"]);
 	});
 
 	it("starts a new block after a tool call", () => {
@@ -91,5 +105,51 @@ describe("streamed deltas", () => {
 			["text", "three"],
 		]);
 		expect(textOf(target, "text")).toEqual(["one two three"]);
+	});
+});
+
+describe("the harness's own block numbers", () => {
+	it("routes interleaved deltas by index rather than by arrival", () => {
+		const target = message();
+		feedIndexed(target, [
+			["thinking", 0, "Let me write a python"],
+			["text", 1, "Sc"],
+			["thinking", 0, " script."],
+			["text", 1, "affold is in place."],
+		]);
+
+		expect(textOf(target, "text")).toEqual(["Scaffold is in place."]);
+		expect(textOf(target, "thinking")).toEqual([
+			"Let me write a python script.",
+		]);
+	});
+
+	it("keeps two blocks of one kind apart", () => {
+		// The fallback scan cannot do this: with nothing between them to mark a
+		// boundary, it would fold the second block into the first.
+		const target = message();
+		feedIndexed(target, [
+			["text", 0, "First block."],
+			["text", 2, "Second block."],
+			["text", 0, " Still first."],
+		]);
+
+		expect(textOf(target, "text")).toEqual([
+			"First block. Still first.",
+			"Second block.",
+		]);
+	});
+
+	it("falls back to the scan when no number is sent", () => {
+		const target = message();
+		feed(target, [
+			["thinking", "thinking "],
+			["text", "answer "],
+			["thinking", "continues"],
+			["text", "continues"],
+		]);
+
+		expect(textOf(target, "text")).toEqual(["answer continues"]);
+		expect(textOf(target, "thinking")).toEqual(["thinking continues"]);
 	});
 });

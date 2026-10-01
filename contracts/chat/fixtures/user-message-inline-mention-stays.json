@@ -1,0 +1,10 @@
+{
+	"format": "oqto-chat-user-message",
+	"formatVersion": 1,
+	"name": "inline-mention-stays",
+	"why": "A mention inside a sentence is the writer referring to a file, not an attachment manifest, so the sentence is shown as written.",
+	"text": "Look at @src/fuse-table.ts and tell me why F.11 is missing.",
+	"expect": {
+		"text": "Look at @src/fuse-table.ts and tell me why F.11 is missing."
+	}
+}

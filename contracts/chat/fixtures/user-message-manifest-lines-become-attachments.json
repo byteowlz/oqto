@@ -1,0 +1,14 @@
+{
+	"format": "oqto-chat-user-message",
+	"formatVersion": 1,
+	"name": "manifest-lines-become-attachments",
+	"why": "Attaching files writes them into the prompt as @path tokens. A line made up only of such tokens is an attachment manifest: it is not shown as text, and the files appear once, as attachments.",
+	"text": "@uploads/Stromlaufplan.pdf @uploads/Sicherungsuebersicht.xlsx\n\nOk, ich schicke dir mal die ganzen Elektrodaten.",
+	"expect": {
+		"text": "Ok, ich schicke dir mal die ganzen Elektrodaten.",
+		"attachments": [
+			"uploads/Stromlaufplan.pdf",
+			"uploads/Sicherungsuebersicht.xlsx"
+		]
+	}
+}

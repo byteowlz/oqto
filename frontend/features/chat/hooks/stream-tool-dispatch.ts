@@ -101,6 +101,10 @@ export const dispatchStreamToolEvent = ({
 				message: currentMsg,
 				delta,
 				partType: "text",
+				contentIndex:
+					typeof event.content_index === "number"
+						? event.content_index
+						: undefined,
 				nextPartId,
 			});
 			throttledStreamingUpdate(currentMsg);
@@ -116,6 +120,10 @@ export const dispatchStreamToolEvent = ({
 				message: currentMsg,
 				delta,
 				partType: "thinking",
+				contentIndex:
+					typeof event.content_index === "number"
+						? event.content_index
+						: undefined,
 				nextPartId,
 			});
 			throttledStreamingUpdate(currentMsg);

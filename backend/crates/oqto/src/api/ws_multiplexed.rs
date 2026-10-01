@@ -1719,8 +1719,8 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 oqto_protocol::commands::CommandPayload::InputResponse { .. } => {
                     "agent.input_response"
                 }
-                oqto_protocol::commands::CommandPayload::GetState => "agent.get_state",
-                oqto_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
+                oqto_protocol::commands::CommandPayload::GetState { .. } => "agent.get_state",
+                oqto_protocol::commands::CommandPayload::GetMessages { .. } => "agent.get_messages",
                 oqto_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
                 oqto_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
                 oqto_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
@@ -2832,7 +2832,10 @@ mod tests {
         match cmd {
             WsCommand::Agent(oqto_protocol::commands::Command {
                 session_id,
-                payload: oqto_protocol::commands::CommandPayload::GetState,
+                payload:
+                    oqto_protocol::commands::CommandPayload::GetState {
+                        workspace_path: None,
+                    },
                 ..
             }) => {
                 assert_eq!(session_id, "ses_456");

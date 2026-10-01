@@ -24,7 +24,10 @@ import type {
 	SessionOverview,
 	SessionTask,
 } from "../platform/contracts";
-import { workspaceFilePreviewUrl } from "../platform/workspace-file-url";
+import {
+	workspaceFilePathFromUrl,
+	workspaceFilePreviewUrl,
+} from "../platform/workspace-file-url";
 import { TaskProgress } from "./TaskProgress";
 import { estimateContextTokens } from "./context-tokens";
 import { timelineQueryKey, turnDraftQueryKey } from "./query-keys";
@@ -373,6 +376,9 @@ export function ChatPane({
 										onFileReferenceOpen={(path, range) =>
 											onOpenFile(path, range)
 										}
+										onImageOpen={(image) =>
+											onOpenFile(workspaceFilePathFromUrl(image.src))
+										}
 									/>
 								</div>
 							))
@@ -401,6 +407,9 @@ export function ChatPane({
 											onFileReferenceOpen={(path, range) =>
 												onOpenFile(path, range)
 											}
+											onImageOpen={(image) =>
+												onOpenFile(workspaceFilePathFromUrl(image.src))
+											}
 										/>
 									</div>
 								);
@@ -415,6 +424,9 @@ export function ChatPane({
 								locale={locale}
 								messageId={pendingPrompt.id}
 								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
+								onImageOpen={(image) =>
+									onOpenFile(workspaceFilePathFromUrl(image.src))
+								}
 							/>
 						</div>
 					) : null}
@@ -429,6 +441,9 @@ export function ChatPane({
 								messageId="streaming-draft"
 								showWorkingIndicator
 								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
+								onImageOpen={(image) =>
+									onOpenFile(workspaceFilePathFromUrl(image.src))
+								}
 							/>
 						</div>
 					) : null}

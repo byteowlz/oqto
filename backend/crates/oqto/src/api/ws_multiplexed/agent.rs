@@ -307,13 +307,45 @@ pub(super) async fn handle_agent_command(
                         None
                     };
 
-                    if let Some(client) = hydrated {
+                    // Neither the connection nor the durable store knows this
+                    // session. A read probe may still say where it lives: a
+                    // chat opened from another machine's catalog has never been
+                    // created through this host, so it has no target record,
+                    // yet its owning runner holds the history. The hint goes
+                    // through the same admission check as creating a session
+                    // at that path, and only read probes may carry one, so it
+                    // cannot steer a prompt anywhere the store would not.
+                    let hinted = if hydrated.is_none()
+                        && let Some(path) = read_probe_workspace_hint(&cmd.payload)
+                    {
+                        match runner_client_for_path(state, user_id, Some(path)).await {
+                            Ok(Some((client, _target))) => {
+                                conn_state.lock().await.pi_session_meta.insert(
+                                    session_id.clone(),
+                                    PiSessionMeta {
+                                        scope: None,
+                                        cwd: Some(std::path::PathBuf::from(path)),
+                                    },
+                                );
+                                Some(client)
+                            }
+                            Ok(None) => None,
+                            Err(error) => {
+                                tracing::warn!(%error, "read-probe workspace admission failed");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(client) = hydrated.or(hinted) {
                         client
                     } else {
                         // Fail closed for mutating commands (prompt/steer/etc), but allow
                         // read-only probes used by frontend reattach/recovery flows.
                         match &cmd.payload {
-                            CommandPayload::GetState => {
+                            CommandPayload::GetState { .. } => {
                                 return Some(agent_response(
                                     &session_id,
                                     id,
@@ -321,7 +353,7 @@ pub(super) async fn handle_agent_command(
                                     Ok(None),
                                 ));
                             }
-                            CommandPayload::GetMessages => {
+                            CommandPayload::GetMessages { .. } => {
                                 return Some(agent_response(
                                     &session_id,
                                     id,
@@ -1188,7 +1220,7 @@ pub(super) async fn handle_agent_command(
             }
         }
 
-        CommandPayload::GetState => {
+        CommandPayload::GetState { .. } => {
             debug!(
                 "agent get_state: user={}, session_id={}",
                 user_id, session_id
@@ -1215,7 +1247,7 @@ pub(super) async fn handle_agent_command(
             }
         }
 
-        CommandPayload::GetMessages => {
+        CommandPayload::GetMessages { .. } => {
             debug!(
                 "agent get_messages: user={}, session_id={}",
                 user_id, session_id
@@ -1733,5 +1765,21 @@ mod tests {
     fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
         assert!(should_filter_personal_runner_sessions(true));
         assert!(!should_filter_personal_runner_sessions(false));
+    }
+}
+
+/// The routing hint a read probe carries, if any. Mutating commands never
+/// contribute one: where a prompt goes is decided by the connection and the
+/// durable store, not by the client.
+pub(super) fn read_probe_workspace_hint(
+    payload: &oqto_protocol::commands::CommandPayload,
+) -> Option<&str> {
+    match payload {
+        oqto_protocol::commands::CommandPayload::GetState { workspace_path }
+        | oqto_protocol::commands::CommandPayload::GetMessages { workspace_path } => workspace_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| path.starts_with('/')),
+        _ => None,
     }
 }

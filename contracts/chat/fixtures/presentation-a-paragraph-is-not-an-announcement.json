@@ -1,0 +1,25 @@
+{
+	"format": "oqto-chat-presentation",
+	"formatVersion": 1,
+	"name": "a-paragraph-is-not-an-announcement",
+	"why": "Pairing is conservative: a paragraph of answer that merely precedes a call stays in the answer. Only a colon-terminated line or a single short line is an announcement.",
+	"level": 1,
+	"blocks": [
+		{
+			"type": "text",
+			"text": "Die Verteilung hängt an F1 und wird über den Bus geschaltet. Das ist die Kernlogik, und sie gilt für jede Gruppe im Haus ohne Ausnahme."
+		},
+		{
+			"type": "tool_call",
+			"name": "read",
+			"arguments": {
+				"path": "x.ts"
+			}
+		}
+	],
+	"expect": {
+		"answer": [
+			"Die Verteilung hängt an F1 und wird über den Bus geschaltet. Das ist die Kernlogik, und sie gilt für jede Gruppe im Haus ohne Ausnahme."
+		]
+	}
+}

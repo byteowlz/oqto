@@ -112,10 +112,24 @@ pub enum CommandPayload {
 
     // -- Query commands --
     /// Get current session state.
-    GetState,
+    GetState {
+        /// Where the session lives, for a session this host has no record of.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_path: Option<String>,
+    },
 
     /// Get all messages.
-    GetMessages,
+    ///
+    /// `workspace_path` is a routing hint for a session this host holds no
+    /// target record for — typically one stored on another machine and opened
+    /// from that machine's catalog. It is only consulted when neither the
+    /// connection nor the durable store knows the session, and it goes through
+    /// the same admission check as creating a session there. The runner that
+    /// owns the path then answers from its own history.
+    GetMessages {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_path: Option<String>,
+    },
 
     /// Get session statistics.
     GetStats,

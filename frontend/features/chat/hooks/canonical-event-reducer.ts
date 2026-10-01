@@ -4,22 +4,44 @@ export const appendDeltaPart = ({
 	message,
 	delta,
 	partType,
+	contentIndex,
 	nextPartId,
 }: {
 	message: DisplayMessage;
 	delta: string;
 	partType: "text" | "thinking";
+	/** The harness's own block number for this delta, when it sent one. */
+	contentIndex?: number;
 	nextPartId: () => string;
 }): void => {
-	// Reasoning and content stream as two sequences whose deltas interleave,
-	// so the last part is often the *other* one. Merging only into the last
-	// part starts a new part on every switch between them, which chops a
-	// sentence wherever the two happened to alternate — a word can end up
-	// split across two parts with a thinking block wedged between its halves.
-	//
-	// Scan back to the most recent part of this type instead. A tool call
-	// stops the scan: whatever the agent says after running something is a
-	// new block, not a continuation of what it was saying before.
+	// Reasoning and content are two sequences whose deltas interleave, so the
+	// part at the end of the array is frequently the other one. The harness
+	// numbers the block each delta belongs to, and the durable assembler in
+	// oqto-history keys its drafts on exactly that number — so the browser
+	// addresses the block the same way rather than inferring it from arrival
+	// order.
+	if (typeof contentIndex === "number") {
+		const target = message.parts.find(
+			(part) => part.type === partType && part.contentIndex === contentIndex,
+		);
+		if (target) {
+			(target as { text: string }).text += delta;
+			return;
+		}
+		message.parts.push({
+			type: partType,
+			id: nextPartId(),
+			text: delta,
+			contentIndex,
+		});
+		return;
+	}
+
+	// No number to go on — an older host, or a synthesised message. Scan back
+	// to the most recent part of this type, which reassembles an interleaved
+	// pair correctly even though it cannot tell two same-type blocks apart. A
+	// tool call stops the scan: what the agent says after running something
+	// starts a new block.
 	for (let index = message.parts.length - 1; index >= 0; index--) {
 		const part = message.parts[index];
 		if (part.type === partType) {

@@ -119,6 +119,13 @@ class WsConnectionManager {
 	private pingInterval: ReturnType<typeof setInterval> | null = null;
 	// Prevent get_state request storms during reconnect/reattach flows.
 	private lastGetStateAt = new Map<string, number>();
+	/**
+	 * Where a session lives, for sessions this host holds no record of — a chat
+	 * opened from another machine's catalog, say. Sent with state and message
+	 * reads only; the backend consults it when it knows nothing else about the
+	 * session, and admits it exactly as it would a session created there.
+	 */
+	private sessionWorkspaceHints = new Map<string, string>();
 
 	// Event handlers by channel
 	private channelHandlers: Map<Channel, Set<WsEventHandler>> = new Map();
@@ -357,6 +364,7 @@ class WsConnectionManager {
 			channel: "agent",
 			session_id: sessionId,
 			cmd: "get_state",
+			...this.workspaceHint(sessionId),
 		});
 		const resp = this.extractCommandResponse(event);
 		if (resp?.success) {
@@ -894,8 +902,26 @@ class WsConnectionManager {
 			channel: "agent",
 			session_id: sessionId,
 			cmd: "get_state",
+			...this.workspaceHint(sessionId),
 			id,
 		});
+	}
+
+	/** Record where a session lives, for the read probes below. */
+	setSessionWorkspaceHint(
+		sessionId: string,
+		workspacePath: string | null,
+	): void {
+		if (workspacePath?.startsWith("/")) {
+			this.sessionWorkspaceHints.set(sessionId, workspacePath);
+		} else {
+			this.sessionWorkspaceHints.delete(sessionId);
+		}
+	}
+
+	private workspaceHint(sessionId: string): { workspace_path?: string } {
+		const workspacePath = this.sessionWorkspaceHints.get(sessionId);
+		return workspacePath ? { workspace_path: workspacePath } : {};
 	}
 
 	/**
@@ -906,6 +932,7 @@ class WsConnectionManager {
 			channel: "agent",
 			session_id: sessionId,
 			cmd: "get_messages",
+			...this.workspaceHint(sessionId),
 			id,
 		});
 	}
@@ -1837,6 +1864,7 @@ class WsConnectionManager {
 							channel: "agent",
 							session_id: sessionId,
 							cmd: "get_state",
+							...this.workspaceHint(sessionId),
 						},
 						10000,
 					);
@@ -1853,6 +1881,7 @@ class WsConnectionManager {
 							channel: "agent",
 							session_id: sessionId,
 							cmd: "get_messages",
+							...this.workspaceHint(sessionId),
 						},
 						10000,
 					);
