@@ -377,6 +377,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 				settings.vadTimeoutMs,
 			);
 			sttRef.current.setCallbacks({
+				onPreview: (text) => {
+					if (isActiveRef.current && !settingsRef.current.micMuted)
+						setLiveTranscript(text);
+				},
 				onWord: (word) => {
 					// Ignore if voice mode is not active or mic is muted
 					if (!isActiveRef.current || settingsRef.current.micMuted) {
@@ -661,7 +665,6 @@ export function useVoiceMode(options: UseVoiceModeOptions): UseVoiceModeReturn {
 
 	const setVadTimeout = useCallback((ms: number) => {
 		setSettings((prev) => ({ ...prev, vadTimeoutMs: ms }));
-		sttRef.current?.setVadTimeout(ms);
 	}, []);
 
 	const setInterruptWordCount = useCallback((count: number) => {

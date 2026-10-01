@@ -5,8 +5,10 @@
 	"type": "module",
 	"scripts": {
 		"sync:visual-runtime-assets": "node scripts/sync-visual-runtime-assets.mjs",
-		"dev": "bun run sync:visual-runtime-assets && vite",
-		"build": "bun run sync:visual-runtime-assets && vite build",
+		"sync:ears-browser-sdk": "bun scripts/sync-ears-browser-sdk.mjs",
+		"sync:speech-runtime-assets": "bun scripts/sync-speech-runtime-assets.mjs",
+		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite",
+		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite build",
 		"preview": "vite preview",
 		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail && bun run typecheck:oqto-ui && bun run lint:oqto-ui-guardrails",
 		"lint:useeffect-guardrail": "bun scripts/check-useeffect-guardrail.mjs",
@@ -20,6 +22,7 @@
 		"format:generated-types": "bunx biome format --write src/generated"
 	},
 	"dependencies": {
+		"@byteowlz/ears-browser": "file:vendor/ears-browser",
 		"@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#v0.3.1",
 		"@hookform/resolvers": "^5.2.2",
 		"@mdxeditor/editor": "^4.0.2",
@@ -114,7 +117,5 @@
 		"vite": "^5.4.10",
 		"vitest": "^3.2.4"
 	},
-	"trustedDependencies": [
-		"@byteowlz/oqto-app-sdk"
-	]
+	"trustedDependencies": ["@byteowlz/oqto-app-sdk"]
 }

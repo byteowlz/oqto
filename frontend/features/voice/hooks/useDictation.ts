@@ -1,296 +1,280 @@
-/**
- * Dictation hook for speech-to-text input.
- *
- * Unlike voice mode, dictation only does STT and appends to a text input.
- * It doesn't trigger TTS responses - it's just for typing by speaking.
- *
- * Performance: Uses word array instead of string concatenation to avoid O(n^2) growth.
- */
-
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import { voiceProxyWsUrl } from "@/lib/control-plane-client";
 import { STTService } from "@/lib/voice";
+import {
+	DEFAULT_RECOGNITION_SETTINGS,
+	RECOGNITION_SETTINGS_KEY,
+	type RecognitionSettings,
+	parseRecognitionSettings,
+	reportRecognitionStorageError,
+} from "@/lib/voice/recognition-settings";
 import type { VoiceConfig } from "@/lib/voice/types";
+import type {
+	RecognitionLanguage,
+	RecognitionProvider,
+} from "@byteowlz/ears-browser";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface UseDictationOptions {
-	/** Voice configuration from backend (for STT URL) */
 	config: VoiceConfig | null;
-	/** Callback when text is transcribed (usually append to input) */
 	onTranscript: (text: string) => void;
-	/** VAD timeout in ms (default: use config or 2000ms) */
 	vadTimeoutMs?: number;
-	/** If true, call onAutoSend after each VAD final */
 	autoSendOnFinal?: boolean;
-	/** Optional delay before auto-sending (ms) */
 	autoSendDelayMs?: number;
-	/** Callback to trigger sending the current input */
 	onAutoSend?: () => void;
 }
-
 export interface UseDictationReturn {
-	/** Whether dictation is currently active */
 	isActive: boolean;
-	/** Current live transcript being accumulated */
 	liveTranscript: string;
-	/** VAD progress (0-1) for timeout visualization */
 	vadProgress: number;
-	/** Input volume (0-1) for visualization */
 	inputVolume: number;
-	/** Whether connected to STT service */
 	isConnected: boolean;
-	/** Error message if any */
 	error: string | null;
-	/** Whether auto-send on VAD final is enabled */
+	preparation: string | null;
+	recognition: RecognitionSettings;
+	remoteAvailable: boolean;
+	setRecognitionProvider: (provider: RecognitionProvider) => void;
+	setRecognitionLanguage: (language: RecognitionLanguage) => void;
 	autoSendEnabled: boolean;
-	/** Toggle auto-send on/off */
 	setAutoSendEnabled: (enabled: boolean) => void;
-	/** Start dictation */
 	start: () => Promise<void>;
-	/** Stop dictation (flushes pending transcript, may trigger auto-send) */
+	/** Drain actual engine completion, without promoting a preview. */
 	stop: () => void;
-	/** Cancel dictation (flushes pending transcript, does NOT auto-send) */
+	/** Drop provisional speech and pending auto-send. */
 	cancel: () => void;
 }
 
-/**
- * Hook for dictation mode - speech to text input.
- */
+type CompletionContext = {
+	isCurrent: () => boolean;
+	latest: () => { options: UseDictationOptions; autoSendEnabled: boolean };
+	finishing: () => boolean;
+	schedule: (action: () => void, delay: number) => void;
+};
+
+/** Committed delivery is separate from connection wiring and provisional rendering. */
+function deliverCompletedTranscript(text: string, context: CompletionContext) {
+	if (!context.isCurrent() || !text.trim()) return;
+	const current = context.latest();
+	current.options.onTranscript(text);
+	if (
+		context.finishing() ||
+		!current.autoSendEnabled ||
+		!current.options.onAutoSend
+	)
+		return;
+	context.schedule(() => {
+		if (context.isCurrent() && context.latest().autoSendEnabled)
+			context.latest().options.onAutoSend?.();
+	}, current.options.autoSendDelayMs ?? 0);
+}
+
 export function useDictation(options: UseDictationOptions): UseDictationReturn {
-	const {
-		config,
-		onTranscript,
-		vadTimeoutMs,
-		autoSendOnFinal = false,
-		autoSendDelayMs = 0,
-		onAutoSend,
-	} = options;
-
 	const sttRef = useRef<STTService | null>(null);
+	const tokenRef = useRef(0);
+	const activeRef = useRef(false);
+	const runningRecognitionRef = useRef<RecognitionSettings | null>(null);
+	const finishingRef = useRef(false);
 	const smoothVolumeRef = useRef(0);
-
-	// Use word array instead of string concatenation (O(1) push vs O(n) concat)
-	const liveWordsRef = useRef<string[]>([]);
-
+	const autoSendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [isActive, setIsActive] = useState(false);
 	const [liveTranscript, setLiveTranscript] = useState("");
-	const [vadProgress, setVadProgress] = useState(0);
 	const [inputVolume, setInputVolume] = useState(0);
 	const [isConnected, setIsConnected] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	// Auto-send state - initialized from options, can be toggled by user
-	const [autoSendEnabled, setAutoSendEnabled] = useState(autoSendOnFinal);
+	const [preparation, setPreparation] = useState<string | null>(null);
+	const [recognition, setRecognition] = useLocalStorage(
+		RECOGNITION_SETTINGS_KEY,
+		DEFAULT_RECOGNITION_SETTINGS,
+		{
+			deserialize: parseRecognitionSettings,
+			onError: reportRecognitionStorageError,
+		},
+	);
+	const [autoSendEnabled, setAutoSend] = useState(
+		options.autoSendOnFinal ?? false,
+	);
+	const latest = useRef({ options, autoSendEnabled, recognition });
+	latest.current = { options, autoSendEnabled, recognition };
 
-	// Keep refs in sync for callbacks
-	const onTranscriptRef = useRef(onTranscript);
-	const onAutoSendRef = useRef(onAutoSend);
-	const autoSendEnabledRef = useRef(autoSendEnabled);
-	const autoSendDelayRef = useRef(autoSendDelayMs);
+	const clearAutoSend = useCallback(() => {
+		if (autoSendTimer.current !== null) clearTimeout(autoSendTimer.current);
+		autoSendTimer.current = null;
+	}, []);
+	const cancel = useCallback(() => {
+		tokenRef.current++;
+		activeRef.current = false;
+		runningRecognitionRef.current = null;
+		finishingRef.current = false;
+		clearAutoSend();
+		sttRef.current?.disconnect();
+		sttRef.current = null;
+		setIsActive(false);
+		setIsConnected(false);
+		setPreparation(null);
+		setLiveTranscript("");
+	}, [clearAutoSend]);
+	const setAutoSendEnabled = useCallback(
+		(enabled: boolean) => {
+			latest.current.autoSendEnabled = enabled;
+			setAutoSend(enabled);
+			if (!enabled) clearAutoSend();
+		},
+		[clearAutoSend],
+	);
 
-	useEffect(() => {
-		onTranscriptRef.current = onTranscript;
-	}, [onTranscript]);
-	useEffect(() => {
-		onAutoSendRef.current = onAutoSend;
-	}, [onAutoSend]);
-	useEffect(() => {
-		autoSendEnabledRef.current = autoSendEnabled;
-	}, [autoSendEnabled]);
-	useEffect(() => {
-		autoSendDelayRef.current = autoSendDelayMs;
-	}, [autoSendDelayMs]);
+	const start = useCallback(async () => {
+		if (activeRef.current) return;
+		cancel();
+		const token = tokenRef.current;
+		const { recognition: selected, options: current } = latest.current;
+		setError(null);
+		setPreparation("Preparing speech recognition…");
+		setIsActive(true);
+		activeRef.current = true;
+		runningRecognitionRef.current = selected;
+		try {
+			if (selected.provider === "ears" && !current.config?.stt_url)
+				throw new Error("Remote eaRS recognition is not configured");
+			const service = new STTService(
+				selected.provider === "ears" ? voiceProxyWsUrl("stt") : "",
+				current.vadTimeoutMs ?? current.config?.vad_timeout_ms ?? 1500,
+				selected,
+			);
+			sttRef.current = service;
+			const isCurrent = () => token === tokenRef.current && activeRef.current;
+			service.setCallbacks({
+				onPreview: (text) => {
+					if (isCurrent()) setLiveTranscript(text);
+				},
+				onPreparation: (label) => {
+					if (isCurrent()) setPreparation(label);
+				},
+				onConnectionChange: (connected) => {
+					if (isCurrent()) setIsConnected(connected);
+				},
+				onFinal: (text) =>
+					deliverCompletedTranscript(text, {
+						isCurrent,
+						latest: () => latest.current,
+						finishing: () => finishingRef.current,
+						schedule: (action, delay) => {
+							clearAutoSend();
+							autoSendTimer.current = setTimeout(() => {
+								autoSendTimer.current = null;
+								action();
+							}, delay);
+						},
+					}),
+				onError: (message) => {
+					if (!isCurrent()) return;
+					cancel();
+					setError(message);
+				},
+			});
+			await service.startListening();
+			if (!isCurrent()) return;
+			setPreparation(null);
+		} catch (failure) {
+			if (token !== tokenRef.current) return;
+			cancel();
+			setError(
+				failure instanceof Error
+					? failure.message
+					: "Speech recognition failed",
+			);
+		}
+	}, [cancel, clearAutoSend]);
 
-	// Throttle transcript updates to reduce re-renders (update at most every 100ms)
-	const lastTranscriptUpdateRef = useRef(0);
-	const pendingTranscriptUpdateRef = useRef<number | null>(null);
-	// Track auto-send timeout so it can be canceled
-	const autoSendTimeoutRef = useRef<number | null>(null);
+	const stop = useCallback(() => {
+		if (!activeRef.current || finishingRef.current) return;
+		finishingRef.current = true;
+		clearAutoSend();
+		const token = tokenRef.current;
+		setPreparation("Finishing speech recognition…");
+		void sttRef.current
+			?.finishListening()
+			.catch((failure) => {
+				if (token === tokenRef.current)
+					setError(
+						failure instanceof Error
+							? failure.message
+							: "Speech recognition failed",
+					);
+			})
+			.finally(() => {
+				if (token === tokenRef.current) cancel();
+			});
+	}, [cancel, clearAutoSend]);
 
-	// Volume smoothing loop - throttled to ~15fps to reduce re-renders
+	const changeRecognition = useCallback(
+		(patch: Partial<RecognitionSettings>) => {
+			cancel();
+			const next = { ...latest.current.recognition, ...patch };
+			latest.current.recognition = next;
+			setRecognition(next);
+			setError(null);
+		},
+		[cancel, setRecognition],
+	);
+	const setRecognitionProvider = useCallback(
+		(provider: RecognitionProvider) => changeRecognition({ provider }),
+		[changeRecognition],
+	);
+	const setRecognitionLanguage = useCallback(
+		(language: RecognitionLanguage) => changeRecognition({ language }),
+		[changeRecognition],
+	);
+
+	// useeffect-guardrail: allow — cross-tab settings changes must stop the old audio destination.
+	useEffect(() => {
+		const running = runningRecognitionRef.current;
+		if (
+			running &&
+			(running.provider !== recognition.provider ||
+				running.language !== recognition.language)
+		)
+			cancel();
+	}, [recognition.provider, recognition.language, cancel]);
+
+	// useeffect-guardrail: allow — microphone visualization owns this bounded timer.
 	useEffect(() => {
 		if (!isActive) {
 			smoothVolumeRef.current = 0;
 			setInputVolume(0);
 			return;
 		}
-
-		const smoothingFactor = 0.3; // Higher factor since we update less frequently
-
-		const intervalId = setInterval(() => {
-			const rawVolume = sttRef.current?.getInputVolume() ?? 0;
-			smoothVolumeRef.current +=
-				(rawVolume - smoothVolumeRef.current) * smoothingFactor;
-			if (smoothVolumeRef.current < 0.001) smoothVolumeRef.current = 0;
-			setInputVolume(smoothVolumeRef.current);
-		}, 66); // ~15fps instead of 60fps
-
-		return () => {
-			clearInterval(intervalId);
-		};
+		const timer = setInterval(() => {
+			const volume = sttRef.current?.getInputVolume() ?? 0;
+			smoothVolumeRef.current += (volume - smoothVolumeRef.current) * 0.3;
+			setInputVolume(
+				smoothVolumeRef.current < 0.001 ? 0 : smoothVolumeRef.current,
+			);
+		}, 66);
+		return () => clearInterval(timer);
 	}, [isActive]);
-
-	// Handle final transcript - append to input
-	const handleFinalTranscript = useCallback((text: string) => {
-		if (!text.trim()) return;
-		console.log("[Dictation] Final transcript:", text);
-		// Clear both state and ref to prevent double-submission on stop
-		liveWordsRef.current = [];
-		setLiveTranscript("");
-
-		onTranscriptRef.current(text);
-
-		if (autoSendEnabledRef.current && onAutoSendRef.current) {
-			// Clear any existing timeout before setting a new one
-			if (autoSendTimeoutRef.current !== null) {
-				window.clearTimeout(autoSendTimeoutRef.current);
-			}
-			const delay = autoSendDelayRef.current;
-			autoSendTimeoutRef.current = window.setTimeout(() => {
-				autoSendTimeoutRef.current = null;
-				onAutoSendRef.current?.();
-			}, delay);
-		}
-	}, []);
-
-	// Initialize STT service
-	const initService = useCallback(async () => {
-		if (!config) {
-			throw new Error("Dictation not configured - voice config missing");
-		}
-
-		if (!sttRef.current) {
-			const timeout = vadTimeoutMs ?? config.vad_timeout_ms ?? 2000;
-			// Use voiceProxyWsUrl to get the full URL with auth token
-			sttRef.current = new STTService(voiceProxyWsUrl("stt"), timeout);
-			sttRef.current.setCallbacks({
-				onWord: (word) => {
-					// O(1) array push instead of O(n) string concatenation
-					liveWordsRef.current.push(word);
-
-					// Throttle React state updates to max 10/sec to reduce re-renders
-					const now = Date.now();
-					if (now - lastTranscriptUpdateRef.current >= 100) {
-						lastTranscriptUpdateRef.current = now;
-						// Only join when updating UI (single allocation)
-						setLiveTranscript(liveWordsRef.current.join(" "));
-					} else if (!pendingTranscriptUpdateRef.current) {
-						// Schedule update for end of throttle window
-						pendingTranscriptUpdateRef.current = window.setTimeout(
-							() => {
-								pendingTranscriptUpdateRef.current = null;
-								lastTranscriptUpdateRef.current = Date.now();
-								setLiveTranscript(liveWordsRef.current.join(" "));
-							},
-							100 - (now - lastTranscriptUpdateRef.current),
-						);
-					}
-				},
-				onFinal: handleFinalTranscript,
-				onVadProgress: setVadProgress,
-				onError: (err) => {
-					console.error("[Dictation] STT error:", err);
-					setError(err);
-				},
-				onConnectionChange: (connected) => {
-					console.log("[Dictation] STT connection:", connected);
-					setIsConnected(connected);
-				},
-			});
-		}
-
-		await sttRef.current.connect();
-		setIsConnected(true);
-	}, [config, vadTimeoutMs, handleFinalTranscript]);
-
-	// Start dictation
-	const start = useCallback(async () => {
-		setError(null);
-
-		try {
-			await initService();
-			setIsActive(true);
-			await sttRef.current?.startListening();
-			console.log("[Dictation] Started");
-		} catch (err) {
-			const message =
-				err instanceof Error ? err.message : "Failed to start dictation";
-			setError(message);
-			console.error("[Dictation] Start failed:", err);
-			throw err;
-		}
-	}, [initService]);
-
-	// Stop dictation - flush any pending transcript first (may trigger auto-send)
-	const stop = useCallback(() => {
-		console.log("[Dictation] Stopping");
-		// Use ref to check for pending transcript - avoids race condition with handleFinalTranscript
-		// which may have already cleared the transcript via VAD timeout
-		if (liveWordsRef.current.length > 0) {
-			const pendingTranscript = liveWordsRef.current.join(" ").trim();
-			if (pendingTranscript) {
-				console.log(
-					"[Dictation] Flushing pending transcript:",
-					pendingTranscript,
-				);
-				onTranscriptRef.current(pendingTranscript);
-			}
-		}
-		// Clear both ref and state
-		liveWordsRef.current = [];
-		setLiveTranscript("");
-		setIsActive(false);
-		setVadProgress(0);
-		sttRef.current?.stopListening();
-	}, []);
-
-	// Cancel dictation - flush pending transcript but do NOT auto-send
-	const cancel = useCallback(() => {
-		console.log("[Dictation] Canceling (no auto-send)");
-		// Cancel any pending auto-send timeout
-		if (autoSendTimeoutRef.current !== null) {
-			window.clearTimeout(autoSendTimeoutRef.current);
-			autoSendTimeoutRef.current = null;
-		}
-		// Flush pending transcript without triggering auto-send
-		if (liveWordsRef.current.length > 0) {
-			const pendingTranscript = liveWordsRef.current.join(" ").trim();
-			if (pendingTranscript) {
-				console.log(
-					"[Dictation] Flushing pending transcript (no auto-send):",
-					pendingTranscript,
-				);
-				onTranscriptRef.current(pendingTranscript);
-			}
-		}
-		// Clear both ref and state
-		liveWordsRef.current = [];
-		setLiveTranscript("");
-		setIsActive(false);
-		setVadProgress(0);
-		sttRef.current?.stopListening();
-	}, []);
-
-	// Cleanup on unmount
-	useEffect(() => {
-		return () => {
+	// useeffect-guardrail: allow — release capture and fence callbacks on unmount.
+	useEffect(
+		() => () => {
+			tokenRef.current++;
+			activeRef.current = false;
+			if (autoSendTimer.current !== null) clearTimeout(autoSendTimer.current);
 			sttRef.current?.disconnect();
-			// Clear any pending transcript update timeout
-			if (pendingTranscriptUpdateRef.current) {
-				clearTimeout(pendingTranscriptUpdateRef.current);
-			}
-			// Clear any pending auto-send timeout
-			if (autoSendTimeoutRef.current !== null) {
-				clearTimeout(autoSendTimeoutRef.current);
-			}
-		};
-	}, []);
+		},
+		[],
+	);
 
 	return {
 		isActive,
 		liveTranscript,
-		vadProgress,
+		vadProgress: 0,
 		inputVolume,
 		isConnected,
 		error,
+		preparation,
+		recognition,
+		remoteAvailable: Boolean(options.config?.stt_url),
+		setRecognitionProvider,
+		setRecognitionLanguage,
 		autoSendEnabled,
 		setAutoSendEnabled,
 		start,

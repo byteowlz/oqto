@@ -29,6 +29,7 @@ VITE_CADDY_BASE_URL=http://localhost
 | `VITE_FILE_SERVER_URL` | HTTP server rooted at the same workspace folder the container starts in. Must expose `/tree?path=` and `/file?path=` helpers. |
 | `VITE_CONTROL_PLANE_URL` | Control plane API base URL for sessions, auth, and proxy endpoints. |
 | `VITE_CADDY_BASE_URL` | Optional Caddy proxy URL used for container routing in production. |
+| `VITE_LOCAL_SPEECH_ISOLATION` | Set to `1` to opt the Vite dev server into COOP/COEP for local Moonshine recognition; review external frame/opener compatibility first. |
 
 ## Local Development
 
@@ -41,6 +42,27 @@ The app runs on [http://localhost:3000](http://localhost:3000) and immediately b
 
 The default route resolves to the sessions (chat) view so the most recent chat opens first.
 The app uses a fixed viewport-height shell to avoid iOS PWA bottom inset drift after reopening, and the status bar avoids bottom safe-area padding.
+
+## Browser dictation
+
+The chat voice menu offers explicit local Moonshine or configured remote eaRS
+recognition, with English/German selection. Local mode never uploads microphone
+audio or silently falls back to a service. Previews stay separate from committed
+composer text; Finish drains inference, Cancel discards provisional speech.
+
+Local recognition requires HTTPS/localhost and cross-origin isolation. For dev:
+`VITE_LOCAL_SPEECH_ISOLATION=1 bun dev`. Production operators must set COOP
+`same-origin` and COEP `require-corp` and review cross-origin frames/resources.
+A missing prerequisite is reported visibly; the published runtime has no
+single-thread fallback. Model GET downloads are cached subject to browser eviction.
+
+Dev/build scripts stage a checksum-pinned GitHub Moonshine WASM release into
+`public/speech/` (gitignored), with upstream licenses. npm's same-version WASM is
+older and incompatible with German/split frontends. The small reusable SDK source
+is vendored; update it explicitly using `bun run sync:ears-browser-sdk`, then
+`bun install` and `bun run sync:speech-runtime-assets`. Normal builds do not need
+an eaRS checkout. See [ADR 0051](../docs/adr/0051-standalone-browser-recognition.md)
+for the ownership boundary, exact proof and remaining validation gaps.
 
 ## Desktop (Tauri)
 
