@@ -45,10 +45,18 @@ The app uses a fixed viewport-height shell to avoid iOS PWA bottom inset drift a
 
 ## Browser dictation
 
-The chat voice menu offers explicit local Moonshine or configured remote eaRS
-recognition, with English/German selection. Local mode never uploads microphone
-audio or silently falls back to a service. Previews stay separate from committed
-composer text; Finish drains inference, Cancel discards provisional speech.
+Both composers keep the normal editor mounted and show a compact anchored speech
+status/preview. The microphone popover offers English/German, local Moonshine and
+(where configured) remote eaRS. OqtoUI currently exposes local recognition only.
+Local mode never uploads microphone audio or silently falls back to a service.
+Completed speech persists as draft content; previews do not. Finish drains inference
+without sending, Cancel discards provisional speech, and auto-send requires opt-in.
+Model preparation shows aggregate downloaded bytes and percentage when the catalog
+supplies the whole-model total, otherwise an indeterminate bar—not per-file resets.
+
+Layout proof: run Vite on port 3018 and
+`python3 tests/e2e/dictation-layout-e2e.py`; the standalone fixture uses no microphone
+or credentials and tests desktop/mobile state transitions in both schemes.
 
 Local recognition requires HTTPS/localhost and cross-origin isolation. For dev:
 `VITE_LOCAL_SPEECH_ISOLATION=1 bun dev`. Production operators must set COOP

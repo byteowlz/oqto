@@ -20,7 +20,9 @@ export interface MoonshineHost {
 	loadTranscriber(config: {
 		transcriberId: string;
 		modelArch: number;
-		source: { kind: "urls"; files: Record<string, string> };
+		source:
+			| { kind: "catalog"; language: "en" | "de"; includeSpelling: boolean }
+			| { kind: "urls"; files: Record<string, string> };
 	}): Promise<void>;
 	createStream(
 		transcriberId: string,
@@ -97,15 +99,28 @@ export class MoonshineAdapter implements RecognitionAdapter {
 		this.host = host;
 		host.onProgress = (_id, loaded, total, file) =>
 			this.emit({ type: "progress", loaded, total, file });
-		const base =
-			this.options.modelBaseUrl ?? MOONSHINE_MODEL_BASES[this.options.language];
-		const files = Object.fromEntries(
-			MODEL_FILES.map((file) => [file, new URL(file, base).href]),
-		);
+		// The pinned 0.1.5 catalog resolves these same Tiny streaming files and
+		// supplies declared aggregate bytes. Custom URLs have no known total.
+		const source: Parameters<MoonshineHost["loadTranscriber"]>[0]["source"] =
+			this.options.modelBaseUrl !== undefined
+				? {
+						kind: "urls",
+						files: Object.fromEntries(
+							MODEL_FILES.map((file) => [
+								file,
+								new URL(file, this.options.modelBaseUrl).href,
+							]),
+						),
+					}
+				: {
+						kind: "catalog",
+						language: this.options.language,
+						includeSpelling: false,
+					};
 		await host.loadTranscriber({
 			transcriberId: "ears",
 			modelArch: 2,
-			source: { kind: "urls", files },
+			source,
 		});
 		this.assertOpen();
 		await host.createStream("ears", "audio", { updateInterval: 0.3 });

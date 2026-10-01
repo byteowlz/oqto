@@ -40,20 +40,13 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { DictationOverlay } from "@/components/voice";
 import {
-	VoiceMenuButton,
-	type VoiceMode,
-} from "@/components/voice/VoiceMenuButton";
+	DictationMicButton,
+	DictationStatus,
+} from "@/components/voice/ComposerDictation";
 import type { Features, PiModelInfo } from "@/features/chat/api";
 import { InstructionsPinnedMessage } from "@/features/chat/components/InstructionsPinnedMessage";
 import { TimelineTreeView } from "@/features/chat/components/TimelineTreeView";
-import {
-	appendCompletedDraft,
-	buildLegacyDraftStorageKey,
-	buildSessionDraftStorageKey,
-	writeChatDraft,
-} from "@/features/chat/hooks/draft-storage";
 import {
 	normalizeTokenCount,
 	parsePiSessionStats,
@@ -72,8 +65,14 @@ import {
 	setCachedScrollPosition,
 	useChat,
 } from "@/hooks/useChat";
-import { workspaceFileUrl } from "@/lib/api/files";
+import { voiceProxyWsUrl, workspaceFileUrl } from "@/lib/api/files";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
+import {
+	appendCompletedDraft,
+	buildLegacyDraftStorageKey,
+	buildSessionDraftStorageKey,
+	writeChatDraft,
+} from "@/lib/chat-draft-storage";
 import {
 	type ChatFileAdapter,
 	MessageGroupCard,
@@ -682,7 +681,7 @@ export function ChatView({
 		}
 	}, []);
 	const { mode: streamingPresentationMode } = useStreamingPresentation();
-	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
+
 	const [isUploading, setIsUploading] = useState(false);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
@@ -1284,6 +1283,7 @@ export function ChatView({
 			selectedSessionId ?? null,
 		]),
 		config: voiceConfig,
+		remoteUrl: voiceConfig?.stt_url ? voiceProxyWsUrl("stt") : undefined,
 		onTranscript: useCallback(
 			(text: string) => {
 				// A pending typed snapshot must not overwrite completed speech.
@@ -1298,7 +1298,7 @@ export function ChatView({
 			[draftStorageKey, setInput],
 		),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
-		autoSendOnFinal: true,
+		autoSendOnFinal: false,
 		autoSendDelayMs: 50,
 		onAutoSend: () => dictationSendRef.current?.click(),
 	});
@@ -1625,14 +1625,6 @@ export function ChatView({
 			inputRef.current?.focus();
 		}
 	}, []);
-
-	// Auto-resize is now handled inline in handleInputChange for better performance.
-	// This effect only handles dictation mode changes.
-	useEffect(() => {
-		if (dictation.isActive && inputRef.current) {
-			inputRef.current.style.height = "36px";
-		}
-	}, [dictation.isActive]);
 
 	// Handle file upload
 	const handleFileUpload = useCallback(
@@ -2125,9 +2117,7 @@ export function ChatView({
 			setCommandError(null);
 
 			// Keep textarea stable during dictation to avoid reflow storms.
-			if (dictation.isActive) {
-				textarea.style.height = "36px";
-			} else {
+			if (!dictation.isActive) {
 				// Auto-resize textarea immediately
 				textarea.style.height = "auto";
 				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
@@ -2261,23 +2251,6 @@ export function ChatView({
 	const handleStop = useCallback(async () => {
 		await abort();
 	}, [abort]);
-
-	// Voice mode handlers
-	const handleVoiceConversation = useCallback(() => {
-		setVoiceMode("conversation");
-		dictation.start();
-	}, [dictation]);
-
-	const handleVoiceDictation = useCallback(async () => {
-		setVoiceMode("dictation");
-		await dictation.start();
-	}, [dictation]);
-
-	const handleVoiceStop = useCallback(() => {
-		// Use cancel() to stop without auto-send - user clicked X
-		dictation.cancel();
-		setVoiceMode(null);
-	}, [dictation]);
 
 	// Local dictation is independent of backend speech-service configuration.
 	const hasVoice =
@@ -2685,7 +2658,8 @@ export function ChatView({
 				/>
 
 				{/* Chat input - canonical chat input */}
-				<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
+				<div className="chat-input-container composer-dictation-anchor flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
+					<DictationStatus dictation={dictation} />
 					<div className="flex items-center gap-2">
 						{/* File upload button */}
 						<button
@@ -2703,23 +2677,7 @@ export function ChatView({
 						</button>
 
 						{/* Voice menu button */}
-						{hasVoice && (
-							<VoiceMenuButton
-								activeMode={dictation.isActive ? voiceMode : null}
-								recognitionControls={{
-									recognition: dictation.recognition,
-									remoteAvailable: dictation.remoteAvailable,
-									onProviderChange: dictation.setRecognitionProvider,
-									onLanguageChange: dictation.setRecognitionLanguage,
-								}}
-								voiceState={dictation.isActive ? "listening" : "idle"}
-								onConversation={handleVoiceConversation}
-								onDictation={handleVoiceDictation}
-								onStop={handleVoiceStop}
-								locale={locale}
-								className="flex-shrink-0"
-							/>
-						)}
+						{hasVoice && <DictationMicButton dictation={dictation} />}
 
 						{/* Textarea wrapper with slash command popup */}
 						<div
@@ -2913,151 +2871,67 @@ export function ChatView({
 								</div>
 							)}
 
-							{dictation.error && (
-								<div
-									role="alert"
-									className="mb-2 flex flex-wrap items-center gap-2 text-sm text-destructive"
-								>
-									<span>{dictation.error}</span>
-									<button
-										type="button"
-										className="underline underline-offset-4"
-										onClick={() => void dictation.start()}
-									>
-										Retry recognition
-									</button>
-								</div>
-							)}
-							{hasVoice && dictation.isActive ? (
-								<DictationOverlay
-									open
-									value={inputValueRef.current}
-									liveTranscript={dictation.liveTranscript}
-									placeholder={t("chat.speakNow")}
-									vadProgress={dictation.vadProgress}
-									preparation={dictation.preparation}
-									onFinish={dictation.stop}
-									recognitionControls={{
-										recognition: dictation.recognition,
-										remoteAvailable: dictation.remoteAvailable,
-										onProviderChange: dictation.setRecognitionProvider,
-										onLanguageChange: dictation.setRecognitionLanguage,
-									}}
-									autoSend={dictation.autoSendEnabled}
-									onAutoSendChange={dictation.setAutoSendEnabled}
-									onStop={handleVoiceStop}
-									onChange={handleInputChange}
-									onKeyDown={handleKeyDown}
-									onPaste={(e) => {
-										// Handle pasted files
-										const items = e.clipboardData?.items;
-										if (!items) return;
+							<textarea
+								ref={inputRef}
+								autoComplete="off"
+								autoCorrect="off"
+								autoCapitalize="sentences"
+								spellCheck={false}
+								enterKeyHint="send"
+								data-form-type="other"
+								placeholder={t("chat.placeholder")}
+								defaultValue={inputInitialValue}
+								onChange={handleInputChange}
+								onKeyDown={handleKeyDown}
+								onPaste={(e) => {
+									// Handle pasted files
+									const items = e.clipboardData?.items;
+									if (!items) return;
 
-										const files: File[] = [];
-										let imageIndex = 0;
-										for (const item of Array.from(items)) {
-											if (item.kind === "file") {
-												const file = item.getAsFile();
-												if (file) {
-													// Rename generic clipboard image names to be unique
-													const isGenericName =
-														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-													if (isGenericName) {
-														const ext = file.name.split(".").pop() || "png";
-														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-														const renamedFile = new File([file], uniqueName, {
-															type: file.type,
-														});
-														files.push(renamedFile);
-													} else {
-														files.push(file);
-													}
+									const files: File[] = [];
+									let imageIndex = 0;
+									for (const item of Array.from(items)) {
+										if (item.kind === "file") {
+											const file = item.getAsFile();
+											if (file) {
+												// Rename generic clipboard image names to be unique
+												const isGenericName =
+													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+												if (isGenericName) {
+													const ext = file.name.split(".").pop() || "png";
+													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+													const renamedFile = new File([file], uniqueName, {
+														type: file.type,
+													});
+													files.push(renamedFile);
+												} else {
+													files.push(file);
 												}
 											}
 										}
+									}
 
-										if (files.length > 0) {
-											e.preventDefault();
-											const dataTransfer = new DataTransfer();
-											for (const file of files) {
-												dataTransfer.items.add(file);
-											}
-											handleFileUpload(dataTransfer.files);
+									if (files.length > 0) {
+										e.preventDefault();
+										const dataTransfer = new DataTransfer();
+										for (const file of files) {
+											dataTransfer.items.add(file);
 										}
-									}}
-									onFocus={(e) => {
-										// Scroll input into view on mobile when keyboard opens
-										setTimeout(() => {
-											e.target.scrollIntoView({
-												behavior: "smooth",
-												block: "nearest",
-											});
-										}, 300);
-									}}
-								/>
-							) : (
-								<textarea
-									ref={inputRef}
-									autoComplete="off"
-									autoCorrect="off"
-									autoCapitalize="sentences"
-									spellCheck={false}
-									enterKeyHint="send"
-									data-form-type="other"
-									placeholder={t("chat.placeholder")}
-									defaultValue={inputInitialValue}
-									onChange={handleInputChange}
-									onKeyDown={handleKeyDown}
-									onPaste={(e) => {
-										// Handle pasted files
-										const items = e.clipboardData?.items;
-										if (!items) return;
-
-										const files: File[] = [];
-										let imageIndex = 0;
-										for (const item of Array.from(items)) {
-											if (item.kind === "file") {
-												const file = item.getAsFile();
-												if (file) {
-													// Rename generic clipboard image names to be unique
-													const isGenericName =
-														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-													if (isGenericName) {
-														const ext = file.name.split(".").pop() || "png";
-														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-														const renamedFile = new File([file], uniqueName, {
-															type: file.type,
-														});
-														files.push(renamedFile);
-													} else {
-														files.push(file);
-													}
-												}
-											}
-										}
-
-										if (files.length > 0) {
-											e.preventDefault();
-											const dataTransfer = new DataTransfer();
-											for (const file of files) {
-												dataTransfer.items.add(file);
-											}
-											handleFileUpload(dataTransfer.files);
-										}
-									}}
-									onFocus={(e) => {
-										// Scroll input into view on mobile when keyboard opens
-										setTimeout(() => {
-											e.target.scrollIntoView({
-												behavior: "smooth",
-												block: "nearest",
-											});
-										}, 300);
-									}}
-									rows={1}
-									className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-								/>
-							)}
+										handleFileUpload(dataTransfer.files);
+									}
+								}}
+								onFocus={(e) => {
+									// Scroll input into view on mobile when keyboard opens
+									setTimeout(() => {
+										e.target.scrollIntoView({
+											behavior: "smooth",
+											block: "nearest",
+										});
+									}, 300);
+								}}
+								rows={1}
+								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+							/>
 						</div>
 
 						{/* Stop button - only shown when streaming */}

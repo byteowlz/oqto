@@ -1,7 +1,7 @@
 import { DictationOverlay } from "@/components/voice/DictationOverlay";
 import { RecognitionControls } from "@/components/voice/RecognitionControls";
-import { appendCompletedDraft } from "@/features/chat/hooks/draft-storage";
 import { useDictation } from "@/features/voice/hooks/useDictation";
+import { appendCompletedDraft } from "@/lib/chat-draft-storage";
 import type {
 	STTCallbacks,
 	STTRecognitionSettings,
@@ -45,7 +45,7 @@ class FakeService {
 		return 0;
 	}
 }
-vi.mock("@/lib/voice", () => ({
+vi.mock("@/lib/voice/stt-service", () => ({
 	STTService: vi
 		.fn()
 		.mockImplementation(
@@ -259,6 +259,21 @@ describe("standalone Oqto dictation", () => {
 		expect(result.current.recognition.provider).toBe("ears");
 		expect(result.current.isActive).toBe(false);
 		expect(instances[0]?.listening).toBe(false);
+	});
+	it("drops model progress on cancellation and fences late download callbacks", async () => {
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn() }),
+		);
+		await act(() => result.current.start());
+		act(() =>
+			instances[0]?.callbacks.onDownload?.({ loaded: 6e6, total: 10e6 }),
+		);
+		expect(result.current.download).toEqual({ loaded: 6e6, total: 10e6 });
+		act(() => result.current.cancel());
+		act(() =>
+			instances[0]?.callbacks.onDownload?.({ loaded: 8e6, total: 10e6 }),
+		);
+		expect(result.current.download).toBeNull();
 	});
 	it("turning auto-send off clears already scheduled work", async () => {
 		vi.useFakeTimers();

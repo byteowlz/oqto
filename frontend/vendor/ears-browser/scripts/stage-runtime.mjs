@@ -34,6 +34,10 @@ export function verifyRuntimeArchive(bytes) {
 	}
 }
 
+export function isRuntimeModule(name) {
+	return !name.startsWith(".") && /\.(js|mjs|wasm)$/.test(name);
+}
+
 /** Build-time GET only; verified archive caching supports offline rebuilds.
  * Keep the upstream ESM/worker/pthread tree intact; never rebundle moonshine.mjs.
  */
@@ -58,7 +62,11 @@ export async function stageMoonshineRuntime(destination) {
 	verifyRuntimeArchive(readFileSync(archive));
 	const temporary = mkdtempSync(path.join(os.tmpdir(), "ears-moonshine-"));
 	try {
-		execFileSync("tar", ["-xzf", archive, "-C", temporary]);
+		const tarVersion = execFileSync("tar", ["--version"], { encoding: "utf8" });
+		// GNU tar warns for every unused macOS provenance xattr in the pinned archive.
+		// Suppress only that metadata category; keep all extraction errors visible.
+		const metadataArgs = tarVersion.includes("GNU tar") ? ["--warning=no-unknown-keyword"] : [];
+		execFileSync("tar", [...metadataArgs, "-xzf", archive, "-C", temporary]);
 		const source = path.join(temporary, "dist");
 		const wasmDigest = createHash("sha256")
 			.update(readFileSync(path.join(source, "moonshine.wasm")))
@@ -67,7 +75,12 @@ export async function stageMoonshineRuntime(destination) {
 			throw new Error("Moonshine WASM checksum mismatch");
 		mkdirSync(destination, { recursive: true });
 		for (const name of readdirSync(source)) {
-			if (/\.(js|mjs|wasm)$/.test(name))
+			// Clean only known generated resource-fork siblings from earlier staging.
+			if (name.startsWith("._")) {
+				rmSync(path.join(destination, name), { force: true });
+				continue;
+			}
+			if (isRuntimeModule(name))
 				cpSync(path.join(source, name), path.join(destination, name));
 		}
 		cpSync(

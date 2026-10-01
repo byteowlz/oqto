@@ -71,7 +71,14 @@ const ALLOWED_PROJECT_ALIASES = {
 	terminal: ["@/hooks/use-mount-effect"],
 	gallery: [],
 	theme: [],
-	platform: ["@/src/generated"],
+	platform: [
+		"@/src/generated",
+		// Shared browser-speech presentation/capture and disposable draft storage.
+		// These contain no legacy chat/session transport or history authority.
+		"@/components/voice/ComposerDictation",
+		"@/features/voice/hooks/useDictation",
+		"@/lib/chat-draft-storage",
+	],
 	dev: [],
 };
 

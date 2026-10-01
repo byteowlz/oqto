@@ -73,6 +73,32 @@ it("uses local SDK options without a server, with opaque preview identities", as
 	service.disconnect();
 });
 
+it("forwards cumulative model bytes without summing files and clears progress when ready", async () => {
+	const service = new STTService("", 1500, {
+		provider: "moonshine",
+		language: "en",
+	});
+	const download = vi.fn();
+	service.setCallbacks({ onDownload: download });
+	await service.connect();
+	fake.listener?.({
+		type: "progress",
+		loaded: 4e6,
+		total: 10e6,
+		file: "encoder.ort",
+	});
+	fake.listener?.({
+		type: "progress",
+		loaded: 6e6,
+		total: 10e6,
+		file: "decoder_kv.ort",
+	});
+	expect(download).toHaveBeenLastCalledWith({ loaded: 6e6, total: 10e6 });
+	fake.listener?.({ type: "state", state: "ready" });
+	expect(download).toHaveBeenLastCalledWith(null);
+	service.disconnect();
+});
+
 it("cancel during microphone permission releases the late-granted stream", async () => {
 	let grant!: (stream: MediaStream) => void;
 	const stop = vi.fn();

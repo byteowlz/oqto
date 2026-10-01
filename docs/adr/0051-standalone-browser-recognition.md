@@ -29,8 +29,11 @@ STTService capture path for both implementations:
 Changing language/provider, including a cross-tab persisted-settings change,
 stops the old destination. There is no automatic server fallback after a local
 failure. TTS and Foxline client-owned capability negotiation remain outside scope.
-The separate `/oqto-ui` ChatPane composer is not wired by this change; it can reuse
-the hook when voice controls are added there without changing chat's send authority.
+Both the legacy ChatView and `/oqto-ui` ChatPane reuse the same capture hook and
+compact presentation. OqtoUI reaches browser capture and disposable draft storage
+through its platform adapter, not legacy chat transport. Its platform currently
+has no remote voice configuration capability, so remote recognition is explicitly
+unavailable there; local recognition needs no backend speech configuration.
 
 ## Finality and chat authority
 
@@ -78,6 +81,52 @@ A missing prerequisite is a visible error, not permission to upload speech. Ther
 is no shipped single-thread fallback. Downloaded model caches may be evicted by
 the browser; this is not a promise of unconditional offline operation.
 
+## Compact composer and model preparation (`oqto-yakf`)
+
+The normal editor remains mounted at the same dimensions throughout dictation.
+An absolutely anchored, bounded status strip shows preparation, listening,
+finishing or an actionable error; provisional words occupy a separate two-line
+preview and never become editor content. Language/provider/auto-send settings live
+in the microphone popover, not a replacement input form. Finish commits without
+sending; Cancel discards only provisional speech. Auto-send starts off in both
+composers and requires explicit opt-in. The audio meter samples into its own leaf
+CSS transform, without rerendering the whole chat on every volume tick.
+
+Download progress carries cumulative bytes from the SDK, never re-sums snapshots
+when filenames change. A native progress bar shows percentage and loaded/total MB
+only when the complete total is known and consistent; unknown totals and other
+preparation phases are indeterminate. Download completion is not recognition
+readiness: initialization and microphone permission remain visibly separate.
+Cancel and Retry remain available. Cached model loads can skip network transfer.
+
+The vendored SDK is synchronized from canonical eaRS `50f809e9` (including
+`9dea81fb`, `trx-cwxx` and `trx-dvgd`),
+not patched only in Oqto. Its default Tiny loader uses the catalog in the exact
+pinned WASM artifact: real isolated Chromium execution verified both en/de
+catalogs use the prior directory URLs, eight filenames and Tiny architecture.
+Catalog manifests provide aggregate declared totals; explicit custom model URL
+loads retain unknown totals rather than manufacture estimates. The source proof
+script is included in the snapshot; SDK tests/typecheck/build passed on its source
+branch (20 SDK tests). Staging excludes AppleDouble resource-fork files and cleans
+only their known generated siblings; the WASM digest remains unchanged. Generated
+checksum-pinned upstream `public/speech/` assets, like visual-runtime vendor assets,
+are outside application source linting; this does not exclude Oqto speech source.
+This is catalog validation, not a new physical-microphone inference proof.
+
+Layout proof: `frontend/dictation-layout.html` plus
+`frontend/tests/e2e/dictation-layout-e2e.py` exercise seven states in both schemes
+at 1280px and 390px (28 transitions). Chat, composer and editor bounding rectangles
+remain unchanged, the editor node survives, and no horizontal overflow or page
+errors occur. This is a representative shared-control fixture; actual ChatPane
+component tests additionally prove send/abort authority, completed-draft retention,
+preview exclusion and scope cancellation. The focused application/architecture suite
+passes 97 tests; changed-file Biome/Oxlint, scoped OqtoUI typecheck, zero-baseline
+architecture guardrails and the production build pass. Full TypeScript still has
+exactly the unchanged 180 error signatures, full Biome the unchanged 14 errors/two
+warnings, and the effect gate the same four unrelated effects. The prior explicit
+`oqto-d0pc.1` deferral remains; no full-gate success is claimed. Live
+deploy/microphone acceptance is still separate.
+
 ## Composer lifecycle follow-up
 
 `oqto-qyh4` binds recognition to the unsanitized workspace/session composer
@@ -124,5 +173,6 @@ tests or the production build.
   `oqto-d0pc.1`; speech changes do not suppress those gates. Structural review
   retains two explained findings: a ref-dispatched volume method misclassified
   as dead, and presentation growth for explicit controls/status. Contract checking
-  preserves `useDictation`'s caller signature; no blanket quality acknowledgement
-  was added.
+  preserves the submission contract. Browser host adapters now supply the optional
+  authenticated remote URL; leaf metering uses a getter rather than chat-wide
+  volume state. No blanket quality acknowledgement was added.

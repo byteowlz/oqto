@@ -1,6 +1,4 @@
 import { useLocalStorage } from "@/hooks/use-local-storage";
-import { voiceProxyWsUrl } from "@/lib/control-plane-client";
-import { STTService } from "@/lib/voice";
 import {
 	DEFAULT_RECOGNITION_SETTINGS,
 	RECOGNITION_SETTINGS_KEY,
@@ -8,6 +6,8 @@ import {
 	parseRecognitionSettings,
 	reportRecognitionStorageError,
 } from "@/lib/voice/recognition-settings";
+import { STTService } from "@/lib/voice/stt-service";
+import type { ModelDownloadProgress } from "@/lib/voice/stt-service";
 import type { VoiceConfig } from "@/lib/voice/types";
 import type {
 	RecognitionLanguage,
@@ -19,6 +19,8 @@ export interface UseDictationOptions {
 	/** Composer identity; changing it cancels capture and fences queued delivery. */
 	scopeKey?: string;
 	config: VoiceConfig | null;
+	/** Authenticated URL supplied by the host adapter; local recognition never uses it. */
+	remoteUrl?: string;
 	onTranscript: (text: string) => void;
 	vadTimeoutMs?: number;
 	autoSendOnFinal?: boolean;
@@ -29,10 +31,13 @@ export interface UseDictationReturn {
 	isActive: boolean;
 	liveTranscript: string;
 	vadProgress: number;
-	inputVolume: number;
+	/** Leaf visualization samples capture without rerendering the whole composer. */
+	getInputVolume: () => number;
 	isConnected: boolean;
 	error: string | null;
+	dismissError: () => void;
 	preparation: string | null;
+	download: ModelDownloadProgress | null;
 	recognition: RecognitionSettings;
 	remoteAvailable: boolean;
 	setRecognitionProvider: (provider: RecognitionProvider) => void;
@@ -77,14 +82,15 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const runningScopeRef = useRef<string | undefined>(undefined);
 	const runningRecognitionRef = useRef<RecognitionSettings | null>(null);
 	const finishingRef = useRef(false);
-	const smoothVolumeRef = useRef(0);
+
 	const autoSendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [isActive, setIsActive] = useState(false);
 	const [liveTranscript, setLiveTranscript] = useState("");
-	const [inputVolume, setInputVolume] = useState(0);
+
 	const [isConnected, setIsConnected] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [preparation, setPreparation] = useState<string | null>(null);
+	const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
 	const [recognition, setRecognition] = useLocalStorage(
 		RECOGNITION_SETTINGS_KEY,
 		DEFAULT_RECOGNITION_SETTINGS,
@@ -115,6 +121,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		setIsActive(false);
 		setIsConnected(false);
 		setPreparation(null);
+		setDownload(null);
 		setLiveTranscript("");
 	}, [clearAutoSend]);
 	const setAutoSendEnabled = useCallback(
@@ -138,10 +145,13 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		runningScopeRef.current = current.scopeKey;
 		runningRecognitionRef.current = selected;
 		try {
-			if (selected.provider === "ears" && !current.config?.stt_url)
+			if (
+				selected.provider === "ears" &&
+				(!current.config?.stt_url || !current.remoteUrl)
+			)
 				throw new Error("Remote eaRS recognition is not configured");
 			const service = new STTService(
-				selected.provider === "ears" ? voiceProxyWsUrl("stt") : "",
+				selected.provider === "ears" ? (current.remoteUrl ?? "") : "",
 				current.vadTimeoutMs ?? current.config?.vad_timeout_ms ?? 1500,
 				selected,
 			);
@@ -151,6 +161,9 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 				activeRef.current &&
 				current.scopeKey === latest.current.options.scopeKey;
 			service.setCallbacks({
+				onDownload: (progress) => {
+					if (isCurrent()) setDownload(progress);
+				},
 				onPreview: (text) => {
 					if (isCurrent()) setLiveTranscript(text);
 				},
@@ -250,22 +263,10 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			cancel();
 	}, [recognition.provider, recognition.language, cancel]);
 
-	// useeffect-guardrail: allow — microphone visualization owns this bounded timer.
-	useEffect(() => {
-		if (!isActive) {
-			smoothVolumeRef.current = 0;
-			setInputVolume(0);
-			return;
-		}
-		const timer = setInterval(() => {
-			const volume = sttRef.current?.getInputVolume() ?? 0;
-			smoothVolumeRef.current += (volume - smoothVolumeRef.current) * 0.3;
-			setInputVolume(
-				smoothVolumeRef.current < 0.001 ? 0 : smoothVolumeRef.current,
-			);
-		}, 66);
-		return () => clearInterval(timer);
-	}, [isActive]);
+	const getInputVolume = useCallback(
+		() => sttRef.current?.getInputVolume() ?? 0,
+		[],
+	);
 	// useeffect-guardrail: allow — release capture and fence callbacks on unmount.
 	useEffect(
 		() => () => {
@@ -281,12 +282,14 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		isActive,
 		liveTranscript,
 		vadProgress: 0,
-		inputVolume,
+		getInputVolume,
 		isConnected,
 		error,
+		dismissError: () => setError(null),
 		preparation,
+		download,
 		recognition,
-		remoteAvailable: Boolean(options.config?.stt_url),
+		remoteAvailable: Boolean(options.config?.stt_url && options.remoteUrl),
 		setRecognitionProvider,
 		setRecognitionLanguage,
 		autoSendEnabled,

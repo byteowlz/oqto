@@ -1,6 +1,7 @@
+import { i18n, initI18n } from "@/lib/i18n";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatPane } from "../src/oqto-ui/chat/ChatPane";
 import { turnDraftQueryKey } from "../src/oqto-ui/chat/query-keys";
 import {
@@ -8,7 +9,13 @@ import {
 	scriptedStore,
 } from "../src/oqto-ui/dev/scripted-platform";
 
+initI18n();
 const SESSION = "chat-reliability";
+
+beforeEach(() => {
+	// Storage.getItem returns null for absent keys, never undefined.
+	vi.mocked(localStorage.getItem).mockReturnValue(null);
+});
 
 describe("OqtoUI writable Chat View", () => {
 	it("sends, streams through a disposable cache draft, then converges to pages", async () => {
@@ -35,11 +42,13 @@ describe("OqtoUI writable Chat View", () => {
 
 		const composer = screen.getByRole("textbox");
 		fireEvent.change(composer, { target: { value: "prove writable chat" } });
-		fireEvent.click(screen.getByRole("button", { name: "oqtoUi.chat.send" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("oqtoUi.chat.send") }),
+		);
 
 		expect(screen.getByText("prove writable chat")).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: "oqtoUi.chat.abort" }),
+			screen.getByRole("button", { name: i18n.t("oqtoUi.chat.abort") }),
 		).toBeInTheDocument();
 
 		await waitFor(
@@ -61,7 +70,7 @@ describe("OqtoUI writable Chat View", () => {
 				turnDraftQueryKey(scriptedOqtoUiPlatform.id, SESSION),
 			),
 		).toBeNull();
-		expect(screen.queryByText("oqtoUi.chat.pending")).toBeNull();
+		expect(screen.queryByText(i18n.t("oqtoUi.chat.pending"))).toBeNull();
 		expect(screen.getAllByText("prove writable chat")).toHaveLength(1);
 		expect(scriptedStore.get(SESSION)).toHaveLength(initialLength + 2);
 	});

@@ -18,6 +18,14 @@ import type { ReactNode } from "react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurnDraft } from "../platform/chat-contract";
+import {
+	DictationMicButton,
+	DictationStatus,
+	appendCompletedDraft,
+	readChatDraft,
+	useDictation,
+	writeChatDraft,
+} from "../platform/composer-dictation";
 import type {
 	ChatMessage,
 	OqtoUiPlatform,
@@ -146,7 +154,17 @@ function streamingDraftGroup(draft: ChatTurnDraft): CanonicalMessageGroup {
  * draft and pending prompt from the engine, and a live composer. Store
  * truth always wins: turn end and resync drop ephemera and invalidate.
  */
-export function ChatPane({
+export function ChatPane(props: ChatPaneProps) {
+	const scopeKey = JSON.stringify([
+		props.platform.id,
+		props.workspacePath,
+		props.sessionId,
+	]);
+	// Identity changes replace the entire composer, including the chat binding.
+	return <ScopedChatPane key={scopeKey} {...props} scopeKey={scopeKey} />;
+}
+
+function ScopedChatPane({
 	platform,
 	agentName,
 	session,
@@ -155,7 +173,8 @@ export function ChatPane({
 	workspacePath,
 	actions,
 	onOpenFile,
-}: ChatPaneProps) {
+	scopeKey,
+}: ChatPaneProps & { scopeKey: string }) {
 	const { t, i18n } = useTranslation();
 	const locale = i18n.resolvedLanguage?.startsWith("de") ? "de" : "en";
 	const queryClient = useQueryClient();
@@ -177,8 +196,45 @@ export function ChatPane({
 	const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(
 		null,
 	);
-	const [prompt, setPrompt] = useState("");
+	const storageKey = `oqto-ui:chat-draft:${scopeKey}`;
+	const [prompt, setPrompt] = useState(() => readChatDraft(storageKey));
+	const promptRef = useRef(prompt);
+	const currentRef = useRef(true);
 	const [streaming, setStreaming] = useState(false);
+	const updatePrompt = (value: string) => {
+		promptRef.current = value;
+		setPrompt(value);
+		writeChatDraft(storageKey, value);
+	};
+	const sendPrompt = (text: string) => {
+		if (!currentRef.current || !text.trim()) return;
+		const clientId = platform.chat.send(sessionId, text, "steer");
+		setPendingPrompt({ id: clientId, text });
+		setStreaming(true);
+		updatePrompt("");
+	};
+	const dictation = useDictation({
+		scopeKey,
+		// This host-neutral platform has no voice configuration capability.
+		// Local recognition works independently; remote is explicitly unavailable.
+		config: null,
+		autoSendOnFinal: false,
+		onTranscript: (text) => {
+			if (!currentRef.current) return;
+			const value = appendCompletedDraft(storageKey, promptRef.current, text);
+			promptRef.current = value;
+			setPrompt(value);
+		},
+		onAutoSend: () => sendPrompt(promptRef.current.trim()),
+	});
+	// Cancel before a replacement scope can capture; also fence queued delivery.
+	useLayoutEffect(() => {
+		currentRef.current = true;
+		return () => {
+			currentRef.current = false;
+			dictation.cancel();
+		};
+	}, [dictation.cancel]);
 
 	useMountEffect(() => {
 		return platform.chat.bind(sessionId, (update) => {
@@ -197,13 +253,6 @@ export function ChatPane({
 			});
 		});
 	});
-
-	const sendPrompt = (text: string) => {
-		const clientId = platform.chat.send(sessionId, text, "steer");
-		setPendingPrompt({ id: clientId, text });
-		setStreaming(true);
-		setPrompt("");
-	};
 
 	const scrollRef = useRef<HTMLElement | null>(null);
 	// Viewport anchoring: keep the visible content stable when an earlier page
@@ -452,16 +501,16 @@ export function ChatPane({
 
 			<ChatSelectionToolbar
 				onQuote={(passage) =>
-					setPrompt(
-						(current) =>
-							`${current}${current ? "\n\n" : ""}> ${passage.replace(/\n/g, "\n> ")}\n\n`,
+					updatePrompt(
+						`${promptRef.current}${promptRef.current ? "\n\n" : ""}> ${passage.replace(/\n/g, "\n> ")}\n\n`,
 					)
 				}
 			/>
 
 			<TaskProgress tasks={tasks} placement="desktop" />
 
-			<footer className="wb-composer">
+			<footer className="wb-composer relative">
+				<DictationStatus dictation={dictation} />
 				<button
 					className="wb-icon-button"
 					type="button"
@@ -474,7 +523,7 @@ export function ChatPane({
 					placeholder={t("oqtoUi.chat.placeholder")}
 					aria-label={t("oqtoUi.chat.placeholder")}
 					value={prompt}
-					onChange={(event) => setPrompt(event.target.value)}
+					onChange={(event) => updatePrompt(event.target.value)}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && !event.shiftKey) {
 							event.preventDefault();
@@ -482,6 +531,7 @@ export function ChatPane({
 						}
 					}}
 				/>
+				<DictationMicButton dictation={dictation} className="wb-icon-button" />
 				{streaming ? (
 					<button
 						className="wb-icon-button"

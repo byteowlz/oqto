@@ -67,7 +67,12 @@ and model downloads. The runtime modules are served intact, not rebundled.
 Pinned streaming Tiny model directories: English `quantized_26_08_21`, German
 `quantized_26_08_24`. The eight files total approximately 45 MB English / 32 MB
 German, plus approximately 13 MB runtime WASM. German Small is deliberately not
-the default. Models download via GET from `download.moonshine.ai`, with upstream
+the default. Defaults use the pinned native catalog (architecture 2, no spelling
+model), so progress reports cumulative loaded bytes and manifest-declared total
+bytes across all eight files, including cache hits. `modelBaseUrl` uses explicit
+URLs instead: loaded bytes remain cumulative, but total is unknown (`undefined`).
+The SDK forwards upstream progress without inventing or re-summing byte totals.
+Models download via GET from `download.moonshine.ai`, with upstream
 Cache API caching (`moonshine-models-v1`). Microphone audio stays in a local
 worker. Use `modelBaseUrl` for an equivalent self-hosted model directory (absolute
 URL, trailing slash). Runtime caching uses normal HTTP caching; model downloads
@@ -107,6 +112,16 @@ For real CPU/WASM streaming proof, install `agent-browser` and run
 paces public/consented fixtures, checks non-empty exactly-once completions,
 and forbids WebSockets/non-GET fetches in the page and STT worker. Audio
 fixtures, browser state and runtime binaries stay outside git.
+To verify catalog compatibility without downloading models, run:
+
+```sh
+bun scripts/catalog-proof.mjs /path/to/vite/dist/node/index.js /path/to/moonshine-0.1.5 /path/to/chromium
+```
+
+This checks the pinned WASM digest, executes `sttDependencies(language, '2', false)`
+in isolated Chromium through Vite, and asserts EN/DE catalog directories, URLs,
+eight filenames and declared sizes. It leaves runtime assets unchanged.
+
 The package exports TypeScript source for Bun/Vite consumers; `dist/index.js` is
 an independently usable browser ESM build. Keep generated/runtime assets and
 private evaluation audio outside git. Oqto vendors this small source package for

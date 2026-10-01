@@ -15,7 +15,13 @@ export interface STTRecognitionSettings {
 	language: RecognitionLanguage;
 	runtimeBaseUrl?: string;
 }
+export interface ModelDownloadProgress {
+	/** Cumulative bytes across the whole model, not the current file. */
+	loaded: number;
+	total?: number;
+}
 export interface STTCallbacks {
+	onDownload?: (progress: ModelDownloadProgress | null) => void;
 	onPreview?: (text: string) => void;
 	/** Legacy voice-mode callback: emitted only for completed words. */
 	onWord?: (word: string) => void;
@@ -55,6 +61,7 @@ export class STTService {
 	private receive(event: RecognitionEvent) {
 		switch (event.type) {
 			case "state":
+				if (event.state !== "preparing") this.callbacks.onDownload?.(null);
 				this.ready = event.state === "ready";
 				this.callbacks.onConnectionChange?.(this.ready);
 				this.callbacks.onPreparation?.(
@@ -62,11 +69,11 @@ export class STTService {
 				);
 				break;
 			case "progress":
-				this.callbacks.onPreparation?.(
-					event.total
-						? `Loading speech model: ${Math.round((event.loaded / event.total) * 100)}%`
-						: "Loading speech model…",
-				);
+				this.callbacks.onDownload?.({
+					loaded: event.loaded,
+					total: event.total,
+				});
+				this.callbacks.onPreparation?.("Downloading speech model…");
 				break;
 			case "preview":
 				this.preview.set(event.id, event.text);
@@ -118,6 +125,7 @@ export class STTService {
 		}
 		await this.connect();
 		if (token !== this.setupToken) return;
+		this.callbacks.onPreparation?.("Waiting for microphone permission…");
 		const stream = await navigator.mediaDevices.getUserMedia({
 			audio: {
 				channelCount: 1,
