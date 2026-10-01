@@ -1,702 +1,300 @@
-/**
- * Speech-to-Text Service for eaRS WebSocket server.
- *
- * Handles real-time audio streaming from microphone to eaRS,
- * receiving word-by-word transcriptions with VAD (Voice Activity Detection).
- *
- * Audio Requirements:
- * - Format: 32-bit float PCM
- * - Sample Rate: 24000 Hz
- * - Channels: Mono
- *
- * Performance optimizations:
- * - Audio frame batching: reduces WS message rate from ~187/sec to ~23/sec
- * - Backpressure handling: drops frames when WS buffer exceeds threshold
- * - Word array accumulation: avoids O(n^2) string concatenation
- */
+import {
+	type RecognitionEvent,
+	type RecognitionLanguage,
+	type RecognitionProvider,
+	Recognizer,
+} from "@byteowlz/ears-browser";
 
-// Backpressure config
-const WS_BUFFER_HIGH_WATER = 256 * 1024; // 256KB - start dropping frames
-const WS_BUFFER_LOW_WATER = 64 * 1024; // 64KB - resume sending
-
-// Batching config: at 24kHz with 128-sample worklet chunks, we get ~187 chunks/sec
-// Batching 8 chunks = ~23 sends/sec, ~42ms worth of audio per send
-const AUDIO_BATCH_SIZE = 8;
-
-/** Message types from eaRS server */
-interface STTMessage {
-	type: "word" | "final" | "pause" | "error" | "status" | "languagechanged";
-	word?: string;
-	text?: string;
-	start_time?: number;
-	end_time?: number;
-	message?: string;
-	timestamp?: number;
-	paused?: boolean;
-	vad?: boolean;
-	vad_timeout?: number;
-	lang?: string;
-	words?: Array<{
-		word: string;
-		start_time: number;
-		end_time?: number;
-	}>;
-}
-
-/** Microphone device information */
 export interface MicrophoneDevice {
 	deviceId: string;
 	label: string;
 	isDefault: boolean;
 }
-
-/** STT Service event callbacks */
+export interface STTRecognitionSettings {
+	provider: RecognitionProvider;
+	language: RecognitionLanguage;
+	runtimeBaseUrl?: string;
+}
 export interface STTCallbacks {
+	onPreview?: (text: string) => void;
+	/** Legacy voice-mode callback: emitted only for completed words. */
 	onWord?: (word: string) => void;
 	onFinal?: (text: string) => void;
 	onError?: (error: string) => void;
 	onVadProgress?: (progress: number) => void;
 	onConnectionChange?: (connected: boolean) => void;
+	onPreparation?: (label: string | null) => void;
 }
 
-/**
- * STT Service for real-time speech-to-text via eaRS WebSocket.
- */
+/** Oqto owns capture/permissions/visualization; eaRS owns inference and finality. */
 export class STTService {
-	private ws: WebSocket | null = null;
+	private recognizer = new Recognizer();
+	private callbacks: STTCallbacks = {};
 	private audioContext: AudioContext | null = null;
 	private mediaStream: MediaStream | null = null;
 	private workletNode: AudioWorkletNode | null = null;
 	private source: MediaStreamAudioSourceNode | null = null;
 	private analyserNode: AnalyserNode | null = null;
-
-	private callbacks: STTCallbacks = {};
-	private vadTimeoutId: number | null = null;
-	private vadSilenceTimeoutMs: number;
-	private vadProgressIntervalId: number | null = null;
-	private vadStartTime = 0;
-	private isListening = false;
-	private audioSetupToken = 0;
+	private setupToken = 0;
+	private ready = false;
+	private listening = false;
 	private selectedDeviceId: string | null = null;
-
-	// Use word array instead of string concatenation (avoids O(n^2) growth)
-	private transcriptWords: string[] = [];
-
-	// Audio batching state
-	private audioBatchBuffer: Float32Array[] = [];
-	private audioBatchTotalSamples = 0;
-
-	// Backpressure state
-	private isBackpressured = false;
-	private droppedFrameCount = 0;
+	private preview = new Map<string, string>();
+	private chunks: Float32Array[] = [];
 
 	constructor(
 		private wsUrl: string,
-		vadSilenceTimeoutMs = 1500,
+		_vadSilenceTimeoutMs = 1500,
+		private selection: STTRecognitionSettings = {
+			provider: "ears",
+			language: "en",
+		},
 	) {
-		this.vadSilenceTimeoutMs = vadSilenceTimeoutMs;
+		this.recognizer.subscribe((event) => this.receive(event));
 	}
-
-	/**
-	 * Update VAD timeout dynamically.
-	 */
-	setVadTimeout(ms: number) {
-		this.vadSilenceTimeoutMs = ms;
-	}
-
-	/**
-	 * List available microphone devices.
-	 */
-	async listMicrophones(): Promise<MicrophoneDevice[]> {
-		try {
-			// Request permission first to get device labels
-			if (!this.mediaStream) {
-				const tempStream = await navigator.mediaDevices.getUserMedia({
-					audio: true,
-				});
-				for (const track of tempStream.getTracks()) {
-					track.stop();
-				}
-			}
-
-			const devices = await navigator.mediaDevices.enumerateDevices();
-			const audioInputs = devices.filter(
-				(device) => device.kind === "audioinput",
-			);
-
-			return audioInputs.map((device) => ({
-				deviceId: device.deviceId,
-				label: device.label || `Microphone ${device.deviceId.substring(0, 8)}`,
-				isDefault: device.deviceId === "default",
-			}));
-		} catch (error) {
-			console.error("[STT] Failed to enumerate microphones:", error);
-			throw error;
-		}
-	}
-
-	/**
-	 * Set the microphone device to use.
-	 */
-	setMicrophone(deviceId: string) {
-		console.log("[STT] Setting microphone to:", deviceId);
-		this.selectedDeviceId = deviceId;
-
-		// Restart listening if currently active
-		if (this.isListening) {
-			this.stopListening();
-			this.startListening().catch((error) => {
-				console.error("[STT] Failed to restart with new microphone:", error);
-				this.callbacks.onError?.(`Failed to switch microphone: ${error}`);
-			});
-		}
-	}
-
-	/**
-	 * Get currently selected microphone device ID.
-	 */
-	getSelectedMicrophone(): string | null {
-		return this.selectedDeviceId;
-	}
-
-	/**
-	 * Connect to the eaRS WebSocket server.
-	 */
-	async connect(): Promise<void> {
-		if (
-			this.ws &&
-			(this.ws.readyState === WebSocket.OPEN ||
-				this.ws.readyState === WebSocket.CONNECTING)
-		) {
-			console.log("[STT] Already connected or connecting");
-			return;
-		}
-
-		return new Promise((resolve, reject) => {
-			try {
-				console.log("[STT] Connecting to:", this.wsUrl);
-				this.ws = new WebSocket(this.wsUrl);
-				this.ws.binaryType = "arraybuffer";
-
-				this.ws.onopen = () => {
-					console.log("[STT] Connected to eaRS server");
-					this.callbacks.onConnectionChange?.(true);
-					resolve();
-				};
-
-				this.ws.onmessage = (event) => {
-					try {
-						const message: STTMessage = JSON.parse(event.data);
-						this.handleMessage(message);
-					} catch (error) {
-						console.error("[STT] Failed to parse message:", error);
-					}
-				};
-
-				this.ws.onerror = (error) => {
-					console.error("[STT] WebSocket error:", error);
-					reject(error);
-				};
-
-				this.ws.onclose = (event) => {
-					console.log("[STT] WebSocket closed:", event.code, event.reason);
-					this.callbacks.onConnectionChange?.(false);
-					this.stopListening();
-				};
-			} catch (error) {
-				reject(error);
-			}
-		});
-	}
-
-	private handleMessage(message: STTMessage) {
-		switch (message.type) {
-			case "word":
-				// Ignore words when not listening - server may still send after stopListening
-				if (!this.isListening) return;
-				if (message.word) {
-					// Use array push instead of string concat (O(1) vs O(n))
-					this.transcriptWords.push(message.word);
-					this.resetVadTimeout();
-					this.callbacks.onWord?.(message.word);
+	private receive(event: RecognitionEvent) {
+		switch (event.type) {
+			case "state":
+				this.ready = event.state === "ready";
+				this.callbacks.onConnectionChange?.(this.ready);
+				this.callbacks.onPreparation?.(
+					event.state === "preparing" ? "Preparing speech recognition…" : null,
+				);
+				break;
+			case "progress":
+				this.callbacks.onPreparation?.(
+					event.total
+						? `Loading speech model: ${Math.round((event.loaded / event.total) * 100)}%`
+						: "Loading speech model…",
+				);
+				break;
+			case "preview":
+				this.preview.set(event.id, event.text);
+				this.callbacks.onPreview?.(this.getCurrentTranscript());
+				break;
+			case "completed":
+				this.preview.delete(event.id);
+				this.callbacks.onPreview?.(this.getCurrentTranscript());
+				if (event.text.trim()) {
+					for (const word of event.text.split(/\s+/))
+						this.callbacks.onWord?.(word);
+					this.callbacks.onFinal?.(event.text);
 				}
 				break;
-
-			case "final":
-				// Ignore final messages when not listening
-				if (!this.isListening) return;
-				this.clearVadTimeout(true);
-				if (message.text) {
-					this.callbacks.onFinal?.(message.text);
-				}
-				this.transcriptWords = [];
-				break;
-
-			case "pause":
-				// VAD detected silence - could trigger final if we have content
-				console.log("[STT] VAD pause detected");
-				break;
-
 			case "error":
-				console.error("[STT] Server error:", message.message);
-				this.clearVadTimeout(true);
-				this.callbacks.onError?.(message.message || "Unknown error");
-				break;
-
-			case "status":
-				console.log("[STT] Server status:", message);
-				break;
-
-			case "languagechanged":
-				console.log("[STT] Language changed to:", message.lang);
+				this.releaseCapture();
+				this.callbacks.onError?.(event.message);
 				break;
 		}
 	}
-
-	private resetVadTimeout() {
-		// Reset timers but don't emit a progress reset on every word.
-		this.clearVadTimeout(false);
-		this.vadStartTime = Date.now();
-
-		// Set timeout for silence detection
-		this.vadTimeoutId = window.setTimeout(() => {
-			console.log("[STT] VAD timeout - silence detected");
-			// Join words only when needed (single allocation)
-			const finalTranscript = this.transcriptWords.join(" ").trim();
-			this.clearVadTimeout(true);
-
-			if (finalTranscript) {
-				this.callbacks.onFinal?.(finalTranscript);
-			}
-			this.transcriptWords = [];
-		}, this.vadSilenceTimeoutMs);
-
-		// Progress callback at ~15fps (every 66ms) - smooth enough for UI, reduces re-renders
-		this.vadProgressIntervalId = window.setInterval(() => {
-			const elapsed = Date.now() - this.vadStartTime;
-			const progress = Math.min(1, elapsed / this.vadSilenceTimeoutMs);
-			this.callbacks.onVadProgress?.(progress);
-		}, 66);
+	async connect() {
+		if (this.ready) return;
+		if (!["moonshine", "ears"].includes(this.selection.provider))
+			throw new Error("Unsupported recognition provider");
+		const sampleRate = 24000;
+		await this.recognizer.prepare(
+			this.selection.provider === "moonshine"
+				? {
+						provider: "moonshine",
+						language: this.selection.language,
+						sampleRate,
+						runtimeBaseUrl:
+							this.selection.runtimeBaseUrl ??
+							`${import.meta.env.BASE_URL}speech/moonshine-0.1.5/`,
+					}
+				: {
+						provider: "ears",
+						language: this.selection.language,
+						sampleRate,
+						url: this.wsUrl,
+					},
+		);
 	}
-
-	private clearVadTimeout(resetProgress = true) {
-		if (this.vadTimeoutId !== null) {
-			clearTimeout(this.vadTimeoutId);
-			this.vadTimeoutId = null;
+	async startListening() {
+		if (this.listening) return;
+		const token = ++this.setupToken;
+		if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+			throw new Error("Microphone capture requires HTTPS or localhost");
 		}
-		if (this.vadProgressIntervalId !== null) {
-			clearInterval(this.vadProgressIntervalId);
-			this.vadProgressIntervalId = null;
-		}
-		if (resetProgress) {
-			this.callbacks.onVadProgress?.(0);
-		}
-	}
-
-	/**
-	 * Start listening and streaming audio to eaRS.
-	 */
-	async startListening(): Promise<void> {
-		console.log("[STT] Starting audio capture...");
-
-		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-			throw new Error("WebSocket not connected");
-		}
-
-		// Check for secure context (HTTPS or localhost)
-		if (!window.isSecureContext) {
-			throw new Error(
-				"Voice mode requires HTTPS. Please access the site via https:// or localhost",
-			);
-		}
-
-		// Check for mediaDevices API
-		if (!navigator.mediaDevices?.getUserMedia) {
-			throw new Error(
-				"getUserMedia not supported. Voice mode requires a modern browser with HTTPS",
-			);
-		}
-
-		const setupToken = ++this.audioSetupToken;
-
-		try {
-			// Request microphone access
-			const audioConstraints: MediaTrackConstraints = {
+		await this.connect();
+		if (token !== this.setupToken) return;
+		const stream = await navigator.mediaDevices.getUserMedia({
+			audio: {
 				channelCount: 1,
-				sampleRate: 24000,
 				echoCancellation: true,
 				noiseSuppression: true,
 				autoGainControl: true,
-			};
-
-			if (this.selectedDeviceId && this.selectedDeviceId !== "default") {
-				audioConstraints.deviceId = { exact: this.selectedDeviceId };
-			}
-
-			this.mediaStream = await navigator.mediaDevices.getUserMedia({
-				audio: audioConstraints,
-			});
-			console.log("[STT] Microphone access granted");
+				...(this.selectedDeviceId && this.selectedDeviceId !== "default"
+					? { deviceId: { exact: this.selectedDeviceId } }
+					: {}),
+			},
+		});
+		if (token !== this.setupToken) {
+			for (const track of stream.getTracks()) track.stop();
+			return;
+		}
+		this.mediaStream = stream;
+		try {
+			await this.attachCapture(stream, token);
 		} catch (error) {
-			console.error("[STT] Microphone access error:", error);
-			if (error instanceof Error) {
-				switch (error.name) {
-					case "NotAllowedError":
-						throw new Error("Microphone permission denied");
-					case "NotFoundError":
-						throw new Error("No microphone found");
-					case "OverconstrainedError":
-						throw new Error("Selected microphone not available");
-					default:
-						break;
-				}
-			}
+			this.stopListening();
 			throw error;
 		}
-
-		// Check if setup was cancelled
-		if (setupToken !== this.audioSetupToken) {
-			for (const track of this.mediaStream?.getTracks() ?? []) {
-				track.stop();
-			}
-			this.mediaStream = null;
-			return;
+	}
+	private async attachCapture(stream: MediaStream, token: number) {
+		const context = new AudioContext({ sampleRate: 24000 });
+		this.audioContext = context;
+		if (context.sampleRate !== 24000) {
+			this.stopListening();
+			throw new Error("Browser did not provide a 24 kHz capture context");
 		}
-
-		// Create AudioContext at 24kHz (eaRS requirement)
-		const audioContext = new AudioContext({ sampleRate: 24000 });
-		this.audioContext = audioContext;
-
-		const source = audioContext.createMediaStreamSource(this.mediaStream);
-
-		// Create analyser for volume visualization
-		const analyserNode = audioContext.createAnalyser();
-		analyserNode.fftSize = 256;
-		analyserNode.smoothingTimeConstant = 0.8;
-
-		// Create AudioWorklet for processing
-		await audioContext.audioWorklet.addModule(
-			URL.createObjectURL(
-				new Blob(
-					[
-						`
-        class AudioProcessor extends AudioWorkletProcessor {
-          process(inputs) {
-            const input = inputs[0];
-            if (input.length > 0) {
-              const samples = input[0];
-              this.port.postMessage(samples);
-            }
-            return true;
-          }
-        }
-        registerProcessor('audio-processor', AudioProcessor);
-      `,
-					],
-					{ type: "application/javascript" },
-				),
+		const url = URL.createObjectURL(
+			new Blob(
+				[
+					`
+			class EarsCapture extends AudioWorkletProcessor {
+				process(inputs) {
+					if (inputs[0]?.[0]) this.port.postMessage(inputs[0][0]);
+					return true;
+				}
+			}
+			registerProcessor('ears-capture', EarsCapture);
+		`,
+				],
+				{ type: "application/javascript" },
 			),
 		);
-
-		// Check if setup was cancelled during worklet registration
-		if (setupToken !== this.audioSetupToken) {
-			await audioContext.close().catch(console.error);
+		try {
+			await context.audioWorklet.addModule(url);
+		} finally {
+			URL.revokeObjectURL(url);
+		}
+		if (token !== this.setupToken) {
+			await context
+				.close()
+				.catch((error) =>
+					console.warn("[STT] Audio context cleanup failed", error),
+				);
 			return;
 		}
-
-		const workletNode = new AudioWorkletNode(audioContext, "audio-processor");
-
-		// Send audio chunks to WebSocket with batching and backpressure
-		workletNode.port.onmessage = (e) => {
-			if (!this.isListening) return;
-			if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
-			const samples: Float32Array = e.data;
-
-			// Check backpressure: if WS buffer is full, drop frames
-			const buffered = this.ws.bufferedAmount;
-			if (this.isBackpressured) {
-				// In backpressure mode - check if we can resume
-				if (buffered < WS_BUFFER_LOW_WATER) {
-					this.isBackpressured = false;
-					if (this.droppedFrameCount > 0) {
-						console.log(
-							`[STT] Backpressure cleared, dropped ${this.droppedFrameCount} frames`,
-						);
-						this.droppedFrameCount = 0;
-					}
-				} else {
-					// Still congested - drop this frame
-					this.droppedFrameCount++;
-					return;
+		const worklet = new AudioWorkletNode(context, "ears-capture");
+		this.workletNode = worklet;
+		const source = context.createMediaStreamSource(stream);
+		this.source = source;
+		const analyser = context.createAnalyser();
+		this.analyserNode = analyser;
+		analyser.fftSize = 256;
+		worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
+			if (!this.listening) return;
+			this.chunks.push(event.data);
+			if (this.chunks.length >= 8) {
+				try {
+					this.flushAudio();
+				} catch (error) {
+					// Recognizer has already emitted the failure and stopped capture.
+					console.warn("[STT] Audio batch could not be recognized", error);
 				}
-			} else if (buffered > WS_BUFFER_HIGH_WATER) {
-				// Enter backpressure mode
-				this.isBackpressured = true;
-				console.warn(
-					`[STT] Backpressure: WS buffer ${Math.round(buffered / 1024)}KB > ${Math.round(WS_BUFFER_HIGH_WATER / 1024)}KB threshold`,
-				);
-				this.droppedFrameCount++;
-				return;
-			}
-
-			// Add to batch buffer
-			this.audioBatchBuffer.push(samples);
-			this.audioBatchTotalSamples += samples.length;
-
-			// Send when batch is full
-			if (this.audioBatchBuffer.length >= AUDIO_BATCH_SIZE) {
-				this.flushAudioBatch();
 			}
 		};
-
-		// Check if setup was cancelled after worklet setup
-		if (setupToken !== this.audioSetupToken) {
-			workletNode.port.onmessage = null;
-			workletNode.disconnect();
-			await audioContext.close().catch(console.error);
-			return;
-		}
-
-		// Store references and connect pipeline
-		this.source = source;
-		this.analyserNode = analyserNode;
-		this.workletNode = workletNode;
-
-		source.connect(analyserNode);
-		analyserNode.connect(workletNode);
-		workletNode.connect(audioContext.destination);
-		this.isListening = true;
-
-		console.log("[STT] Audio pipeline connected");
+		source.connect(analyser);
+		analyser.connect(worklet);
+		worklet.connect(context.destination);
+		this.listening = true;
+		await context.resume();
 	}
-
-	/**
-	 * Flush batched audio frames to WebSocket.
-	 */
-	private flushAudioBatch() {
-		if (this.audioBatchBuffer.length === 0) return;
-		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-			this.audioBatchBuffer = [];
-			this.audioBatchTotalSamples = 0;
-			return;
-		}
-
-		// Merge all chunks into single buffer (one allocation)
-		const merged = new Float32Array(this.audioBatchTotalSamples);
+	private flushAudio() {
+		if (!this.chunks.length) return;
+		const audio = new Float32Array(
+			this.chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+		);
 		let offset = 0;
-		for (const chunk of this.audioBatchBuffer) {
-			merged.set(chunk, offset);
+		for (const chunk of this.chunks) {
+			audio.set(chunk, offset);
 			offset += chunk.length;
 		}
-
-		// Clear batch state
-		this.audioBatchBuffer = [];
-		this.audioBatchTotalSamples = 0;
-
-		try {
-			this.ws.send(merged.buffer);
-		} catch (error) {
-			console.error("[STT] Error sending batched audio:", error);
-			this.stopListening();
-		}
+		this.chunks = [];
+		this.recognizer.feed(audio);
 	}
-
-	/**
-	 * Stop listening and release audio resources.
-	 */
-	stopListening() {
-		console.log("[STT] Stopping audio capture...");
-		this.audioSetupToken++;
-		this.isListening = false;
-		this.clearVadTimeout();
-
-		// Clear accumulated transcript words to avoid stale data
-		this.transcriptWords = [];
-
-		// Flush any remaining batched audio
-		this.flushAudioBatch();
-
+	private releaseCapture() {
+		this.setupToken++;
+		this.listening = false;
 		if (this.workletNode) {
-			try {
-				this.workletNode.port.onmessage = null;
-				this.workletNode.disconnect();
-			} catch (error) {
-				console.error("[STT] Error disconnecting worklet:", error);
-			}
-			this.workletNode = null;
+			this.workletNode.port.onmessage = null;
+			this.workletNode.disconnect();
 		}
-
-		if (this.analyserNode) {
-			try {
-				this.analyserNode.disconnect();
-			} catch (error) {
-				console.error("[STT] Error disconnecting analyser:", error);
-			}
-			this.analyserNode = null;
-		}
-
-		if (this.source) {
-			try {
-				this.source.disconnect();
-			} catch (error) {
-				console.error("[STT] Error disconnecting source:", error);
-			}
-			this.source = null;
-		}
-
-		if (this.mediaStream) {
-			try {
-				for (const track of this.mediaStream.getTracks()) {
-					track.stop();
-				}
-			} catch (error) {
-				console.error("[STT] Error stopping media tracks:", error);
-			}
-			this.mediaStream = null;
-		}
-
-		if (this.audioContext && this.audioContext.state !== "closed") {
-			this.audioContext.close().catch(console.error);
-		}
+		this.source?.disconnect();
+		this.analyserNode?.disconnect();
+		for (const track of this.mediaStream?.getTracks() ?? []) track.stop();
+		if (this.audioContext?.state !== "closed")
+			void this.audioContext
+				?.close()
+				.catch((error) =>
+					console.warn("[STT] Audio context cleanup failed", error),
+				);
 		this.audioContext = null;
-
-		console.log("[STT] Audio capture stopped");
+		this.mediaStream = null;
+		this.source = null;
+		this.workletNode = null;
+		this.analyserNode = null;
 	}
-
-	/**
-	 * Set event callbacks.
-	 */
+	/** Drain actual engine finality, never promote a preview. */
+	async finishListening() {
+		try {
+			this.flushAudio();
+			this.releaseCapture();
+			await this.recognizer.finish();
+		} finally {
+			this.clearPreview();
+		}
+	}
+	private clearPreview() {
+		this.preview.clear();
+		this.callbacks.onPreview?.("");
+	}
+	stopListening() {
+		this.releaseCapture();
+		this.chunks = [];
+		this.recognizer.cancel();
+		this.clearPreview();
+	}
+	disconnect() {
+		this.stopListening();
+	}
 	setCallbacks(callbacks: STTCallbacks) {
 		this.callbacks = { ...this.callbacks, ...callbacks };
 	}
-
-	/**
-	 * Convenience methods for setting individual callbacks.
-	 */
-	onWord(callback: (word: string) => void) {
-		this.callbacks.onWord = callback;
+	isConnected() {
+		return this.ready;
 	}
-
-	onFinal(callback: (text: string) => void) {
-		this.callbacks.onFinal = callback;
+	getIsListening() {
+		return this.listening;
 	}
-
-	onError(callback: (error: string) => void) {
-		this.callbacks.onError = callback;
+	getCurrentTranscript() {
+		return [...this.preview.values()].filter(Boolean).join(" ");
 	}
-
-	onVadProgress(callback: (progress: number) => void) {
-		this.callbacks.onVadProgress = callback;
-	}
-
-	onConnectionChange(callback: (connected: boolean) => void) {
-		this.callbacks.onConnectionChange = callback;
-	}
-
-	/**
-	 * Disconnect from the WebSocket and cleanup all resources.
-	 */
-	disconnect() {
-		console.log("[STT] Disconnecting...");
-		this.isListening = false;
-		this.clearVadTimeout();
-		this.transcriptWords = [];
-		this.audioBatchBuffer = [];
-		this.audioBatchTotalSamples = 0;
-		this.isBackpressured = false;
-		this.droppedFrameCount = 0;
-		this.stopListening();
-
-		if (this.ws) {
-			try {
-				if (this.ws.readyState === WebSocket.OPEN) {
-					this.ws.send(JSON.stringify({ type: "stop" }));
-				}
-				this.ws.close(1000, "Client disconnecting");
-			} catch (error) {
-				console.error("[STT] Error during disconnect:", error);
-			}
-			this.ws = null;
-		}
-
-		console.log("[STT] Disconnected");
-	}
-
-	/**
-	 * Check if connected to eaRS server.
-	 */
-	isConnected(): boolean {
-		return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
-	}
-
-	/**
-	 * Check if currently listening/recording.
-	 */
-	getIsListening(): boolean {
-		return this.isListening;
-	}
-
-	/**
-	 * Get current input volume level (0-1) for visualization.
-	 */
-	getInputVolume(): number {
-		if (!this.analyserNode || !this.isListening) {
-			return 0;
-		}
-
+	getInputVolume() {
+		if (!this.analyserNode || !this.listening) return 0;
 		const data = new Uint8Array(this.analyserNode.frequencyBinCount);
 		this.analyserNode.getByteFrequencyData(data);
-
-		let sum = 0;
-		for (let i = 0; i < data.length; i++) {
-			sum += data[i];
-		}
-		const volume = sum / data.length / 255;
-
-		// Apply noise floor
-		const noiseFloor = 0.01;
-		if (volume < noiseFloor) {
-			return 0;
-		}
-
-		return volume;
+		const volume =
+			data.reduce((sum, value) => sum + value, 0) / data.length / 255;
+		return volume < 0.01 ? 0 : volume;
 	}
-
-	/**
-	 * Get current transcript being accumulated.
-	 */
-	getCurrentTranscript(): string {
-		return this.transcriptWords.join(" ");
+	async listMicrophones(): Promise<MicrophoneDevice[]> {
+		const devices = await navigator.mediaDevices.enumerateDevices();
+		return devices
+			.filter((device) => device.kind === "audioinput")
+			.map((device) => ({
+				deviceId: device.deviceId,
+				label: device.label || "Microphone",
+				isDefault: device.deviceId === "default",
+			}));
 	}
-
-	/**
-	 * Send a control command to the server.
-	 */
-	sendCommand(command: object) {
-		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-			this.ws.send(JSON.stringify(command));
-		}
+	setMicrophone(deviceId: string) {
+		this.selectedDeviceId = deviceId;
+		this.stopListening();
 	}
-
-	/**
-	 * Set the transcription language.
-	 */
-	setLanguage(lang: string) {
-		this.sendCommand({ type: "setlanguage", lang });
-	}
-
-	/**
-	 * Pause transcription.
-	 */
-	pause() {
-		this.sendCommand({ type: "pause" });
-	}
-
-	/**
-	 * Resume transcription.
-	 */
-	resume() {
-		this.sendCommand({ type: "resume" });
+	getSelectedMicrophone() {
+		return this.selectedDeviceId;
 	}
 }

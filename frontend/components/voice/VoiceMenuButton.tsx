@@ -16,6 +16,10 @@ import {
 	MicOff,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+	RecognitionControls,
+	type RecognitionControlsProps,
+} from "./RecognitionControls";
 
 export type VoiceMode = "conversation" | "dictation" | null;
 
@@ -30,6 +34,7 @@ export const DEFAULT_VOICE_SHORTCUTS: VoiceShortcuts = {
 };
 
 interface VoiceMenuButtonProps {
+	recognitionControls?: RecognitionControlsProps;
 	/** Currently active mode */
 	activeMode: VoiceMode;
 	/** Voice state for conversation mode */
@@ -51,6 +56,7 @@ interface VoiceMenuButtonProps {
 }
 
 export function VoiceMenuButton({
+	recognitionControls,
 	activeMode,
 	voiceState = "idle",
 	onConversation,
@@ -111,7 +117,16 @@ export function VoiceMenuButton({
 					<AudioLines className="size-4" />
 				</button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" side="top" className="w-56">
+			<DropdownMenuContent
+				align="start"
+				side="top"
+				className="w-72 max-w-[calc(100vw-2rem)]"
+			>
+				{recognitionControls && (
+					<div className="p-2 border-b mb-1">
+						<RecognitionControls {...recognitionControls} />
+					</div>
+				)}
 				<DropdownMenuItem
 					onClick={onConversation}
 					className="flex flex-col items-start gap-0.5 py-2"

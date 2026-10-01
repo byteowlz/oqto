@@ -106,6 +106,13 @@ export default defineConfig(({ mode }) => {
 		},
 		server: {
 			headers: {
+				// Opt-in: isolation can affect external app frames and opener flows.
+				...(env.VITE_LOCAL_SPEECH_ISOLATION === "1"
+					? {
+							"Cross-Origin-Opener-Policy": "same-origin",
+							"Cross-Origin-Embedder-Policy": "require-corp",
+						}
+					: {}),
 				"Permissions-Policy": "geolocation=(), microphone=(self), camera=()",
 			},
 			host: true,

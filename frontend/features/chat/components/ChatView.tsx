@@ -2227,7 +2227,10 @@ export function ChatView({
 		setVoiceMode(null);
 	}, [dictation]);
 
-	const hasVoice = !!features?.voice;
+	// Local dictation is independent of backend speech-service configuration.
+	const hasVoice =
+		typeof navigator !== "undefined" &&
+		Boolean(navigator.mediaDevices?.getUserMedia);
 	const { t } = useTranslation();
 
 	const tempId = sessionMeta ? getTempIdFromSession(sessionMeta) : null;
@@ -2640,7 +2643,13 @@ export function ChatView({
 						{/* Voice menu button */}
 						{hasVoice && (
 							<VoiceMenuButton
-								activeMode={voiceMode}
+								activeMode={dictation.isActive ? voiceMode : null}
+								recognitionControls={{
+									recognition: dictation.recognition,
+									remoteAvailable: dictation.remoteAvailable,
+									onProviderChange: dictation.setRecognitionProvider,
+									onLanguageChange: dictation.setRecognitionLanguage,
+								}}
 								voiceState={dictation.isActive ? "listening" : "idle"}
 								onConversation={handleVoiceConversation}
 								onDictation={handleVoiceDictation}
@@ -2842,6 +2851,21 @@ export function ChatView({
 								</div>
 							)}
 
+							{dictation.error && (
+								<div
+									role="alert"
+									className="mb-2 flex flex-wrap items-center gap-2 text-sm text-destructive"
+								>
+									<span>{dictation.error}</span>
+									<button
+										type="button"
+										className="underline underline-offset-4"
+										onClick={() => void dictation.start()}
+									>
+										Retry recognition
+									</button>
+								</div>
+							)}
 							{hasVoice && dictation.isActive ? (
 								<DictationOverlay
 									open
@@ -2849,6 +2873,14 @@ export function ChatView({
 									liveTranscript={dictation.liveTranscript}
 									placeholder={t("chat.speakNow")}
 									vadProgress={dictation.vadProgress}
+									preparation={dictation.preparation}
+									onFinish={dictation.stop}
+									recognitionControls={{
+										recognition: dictation.recognition,
+										remoteAvailable: dictation.remoteAvailable,
+										onProviderChange: dictation.setRecognitionProvider,
+										onLanguageChange: dictation.setRecognitionLanguage,
+									}}
 									autoSend={dictation.autoSendEnabled}
 									onAutoSendChange={dictation.setAutoSendEnabled}
 									onStop={handleVoiceStop}
