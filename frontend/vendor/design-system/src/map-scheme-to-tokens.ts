@@ -113,8 +113,25 @@ export function mapSchemeToTokens(scheme: NormalizedScheme): SemanticTokenMap {
 		}
 	}
 
+	// Derived-text tier: shades computed from the base semantic vars so apps
+	// get a coherent hierarchy without hardcoding. color-mix resolves var() at
+	// computed time, so these adapt to the active (dark) mode automatically.
+	for (const [cssVar, value] of Object.entries(DERIVED_SEMANTIC_VARS)) {
+		tokens[cssVar] = value;
+	}
+
 	return tokens;
 }
+
+/** Derived shades computed from base semantic vars (via color-mix). */
+const DERIVED_SEMANTIC_VARS: Record<string, string> = {
+	"--subtle-foreground":
+		"color-mix(in oklch, var(--foreground) 58%, var(--background))",
+	"--readback-foreground":
+		"color-mix(in oklch, var(--foreground) 64%, var(--background))",
+	"--state-hover": "color-mix(in oklab, var(--muted), var(--foreground) 12%)",
+	"--state-active": "color-mix(in oklab, var(--muted), var(--foreground) 24%)",
+};
 
 /** Every CSS variable this engine controls (slots + semantic), for clearing/inspection. */
 export const MANAGED_SEMANTIC_VARS: readonly string[] = [
@@ -122,5 +139,6 @@ export const MANAGED_SEMANTIC_VARS: readonly string[] = [
 	...new Set([
 		...Object.keys(SHADCN_SURFACE),
 		...Object.values(ROLE_FOR_SLOT).map((s) => `--${s}`),
+		...Object.keys(DERIVED_SEMANTIC_VARS),
 	]),
 ];

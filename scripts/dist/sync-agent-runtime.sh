@@ -121,29 +121,59 @@ ext_cache() {
   echo "$cache"
 }
 
-# Install the default extensions into <home>/.pi/agent/extensions, owned by the
-# home's owner. Args: <home> <src>
+# Install into a home as its owner; only /etc/skel is installed as root.
+# The source must be the world-readable system staging tree, not the invoking
+# user's private git cache. Args: <home> <src>
 install_ext_for_home() {
   local home="$1" src="$2"
-  local dir="$home/.pi/agent/extensions"
-  local owner; owner="$(stat -c '%U:%G' "$home" 2>/dev/null || echo 'root:root')"
-  sudo mkdir -p "$dir"
-  # Prune superseded legacy extension dirs first, so a stale duplicate can't
-  # conflict with its pi-* successor and abort Pi startup.
-  local legacy
+  local dir="$home/.pi/agent/extensions" owner group parent legacy ext
+  owner="$(stat -c '%U' "$home")" || return 1
+  group="$(stat -c '%G' "$home")" || return 1
+
+  as_owner() {
+    if [[ "$owner" == root ]]; then
+      sudo -- "$@"
+    else
+      sudo -H -u "$owner" -- "$@"
+    fi
+  }
+
+  # Repair only deployment-created parent directories, never arbitrary user
+  # config. A previous interrupted root install may have left them root-owned.
+  if [[ "$owner" != root ]]; then
+    for parent in "$home/.pi" "$home/.pi/agent" "$dir"; do
+      if [[ -d "$parent" && "$(stat -c '%U' "$parent")" == root ]]; then
+        sudo chown "$owner:$group" "$parent" || return 1
+      fi
+    done
+  fi
+  as_owner mkdir -p "$dir" || return 1
+
+  # Only deployment-owned names may be repaired/pruned; custom extensions and
+  # every other file under ~/.pi remain untouched.
   for legacy in "${PI_LEGACY_EXTENSIONS[@]}"; do
-    [[ -e "$dir/$legacy" ]] || continue
-    sudo rm -rf "$dir/$legacy"
-    log "  pruned legacy extension: $home/.pi/agent/extensions/$legacy"
+    [[ -e "$dir/$legacy" || -L "$dir/$legacy" ]] || continue
+    if [[ "$owner" != root && ! -L "$dir/$legacy" ]]; then
+      sudo chown -hR "$owner:$group" "$dir/$legacy" || return 1
+    fi
+    as_owner rm -rf -- "$dir/$legacy" || return 1
+    log "  pruned legacy extension: $dir/$legacy"
   done
-  local ext
   for ext in "${PI_DEFAULT_EXTENSIONS[@]}"; do
-    [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; continue; }
-    sudo rm -rf "$dir/$ext"
-    sudo cp -r "$src/$ext" "$dir/$ext"
-    sudo rm -f "$dir/$ext/install.sh"
+    [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; return 1; }
+    if [[ -e "$dir/$ext" || -L "$dir/$ext" ]]; then
+      if [[ "$owner" != root && ! -L "$dir/$ext" ]]; then
+        sudo chown -hR "$owner:$group" "$dir/$ext" || return 1
+      fi
+      as_owner rm -rf -- "$dir/$ext" || return 1
+    fi
+    as_owner cp -r -- "$src/$ext" "$dir/$ext" || return 1
+    as_owner rm -f -- "$dir/$ext/install.sh" || return 1
+    [[ "$(stat -c '%U' "$dir/$ext")" == "$owner" ]] || {
+      err "extension not owned by $owner after install: $dir/$ext"
+      return 1
+    }
   done
-  sudo chown -R "$owner" "$home/.pi" 2>/dev/null || true
 }
 
 sync_extensions() {
@@ -159,14 +189,14 @@ sync_extensions() {
   [[ "$missing" -eq 0 ]] || return 1
 
   log "syncing extensions to /usr/share/oqto/pi-agent-extensions (new-user source)"
-  sudo mkdir -p /usr/share/oqto/pi-agent-extensions
-  sudo rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/
+  sudo mkdir -p /usr/share/oqto/pi-agent-extensions || return 1
+  sudo rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/ || return 1
 
   # Every existing platform user + the invoking user + /etc/skel (new users).
   local home count=0
   for home in /home/oqto_* "$HOME" /etc/skel; do
     [[ -d "$home" ]] || continue
-    install_ext_for_home "$home" "$src"
+    install_ext_for_home "$home" /usr/share/oqto/pi-agent-extensions || return 1
     count=$((count + 1))
     log "  extensions -> $home"
   done
@@ -187,10 +217,16 @@ verify_managed_pi_selection() {
   esac
 }
 
-log "manifest=$MANIFEST  pi=${PI_VERSION:-<unset>}  pi-extensions=${EXT_REF:-<unset>}"
-rc=0
-$DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
-$DO_PI && { verify_managed_pi_selection || rc=1; }
-$DO_EXT && { sync_extensions || rc=1; }
-[[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
-exit "$rc"
+sync_agent_runtime_main() {
+  log "manifest=$MANIFEST  pi=${PI_VERSION:-<unset>}  pi-extensions=${EXT_REF:-<unset>}"
+  local rc=0
+  $DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
+  $DO_PI && { verify_managed_pi_selection || rc=1; }
+  $DO_EXT && { sync_extensions || rc=1; }
+  [[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
+  return "$rc"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  sync_agent_runtime_main
+fi

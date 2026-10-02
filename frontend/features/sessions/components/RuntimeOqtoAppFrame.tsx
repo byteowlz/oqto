@@ -33,6 +33,7 @@ import {
 	serveOqtoAppPort,
 } from "@byteowlz/oqto-app-sdk/host";
 import { useCallback, useRef } from "react";
+import { detectAppColorScheme, observeAppTheme } from "./app-theme-observer";
 
 interface RuntimeOqtoAppFrameProps {
 	instanceId: string;
@@ -43,23 +44,88 @@ interface RuntimeOqtoAppFrameProps {
 	workspacePath: string;
 }
 
+// Forwarded to every App so it inherits the host's full visual identity
+// (colors, radius, shadows, spacing, fonts, tracking) instead of hardcoding its
+// own. Keep in sync with globals.css / identity tokens.
 const THEME_TOKENS = [
+	// color surfaces & text
 	"--background",
 	"--foreground",
 	"--card",
 	"--card-foreground",
+	"--popover",
+	"--popover-foreground",
 	"--primary",
 	"--primary-foreground",
+	"--secondary",
+	"--secondary-foreground",
 	"--muted",
 	"--muted-foreground",
+	"--accent",
+	"--accent-foreground",
+	"--destructive",
+	"--destructive-foreground",
+	// derived-text tier (computed via color-mix by the host theme)
+	"--subtle-foreground",
+	"--readback-foreground",
+	"--state-hover",
+	"--state-active",
 	"--border",
+	"--input",
+	"--ring",
+	"--chart-1",
+	"--chart-2",
+	"--chart-3",
+	"--chart-4",
+	"--chart-5",
+	"--panel",
+	"--panel-strong",
+	"--sidebar",
+	"--sidebar-foreground",
+	"--sidebar-accent",
+	"--sidebar-border",
+	"--sidebar-ring",
+	"--terminal-bg",
+	"--terminal-fg",
+	"--code-bg",
+	"--code-inline-bg",
+	"--code-fg",
+	"--code-border",
+	"--code-accent",
+	// identity: radius, shadows, spacing, fonts, tracking
+	"--radius",
+	"--radius-sm",
+	"--radius-md",
+	"--radius-lg",
+	"--radius-xl",
+	"--spacing",
+	"--font-sans",
+	"--font-serif",
+	"--font-mono",
+	"--tracking-normal",
+	"--letter-spacing",
+	"--shadow-2xs",
+	"--shadow-xs",
+	"--shadow-sm",
+	"--shadow",
+	"--shadow-md",
+	"--shadow-lg",
+	"--shadow-xl",
+	"--shadow-2xl",
+	"--shadow-color",
+	"--shadow-opacity",
 ] as const;
 
+/** The root the host actually themes (document.documentElement via globals.css). */
+function themeRoot(): HTMLElement {
+	return document.documentElement;
+}
+
 function themeSnapshot(): OqtoThemeSnapshot {
-	const root = document.documentElement;
+	const root = themeRoot();
 	const styles = getComputedStyle(root);
 	return {
-		colorScheme: root.classList.contains("dark") ? "dark" : "light",
+		colorScheme: detectAppColorScheme(root),
 		tokens: Object.fromEntries(
 			THEME_TOKENS.map((token) => [
 				token,
@@ -72,12 +138,9 @@ function themeSnapshot(): OqtoThemeSnapshot {
 function watchTheme(
 	listener: (theme: OqtoThemeSnapshot) => void,
 ): Promise<OqtoUnsubscribe> {
-	const observer = new MutationObserver(() => listener(themeSnapshot()));
-	observer.observe(document.documentElement, {
-		attributes: true,
-		attributeFilter: ["class", "style", "data-theme"],
-	});
-	return Promise.resolve(() => observer.disconnect());
+	return Promise.resolve(
+		observeAppTheme(themeRoot(), () => listener(themeSnapshot())),
+	);
 }
 
 function presentationContext(

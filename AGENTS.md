@@ -15,7 +15,6 @@ Single-context layout: project domain language lives in `CONTEXT.md`; architectu
 ## Rules
 
 - Before changing code/config/docs: `trx ready` or `trx list` -> reuse/create issue -> `trx update <id> --status in_progress`; close/update it when done. Ambiguous git/trx commands are read-only first.
-- Search `agntz memory` before unfamiliar work. Add memories only for reusable architecture/interface/debugging lessons.
 - Use `CONTEXT.md` for project domain language. `docs/adr/` is the canonical decision log; read past ADRs before architecture changes and add/update ADRs for new decisions.
 - Repeated failures must become mechanisms, not reminders: propose or add a lint, test, doctor, checklist, or skill when a mistake recurs.
 - No hacky fixes or legacy shims. Understand the root cause, respect the architecture, and delete dead compatibility paths when safe.

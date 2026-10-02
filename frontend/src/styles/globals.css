@@ -176,6 +176,15 @@
 	--code-muted: #666666;
 	--code-accent: #0969da;
 	--code-success: #2d6a4f;
+
+	/* Derived-text tier: shades computed from the base foreground/background
+	 * so apps get a coherent hierarchy without hardcoding. Defined once on
+	 * :root; color-mix resolves var() at computed time, so these adapt to the
+	 * active (.dark) mode automatically. */
+	--subtle-foreground: color-mix(in oklch, var(--foreground) 58%, var(--background));
+	--readback-foreground: color-mix(in oklch, var(--foreground) 64%, var(--background));
+	--state-hover: color-mix(in oklab, var(--muted), var(--foreground) 12%);
+	--state-active: color-mix(in oklab, var(--muted), var(--foreground) 24%);
 }
 
 .dark {
