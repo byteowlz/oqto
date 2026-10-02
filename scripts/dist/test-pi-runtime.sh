@@ -184,4 +184,30 @@ grep -q '^pi = "1.2.3"' "$TMP/dependencies.toml"
 grep -q "^pi-linux-x64-sha256 = \"$SHA\"" "$TMP/dependencies.toml"
 grep -q "^pi-linux-arm64-sha256 = \"$ARM_SHA\"" "$TMP/dependencies.toml"
 
+# A version/model-discovery smoke cannot authorize an automatic major bump.
+# Both promotion surfaces fail closed before acquisition or mutation, and the
+# pin plus existing user runtime remain byte-for-byte/target-for-target intact.
+python3 - "$TMP/release.json" "$TMP/major-release.json" <<'PY'
+import json, sys
+release = json.load(open(sys.argv[1], encoding="utf-8"))
+release["tag_name"] = "v2.0.0"
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    json.dump(release, output)
+PY
+before_manifest="$(sha256sum "$TMP/dependencies.toml")"
+before_current="$(readlink "$USER_RUNTIME")"
+for mode in --update-lock --install-user; do
+  if HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" \
+    PI_RELEASE_API_URL="file://$TMP/major-release.json" \
+    PI_RELEASE_BASE_URL="file://$TMP/releases" \
+    "$SCRIPT_DIR/check-agent-runtime.sh" --manifest "$TMP/dependencies.toml" "$mode" \
+    >"$TMP/major.out" 2>&1; then
+    echo "test-pi-runtime: unqualified major promotion unexpectedly passed ($mode)" >&2
+    exit 1
+  fi
+  grep -q 'major-version promotion requires reviewed integration qualification' "$TMP/major.out"
+  [[ "$(sha256sum "$TMP/dependencies.toml")" == "$before_manifest" ]]
+  [[ "$(readlink "$USER_RUNTIME")" == "$before_current" ]]
+done
+
 echo "test-pi-runtime: pass"

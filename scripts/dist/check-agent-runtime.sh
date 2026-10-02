@@ -19,6 +19,8 @@ Default: report whether a newer Pi release exists and compatibility-test it.
 --update-lock updates Pi version and Linux checksums only after the test passes.
 --verify-current tests the currently pinned release even when no update exists.
 --install-user atomically promotes latest into the rootless local runtime channel.
+Automatic major-version promotions are refused. Qualify the runner, durable
+history, managed extensions and authorization before reviewing a major pin change.
 EOF
 }
 
@@ -99,6 +101,16 @@ raise SystemExit(0 if key(sys.argv[2]) > key(sys.argv[1]) else 1)
 PY
 then
   echo "agent-check: refusing non-forward Pi promotion $CURRENT -> $LATEST" >&2
+  exit 1
+fi
+
+# The binary/model-discovery smoke is not an integration acceptance gate.
+# A major release can pass it while changing history, event and permission
+# semantics. Neither automated pin updates nor user-channel installs may turn
+# that narrow success into an unreviewed major upgrade.
+if [[ "${LATEST%%.*}" != "${CURRENT%%.*}" ]] && \
+  { [[ "$UPDATE_LOCK" == "true" ]] || [[ "$INSTALL_USER" == "true" ]]; }; then
+  echo "agent-check: major-version promotion requires reviewed integration qualification ($CURRENT -> $LATEST); pin and runtime links unchanged" >&2
   exit 1
 fi
 
