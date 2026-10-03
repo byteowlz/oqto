@@ -133,6 +133,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::PiSetSessionName(_)
         | RunnerRequest::PiExportHtml(_)
         | RunnerRequest::AgentGetCommands(_)
+        | RunnerRequest::AgentControl(_)
         | RunnerRequest::PiBash(_)
         | RunnerRequest::PiAbortBash(_)
         | RunnerRequest::PiExtensionUiResponse(_)) => super::pi::handle_request(runner, req).await,

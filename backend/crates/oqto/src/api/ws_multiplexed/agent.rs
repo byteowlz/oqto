@@ -6,6 +6,23 @@ fn should_filter_personal_runner_sessions(user_isolation_enabled: bool) -> bool 
     user_isolation_enabled
 }
 
+fn control_response_data(
+    result: oqto_protocol::control::ControlResult,
+    binding_id: &str,
+    request_id: &str,
+    operation: oqto_protocol::control::ControlOperation,
+) -> Result<Option<Value>, String> {
+    if result.binding_id != binding_id
+        || result.request_id != request_id
+        || result.operation != operation
+    {
+        return Err("Control acknowledgement transport identity mismatch".into());
+    }
+    serde_json::to_value(result)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 pub(super) async fn handle_agent_command(
     cmd: oqto_protocol::commands::Command,
     user_id: &str,
@@ -18,9 +35,11 @@ pub(super) async fn handle_agent_command(
     let id = cmd.id.clone();
     let session_id = cmd.session_id.clone();
     let runner_id = cmd.runner_id.clone().unwrap_or_else(|| "local".to_string());
+    let is_control = matches!(&cmd.payload, CommandPayload::ExtensionControl(_));
     let agent_response =
         |session_id: &str, id: Option<String>, cmd: &str, result: Result<Option<Value>, String>| {
-            agent_response_with_runner(&runner_id, session_id, id, cmd, result)
+            let response_cmd = if is_control { "extension_control" } else { cmd };
+            agent_response_with_runner(&runner_id, session_id, id, response_cmd, result)
         };
 
     // Resolve the effective runner for this command.
@@ -43,6 +62,19 @@ pub(super) async fn handle_agent_command(
                 ));
             }
         };
+        if is_control
+            && (binding.is_none()
+                || session_id == "_system"
+                || session_id.starts_with("pending-")
+                || session_id.starts_with("tmp:"))
+        {
+            return Some(agent_response(
+                &session_id,
+                id,
+                "extension_control",
+                Err("Control requires an authorized durable Session binding".into()),
+            ));
+        }
         if let Some(binding) = binding {
             let target = match binding.scope {
                 SessionTargetScope::Personal
@@ -1190,6 +1222,52 @@ pub(super) async fn handle_agent_command(
             }
         }
 
+        CommandPayload::ExtensionControl(control) => {
+            let oqto_protocol::control::ControlRequest {
+                operation,
+                arguments,
+            } = control;
+            let Some(request_id) = id
+                .clone()
+                .filter(|value| !value.is_empty() && value.len() <= 128)
+            else {
+                return Some(agent_response(
+                    &session_id,
+                    id,
+                    "extension_control",
+                    Err("Control correlation ID required (1..128 bytes)".into()),
+                ));
+            };
+            let binding_id = conn_state
+                .lock()
+                .await
+                .control_binding_for_session(&session_id);
+            // Reject identity injection before crossing the runner boundary.
+            if let Err(error) = operation.arguments(arguments.clone(), "validation", &binding_id) {
+                return Some(agent_response(
+                    &session_id,
+                    id,
+                    "extension_control",
+                    Err(error),
+                ));
+            }
+            let request = oqto_runner::protocol::AgentControlRequest {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                binding_id: binding_id.clone(),
+                operation,
+                arguments,
+            };
+            let result = runner
+                .agent_control(request)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| {
+                    control_response_data(result, &binding_id, &request_id, operation)
+                });
+            Some(agent_response(&session_id, id, "extension_control", result))
+        }
+
         CommandPayload::InputResponse {
             request_id,
             value,
@@ -1757,17 +1835,6 @@ pub(super) async fn handle_agent_command(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::should_filter_personal_runner_sessions;
-
-    #[test]
-    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
-        assert!(should_filter_personal_runner_sessions(true));
-        assert!(!should_filter_personal_runner_sessions(false));
-    }
-}
-
 /// The routing hint a read probe carries, if any. Mutating commands never
 /// contribute one: where a prompt goes is decided by the connection and the
 /// durable store, not by the client.
@@ -1781,5 +1848,64 @@ pub(super) fn read_probe_workspace_hint(
             .map(str::trim)
             .filter(|path| path.starts_with('/')),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{control_response_data, should_filter_personal_runner_sessions};
+
+    #[test]
+    fn control_ack_binding_is_the_transport_binding_not_any_snapshot_claim() {
+        use oqto_protocol::control::{ControlOperation, ControlResult};
+        let result = ControlResult {
+            binding_id: "authenticated-connection-session".into(),
+            request_id: "request".into(),
+            operation: ControlOperation::PresentationBind,
+            native_session_id: "pi-native".into(),
+            reply: serde_json::json!({"version":1,"snapshot":{"bindings":[{"id":"other-view"},{"id":"authenticated-connection-session"}]}}),
+        };
+        let data = control_response_data(
+            result.clone(),
+            "authenticated-connection-session",
+            "request",
+            ControlOperation::PresentationBind,
+        )
+        .expect("own connection")
+        .expect("result");
+        assert_eq!(data["binding_id"], "authenticated-connection-session");
+        assert!(
+            control_response_data(
+                result.clone(),
+                "other-view",
+                "request",
+                ControlOperation::PresentationBind
+            )
+            .is_err()
+        );
+        assert!(
+            control_response_data(
+                result.clone(),
+                "authenticated-connection-session",
+                "another-request",
+                ControlOperation::PresentationBind
+            )
+            .is_err()
+        );
+        assert!(
+            control_response_data(
+                result,
+                "authenticated-connection-session",
+                "request",
+                ControlOperation::PresentationUnbind
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
+        assert!(should_filter_personal_runner_sessions(true));
+        assert!(!should_filter_personal_runner_sessions(false));
     }
 }

@@ -1842,6 +1842,18 @@ impl RunnerClient {
         }
     }
 
+    /// Execute a non-chat control over the existing authenticated runner transport.
+    pub async fn agent_control(
+        &self,
+        request: AgentControlRequest,
+    ) -> Result<oqto_protocol::control::ControlResult> {
+        match self.request(&RunnerRequest::AgentControl(request)).await? {
+            RunnerResponse::AgentControl(result) => Ok(result),
+            RunnerResponse::Error(error) => anyhow::bail!("{}", error.message),
+            _ => anyhow::bail!("Unexpected control response"),
+        }
+    }
+
     /// Get available commands (extensions, templates, skills).
     pub async fn fetch_agent_commands(&self, session_id: &str) -> Result<AgentCommandsResponse> {
         let req = RunnerRequest::AgentGetCommands(AgentGetCommandsRequest {

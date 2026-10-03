@@ -27,6 +27,7 @@
 pub mod apps;
 pub mod canon;
 pub mod commands;
+pub mod control;
 pub mod delegation;
 pub mod events;
 pub mod messages;

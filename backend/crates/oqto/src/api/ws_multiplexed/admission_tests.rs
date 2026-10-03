@@ -1,4 +1,6 @@
 //! Admission regressions use disposable stores/sockets; never a production runner.
+// Keep the test-only boundary visible to scanners of external module files.
+#[cfg(test)]
 use super::*;
 use crate::{
     api::AppState,
@@ -121,6 +123,7 @@ async fn state(root: &std::path::Path) -> (AppState, String) {
 fn connection() -> Arc<Mutex<WsConnectionState>> {
     let (event_tx, _) = mpsc::unbounded_channel();
     Arc::new(Mutex::new(WsConnectionState {
+        control_bindings: HashMap::new(),
         subscribed_sessions: HashSet::new(),
         event_tx,
         pi_subscriptions: HashSet::new(),
@@ -131,6 +134,115 @@ fn connection() -> Arc<Mutex<WsConnectionState>> {
         file_watchers: HashMap::new(),
         terminal_allowed: false,
     }))
+}
+
+#[tokio::test]
+async fn extension_control_requires_durable_authorized_binding_before_any_runner_io() {
+    let root = tempfile::tempdir().unwrap();
+    let (state, owner) = state(root.path()).await;
+    for (session, scope, workspace, account) in [
+        (
+            "personal-control",
+            SessionTargetScope::Personal,
+            None,
+            Some(owner.clone()),
+        ),
+        (
+            "shared-control",
+            SessionTargetScope::SharedWorkspace,
+            Some("sw_mac".to_string()),
+            None,
+        ),
+    ] {
+        state
+            .session_targets
+            .upsert(&SessionTargetRecord {
+                session_id: session.into(),
+                owner_user_id: account,
+                scope,
+                workspace_id: workspace,
+                workspace_path: Some("/remote/mac/project".into()),
+            })
+            .await
+            .unwrap();
+    }
+    let personal = tokio::net::UnixListener::bind(root.path().join("personal-spy.sock")).unwrap();
+    let shared = tokio::net::UnixListener::bind(root.path().join("offline-mac.sock")).unwrap();
+    let runner = RunnerClient::new(root.path().join("personal-spy.sock"));
+    for (account, session) in [
+        ("ungranted-account", "personal-control"),
+        ("ungranted-account", "shared-control"),
+        (owner.as_str(), "unknown-native-id"),
+        (owner.as_str(), "_system"),
+        (owner.as_str(), "pending-control"),
+    ] {
+        let conn = connection();
+        conn.lock().await.pi_session_meta.insert(
+            session.into(),
+            PiSessionMeta {
+                scope: None,
+                cwd: Some("/remote/mac/project".into()),
+            },
+        );
+        let cmd = serde_json::from_value(serde_json::json!({
+            "id":"control-request","session_id":session,"cmd":"extension_control",
+            "operation":"selection_get","arguments":{"id":"review"}
+        }))
+        .unwrap();
+        let response =
+            agent::handle_agent_command(cmd, account, &state, Some(&runner), conn.clone())
+                .await
+                .unwrap();
+        let WsEvent::Agent(ref event) = response else {
+            panic!("Canonical agent response required")
+        };
+        assert_eq!(event.session_id, session);
+        let oqto_protocol::events::EventPayload::Response(ref ack) = event.payload else {
+            panic!("Control acknowledgement required")
+        };
+        assert_eq!(ack.id, "control-request");
+        assert_eq!(ack.cmd, "extension_control");
+        assert!(!ack.success);
+        let response = serde_json::to_value(response).unwrap();
+        assert!(
+            response.to_string().contains("denied")
+                || response.to_string().contains("authorized durable"),
+            "{response}"
+        );
+        assert!(conn.lock().await.response_watchdogs.is_empty());
+        assert!(conn.lock().await.subscribed_sessions.is_empty());
+        assert!(conn.lock().await.pi_forwarders.is_empty());
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), personal.accept())
+            .await
+            .is_err()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), shared.accept())
+            .await
+            .is_err()
+    );
+    let first = connection();
+    let second = connection();
+    let binding = first.lock().await.control_binding_for_session("session");
+    assert_eq!(
+        binding,
+        first.lock().await.control_binding_for_session("session")
+    );
+    assert_ne!(
+        binding,
+        first
+            .lock()
+            .await
+            .control_binding_for_session("another-session"),
+        "A connection cannot reuse a binding across Sessions"
+    );
+    assert_ne!(
+        binding,
+        second.lock().await.control_binding_for_session("session"),
+        "Reconnect cannot adopt the previous connection's Session binding"
+    );
 }
 
 #[tokio::test]

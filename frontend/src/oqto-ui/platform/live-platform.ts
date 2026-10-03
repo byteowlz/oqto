@@ -15,6 +15,7 @@ import type {
 } from "./contracts";
 import { DEFAULT_OQTO_UI_CONFIG } from "./contracts";
 import { liveChatTransport } from "./live-chat-transport";
+import { createLiveSelectionHost } from "./live-selection";
 import { type MuxSocket, createMuxFileSystem } from "./mux-files";
 import { createMuxGitHost } from "./mux-git";
 import { createMuxIssueHost } from "./mux-issues";
@@ -504,6 +505,7 @@ export const liveOqtoUiPlatform: OqtoUiPlatform = {
 	actions: createEmptyActionHost(),
 	terminal: liveTerminal,
 	chat: createSessionEngine(liveChatTransport),
+	selections: createLiveSelectionHost(liveChatTransport),
 	async loadUiConfig(): Promise<OqtoUiConfigResolution> {
 		return parseUiConfig(await readJson("/api/oqto-ui/config"));
 	},

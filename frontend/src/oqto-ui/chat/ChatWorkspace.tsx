@@ -14,6 +14,7 @@ import {
 	type PreviewSelection,
 	ResourcePreviewPane,
 } from "./ResourcePreviewPane";
+import { SelectionView } from "./SelectionView";
 import { ChatActions, EditorPane, TerminalPane } from "./WorkAreaPanes";
 
 export type ChatWorkspaceContext = {
@@ -29,7 +30,7 @@ export type PreviewState = {
 };
 
 type ChatWorkspaceProps = {
-	platform: Pick<OqtoUiPlatform, "chat" | "id" | "loadMessages">;
+	platform: Pick<OqtoUiPlatform, "chat" | "id" | "loadMessages" | "selections">;
 	context: ChatWorkspaceContext;
 	workArea: WorkArea;
 	workAreaTab: string;
@@ -62,6 +63,13 @@ export function ChatWorkspace({
 	return (
 		<main className="wb-main" aria-label={t("oqtoUi.chat.label")}>
 			<div className="wb-chat-card">
+				{platform.selections ? (
+					<SelectionView
+						key={session.id}
+						host={platform.selections}
+						sessionId={session.id}
+					/>
+				) : null}
 				{preview ? (
 					<ResourcePreviewPane
 						selection={preview}

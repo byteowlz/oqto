@@ -525,6 +525,17 @@ impl PiTranslator {
         if req.method == "setStatus"
             && let Some(ref key) = req.status_key
         {
+            if oqto_protocol::control::is_control_status(key)
+                && let Some(text) = req.status_text.as_deref()
+                && (text.len() > oqto_protocol::control::CONTROL_MAX_BYTES
+                    || !serde_json::from_str::<serde_json::Value>(text)
+                        .ok()
+                        .is_some_and(|value| {
+                            value.get("version").and_then(|v| v.as_u64()) == Some(1)
+                        }))
+            {
+                return vec![];
+            }
             if key == "oqto_phase" {
                 return self.on_oqto_phase_status(req.status_text.as_deref());
             }

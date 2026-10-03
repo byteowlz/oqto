@@ -110,6 +110,9 @@ pub enum CommandPayload {
         cancelled: Option<bool>,
     },
 
+    /// Authenticated non-chat control; never treated as model input.
+    ExtensionControl(crate::control::ControlRequest),
+
     // -- Query commands --
     /// Get current session state.
     GetState {

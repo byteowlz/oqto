@@ -8,6 +8,9 @@
 //! - Idle session cleanup
 //! - Persistence to oqto-log on AgentEnd
 
+#[path = "pi_control.rs"]
+mod control;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -238,6 +241,11 @@ pub struct ForkResult {
 /// and the reader task routes the response back.
 #[derive(Debug)]
 pub enum PiSessionCommand {
+    /// Serialized non-chat transaction, bypassing client prompt bookkeeping.
+    Control {
+        request: crate::protocol::AgentControlRequest,
+        reply: oneshot::Sender<Result<oqto_protocol::control::ControlResult>>,
+    },
     // ========================================================================
     // Prompting
     // ========================================================================
@@ -283,7 +291,7 @@ pub enum PiSessionCommand {
     /// Get session statistics.
     GetSessionStats,
     /// Get available commands.
-    GetCommands,
+    GetCommands { request_id: String },
 
     // ========================================================================
     // Model Configuration
@@ -1139,6 +1147,10 @@ impl PiSessionManager {
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
             let pending_client_id = Arc::clone(&pending_client_id);
+            let control_runtime = control::Runtime {
+                pending: Arc::clone(&pending_responses),
+                external_id: Arc::clone(&session_external_id),
+            };
 
             tokio::spawn(async move {
                 Self::command_processor_task(
@@ -1148,6 +1160,7 @@ impl PiSessionManager {
                     state,
                     last_activity,
                     pending_client_id,
+                    control_runtime,
                 )
                 .await;
             })
@@ -2565,9 +2578,33 @@ impl PiSessionManager {
         Ok(response.data.and_then(|d| d.as_str().map(String::from)))
     }
 
+    /// Enqueue a bounded control; active process identity is resolved only inside the runner.
+    pub async fn control(
+        &self,
+        request: crate::protocol::AgentControlRequest,
+    ) -> Result<oqto_protocol::control::ControlResult> {
+        let sender = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .get(&request.session_id)
+                .context("Control Session not found")?
+                .cmd_tx
+                .clone()
+        };
+        let (reply, result) = oneshot::channel();
+        sender
+            .send(PiSessionCommand::Control { request, reply })
+            .await
+            .context("Queue control")?;
+        tokio::time::timeout(Duration::from_secs(15), result)
+            .await
+            .context("Control queue deadline exceeded")?
+            .context("Control queue closed")?
+    }
+
     /// Get available commands.
     pub async fn get_commands(&self, session_id: &str) -> Result<serde_json::Value> {
-        let request_id = "get_commands".to_string();
+        let request_id = format!("get-commands-{}", uuid::Uuid::new_v4());
 
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
@@ -2586,28 +2623,24 @@ impl PiSessionManager {
             pending.insert(request_id.clone(), tx);
         }
 
-        cmd_tx
-            .send(PiSessionCommand::GetCommands)
-            .await
-            .context("Failed to send GetCommands command")?;
-
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
-            .await
-            .context("Timeout waiting for GetCommands response")?
-            .context("Response channel closed")?;
-
-        if !response.success {
-            anyhow::bail!(
-                "GetCommands failed: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            );
+        let result = async {
+            cmd_tx
+                .send(PiSessionCommand::GetCommands {
+                    request_id: request_id.clone(),
+                })
+                .await
+                .context("Failed to send GetCommands command")?;
+            let response = tokio::time::timeout(Duration::from_secs(10), rx)
+                .await
+                .context("Timeout waiting for GetCommands response")?
+                .context("Response channel closed")?;
+            anyhow::ensure!(response.success, "GetCommands failed");
+            let data = response.data.context("GetCommands response missing data")?;
+            Ok(serde_json::Value::Array(control::catalog(&data)?.to_vec()))
         }
-
-        response
-            .data
-            .ok_or_else(|| anyhow::anyhow!("GetCommands response missing data"))
+        .await;
+        pending_responses.write().await.remove(&request_id);
+        result
     }
 
     /// Cycle to the next model.
@@ -3779,6 +3812,7 @@ impl PiSessionManager {
                     }
                 };
 
+                control::route_status(&pi_event, &pending_responses).await;
                 Self::write_stream_trace(
                     stream_trace_file.as_mut(),
                     serde_json::json!({
@@ -4409,9 +4443,50 @@ impl PiSessionManager {
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
         pending_client_id: PendingClientId,
+        control_runtime: control::Runtime,
     ) {
+        // Registry/session replacement invalidates discovery safety for this process.
+        // Reattach through a newly mapped process rather than dispatching against an ambiguous runtime.
+        let mut control_ready = true;
         while let Some(cmd) = cmd_rx.recv().await {
+            if matches!(
+                &cmd,
+                PiSessionCommand::NewSession(_)
+                    | PiSessionCommand::SwitchSession(_)
+                    | PiSessionCommand::Fork { .. }
+            ) || matches!(&cmd, PiSessionCommand::Prompt { message, .. } | PiSessionCommand::Steer { message, .. } | PiSessionCommand::FollowUp { message, .. } if message.trim_start().starts_with('/'))
+            {
+                control_ready = false;
+            }
             let result = match cmd {
+                PiSessionCommand::Control { request, reply } => {
+                    if reply.is_closed() {
+                        continue;
+                    }
+                    let result = if control_ready
+                        && matches!(
+                            *state.read().await,
+                            PiSessionState::Idle | PiSessionState::Streaming
+                        ) {
+                        let native_id = control_runtime.external_id.read().await.clone();
+                        control::execute(
+                            &mut stdin,
+                            &control_runtime.pending,
+                            &native_id,
+                            request,
+                            &mut control_ready,
+                        )
+                        .await
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "Control unavailable during work or after runtime replacement"
+                        ))
+                    };
+                    // The transaction invalidates safety only after dispatch, and restores it
+                    // only after both authoritative acknowledgements have been verified.
+                    let _ = reply.send(result);
+                    continue;
+                }
                 PiSessionCommand::Prompt { message, client_id } => {
                     if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
                         pending_client_id.lock().await.push_back(cid);
@@ -4590,9 +4665,9 @@ impl PiSessionManager {
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::GetCommands => {
+                PiSessionCommand::GetCommands { request_id } => {
                     let pi_cmd = PiCommand::GetCommands {
-                        id: Some("get_commands".to_string()),
+                        id: Some(request_id),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }

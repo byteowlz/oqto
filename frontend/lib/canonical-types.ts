@@ -1,3 +1,5 @@
+import type { ControlRequest } from "@/src/generated/ControlRequest";
+
 /**
  * Canonical protocol types for Oqto agent communication.
  *
@@ -441,6 +443,7 @@ export type CommandPayload =
 	| { cmd: "get_stats" }
 	| { cmd: "get_models"; workdir?: string }
 	| { cmd: "get_commands" }
+	| ({ cmd: "extension_control" } & ControlRequest)
 	| { cmd: "get_fork_points" }
 	| { cmd: "list_sessions" }
 	// Configuration commands

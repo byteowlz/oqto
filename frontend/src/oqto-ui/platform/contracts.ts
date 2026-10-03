@@ -1,5 +1,6 @@
 import type { JsonValue } from "../engine/projection";
 import type { ChatEngineHandle } from "./chat-contract";
+import type { SelectionHost } from "./selection-service";
 
 import type { ActionHost } from "./actions-contract";
 import type { FileHost } from "./files-contract";
@@ -252,6 +253,7 @@ export type OqtoUiPlatform = {
 	terminal: TerminalHost;
 	/** Writable chat engine; scripted adapters provide a deterministic fake. */
 	chat: ChatEngineHandle;
+	selections?: SelectionHost;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;
 	loadUiConfig: () => Promise<OqtoUiConfigResolution>;
 	/**

@@ -1054,6 +1054,8 @@ async fn runner_client_for_path(
 
 /// State for a WebSocket connection, shared between command handler and event forwarder.
 struct WsConnectionState {
+    /// Connection/Session bindings minted by the authenticated gateway, never metadata.
+    control_bindings: HashMap<String, String>,
     /// Subscribed Pi session IDs.
     subscribed_sessions: HashSet<String>,
     /// Channel for sending events to the WebSocket writer.
@@ -1080,6 +1082,15 @@ struct WsConnectionState {
     /// Decided once at connect from the JWT role; terminals bypass the agent
     /// seam, so ordinary users never get one.
     terminal_allowed: bool,
+}
+
+impl WsConnectionState {
+    fn control_binding_for_session(&mut self, session_id: &str) -> String {
+        self.control_bindings
+            .entry(session_id.to_owned())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1127,6 +1138,7 @@ async fn handle_multiplexed_ws(
 
     // Create connection state
     let conn_state = Arc::new(tokio::sync::Mutex::new(WsConnectionState {
+        control_bindings: HashMap::new(),
         subscribed_sessions: HashSet::new(),
         event_tx: event_tx.clone(),
         pi_subscriptions: HashSet::new(),
@@ -1724,6 +1736,9 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 oqto_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
                 oqto_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
                 oqto_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
+                oqto_protocol::commands::CommandPayload::ExtensionControl(_) => {
+                    "agent.extension_control"
+                }
                 oqto_protocol::commands::CommandPayload::GetForkPoints => "agent.get_fork_points",
                 oqto_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
                 oqto_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
@@ -2805,6 +2820,9 @@ async fn handle_unwatch_files(
 mod admission_tests;
 
 #[cfg(test)]
+mod auth_gateway_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3043,6 +3061,7 @@ mod tests {
         response_watchdogs.insert("ses-test".to_string(), watchdog);
 
         let conn_state = Arc::new(tokio::sync::Mutex::new(WsConnectionState {
+            control_bindings: HashMap::new(),
             subscribed_sessions: HashSet::new(),
             event_tx: event_tx.clone(),
             pi_subscriptions: HashSet::new(),

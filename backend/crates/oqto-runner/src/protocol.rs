@@ -307,6 +307,8 @@ pub enum RunnerRequest {
     // ========================================================================
     /// Get available commands (extensions, templates, skills).
     AgentGetCommands(AgentGetCommandsRequest),
+    /// Non-chat extension control with gateway-owned connection identity.
+    AgentControl(AgentControlRequest),
 
     // ========================================================================
     // Pi Bash
@@ -536,6 +538,7 @@ pub enum RunnerResponse {
 
     /// Agent commands response.
     AgentCommands(AgentCommandsResponse),
+    AgentControl(oqto_protocol::control::ControlResult),
 
     /// Pi bash result response.
     PiBashResult(PiBashResultResponse),
@@ -1340,6 +1343,16 @@ pub struct PiExportHtmlRequest {
 pub struct AgentGetCommandsRequest {
     /// Session ID.
     pub session_id: String,
+}
+
+/// Gateway-authenticated control. Connection identity is not a permission grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentControlRequest {
+    pub session_id: String,
+    pub request_id: String,
+    pub binding_id: String,
+    pub operation: oqto_protocol::control::ControlOperation,
+    pub arguments: serde_json::Value,
 }
 
 /// Request to execute a bash command.

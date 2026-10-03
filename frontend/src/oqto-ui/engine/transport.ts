@@ -39,6 +39,7 @@ export type ChatTransport = {
 	observe(
 		onConnection: ((state: ConnectionState) => void) | null,
 		onResync?: (sessionId: string) => void,
+		onEvent?: (event: WireEvent) => void,
 	): () => void;
 	status(sessionId?: string): TransportStatus;
 };
@@ -66,6 +67,7 @@ export function createChatTransport(deps: TransportDeps): ChatTransport {
 	let requestCounter = 0;
 
 	const sessionHandlers = new Map<string, (event: WireEvent) => void>();
+	const eventObservers = new Set<(event: WireEvent) => void>();
 	const subscribed = new Map<string, SessionOptions>();
 	const ready = new Set<string>();
 	const pendingBySession = new Map<string, PendingMessage[]>();
@@ -211,6 +213,7 @@ export function createChatTransport(deps: TransportDeps): ChatTransport {
 		if (event.session_id) {
 			const handler = sessionHandlers.get(event.session_id);
 			if (handler) handler(event);
+			for (const observer of eventObservers) observer(event);
 		}
 	}
 
@@ -371,12 +374,14 @@ export function createChatTransport(deps: TransportDeps): ChatTransport {
 				}
 			});
 		},
-		observe(onConnection, onResync): () => void {
+		observe(onConnection, onResync, onEvent): () => void {
 			if (onConnection) connectionHandlers.add(onConnection);
 			if (onResync) resyncHandlers.add(onResync);
+			if (onEvent) eventObservers.add(onEvent);
 			return () => {
 				if (onConnection) connectionHandlers.delete(onConnection);
 				if (onResync) resyncHandlers.delete(onResync);
+				if (onEvent) eventObservers.delete(onEvent);
 			};
 		},
 		status(sessionId): TransportStatus {
