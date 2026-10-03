@@ -14,6 +14,12 @@ Easy deployment must pin and ship official Pi 1.0.0. A new runner must not accid
 - Runtime staging checks the pinned official archive hash, version and hermetic RPC response. Installation/runtime helper uses the same verified archive engine, with packaged archives preferred on its default acquisition route.
 - Capability advertisements do not grant execution or presentation permissions. No selection/history authority changes.
 
+## Node/npm qualification candidate (2026-10-03)
+
+User direction is to qualify the official Pi1 npm/Node launch path before narrowing CPU support based on the standalone Bun executable. The Node candidate keeps Pi exactly 1.0.0, pins official Node24.14.1 by archive SHA256, and locks the official npm closure with SHA512 integrity for every fetched package. Install lifecycle scripts are disabled. Its launcher resolves the release-owned Node beside itself, never a Node from user PATH.
+
+An explicitly named new runtime tree can be prepared with `just dist-stage-pi-node-runtime NEW_DIRECTORY`; it refuses existing destinations and never promotes user/runtime links. See `docs/release/pi1-node-qualification.md` for measured CPU/RPC/runner evidence and independent Bun CLI limits. This does **not yet switch** the full-release workflow or the standalone archive acquisition engine: that integration must carry matching checksum semantics, the same immutable runtime identity and the installation/update/rollback gates. Existing Bun development artifacts remain identifiable and unchanged.
+
 ## Consequences and verification
 
 Qualification must exercise the exact extracted/packaged runtime, its assets, resolver precedence, private-home startup, canonical agent controls, configured model/chat, and clean install/update/rollback. An archive checksum or binary version alone does not prove authentication/model readiness, CPU compatibility, or a complete deployment. Do not publish until those gates pass. Runner-only targets and non-Linux platforms are not implicitly promoted to accepted full-release support.

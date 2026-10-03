@@ -1,0 +1,8 @@
+{
+  "name": "oqto-pinned-pi-node-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.0.0"
+  }
+}

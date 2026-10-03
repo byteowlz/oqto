@@ -52,6 +52,9 @@ kokorox = "0.2.3"
 pi = "1.0.0"  # accepted baseline; integrate runner/history/extensions against this exact release
 pi-linux-x64-sha256 = "8fd5543a52a889d60ad57ccbf6c969e73c75c5240aae18ac40b506947a63dc38"
 pi-linux-arm64-sha256 = "b60b3fda830a43c1dc3f5edb5fc7b681f22a0a930b48cdac13b97570c6045819"
+# Node/npm runtime qualification candidate; default release switch is separately gated.
+node = "24.14.1"
+node-linux-x64-sha256 = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
 pi-extensions = "a9a87c3d2ba0d97573941b2834fcc8497d8d83b5"  # qualified Pi1 collection 2.2.1; immutable source
 oqto-templates = "277fbdc903e21c109e1c9d89b03610e8f33fc756"  # immutable release defaults revision
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst

@@ -84,6 +84,14 @@ dist-stage-binaries *ARGS:
 dist-stage-pi-runtime:
     ./scripts/dist/stage-pi-runtime.sh
 
+# Prepare an explicit new Node/npm Pi runtime candidate (no live promotion).
+dist-stage-pi-node-runtime output:
+    ./scripts/dist/stage-pi-node-runtime.sh '{{output}}'
+
+# Locked acquisition and preserve-first staging contracts (no downloads).
+test-pi-node-runtime:
+    python3 -B scripts/tests/test-pi-node-runtime.py
+
 # Stage the built frontend into dist/immutable/frontend/ (use --build to build first)
 dist-stage-frontend *ARGS:
     ./scripts/dist/stage-frontend.sh {{ARGS}}
