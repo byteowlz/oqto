@@ -159,6 +159,7 @@ TOML
 # promotion or misleading compatibility claims.
 mkdir -p "$TMP/releases/v1.2.2/payload/pi"
 cp "$RELEASE/payload/pi/pi" "$TMP/releases/v1.2.2/payload/pi/pi"
+cp -R "$RELEASE/payload/pi/theme" "$TMP/releases/v1.2.2/payload/pi/theme"
 sed -i 's/1\.2\.3/1.2.2/g' "$TMP/releases/v1.2.2/payload/pi/pi"
 tar -czf "$TMP/releases/v1.2.2/pi-linux-x64.tar.gz" \
   -C "$TMP/releases/v1.2.2/payload" pi
