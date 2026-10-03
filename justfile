@@ -754,7 +754,9 @@ bump version:
             ;;
     esac
 
+    [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $new_version" >&2; exit 1; }
     echo "Bumping $current -> $new_version"
+    python3 "$ROOT/scripts/release/sync-platform-pin.py" "$new_version"
 
     sed -i 's/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
     sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
@@ -876,6 +878,7 @@ test-setup-installed-doctor:
 
 # Release dependency pin must equal the declared Cargo workspace version
 test-release-version-sync:
+    python3 -B scripts/tests/test-sync-platform-pin.py
     python3 scripts/tests/test-release-version-sync.py
 
 # Dist sources resolve to pinned refs, preserving dirty or unknown local caches
