@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 TARGET = "x86_64-unknown-linux-gnu"
 REQUIRED_BINS = (
     "oqto", "oqtoctl", "oqto-setup", "oqto-runner", "oqto-files",
-    "oqto-sandbox", "oqto-usermgr", "pi-bridge",
+    "oqto-sandbox", "oqto-ssh-proxy", "oqto-usermgr", "pi-bridge",
 )
 
 

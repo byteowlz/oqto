@@ -20,10 +20,10 @@ YELLOW='' NC=''
 export OQTO_BOOTSTRAP_TEST_MARKER="$scratch/installer-argv"
 name='oqto-v0.5.0-x86_64-unknown-linux-gnu'
 mkdir -p "$scratch/stage/$name/immutable/bin" \
-  "$scratch/stage/$name/immutable/frontend/dist" "$scratch/quoted'path"
+  "$scratch/stage/$name/immutable/frontend" "$scratch/quoted'path"
 printf 'manifest_version = 1\nid = "oqto-dist"\n[release]\ntarget = "full"\n' > "$scratch/stage/$name/manifest.toml"
-printf '<main>Oqto</main>\n' > "$scratch/stage/$name/immutable/frontend/dist/index.html"
-for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-usermgr pi-bridge; do
+printf '<main>Oqto</main>\n' > "$scratch/stage/$name/immutable/frontend/index.html"
+for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-ssh-proxy oqto-usermgr pi-bridge; do
     printf '#!/bin/sh\nexit 0\n' > "$scratch/stage/$name/immutable/bin/$bin"
     chmod 0755 "$scratch/stage/$name/immutable/bin/$bin"
 done

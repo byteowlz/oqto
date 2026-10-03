@@ -105,6 +105,39 @@ pub struct PiManagerConfig {
     pub extra_deny_read: Vec<PathBuf>,
 }
 
+pub(crate) fn bundled_pi_runtime(executable: &std::path::Path) -> Option<PathBuf> {
+    let bin = executable.parent()?;
+    let immutable = bin.parent()?;
+    if bin.file_name()? != "bin" || immutable.file_name()? != "immutable" {
+        return None;
+    }
+    // A damaged full release must fail startup, never silently run an older Pi.
+    Some(immutable.join("pi-runtime/pi/pi"))
+}
+
+#[cfg(test)]
+mod bundled_runtime_tests {
+    #[test]
+    fn resolves_release_owned_package_even_when_missing_to_fail_closed() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let executable = root.path().join("immutable/bin/oqto-runner");
+        let runtime = root.path().join("immutable/pi-runtime/pi/pi");
+        assert_eq!(
+            super::bundled_pi_runtime(&executable),
+            Some(runtime.clone())
+        );
+        std::fs::create_dir_all(
+            runtime
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("fixture parent missing"))?,
+        )?;
+        std::fs::write(&runtime, b"fixture")?;
+        assert_eq!(super::bundled_pi_runtime(&executable), Some(runtime));
+        assert!(super::bundled_pi_runtime(&root.path().join("outside/bin/runner")).is_none());
+        Ok(())
+    }
+}
+
 impl Default for PiManagerConfig {
     fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -112,16 +145,23 @@ impl Default for PiManagerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
-        // Prefer the user's rootless, checksummed runtime channel; deployments
-        // provide the root-owned baseline as a fallback. This lets local
-        // deterministic updates advance without a later Oqto deploy downgrade.
+        // Immutable releases own their qualified Pi. Outside a release, prefer
+        // the user's checksummed runtime channel and then the system fallback.
         let pi_binary = {
             let data_dir = std::env::var("XDG_DATA_HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from(&home).join(".local/share"));
             let user_runtime = data_dir.join("oqto/pi-runtimes/current/pi");
             let system_runtime = PathBuf::from("/var/lib/oqto/pi-runtimes/current/pi");
-            if user_runtime.exists() {
+            // An immutable release ships its exact qualified Pi next to its bins.
+            // Resolving current_exe keeps rollback and runner/Pi identity coherent
+            // without overwriting the user's separate native Pi installation.
+            let bundled_runtime = std::env::current_exe()
+                .ok()
+                .and_then(|exe| bundled_pi_runtime(&exe));
+            if let Some(binary) = bundled_runtime {
+                binary
+            } else if user_runtime.exists() {
                 user_runtime
             } else if system_runtime.exists() {
                 system_runtime

@@ -139,7 +139,7 @@ if [[ "$MODE" != plan ]]; then
     immutable/bin/oqto immutable/bin/oqtoctl immutable/bin/oqto-setup \
     immutable/bin/oqto-runner immutable/bin/oqto-files \
     immutable/bin/oqto-sandbox immutable/bin/oqto-usermgr \
-    immutable/bin/pi-bridge immutable/frontend/dist/index.html; do
+    immutable/bin/pi-bridge immutable/bin/oqto-ssh-proxy immutable/frontend/index.html; do
     member="${staging}/${required}"
     member_count="$(grep -Fxc "$member" <<< "$members" || true)"
     [[ "$member_count" == 1 ]] || fail "canonical release bundle must contain exactly one ${member}"

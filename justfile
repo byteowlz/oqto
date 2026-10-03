@@ -80,6 +80,10 @@ dist-sync:
 dist-stage-binaries *ARGS:
     ./scripts/dist/stage-binaries.sh {{ARGS}}
 
+# Ship the checksum-qualified official Pi1 archive with the release.
+dist-stage-pi-runtime:
+    ./scripts/dist/stage-pi-runtime.sh
+
 # Stage the built frontend into dist/immutable/frontend/ (use --build to build first)
 dist-stage-frontend *ARGS:
     ./scripts/dist/stage-frontend.sh {{ARGS}}

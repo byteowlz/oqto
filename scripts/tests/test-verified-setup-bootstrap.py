@@ -20,7 +20,7 @@ SPEC.loader.exec_module(bootstrap_module)
 
 ROOT = "oqto-v0.5.0-x86_64-unknown-linux-gnu"
 BINS = ("oqto", "oqtoctl", "oqto-setup", "oqto-runner", "oqto-files",
-        "oqto-sandbox", "oqto-usermgr", "pi-bridge")
+        "oqto-sandbox", "oqto-ssh-proxy", "oqto-usermgr", "pi-bridge")
 
 
 def add_file(archive: tarfile.TarFile, name: str, content: bytes, mode: int = 0o644) -> None:
@@ -42,7 +42,7 @@ def make_bundle(folder: Path, variant: str = "valid") -> Path:
         add_file(archive, f"{ROOT}/manifest.toml", b'manifest_version = 1\nid = "oqto-dist"\n[release]\ntarget = "full"\n')
         for name in BINS:
             add_file(archive, f"{ROOT}/immutable/bin/{name}", f"#!/bin/sh\necho {name}\n".encode(), 0o755)
-        add_file(archive, f"{ROOT}/immutable/frontend/dist/index.html", b"<main>Oqto</main>")
+        add_file(archive, f"{ROOT}/immutable/frontend/index.html", b"<main>Oqto</main>")
         if variant == "duplicate":
             add_file(archive, f"{ROOT}/immutable/bin/oqto-setup", b"#!/bin/sh\necho replacement\n", 0o755)
         if variant == "traversal":

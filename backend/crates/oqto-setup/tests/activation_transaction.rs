@@ -24,6 +24,7 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
             "oqto-runner",
             "oqto-files",
             "oqto-sandbox",
+            "oqto-ssh-proxy",
             "oqto-usermgr",
             "pi-bridge",
         ]
@@ -45,9 +46,9 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
             staging.join("manifest.toml"),
             "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
         )?;
-        fs::create_dir_all(staging.join("immutable/frontend/dist"))?;
+        fs::create_dir_all(staging.join("immutable/frontend"))?;
         fs::write(
-            staging.join("immutable/frontend/dist/index.html"),
+            staging.join("immutable/frontend/index.html"),
             b"<!doctype html><main>Oqto</main>",
         )?;
     }
@@ -91,6 +92,8 @@ fn install(
         .arg(releases)
         .arg("--bin-dir")
         .arg(binaries)
+        .arg("--web-root")
+        .arg(releases.with_file_name("web"))
         .args(["--doctor-strict", if strict { "true" } else { "false" }])
         .env(
             "PATH",
@@ -150,7 +153,7 @@ fn full_release_without_frontend_fails_before_deferred_activation() -> Result<()
         root.path()
             .join("stage")
             .join(archive_root)
-            .join("immutable/frontend/dist/index.html"),
+            .join("immutable/frontend/index.html"),
     )?;
     let status = Command::new("tar")
         .env("COPYFILE_DISABLE", "1")

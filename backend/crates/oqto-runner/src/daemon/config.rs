@@ -221,6 +221,15 @@ fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> (String, 
 }
 
 fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<String> {
+    if configured == "pi"
+        && let Some(runtime) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| crate::pi_manager::bundled_pi_runtime(&exe))
+    {
+        // One release-owned candidate: even a broken package must not cause a
+        // silent downgrade to an unrelated user or global Pi installation.
+        return vec![runtime.to_string_lossy().into_owned()];
+    }
     let mut candidates = Vec::new();
     if configured.contains('/') {
         push_candidate(&mut candidates, Some(configured.to_string()));

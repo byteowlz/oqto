@@ -825,13 +825,14 @@ fn rollback_fresh_activation(current: &Path, release: &Path, bin_dir: &Path) -> 
 /// installer/doctor contract exists. This gate runs before switching `current`
 /// even when doctor is deferred by an orchestrator.
 fn validate_staged_release(release_dir: &Path) -> Result<()> {
-    const REQUIRED_BINS: [&str; 8] = [
+    const REQUIRED_BINS: [&str; 9] = [
         "oqto",
         "oqtoctl",
         "oqto-setup",
         "oqto-runner",
         "oqto-files",
         "oqto-sandbox",
+        "oqto-ssh-proxy",
         "oqto-usermgr",
         "pi-bridge",
     ];
@@ -1161,7 +1162,7 @@ mod tests {
                     "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
                 )
                 .unwrap();
-                let frontend = release.join("immutable/frontend/dist");
+                let frontend = release.join("immutable/frontend");
                 fs::create_dir_all(&frontend).unwrap();
                 fs::write(
                     frontend.join("index.html"),
@@ -1174,6 +1175,7 @@ mod tests {
                     "oqto-runner",
                     "oqto-files",
                     "oqto-sandbox",
+                    "oqto-ssh-proxy",
                     "oqto-usermgr",
                     "pi-bridge",
                 ] {
@@ -1527,9 +1529,8 @@ mod tests {
     #[test]
     fn validate_staged_release_requires_a_frontend_bundle() {
         let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("nofrontend/immutable/bin");
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("oqto"), b"#!/bin/true\n").unwrap();
+        mk_release_dir(root.path(), "nofrontend", Some("oqto"));
+        fs::remove_file(root.path().join("nofrontend/immutable/frontend/index.html")).unwrap();
 
         assert!(validate_staged_release(&root.path().join("nofrontend")).is_err());
 

@@ -4,6 +4,8 @@ description = "Oqto distribution manifest (draft)"
 
 [release]
 target = "full"
+pi_version = "1.0.0"
+pi_runtime = "bundled-official-archive"
 layout = "transactional"
 root = "/var/lib/oqto/releases"
 current_symlink = "/var/lib/oqto/releases/current"
@@ -22,6 +24,19 @@ assets = ["bin-oqto-setup", "bin-oqto-runner", "bin-oqto-files", "systemd-user-o
 # - runtime_generated: created by services/runtimes; never shipped
 
 # ---------- Immutable shipped assets ----------
+
+[[assets]]
+id = "pi-runtime-archive"
+class = "immutable_symlink"
+kind = "runtime-helper"
+source = "dist/immutable/pi-runtime"
+stage_path = "pi-runtime"
+install_path = "/usr/local/share/oqto/pi-runtime"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
 
 [[assets]]
 id = "provider-login-worker"
@@ -259,7 +274,12 @@ items = [
   "pi-introspection",
   "pi-markdown-export",
   "pi-oqto-bridge",
-  "pi-oqto-todos",
+  "pi-todolist",
+  "pi-capabilities",
+  "pi-selection",
+  "pi-azure-empty-response-guard",
+  "pi-read-image-guard",
+  "pi-read-file-guard",
 ]
 
 # ---------- Published workspace OCI image ----------
@@ -392,11 +412,56 @@ install_method = "copy"
 profiles = ["personal", "team"]
 
 [[assets]]
-id = "pi-extension-pi-oqto-todos"
+id = "pi-extension-pi-todolist"
 class = "immutable_symlink"
 kind = "pi-extension"
-source = "dist/immutable/defaults/pi-agent/extensions/pi-oqto-todos"
-install_path = "~/.pi/agent/extensions/pi-oqto-todos"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-todolist"
+install_path = "~/.pi/agent/extensions/pi-todolist"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-capabilities"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-capabilities"
+install_path = "~/.pi/agent/extensions/pi-capabilities"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-selection"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-selection"
+install_path = "~/.pi/agent/extensions/pi-selection"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-azure-empty-response-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-azure-empty-response-guard"
+install_path = "~/.pi/agent/extensions/pi-azure-empty-response-guard"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-read-image-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-read-image-guard"
+install_path = "~/.pi/agent/extensions/pi-read-image-guard"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-read-file-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-read-file-guard"
+install_path = "~/.pi/agent/extensions/pi-read-file-guard"
 install_method = "copy"
 profiles = ["personal", "team"]
 

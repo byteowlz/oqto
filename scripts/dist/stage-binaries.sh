@@ -41,11 +41,12 @@ else
   echo "[dist-stage] WARNING: binaries may fail on hosts with older glibc than this build host." >&2
 fi
 
-# Release dir the built binaries land in (zigbuild uses the target subdir).
+# Honor the Cargo target directory so staging never reads stale local artifacts.
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/backend/target}"
 if $USE_ZIGBUILD; then
-  REL_DIR="backend/target/${TARGET_TRIPLE}/release"
+  REL_DIR="$BUILD_TARGET_DIR/${TARGET_TRIPLE}/release"
 else
-  REL_DIR="backend/target/release"
+  REL_DIR="$BUILD_TARGET_DIR/release"
 fi
 
 cargo_build() {

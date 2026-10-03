@@ -147,17 +147,17 @@ fi
 cp -R "$TEMPLATES_REPO/onboarding-templates/onboarding/." dist/immutable/defaults/onboarding-templates/onboarding/
 
 # Canonical shipped extension set (must stay in sync with dist/manifest.toml [pi_agent_extensions].items)
-EXTENSIONS=(
-  pi-auto-rename
-  pi-custom-context-files
-  pi-env-ctx
-  pi-error-recovery
-  pi-history-search
-  pi-introspection
-  pi-markdown-export
-  pi-oqto-bridge
-  pi-oqto-todos
+mapfile -t EXTENSIONS < <(python3 - <<'PY'
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+with open("dist/manifest.toml", "rb") as source:
+    for item in tomllib.load(source)["pi_agent_extensions"]["items"]:
+        print(item)
+PY
 )
+[[ ${#EXTENSIONS[@]} -gt 0 ]] || { echo 'error: no canonical extensions in manifest' >&2; exit 1; }
 
 for ext in "${EXTENSIONS[@]}"; do
   src="$EXTENSIONS_REPO/$ext"

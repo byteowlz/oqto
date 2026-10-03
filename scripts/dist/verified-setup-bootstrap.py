@@ -24,7 +24,7 @@ MAX_INSTALLER_BYTES = 128 * 1024 * 1024
 MAX_TRAILING_BYTES = 1024 * 1024
 REQUIRED_BINS = {
     "oqto", "oqtoctl", "oqto-setup", "oqto-runner", "oqto-files",
-    "oqto-sandbox", "oqto-usermgr", "pi-bridge",
+    "oqto-sandbox", "oqto-ssh-proxy", "oqto-usermgr", "pi-bridge",
 }
 RELEASE_NAME = re.compile(r"oqto-v[0-9][A-Za-z0-9._+-]*-(?:x86_64|aarch64)-unknown-linux-gnu")
 
@@ -86,7 +86,7 @@ def _extract_verified(archive: Path, output: Path) -> None:
     required = {f"{root}/immutable/bin/{name}" for name in REQUIRED_BINS}
     installer_name = f"{root}/immutable/bin/oqto-setup"
     manifest_name = f"{root}/manifest.toml"
-    frontend_name = f"{root}/immutable/frontend/dist/index.html"
+    frontend_name = f"{root}/immutable/frontend/index.html"
     seen: set[str] = set()
     total = 0
     installer: tarfile.TarInfo | None = None

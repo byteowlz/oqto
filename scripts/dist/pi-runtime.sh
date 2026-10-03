@@ -66,6 +66,18 @@ done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/oqto-pi-runtime.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 ARCHIVE="$TMP/$ASSET"
+SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Packaged releases consume their shipped, checksummed runtime, never a moving download.
+for bundled_root in "$SOURCE_ROOT/immutable/pi-runtime" "$SOURCE_ROOT/dist/immutable/pi-runtime"; do
+  if [[ "$BASE_URL" == "https://github.com/earendil-works/pi/releases/download" && -d "$bundled_root" ]]; then
+    [[ -f "$bundled_root/v$VERSION/$ASSET" ]] || {
+      echo "pi-runtime: shipped runtime missing for pinned version/platform" >&2
+      exit 1
+    }
+    BASE_URL="file://$bundled_root"
+    break
+  fi
+done
 RELEASE_URL="$BASE_URL/v$VERSION"
 
 echo "pi-runtime: downloading $RELEASE_URL/$ASSET"
