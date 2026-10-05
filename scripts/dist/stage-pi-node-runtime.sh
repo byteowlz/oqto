@@ -7,13 +7,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 output="$(realpath -m -- "$1")"
 [[ ! -e "$output" && ! -L "$output" ]] || { echo 'Refusing to replace an existing runtime' >&2; exit 1; }
 readarray -t pin < <(python3 - "$ROOT" <<'PY'
-import json, pathlib, sys, tomllib
+import json, pathlib, re, sys, tomllib
 root = pathlib.Path(sys.argv[1])
 p = tomllib.loads((root / 'dependencies.toml').read_text())['external']
 lock = json.loads((root / 'scripts/dist/pi-node/package-lock.json').read_text())
 package = json.loads((root / 'scripts/dist/pi-node/package.json').read_text())
 sdk = lock['packages']['node_modules/@earendil-works/pi-coding-agent']
-assert p['pi'] == sdk['version'] == package['dependencies']['@earendil-works/pi-coding-agent'] == '1.0.0'
+assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', p['pi'])
+assert p['pi'] == sdk['version'] == package['dependencies']['@earendil-works/pi-coding-agent']
+assert lock['packages']['']['dependencies'] == package['dependencies']
 assert p['node'] == '24.14.1'
 assert len(p['node-linux-x64-sha256']) == 64
 for name, entry in lock['packages'].items():

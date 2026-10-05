@@ -12,7 +12,9 @@ import { StringDecoder } from "node:string_decoder";
 
 const binary = process.argv[2] ? resolve(process.argv[2]) : undefined;
 assert(binary && process.argv[3], "Pass exact Pi1 binary and staged extension directory");
-assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 10000 }).trim(), "1.0.0");
+const expectedVersion = process.argv[4] ?? "1.0.0";
+assert(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(expectedVersion), "Expected exact stable candidate version");
+assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 10000 }).trim(), expectedVersion);
 const root = resolve(process.argv[3]);
 const extensions = (await readdir(root, { withFileTypes: true }))
 	.filter((entry) => entry.isDirectory() && entry.name.startsWith("pi-"))

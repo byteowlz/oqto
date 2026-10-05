@@ -304,7 +304,17 @@ install-system:
 # Dependencies
 # =============================================================================
 
-# Deterministically compatibility-test the latest Pi release (no changes)
+# Discover official stable Pi without changing accepted pins or live state
+check-pi-stable:
+    python3 -B scripts/release/pi-update.py
+
+# Regression gates for isolated exact-pin candidate preparation
+_test-pi-updates:
+    python3 -B scripts/tests/test-pi-update.py
+    python3 -B scripts/tests/test-pi-node-runtime.py
+    bash -n scripts/dist/stage-pi-node-runtime.sh scripts/dist/test-node-pi-cpu.sh scripts/dist/test-node-pi-runner.sh
+
+# Legacy standalone smoke only; not Node/npm release acceptance
 check-agent-updates:
     ./scripts/dist/check-agent-runtime.sh
 

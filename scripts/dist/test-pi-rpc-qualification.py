@@ -195,6 +195,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument(
+        "--expected-version",
+        default="1.0.0",
+        help="Exact stable candidate pin, not a range",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -205,8 +210,14 @@ def main():
     version = subprocess.check_output(
         [str(binary), "--version"], text=True, timeout=10
     ).strip()
-    if version != "1.0.0":
-        raise SystemExit(f"Expected exact Pi 1.0.0, got {version}")
+    import re
+
+    if not re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.expected_version
+    ):
+        raise SystemExit("Expected version must be an exact stable pin")
+    if version != args.expected_version:
+        raise SystemExit(f"Expected exact Pi {args.expected_version}, got {version}")
     args.output.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix="oqto-pi-rpc-qualification-") as temp:
         root = Path(temp)

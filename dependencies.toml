@@ -46,10 +46,11 @@ kokorox = "0.2.3"
 [external]
 # Not byteowlz, but required for Oqto
 # pi + pi-extensions are PINNED (not "latest") so deploys are deterministic; the
-# pins are advanced by the test-gated auto-bump (just check-agent-updates ->
-# scripts/dist/check-agent-runtime.sh) which only bumps a pin when a candidate
-# passes the gate. sync via scripts/dist/sync-agent-runtime.sh.
-pi = "1.0.0"  # accepted baseline; integrate runner/history/extensions against this exact release
+# latest stable candidates are prepared by scripts/release/pi-update.py in an
+# isolated snapshot. Advance accepted pins only after coherent qualification;
+# the legacy standalone smoke is not a Node/npm release acceptance gate.
+# Sync accepted sources via scripts/dist/sync-agent-runtime.sh.
+pi = "1.0.0"  # last qualified baseline; newer stable candidates require coherent qualification before promotion
 pi-linux-x64-sha256 = "8fd5543a52a889d60ad57ccbf6c969e73c75c5240aae18ac40b506947a63dc38"
 pi-linux-arm64-sha256 = "b60b3fda830a43c1dc3f5edb5fc7b681f22a0a930b48cdac13b97570c6045819"
 # Node/npm runtime qualification candidate; default release switch is separately gated.
