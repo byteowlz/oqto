@@ -16,6 +16,12 @@ Source scope: isolated `feat/linux-node-canary`; development candidate0.5.7, exa
 
 Runner/setup/provisioning tests pass; all-target Clippy-D warnings passes on runner/setup/provisioning/oqtoctl. Additional Node alias tests pass. Frozen extension source typechecks against the **exact shipped SDK namespace/closure**: an initial no-save SDK install pulled newer1.0.4 transitives, so qualification was corrected to bind all `@earendil-works` packages to shipped1.0.3 modules. Source package/lock files and owning repository are unchanged. Shipped14 plus combined native Pi1.0.3 catalog passed.
 
+## Packaged doctor defect and bounded fix (oqto-vemr.5)
+
+Initial6dc1d5e6 archive `d297837334e24fa319b3d1d5401fe69d904faf9fbc5050395619ae721b554dce` passes Ubuntu22 packaged startup and Ubuntu24 development0.5.6→0.5.7 activation/rollback/config preservation. It is retained as **superseded**, not silently replaced: actual strict JSON doctor returned0/findings=[] on an unprovisioned readonly container because `enabled=None, active=None` was ignored. Runtime corruption and nonregular WAL gates do reject and preserve metadata.
+
+The bounded follow-up makes missing and unknown required service state an Error in the shared evaluator; missing/unknown/false/true regression states and actual-package doctor/activation/WAL checks become mechanisms. It does not claim complete oqto-vemr.5 coverage: unresolved personal template paths and declared socket/model checks still need actual fact collection/authorization/readiness design. No fake services/providers are supplied to make strict doctor green.
+
 ## Explicit release limits
 
 Artifact installation/update/failed-activation rollback/config preservation and packaged runner/doctor traces remain to be recorded after the frozen build. Synthetic/readonly/no-sandbox fixture proofs are not full-shell, actual service/sandbox, real-provider, physical CPU/helpers or production authentication acceptance. Development0.5.6 predecessor is not published-history migration evidence. Current frontend is the previously integrated baseline; new Studio V4 production parity and runner-backed forks/subagents are not claimed.
