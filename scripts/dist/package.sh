@@ -31,6 +31,10 @@ cp dist/manifest.toml "$STAGE_DIR/manifest.toml"
 # prompts). Drop the markers; tar preserves the directories themselves.
 find "$STAGE_DIR" -type f -name '.gitkeep' -delete
 
+# Use the actual typed activation contract before producing a bundle. This is
+# read-only and does not run services, Pi, SQLite, or activation.
+"$STAGE_DIR/immutable/bin/oqto-setup" check-release --release-dir "$STAGE_DIR"
+
 TARBALL="$OUT_DIR/${NAME}.tar.gz"
 mkdir -p "$OUT_DIR"
 

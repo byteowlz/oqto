@@ -7,6 +7,10 @@ use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
+mod runtime_fixture {
+    include!("support/node-runtime-fixture.rs");
+}
+
 fn bundle(root: &Path, id: &str) -> Result<std::path::PathBuf> {
     bundle_with_layout(root, id, true)
 }
@@ -46,6 +50,7 @@ fn bundle_with_layout(root: &Path, id: &str, complete: bool) -> Result<std::path
             staging.join("manifest.toml"),
             "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
         )?;
+        runtime_fixture::create(&staging)?;
         fs::create_dir_all(staging.join("immutable/frontend"))?;
         fs::write(
             staging.join("immutable/frontend/index.html"),

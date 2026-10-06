@@ -6,7 +6,8 @@ candidate="$(realpath "${1:?candidate archive}")"
 previous="$(realpath "${2:?canonical predecessor archive}")"
 [[ -f "$candidate.sha256" && -f "$previous.sha256" ]]
 export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
-docker run --rm -i --network none --user 65534:65534 --cap-drop ALL \
+version="${EXPECTED_PI_VERSION:?set the exact candidate Pi version}"
+docker run --rm -i --network none --user 65534:65534 --cap-drop ALL -e EXPECTED_PI_VERSION="$version" \
   --security-opt no-new-privileges --read-only --tmpfs /private:rw,exec,mode=1777 \
   -v "$(dirname "$candidate"):/candidate:ro" -v "$(dirname "$previous"):/previous:ro" \
   ubuntu@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60 \
@@ -64,7 +65,7 @@ sha256sum --check /private/before.sha256
 test "$(basename "$(readlink /private/releases/current)")" = "$new_id"
 test -f /private/web/index.html
 test -x /private/bin/oqto-runner
-test "$(/private/releases/current/immutable/pi-runtime/pi/pi --version)" = 1.0.0
+test "$(/private/releases/current/immutable/pi-runtime/pi/pi --version)" = "$EXPECTED_PI_VERSION"
 /private/bin/oqto --version
 sha256sum --check /private/before.sha256
 echo 'PASS upgrade preserves unknown config/auth/settings'

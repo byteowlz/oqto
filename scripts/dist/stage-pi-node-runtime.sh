@@ -54,6 +54,9 @@ touch "$build/home/npmrc" "$build/home/globalnpmrc"
 )
 cp "$ROOT/scripts/dist/pi-node/pi" "$build/payload/pi"
 chmod 755 "$build/payload/pi"
+# Canonical release extraction rejects symlinks. Preserve JS module identity by
+# replacing only contained CLI aliases with adjacent-Node launchers, not copies.
+python3 "$ROOT/scripts/dist/materialize-node-cli-links.py" "$build/payload" > "$build/payload/cli-aliases.json"
 [[ $("$build/payload/node/bin/node" --version) == "v${pin[1]}" ]]
 [[ $(env -i HOME="$build/home" PATH=/usr/bin:/bin "$build/payload/pi" --version) == "${pin[0]}" ]]
 python3 - "$build/payload" "${pin[0]}" "${pin[1]}" "${pin[2]}" "${pin[3]}" <<'PY'
@@ -67,6 +70,7 @@ for theme in ('dark.json', 'light.json'):
     'kind': 'node-npm', 'version': sys.argv[2], 'node_version': sys.argv[3],
     'node_archive_sha256': sys.argv[4], 'pi_npm_integrity': sys.argv[5],
     'package_lock_sha256': hashlib.sha256((root / 'package-lock.json').read_bytes()).hexdigest(),
+    'cli_aliases': json.loads((root / 'cli-aliases.json').read_text()),
 }, indent=2) + '\n')
 PY
 # Fails without overwriting a destination which appeared during preparation.

@@ -16,8 +16,12 @@ pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;
 pub mod provider_login;
+mod recovery_child;
 pub mod reverse_bridge;
+pub mod runtime_guard;
 pub mod session_resume;
+#[cfg(unix)]
+mod socket_lease;
 pub mod ssh_agent_proxy;
 pub mod tls;
 pub mod transport;

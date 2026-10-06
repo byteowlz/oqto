@@ -308,6 +308,14 @@ install-system:
 check-pi-stable:
     python3 -B scripts/release/pi-update.py
 
+# Combined immutable Node runtime and runner identity regression gates
+_test-node-canary:
+    python3 -B scripts/tests/test-node-cli-links.py
+    python3 -B scripts/tests/test-pi-node-runtime.py
+    python3 -B scripts/tests/test-agent-check-root.py
+    cd backend && cargo test -p oqto-runner -p oqto-setup -p oqto-provisioning
+    cd backend && cargo test -p oqto-runner --test runtime_guards_cli wrong_uid_native_launch_fails_before_state_or_workers -- --ignored --exact
+
 # Regression gates for isolated exact-pin candidate preparation
 _test-pi-updates:
     python3 -B scripts/tests/test-pi-update.py

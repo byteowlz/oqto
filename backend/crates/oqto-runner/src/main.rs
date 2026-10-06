@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oqto_runner::daemon::bootstrap::{
-    ensure_control_socket_isolated, get_default_socket_path, inherited_unix_listener,
-    load_env_file, load_sandbox_config, log_sandbox_state,
+    ensure_control_socket_isolated, inherited_unix_listener, load_env_file, load_sandbox_config,
+    log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
 use oqto_runner::daemon::server::{Runner, SessionBinaries};
@@ -76,6 +76,7 @@ enum MaintenanceCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    oqto_runner::runtime_guard::ensure_launch_identity()?;
     if let Some(MaintenanceCommand::HistoryImport { apply, max_imports }) = args.command {
         use std::io::Write;
         let config = args
@@ -83,6 +84,7 @@ async fn main() -> Result<()> {
             .clone()
             .map(RunnerUserConfig::load_from_path)
             .unwrap_or_else(RunnerUserConfig::load);
+        oqto_runner::runtime_guard::ensure_config_state_owner(&config)?;
         let report = oqto_runner::history_import::run(&config, apply, max_imports.map(|n| n as usize)).await.unwrap_or_else(|_| serde_json::json!({"schema":1,"ok":false,"error":"History import unavailable; check explicit history configuration and source access"}));
         let output = format!("{report}\n");
         if let Err(error) = std::io::stdout().write_all(output.as_bytes()) {
@@ -101,7 +103,10 @@ async fn main() -> Result<()> {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
-    let socket_path = args.socket.clone().unwrap_or_else(get_default_socket_path);
+    let socket_path = args
+        .socket
+        .clone()
+        .unwrap_or_else(oqto_runner::runtime_guard::default_socket_path);
 
     info!(
         "Starting oqto-runner (user={}, endpoint={})",
@@ -112,8 +117,17 @@ async fn main() -> Result<()> {
         )
     );
 
+    oqto_runner::runtime_guard::ensure_socket_identity(&socket_path)?;
     load_env_file();
+    oqto_runner::runtime_guard::ensure_launch_identity()?;
 
+    let user_config = args
+        .config
+        .map(RunnerUserConfig::load_from_path)
+        .unwrap_or_else(RunnerUserConfig::load);
+    oqto_runner::runtime_guard::ensure_config_state_owner(&user_config)?;
+
+    // Validate ownership before any worker can touch configured private state.
     // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
     // aborts startup rather than starting a workspace missing its services.
     let endpoint_socket_dir = PathBuf::from("/run/oqto/endpoints");
@@ -128,11 +142,6 @@ async fn main() -> Result<()> {
             }
         });
     }
-
-    let user_config = args
-        .config
-        .map(RunnerUserConfig::load_from_path)
-        .unwrap_or_else(RunnerUserConfig::load);
 
     let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
 

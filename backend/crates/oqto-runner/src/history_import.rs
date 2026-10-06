@@ -19,6 +19,7 @@ pub async fn run(
         !history.account_id.is_empty() && history.home.is_absolute(),
         "Explicit history owner and home required"
     );
+    crate::runtime_guard::ensure_history_state_owner(&history.home)?;
     let source = history.home.join(".pi/agent/sessions");
     std::fs::read_dir(&source).context("Native Pi session source unavailable")?;
     if !apply {

@@ -25,6 +25,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate an extracted full release without activation or user-state writes.
+    CheckRelease {
+        #[arg(long)]
+        release_dir: PathBuf,
+    },
     /// Print the expected provisioning contract for an install profile.
     Plan {
         /// Install profile to plan: personal or team.
@@ -177,6 +182,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::CheckRelease { release_dir } => {
+            validate_staged_release(&release_dir)?;
+            println!("Validated full release contract: {}", release_dir.display());
+            Ok(())
+        }
         Command::Plan { profile, json } => print_plan(profile, json),
         Command::Hydrate {
             install_config,
@@ -899,6 +909,8 @@ fn validate_staged_release(release_dir: &Path) -> Result<()> {
     if !frontend_meta.file_type().is_file() || frontend_meta.len() == 0 {
         anyhow::bail!("Invalid full release: frontend index must be a nonempty regular file");
     }
+    oqto_provisioning::bundled_runtime::validate(release_dir)
+        .context("Invalid full release Node/Pi runtime")?;
     Ok(())
 }
 
@@ -1142,6 +1154,9 @@ fn run_doctor_strict(release_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod runtime_fixture {
+        include!("../tests/support/node-runtime-fixture.rs");
+    }
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn at(secs: u64) -> SystemTime {
@@ -1169,6 +1184,7 @@ mod tests {
                     b"<!doctype html><main>Oqto</main>",
                 )
                 .unwrap();
+                runtime_fixture::create(&release).expect("synthetic runtime fixture");
                 for name in [
                     "oqtoctl",
                     "oqto-setup",
@@ -1353,6 +1369,46 @@ mod tests {
         .unwrap();
         fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
         assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn staged_runtime_denies_partial_mismatched_and_unknown_modes() -> Result<()> {
+        for damage in [
+            "missing-node",
+            "wrong-sdk",
+            "bad-lock",
+            "missing-receipt",
+            "unknown-mode",
+        ] {
+            let root = tempfile::tempdir()?;
+            mk_release_dir(root.path(), "candidate", Some("oqto"));
+            let release = root.path().join("candidate");
+            let runtime = release.join("immutable/pi-runtime/pi");
+            match damage {
+                "missing-node" => fs::remove_file(runtime.join("node/bin/node"))?,
+                "wrong-sdk" => fs::write(
+                    runtime.join("node_modules/@earendil-works/pi-coding-agent/package.json"),
+                    "{\"version\":\"1.0.0\"}",
+                )?,
+                "bad-lock" => fs::write(runtime.join("package-lock.json"), "{}")?,
+                "missing-receipt" => fs::remove_file(runtime.join("oqto-runtime.json"))?,
+                "unknown-mode" => {
+                    let path = release.join("manifest.toml");
+                    fs::write(
+                        &path,
+                        fs::read_to_string(&path)?
+                            .replace("bundled-official-node-npm", "unsupported"),
+                    )?;
+                }
+                _ => unreachable!("closed fixture cases"),
+            }
+            assert!(
+                validate_staged_release(&release).is_err(),
+                "damage accepted: {damage}"
+            );
+            assert!(!root.path().join("current").exists());
+        }
+        Ok(())
     }
 
     #[test]

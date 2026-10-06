@@ -20,10 +20,6 @@ use crate::wire::{read_json_frame, write_json_frame};
 /// is stuck or overloaded.
 const RUNNER_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Default socket path pattern.
-/// Uses XDG_RUNTIME_DIR if available, otherwise falls back to /tmp.
-pub const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/oqto-runner.sock";
-
 /// Per-user socket path pattern for multi-user mode.
 /// {uid} is replaced with the user's numeric UID.
 pub const USER_SOCKET_PATTERN: &str = "/run/user/{uid}/oqto-runner.sock";
@@ -145,6 +141,11 @@ impl RunnerClient {
             return Ok(false);
         };
 
+        crate::runtime_guard::validate_socket_path(socket_path)?;
+        static RECOVERY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _recovery = RECOVERY.lock().await;
+        let mut owned_child = None;
+
         if !socket_path.exists() {
             // A failed auto-start must not be retried unboundedly: every call
             // path that touches the default runner would otherwise spawn a
@@ -175,39 +176,43 @@ impl RunnerClient {
                 "Runner socket unavailable; attempting oqto-runner auto-start"
             );
 
-            let mut child = tokio::process::Command::new("oqto-runner")
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .context("spawning oqto-runner for single-user recovery")?;
-            // Reap the child whenever it exits so failed starts cannot
-            // accumulate as zombies.
-            tokio::spawn(async move {
-                let _ = child.wait().await;
-            });
+            owned_child = Some(crate::recovery_child::RecoveryChild::spawn(
+                std::ffi::OsStr::new("oqto-runner"),
+                socket_path,
+            )?);
         }
 
-        // Bounded readiness handshake: ping + capabilities.
-        for attempt in 0..5 {
+        // Bound elapsed time, not just attempts: fast connection refusals must
+        // still leave time for config's Pi smoke test and native startup.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut attempt = 0;
+        while tokio::time::Instant::now() < deadline {
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-
-            if let Ok(RunnerResponse::Pong) = self.request_once(&RunnerRequest::Ping).await
-                && let Ok(RunnerResponse::RunnerCapabilities(capabilities)) =
-                    self.request_once(&RunnerRequest::GetCapabilities).await
-                && capabilities.protocol_version == RUNNER_WIRE_VERSION
-            {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let ready = tokio::time::timeout(remaining.min(std::time::Duration::from_secs(1)), async {
+                matches!(self.request_once(&RunnerRequest::Ping).await, Ok(RunnerResponse::Pong))
+                    && matches!(self.request_once(&RunnerRequest::GetCapabilities).await,
+                        Ok(RunnerResponse::RunnerCapabilities(capabilities)) if capabilities.protocol_version == RUNNER_WIRE_VERSION)
+            }).await.unwrap_or(false);
+            if ready {
                 tracing::info!(
                     endpoint = %self.endpoint_description(),
                     attempt,
                     "Runner recovered and ready"
                 );
+                if let Some(child) = owned_child.take() {
+                    child.adopt();
+                }
                 return Ok(true);
             }
+            attempt += 1;
         }
 
+        if let Some(child) = owned_child.as_mut() {
+            child.stop().await?;
+        }
         anyhow::bail!(
             "runner recovery failed at {} after bounded readiness retries",
             self.endpoint_description()
@@ -1979,9 +1984,7 @@ impl RunnerClient {
 /// This is for single-user mode where the runner runs as the current user.
 impl Default for RunnerClient {
     fn default() -> Self {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let socket_path = DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir);
-        Self::new(socket_path)
+        Self::new(crate::runtime_guard::default_socket_path())
     }
 }
 

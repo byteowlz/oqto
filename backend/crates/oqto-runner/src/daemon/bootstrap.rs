@@ -3,18 +3,6 @@ use log::{debug, error, info, warn};
 use oqto_sandbox::{SandboxConfig, SandboxConfigFile};
 use std::path::{Path, PathBuf};
 
-/// Default socket path pattern.
-///
-/// This mirrors the backend client default while runner ownership is being
-/// migrated. Once the client/protocol boundary moves, this constant should be
-/// shared from this crate instead of duplicated in the server crate.
-const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/oqto-runner.sock";
-
-pub fn get_default_socket_path() -> PathBuf {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(runtime_dir).join(DEFAULT_SOCKET_PATTERN)
-}
-
 pub fn load_sandbox_config(
     no_sandbox: bool,
     sandbox_config_path: Option<&PathBuf>,

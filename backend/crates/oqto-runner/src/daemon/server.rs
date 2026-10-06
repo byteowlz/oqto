@@ -4142,6 +4142,8 @@ impl Runner {
 
     /// Run the daemon, listening on the given socket path.
     pub async fn run(&self, socket_path: &PathBuf) -> Result<()> {
+        crate::runtime_guard::ensure_launch_identity()?;
+        crate::runtime_guard::ensure_socket_identity(socket_path)?;
         // Ensure the socket directory exists.
         // Normally created by oqto-usermgr, but we create it ourselves if missing
         // (e.g. after systemd restart). The parent dir has SGID group oqto, mode 2770,
@@ -4157,23 +4159,28 @@ impl Runner {
         } else {
             (0o2770, 0o770)
         };
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                info!("Socket directory {:?} does not exist, creating", parent);
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating socket directory {:?}", parent))?;
-            }
+        // Existing runtime directories are user/admin-owned. Never change
+        // their modes merely because a daemon (or duplicate) starts here.
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            info!("Socket directory {:?} does not exist, creating", parent);
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating socket directory {:?}", parent))?;
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(parent, std::fs::Permissions::from_mode(dir_mode))
-                .with_context(|| format!("chmod socket dir {:?}", parent))?;
+                .with_context(|| format!("chmod new socket dir {:?}", parent))?;
         }
 
-        // Remove existing socket file
-        let _ = tokio::fs::remove_file(socket_path).await;
+        // Hold one persistent lock inode for this endpoint's entire lifetime.
+        let mut socket_lease = crate::socket_lease::SocketLease::acquire(socket_path)?;
+        socket_lease.prepare().await?;
 
         // Bind
         let listener = UnixListener::bind(socket_path)
             .with_context(|| format!("binding to {:?}", socket_path))?;
+
+        socket_lease.record_bound()?;
 
         // Unix sockets require write permission for connect().
         use std::os::unix::fs::PermissionsExt;
@@ -4183,8 +4190,8 @@ impl Runner {
         let listener = UnixRunnerListener::new(listener, socket_path);
         self.run_transport(&listener).await?;
 
-        // Remove socket file
-        let _ = tokio::fs::remove_file(socket_path).await;
+        // Drop unlinks only this incarnation's inode, never a replacement.
+        drop(socket_lease);
 
         info!("Runner stopped");
         Ok(())

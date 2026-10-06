@@ -4,6 +4,8 @@
 //! typed contract instead of scattering path, permission, and service knowledge
 //! across shell scripts and CLI commands.
 
+pub mod bundled_runtime;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -20,6 +20,10 @@ User direction is to qualify the official Pi1 npm/Node launch path before narrow
 
 An explicitly named new runtime tree can be prepared with `just dist-stage-pi-node-runtime NEW_DIRECTORY`; it refuses existing destinations and never promotes user/runtime links. See `docs/release/pi1-node-qualification.md` for measured CPU/RPC/runner evidence and independent Bun CLI limits. This does **not yet switch** the full-release workflow or the standalone archive acquisition engine: that integration must carry matching checksum semantics, the same immutable runtime identity and the installation/update/rollback gates. Existing Bun development artifacts remain identifiable and unchanged.
 
+## Combined Node canary implementation (2026-10-06)
+
+ADR-0055 supersedes the permanent1.0.0 freeze with latest-qualified-stable policy. The isolated Linux0.5.7 candidate switches full-release staging to exact official Pi1.0.3/npm + separately pinned Node24.14.1, without live promotion. The implemented manifest mode is `bundled-official-node-npm`; unsupported runtime modes fail the shared typed activation/doctor contract. Exact lock/integrity/version receipts move with runner and assets. Official contained Node CLI aliases become adjacent-Node launchers because canonical release extraction deliberately rejects symlinks; original JS target locations and the entire closure remain intact. See [canary evidence and limits](../release/linux-node-canary.md). This is implementation on a candidate branch, not release/install acceptance or a change to user-owned native Pi.
+
 ## Consequences and verification
 
 Qualification must exercise the exact extracted/packaged runtime, its assets, resolver precedence, private-home startup, canonical agent controls, configured model/chat, and clean install/update/rollback. An archive checksum or binary version alone does not prove authentication/model readiness, CPU compatibility, or a complete deployment. Do not publish until those gates pass. Runner-only targets and non-Linux platforms are not implicitly promoted to accepted full-release support.

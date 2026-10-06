@@ -3719,6 +3719,35 @@ fn validate_sudoers_file(path: &str) -> Option<bool> {
     Some(sudo_output.status.success())
 }
 
+fn append_release_runtime_findings(findings: &mut Vec<oqto_provisioning::ContractFinding>) {
+    use oqto_provisioning::{CheckSeverity, ContractFinding};
+    let audit = || -> Result<()> {
+        oqto_runner::runtime_guard::ensure_launch_identity()
+            .context("doctor process private-state ownership")?;
+        let executable = std::env::current_exe()?;
+        if let Some(bin) = executable.parent()
+            && bin.file_name() == Some(std::ffi::OsStr::new("bin"))
+            && let Some(immutable) = bin.parent()
+            && immutable.file_name() == Some(std::ffi::OsStr::new("immutable"))
+        {
+            let release = immutable
+                .parent()
+                .context("missing immutable release root")?;
+            oqto_provisioning::bundled_runtime::validate(release)?;
+        }
+        Ok(())
+    };
+    if let Err(error) = audit() {
+        findings.push(ContractFinding {
+            id: "release.runtime-or-private-state".to_string(),
+            severity: CheckSeverity::Error,
+            expected: "matching immutable Node/Pi receipt and correctly owned process-private state".to_string(),
+            observed: format!("{error:#}"),
+            remediation: "use the owning OS identity and a complete verified release; ownership repair needs scoped backup/review, never recursive chown".to_string(),
+        });
+    }
+}
+
 async fn append_team_user_runner_findings(
     manifest: &oqto_provisioning::ProvisioningManifest,
     target_user: Option<&str>,
@@ -3797,6 +3826,20 @@ async fn append_team_user_runner_findings_inner(
         let actual_uid = linux_uid_for_user(&linux_username);
         match actual_uid {
             Some(uid) => {
+                let audit = get_user_home(&linux_username).and_then(|home| {
+                    let expected_uid = u32::try_from(uid).context("invalid resolved Linux UID")?;
+                    oqto_runner::runtime_guard::audit_history_state_owner(
+                        std::path::Path::new(&home),
+                        expected_uid,
+                    )
+                });
+                if let Err(error) = audit {
+                    findings.push(team_user_finding(
+                        &user_id, &username, "history.owner", oqto_provisioning::CheckSeverity::Error,
+                        "home/shard/DB/WAL/SHM owned by the resolved user; metadata-only audit",
+                        &format!("{error:#}"), "stop wrong-identity writers; repair only with reviewed scoped backups, never recursive chown",
+                    ));
+                }
                 if linux_uid != Some(uid) {
                     findings.push(team_user_finding(
                         &user_id,
@@ -4294,6 +4337,7 @@ async fn handle_doctor(
         let mut facts = collect_contract_host_facts(&manifest, config_path);
         let mut findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
         append_sudoers_findings(&manifest, &mut findings);
+        append_release_runtime_findings(&mut findings);
         append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
         let mut applied_fixes = Vec::new();
         if apply {
@@ -4302,6 +4346,7 @@ async fn handle_doctor(
                 facts = collect_contract_host_facts(&manifest, config_path);
                 findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
                 append_sudoers_findings(&manifest, &mut findings);
+                append_release_runtime_findings(&mut findings);
                 append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
             }
         }

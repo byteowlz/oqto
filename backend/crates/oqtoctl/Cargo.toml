@@ -28,6 +28,7 @@ oqto-eavs = { path = "../oqto-eavs" }
 oqto-host = { path = "../oqto-host" }
 oqto-placement = { path = "../oqto-placement" }
 oqto-provisioning = { path = "../oqto-provisioning" }
+oqto-runner = { path = "../oqto-runner" }
 reqwest.workspace = true
 reqwest-eventsource.workspace = true
 serde.workspace = true
