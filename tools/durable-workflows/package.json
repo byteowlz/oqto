@@ -1,0 +1,11 @@
+{
+	"name": "@byteowlz/oqto-durable-workflow-adapter",
+	"private": true,
+	"type": "module",
+	"engines": { "node": ">=24.14.1" },
+	"scripts": {
+		"test": "node --test adapter.test.mjs",
+		"test:native": "node --conditions=import --test native.test.mjs",
+		"check": "node --check adapter.mjs && node --check adapter.test.mjs && node --check native.test.mjs"
+	}
+}
