@@ -219,7 +219,7 @@ def main():
         state = rpc("pi_get_state", session_id=sid)["state"]
         assert state["thinkingLevel"] == "low", state
         assert state["model"]["thinkingLevelMap"]["minimal"] is None, state
-        native_id = state["sessionId"]
+        assert state["sessionId"] == sid, "Public state must retain platform identity"
         rpc("pi_prompt", session_id=sid, message="Reply only OK. Do not call tools.")
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -237,6 +237,15 @@ def main():
         assert (
             native.is_file()
         ), "Pi history must be durable on the host, not namespace-only"
+        header = json.loads(native.open().readline())
+        assert header["type"] == "session"
+        native_id = str(uuid.UUID(header["id"]))
+        entry = next(
+            s for s in rpc("pi_list_sessions")["sessions"] if s["session_id"] == sid
+        )
+        assert (
+            entry.get("external_history_id") == native_id
+        ), "Native alias must match Pi's durable header"
         rpc("pi_close_session", session_id=sid)
         rpc(
             "pi_create_session",
@@ -245,7 +254,13 @@ def main():
         )
         restored = rpc("pi_get_state", session_id=sid)["state"]
         assert (
-            restored["sessionId"] == native_id
+            restored["sessionId"] == sid
+        ), "Public state must retain platform identity"
+        restored_entry = next(
+            s for s in rpc("pi_list_sessions")["sessions"] if s["session_id"] == sid
+        )
+        assert (
+            restored_entry.get("external_history_id") == native_id
         ), "Cold restore must preserve native identity"
         assert restored["thinkingLevel"] == "low", restored
         assert restored["model"]["thinkingLevelMap"]["minimal"] is None, restored
