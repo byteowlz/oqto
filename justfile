@@ -308,6 +308,10 @@ install-system:
 check-pi-stable:
     python3 -B scripts/release/pi-update.py
 
+# Private real-sandbox RPC/provider/cold-restore proof; never touches live stores.
+test-sandboxed-bundled-pi runner runtime:
+    python3 -B scripts/dist/test-sandboxed-bundled-pi.py "{{runner}}" "{{runtime}}"
+
 # Combined immutable Node runtime and runner identity regression gates
 _test-node-canary:
     python3 -B scripts/tests/test-node-cli-links.py

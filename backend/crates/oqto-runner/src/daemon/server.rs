@@ -2850,6 +2850,7 @@ impl Runner {
                 input: vec!["text".to_string()],
                 context_window: 0,
                 max_tokens: 0,
+                thinking_level_map: None,
                 cost: None,
             });
         }
@@ -2874,6 +2875,7 @@ impl Runner {
             input: vec!["text".to_string()],
             context_window: 0,
             max_tokens: 0,
+            thinking_level_map: None,
             cost: None,
         })
     }
@@ -3066,19 +3068,32 @@ impl Runner {
             .set_thinking_level(&req.session_id, &req.level)
             .await
         {
-            Ok(response) => {
-                let level = response
-                    .data
-                    .as_ref()
-                    .and_then(|d| d.get("level"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&req.level)
-                    .to_string();
-                RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
-                    session_id: req.session_id,
-                    level,
-                })
+            Ok(response) if response.success => {
+                // Pi acknowledges this command without response data. The
+                // requested level is not authoritative: Pi may clamp it to
+                // model capabilities (e.g. minimal -> low). Read native state
+                // before telling clients which level actually took effect.
+                match self.pi_manager.get_state(&req.session_id).await {
+                    Ok(state) => {
+                        RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
+                            session_id: req.session_id,
+                            level: state.thinking_level,
+                        })
+                    }
+                    Err(error) => error_response(
+                        ErrorCode::PiSessionNotFound,
+                        format!(
+                            "Thinking level acknowledged but effective state unavailable: {error}"
+                        ),
+                    ),
+                }
             }
+            Ok(response) => error_response(
+                ErrorCode::Internal,
+                response
+                    .error
+                    .unwrap_or_else(|| "Pi rejected thinking level change".to_string()),
+            ),
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to set thinking level: {}", e),

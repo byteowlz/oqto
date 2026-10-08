@@ -646,6 +646,13 @@ pub struct PiModel {
     pub context_window: u64,
     #[serde(rename = "maxTokens")]
     pub max_tokens: u64,
+    /// Native model capability metadata; null means that a level is unsupported.
+    #[serde(
+        rename = "thinkingLevelMap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thinking_level_map: Option<std::collections::HashMap<String, Option<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost: Option<ModelCost>,
 }
@@ -822,6 +829,33 @@ impl PiMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_thinking_capabilities_preserve_null_and_absence() -> Result<(), serde_json::Error> {
+        let mut data = serde_json::json!({
+            "id": "fixture-reasoner", "name": "Fixture", "api": "openai-completions",
+            "provider": "fixture", "reasoning": true, "input": ["text"],
+            "contextWindow": 8192, "maxTokens": 512,
+            "thinkingLevelMap": {"off": "none", "minimal": null, "low": "low"}
+        });
+        let model: PiModel = serde_json::from_value(data.clone())?;
+        assert_eq!(
+            serde_json::to_value(model)?["thinkingLevelMap"],
+            data["thinkingLevelMap"]
+        );
+        let removed = data
+            .as_object_mut()
+            .and_then(|object| object.remove("thinkingLevelMap"));
+        assert!(removed.is_some());
+        let legacy: PiModel = serde_json::from_value(data)?;
+        assert!(legacy.thinking_level_map.is_none());
+        assert!(
+            serde_json::to_value(legacy)?
+                .get("thinkingLevelMap")
+                .is_none()
+        );
+        Ok(())
+    }
 
     // A minimal valid MessageStart event (simplest PiEvent variant)
     fn make_event() -> String {

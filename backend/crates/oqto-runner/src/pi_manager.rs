@@ -115,8 +115,105 @@ pub(crate) fn bundled_pi_runtime(executable: &std::path::Path) -> Option<PathBuf
     Some(immutable.join("pi-runtime/pi/pi"))
 }
 
+/// Grant only the bundled runtime closure through the portable path policy.
+/// Never expose the release store/state or override an explicit workspace deny.
+fn grant_bundled_runtime_readonly(
+    sandbox: &mut SandboxConfig,
+    pi_binary: &std::path::Path,
+    runner_executable: &std::path::Path,
+) -> Result<()> {
+    let Some(expected) = bundled_pi_runtime(runner_executable) else {
+        return Ok(());
+    };
+    if pi_binary != expected {
+        return Ok(());
+    }
+    let runtime = expected
+        .parent()
+        .and_then(std::path::Path::parent)
+        .context("Bundled Pi runtime has no closure directory")?;
+    for denied in &sandbox.deny_read {
+        let denied = std::path::Path::new(denied);
+        if denied.is_absolute() && (runtime.starts_with(denied) || denied.starts_with(runtime)) {
+            anyhow::bail!(
+                "Sandbox deny_read conflicts with required bundled Pi runtime: {}",
+                runtime.display()
+            );
+        }
+    }
+    let runtime = runtime.to_string_lossy().into_owned();
+    if !sandbox.allow_read.contains(&runtime) {
+        sandbox.allow_read.push(runtime.clone());
+    }
+    if !sandbox.deny_write.contains(&runtime) {
+        sandbox.deny_write.push(runtime);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod bundled_runtime_tests {
+    #[test]
+    fn bundled_runtime_is_narrow_readonly_and_idempotent() -> anyhow::Result<()> {
+        let runner =
+            std::path::Path::new("/var/lib/oqto/releases/release-a/immutable/bin/oqto-runner");
+        let pi = super::bundled_pi_runtime(runner)
+            .ok_or_else(|| anyhow::anyhow!("missing fixture runtime"))?;
+        let runtime = "/var/lib/oqto/releases/release-a/immutable/pi-runtime";
+        let mut policy = oqto_sandbox::SandboxConfig::default();
+        let original_read = policy.allow_read.clone();
+        let original_write = policy.allow_write.clone();
+        super::grant_bundled_runtime_readonly(&mut policy, &pi, runner)?;
+        super::grant_bundled_runtime_readonly(&mut policy, &pi, runner)?;
+        assert_eq!(
+            policy
+                .allow_read
+                .iter()
+                .filter(|p| p.as_str() == runtime)
+                .count(),
+            1
+        );
+        assert!(policy.deny_write.iter().any(|p| p == runtime));
+        assert_eq!(policy.allow_write, original_write);
+        assert!(original_read.iter().all(|p| policy.allow_read.contains(p)));
+        assert!(
+            !policy
+                .allow_read
+                .iter()
+                .any(|p| p == "/var/lib/oqto/releases")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bundled_runtime_respects_denials_and_custom_executables() -> anyhow::Result<()> {
+        let runner =
+            std::path::Path::new("/var/lib/oqto/releases/release-a/immutable/bin/oqto-runner");
+        let pi = super::bundled_pi_runtime(runner)
+            .ok_or_else(|| anyhow::anyhow!("missing fixture runtime"))?;
+        let runtime = "/var/lib/oqto/releases/release-a/immutable/pi-runtime";
+        for denied in [
+            "/var/lib/oqto",
+            runtime,
+            "/var/lib/oqto/releases/release-a/immutable/pi-runtime/pi/node/bin/node",
+        ] {
+            let mut policy = oqto_sandbox::SandboxConfig::default();
+            policy.deny_read.push(denied.to_string());
+            let before = policy.allow_read.clone();
+            assert!(super::grant_bundled_runtime_readonly(&mut policy, &pi, runner).is_err());
+            assert_eq!(policy.allow_read, before);
+        }
+        let mut custom = oqto_sandbox::SandboxConfig::default();
+        let before = custom.allow_read.clone();
+        super::grant_bundled_runtime_readonly(
+            &mut custom,
+            std::path::Path::new("/usr/local/bin/custom-pi"),
+            runner,
+        )?;
+        assert_eq!(custom.allow_read, before);
+        Ok(())
+    }
+
     #[test]
     fn resolves_release_owned_package_even_when_missing_to_fail_closed() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
@@ -959,6 +1056,12 @@ impl PiSessionManager {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
                 let mut effective_config = sandbox_config.with_workspace_config(&config.cwd);
+                grant_bundled_runtime_readonly(
+                    &mut effective_config,
+                    &self.config.pi_binary,
+                    &std::env::current_exe()
+                        .context("Resolve runner executable for runtime policy")?,
+                )?;
                 // Host secrets are never workspace-visible, regardless of
                 // profile grants: the runner control socket and TLS key
                 // material are denied explicitly.
@@ -2614,8 +2717,19 @@ impl PiSessionManager {
             );
         }
 
-        // Parse the text from response data
-        Ok(response.data.and_then(|d| d.as_str().map(String::from)))
+        // Official Pi RPC returns an object containing text, not a bare string.
+        let data = response
+            .data
+            .context("GetLastAssistantText response missing data")?;
+        anyhow::ensure!(
+            data.is_object(),
+            "GetLastAssistantText response data must be an object"
+        );
+        match data.get("text") {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
+            Some(_) => anyhow::bail!("GetLastAssistantText text must be a string or null"),
+        }
     }
 
     /// Enqueue a bounded control; active process identity is resolved only inside the runner.
