@@ -69,6 +69,9 @@ enum Command {
         /// (the strict gate requires services already active).
         #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
         doctor_strict: bool,
+        /// Absolute installer-owned executable: restart/check services inside the rollback transaction.
+        #[arg(long)]
+        post_activate_check: Option<PathBuf>,
         /// Number of superseded releases to retain when pruning. `current` and
         /// `last-good` are always preserved on top of this. 0 disables pruning.
         #[arg(long, default_value_t = 3)]
@@ -199,6 +202,7 @@ fn main() -> Result<()> {
             bin_dir,
             web_root,
             doctor_strict,
+            post_activate_check,
             keep_releases,
         } => install_release(
             &artifact,
@@ -206,8 +210,11 @@ fn main() -> Result<()> {
             &releases_root,
             &bin_dir,
             &web_root,
-            doctor_strict,
-            keep_releases,
+            ActivationPolicy {
+                doctor_strict,
+                keep_releases,
+                post_activate_check: post_activate_check.as_deref(),
+            },
         ),
         Command::Deps {
             manifest,
@@ -575,14 +582,19 @@ fn merge_tables(target: &mut toml::value::Table, updates: toml::value::Table) {
 /// Stage and transactionally activate a release artifact: verify -> extract ->
 /// activate. Acquisition (checksum + tarball extraction) is separated from
 /// activation so the transaction itself stays subprocess-free and testable.
+struct ActivationPolicy<'a> {
+    doctor_strict: bool,
+    keep_releases: usize,
+    post_activate_check: Option<&'a Path>,
+}
+
 fn install_release(
     artifact: &Path,
     checksum: &Path,
     releases_root: &Path,
     bin_dir: &Path,
     web_root: &Path,
-    doctor_strict: bool,
-    keep_releases: usize,
+    policy: ActivationPolicy<'_>,
 ) -> Result<()> {
     if !artifact.exists() {
         anyhow::bail!("Artifact not found: {}", artifact.display());
@@ -635,14 +647,9 @@ fn install_release(
         return Err(extraction_error);
     }
 
-    if let Err(activation_error) = activate_release(
-        &release_dir,
-        releases_root,
-        bin_dir,
-        web_root,
-        doctor_strict,
-        keep_releases,
-    ) {
+    if let Err(activation_error) =
+        activate_release_checked(&release_dir, releases_root, bin_dir, web_root, policy)
+    {
         // A failed staged release is disposable only after current/last-good
         // have been restored. Preserve it for diagnosis if rollback failed.
         let referenced = ["current", "last-good"].iter().any(|link| {
@@ -693,6 +700,7 @@ fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
 /// `current` -> relink bins -> strict-doctor gate. On a failed gate the previous
 /// release is restored (rollback); on success `last-good` is advanced and
 /// superseded releases pruned (`current`/`last-good` always preserved).
+#[cfg(test)]
 fn activate_release(
     release_dir: &Path,
     releases_root: &Path,
@@ -701,7 +709,62 @@ fn activate_release(
     doctor_strict: bool,
     keep_releases: usize,
 ) -> Result<()> {
+    activate_release_checked(
+        release_dir,
+        releases_root,
+        bin_dir,
+        web_root,
+        ActivationPolicy {
+            doctor_strict,
+            keep_releases,
+            post_activate_check: None,
+        },
+    )
+}
+
+fn validate_activation_check(program: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if !program.is_absolute() {
+        anyhow::bail!("activation check must be absolute");
+    }
+    let metadata = fs::symlink_metadata(program)?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o022 != 0
+        || metadata.mode() & 0o100 == 0
+    {
+        anyhow::bail!(
+            "activation check must be an installer-owned, non-writable regular executable"
+        );
+    }
+    let mut ancestor = program.parent();
+    while let Some(directory) = ancestor {
+        let metadata = fs::symlink_metadata(directory)?;
+        // A sticky system temporary directory cannot replace another UID's private child.
+        let sticky_root = metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+        if !metadata.is_dir()
+            || (!sticky_root
+                && (metadata.mode() & 0o022 != 0
+                    || (metadata.uid() != 0 && metadata.uid() != unsafe { libc::geteuid() })))
+        {
+            anyhow::bail!("unsafe activation check ancestor: {}", directory.display());
+        }
+        ancestor = directory.parent();
+    }
+    Ok(())
+}
+
+fn activate_release_checked(
+    release_dir: &Path,
+    releases_root: &Path,
+    bin_dir: &Path,
+    web_root: &Path,
+    policy: ActivationPolicy<'_>,
+) -> Result<()> {
     validate_staged_release(release_dir)?;
+    if let Some(program) = policy.post_activate_check {
+        validate_activation_check(program)?;
+    }
 
     // Record what `current` points at *before* the switch so a failed activation
     // can be rolled back to it (mirrors deploy.sh rollback_host).
@@ -718,7 +781,15 @@ fn activate_release(
     let activation = (|| {
         relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
         link_web_root(&current_link.join("immutable/frontend"), web_root)?;
-        if doctor_strict {
+        if let Some(program) = policy.post_activate_check {
+            let status = std::process::Command::new(program)
+                .status()
+                .context("running post-activation service check")?;
+            if !status.success() {
+                anyhow::bail!("post-activation service check failed: {status}");
+            }
+        }
+        if policy.doctor_strict {
             run_doctor_strict(release_dir)?;
         }
         Ok::<(), anyhow::Error>(())
@@ -757,7 +828,7 @@ fn activate_release(
 
     // Activation confirmed good: advance last-good and prune superseded releases.
     atomic_symlink(&releases_root.join("last-good"), release_dir)?;
-    let pruned = prune_old_releases(releases_root, keep_releases)?;
+    let pruned = prune_old_releases(releases_root, policy.keep_releases)?;
     if !pruned.is_empty() {
         println!(
             "Pruned {} old release(s): {}",
@@ -1509,6 +1580,65 @@ mod tests {
             Some(releases_root.join("current/immutable/bin/oqto").as_path()),
             "oqto should be relinked through current"
         );
+    }
+
+    #[test]
+    fn service_check_failure_restores_previous_release_before_marking_good() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let releases = root.path().join("releases");
+        let bins = root.path().join("bin");
+        let web = root.path().join("web");
+        mk_release_dir(&releases, "old", Some("oqto"));
+        mk_release_dir(&releases, "new", Some("oqto"));
+        activate_release(&releases.join("old"), &releases, &bins, &web, false, 0).unwrap();
+        let check = root.path().join("check");
+        fs::write(&check, "#!/bin/sh\nexit 7\n").unwrap();
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o700)).unwrap();
+        let result = activate_release_checked(
+            &releases.join("new"),
+            &releases,
+            &bins,
+            &web,
+            ActivationPolicy {
+                doctor_strict: false,
+                keep_releases: 0,
+                post_activate_check: Some(&check),
+            },
+        );
+        assert!(result.unwrap_err().to_string().contains("rolled back"));
+        assert_eq!(
+            read_link_target(&releases.join("current")),
+            Some(releases.join("old"))
+        );
+        assert_eq!(
+            read_link_target(&releases.join("last-good")),
+            Some(releases.join("old"))
+        );
+        assert_eq!(
+            bins.join("oqto").canonicalize().unwrap(),
+            releases.join("old/immutable/bin/oqto")
+        );
+        assert_eq!(
+            web.canonicalize().unwrap(),
+            releases.join("old/immutable/frontend")
+        );
+    }
+
+    #[test]
+    fn activation_check_rejects_relative_symlink_and_writable_programs() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let check = root.path().join("check");
+        fs::write(&check, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o700)).unwrap();
+        validate_activation_check(&check).unwrap();
+        assert!(validate_activation_check(Path::new("check")).is_err());
+        let alias = root.path().join("alias");
+        symlink(&check, &alias).unwrap();
+        assert!(validate_activation_check(&alias).is_err());
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(validate_activation_check(&check).is_err());
     }
 
     /// A second activation supersedes the first: `current`/`last-good`/bins all

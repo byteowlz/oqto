@@ -62,3 +62,9 @@ Findings that refine the remaining plan (probed against live releases, 2026-06-2
 - Doctor (`oqto-provisioning::evaluate_manifest`) is the single verifier shared by install, deploy preflight, and `oqto-setup` — no parallel gate logic in bash (`oqto-vemr.5`).
 - Privileged steps (sudoers, unit/socket setup, container lifecycle) route through the `oqto-hostd` broker (ADR-0009), not scattered `sudo` calls in scripts (`oqto-vemr.6`).
 - Enables the E2E matrix (`oqto-vemr.8`) to test one engine instead of N bash paths.
+
+### Transactional service validation during authorized deployment
+
+`oqto-setup install --post-activate-check /absolute/private/program` executes an installer-owned, non-group/other-writable regular executable after relinking and before advancing last-good. It rejects relative paths, symlinks and unsafe ancestor ownership/modes. The operator check must bound its runtime and restart/verify only approved profile services. A failed check uses the same canonical rollback as strict doctor, restoring prior current/binaries/frontend; the caller then restarts prior services. No second activation engine is needed. `--doctor-strict false` remains available when this check validates the actual service principal rather than invoking doctor as root. Tests prove callback failure restores current, last-good, binaries and frontend and unsafe callbacks are rejected.
+
+Private deployment build debt: current Zig emits an ignored deprecated linker optimization O1 warning; this is toolchain-only, not suppressed Rust/Clippy debt. Targeted production formatting/tests/all-target Clippy -D warnings are clean. No public release qualification or signing claim follows.
