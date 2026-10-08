@@ -93,7 +93,29 @@ impl AppCapabilityKind {
     /// its own `[capability.<name>]` table.
     #[must_use]
     pub fn requires_table(self) -> bool {
-        matches!(self, Self::Files | Self::Operations | Self::AgentContext)
+        self.table_shape().is_some()
+    }
+
+    /// TOML shape of the required `[capability.<name>]` table, quoted in
+    /// validation errors so an author can fix the manifest without reading
+    /// resolver source. `None` for capabilities that take no configuration.
+    #[must_use]
+    pub fn table_shape(self) -> Option<&'static str> {
+        match self {
+            Self::Files => Some(
+                "[[capability.files.resources]] with role = \"<name>\", \
+                 path = \"<work-directory-relative path>\", \
+                 access = \"read\" | \"readwrite\", optional watch = true|false",
+            ),
+            Self::Operations => Some(
+                "[capability.operations] with table = \"<package-relative operations file>\", \
+                 ids = [\"<operation id>\", ...]",
+            ),
+            Self::AgentContext => Some(
+                "[capability.agent_context] with catalog = \"<package-relative catalog file>\"",
+            ),
+            Self::Theme | Self::Kv => None,
+        }
     }
 }
 
@@ -302,11 +324,13 @@ pub(crate) fn validate_capabilities(
         ));
     }
     for kind in &requested_kinds {
-        if kind.requires_table() && !declared.contains(kind) {
+        if let Some(shape) = kind.table_shape()
+            && !declared.contains(kind)
+        {
             return Err(AppPackageError::new(
                 AppPackageErrorCode::MissingCapabilityTable,
                 format!(
-                    "capability {:?} requires a [capability.{}] table describing its exact authority",
+                    "capability {:?} requires a [capability.{}] table describing its exact authority; expected {shape}",
                     kind.name(),
                     kind.name()
                 ),
@@ -716,6 +740,51 @@ mod tests {
                 .code,
             AppPackageErrorCode::MissingCapabilityTable
         );
+    }
+
+    #[test]
+    fn missing_table_error_names_the_expected_shape() {
+        let files = validate_capabilities(&requested(&["files"]), &RawCapabilityTable::default())
+            .expect_err("missing files table must fail");
+        for key in [
+            "[[capability.files.resources]]",
+            "role",
+            "path",
+            "access",
+            "readwrite",
+            "watch",
+        ] {
+            assert!(
+                files.message.contains(key),
+                "files error should name {key:?}: {}",
+                files.message
+            );
+        }
+
+        let operations =
+            validate_capabilities(&requested(&["operations"]), &RawCapabilityTable::default())
+                .expect_err("missing operations table must fail");
+        assert!(
+            operations.message.contains("table ="),
+            "{}",
+            operations.message
+        );
+        assert!(
+            operations.message.contains("ids ="),
+            "{}",
+            operations.message
+        );
+
+        let context = validate_capabilities(
+            &requested(&["agent_context"]),
+            &RawCapabilityTable::default(),
+        )
+        .expect_err("missing agent_context table must fail");
+        assert!(context.message.contains("catalog ="), "{}", context.message);
+
+        for kind in [AppCapabilityKind::Theme, AppCapabilityKind::Kv] {
+            assert!(!kind.requires_table());
+        }
     }
 
     #[test]
