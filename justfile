@@ -97,8 +97,9 @@ dist-stage-frontend *ARGS:
     ./scripts/dist/stage-frontend.sh {{ARGS}}
 
 # Package dist payload as release tarball (+sha256)
-dist-package version="dev" target="local":
-    ./scripts/dist/package.sh {{version}} {{target}}
+# Package the declared Cargo version for this host; refuses dirty worktrees.
+dist-package version="" target="":
+    ./scripts/dist/package.sh "{{version}}" "{{target}}"
 
 # =============================================================================
 # Test
@@ -860,7 +861,8 @@ install-hooks:
 # Deployment
 # =============================================================================
 
-# Deploy to all configured hosts (build + upload + restart)
+# Deploy to all configured hosts: build a clean versioned release (or use
+# --artifact/--checksum) and activate it through the oqto-setup transaction.
 deploy *ARGS:
     ./scripts/deploy.sh {{ARGS}}
 
@@ -868,17 +870,9 @@ deploy *ARGS:
 deploy-host name *ARGS:
     ./scripts/deploy.sh --host {{name}} {{ARGS}}
 
-# Deploy to a specific host with runner stream tracing enabled (default trace dir)
-deploy-host-debug name *ARGS:
-    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir /tmp/oqto-stream-traces {{ARGS}}
-
-# Deploy to a specific host with runner stream tracing enabled (custom trace dir)
-deploy-host-debug-dir name trace_dir *ARGS:
-    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir {{trace_dir}} {{ARGS}}
-
-# Deploy without rebuilding (use existing artifacts)
-deploy-quick *ARGS:
-    ./scripts/deploy.sh --skip-build {{ARGS}}
+# Protected owner-correct oqto-log backfill only; binaries are not touched
+deploy-backfill name *ARGS:
+    ./scripts/deploy.sh --host {{name}} --backfill-only {{ARGS}}
 
 # Offline publication gate tests (no build, download, or deployment)
 test-release-publication-gates: test-release-tag-version test-release-assets
@@ -891,12 +885,14 @@ test-release-tag-version:
 test-release-assets:
     python3 -B scripts/tests/test-release-assets.py
 
-# Verify release/dev dependency policy behavior without deploying
+# Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
 test-deploy-mode:
     ./scripts/tests/deploy-mode-test.sh
     ./scripts/tests/test-deploy-private-staging.sh
     ./scripts/tests/test-deploy-bootstrap-invocation.sh
     python3 -B scripts/tests/test-verified-setup-bootstrap.py
+    python3 -B scripts/tests/test-deploy-transaction.py
+    python3 -B scripts/tests/test-release-provenance.py
 
 # Offline install/update matrix preflight regression checks (no root or host changes)
 test-install-matrix:
@@ -918,14 +914,6 @@ test-release-version-sync:
 # Dist sources resolve to pinned refs, preserving dirty or unknown local caches
 test-dist-sync-pins:
     ./scripts/tests/test-dist-sync-pins.sh
-
-# Deploy only backend binaries (skip frontend)
-deploy-backend *ARGS:
-    ./scripts/deploy.sh --skip-frontend {{ARGS}}
-
-# Deploy only frontend (skip backend binaries)
-deploy-frontend *ARGS:
-    ./scripts/deploy.sh --skip-backend {{ARGS}}
 
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:

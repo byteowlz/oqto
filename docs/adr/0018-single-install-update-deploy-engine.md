@@ -1,6 +1,6 @@
 # One install/update/deploy engine: one activation path, one artifact-acquisition path
 
-Status: proposed; partially implemented (consolidates epic `oqto-vemr`; supersedes the bash-first operational layer that grew around ADR-0016). Refined 2026-06-25 for portability (ADR-0020): the bundle is multi-target and activation is supervisor-agnostic.
+Status: accepted for activation (ADR-0056 makes `scripts/deploy.sh` a thin driver over one `oqto-setup install` transaction); acquisition consolidation still partially implemented (consolidates epic `oqto-vemr`; supersedes the bash-first operational layer that grew around ADR-0016). Refined 2026-06-25 for portability (ADR-0020): the bundle is multi-target and activation is supervisor-agnostic.
 
 ADR-0016 defined the right model — one host layout, one `dist/manifest.toml`, one transactional activation (release stage → validate → symlink switch → relink bins → doctor). The *implementation* never converged on it: ~11k lines of bash (`scripts/deploy.sh` 2178 LOC + 21 `scripts/setup/*.sh` modules + dist scripts) carry the operational logic, while the typed core (`oqto-provisioning` + `oqto-setup`, ~1.1k LOC) that proves the model is shadowed by bash reimplementations. We decide to collapse onto the typed core and delete the duplicates.
 

@@ -26,7 +26,7 @@ REQUIRED_BINS = {
     "oqto", "oqtoctl", "oqto-setup", "oqto-runner", "oqto-files",
     "oqto-sandbox", "oqto-ssh-proxy", "oqto-usermgr", "pi-bridge",
 }
-RELEASE_NAME = re.compile(r"oqto-v[0-9][A-Za-z0-9._+-]*-(?:x86_64|aarch64)-unknown-linux-gnu")
+RELEASE_NAME = re.compile(r"oqto-v?[0-9][A-Za-z0-9._+-]*-(?:x86_64|aarch64)-unknown-linux-gnu")
 
 
 class InvalidBundle(ValueError):

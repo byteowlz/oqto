@@ -30,6 +30,8 @@ export PATH="$scratch/fake-bin:$PATH"
 # per-host unpredictable private staging directory, without remote mutation.
 source "$scratch/stage-function.sh"
 err() { printf 'stage error: %s\n' "$*" >&2; }
+TRANSACTION="$ROOT_DIR/scripts/dist/deploy-transaction.py"
+BOOTSTRAP="$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py"
 DEPLOY_ARTIFACT="$scratch/quote'folder/oqto-v0.5.0-x86_64-unknown-linux-gnu.tar.gz"
 DEPLOY_CHECKSUM="$scratch/quote'folder/archive.sha256"
 remote_dir="$(stage_private_remote_release test-host)"
@@ -37,6 +39,19 @@ remote_dir="$(stage_private_remote_release test-host)"
 [[ "$(head -1 "$FAKE_SCP_ARGS")" == -- ]]
 [[ "$(grep -Fx -- "$(realpath -e -- "$DEPLOY_ARTIFACT")" "$FAKE_SCP_ARGS")" == "$(realpath -e -- "$DEPLOY_ARTIFACT")" ]]
 [[ "$(grep -Fx -- "$(realpath -e -- "$DEPLOY_CHECKSUM")" "$FAKE_SCP_ARGS")" == "$(realpath -e -- "$DEPLOY_CHECKSUM")" ]]
+# The transaction and verified bootstrap travel with the artifact.
+grep -Fxq -- "$TRANSACTION" "$FAKE_SCP_ARGS"
+grep -Fxq -- "$BOOTSTRAP" "$FAKE_SCP_ARGS"
+# Locally packaged names without the tag-style v are canonical too.
+cp -- "$scratch/quote'folder/oqto-v0.5.0-x86_64-unknown-linux-gnu.tar.gz" "$scratch/quote'folder/oqto-0.5.0-x86_64-unknown-linux-gnu.tar.gz"
+DEPLOY_ARTIFACT="$scratch/quote'folder/oqto-0.5.0-x86_64-unknown-linux-gnu.tar.gz"
+[[ "$(stage_private_remote_release test-host)" == /tmp/oqto-deploy.ABCD1234 ]]
+# A timestamp-named build can never be staged.
+cp -- "$DEPLOY_ARTIFACT" "$scratch/quote'folder/oqto-20261009-abc-linux-x86_64.tar.gz"
+DEPLOY_ARTIFACT="$scratch/quote'folder/oqto-20261009-abc-linux-x86_64.tar.gz"
+if stage_private_remote_release test-host > /dev/null 2>&1; then
+    echo 'non-canonical artifact name unexpectedly staged' >&2; exit 1
+fi
 # A colon-bearing source must be denied before any remote command can run.
 mkdir -p "$scratch/ambiguous:source"
 DEPLOY_ARTIFACT="$scratch/ambiguous:source/oqto-v0.5.0-x86_64-unknown-linux-gnu.tar.gz"

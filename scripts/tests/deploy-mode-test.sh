@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Deploy driver policy regressions: everything here runs as --dry-run or fails
+# before any host contact, against a throwaway hosts file and git checkout.
+# Assertions match the literal "$transaction" text of the printed remote script.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,67 +17,89 @@ ssh = ""
 local = true
 mode = "single-user"
 user = "test"
-frontend = false
-web_root = ""
-binaries = []
-services = []
+frontend = true
+web_root = "/var/www/oqto"
 EOF
 
-common=(
-  --host test-local
-  --config "$tmpdir/hosts.toml"
-  --dry-run
-  --skip-build
-  --allow-legacy-path
-  --status
-)
+# A negated grep never fails under set -e; refute must exit explicitly.
+refute() {
+  local label="$1" pattern="$2" text="$3"
+  if grep -q -- "$pattern" <<<"$text"; then echo "FAIL: $label matched '$pattern'" >&2; exit 1; fi
+}
 
-release_output="$($DEPLOY "${common[@]}" --mode release 2>&1)"
+expect_fail() {
+  local label="$1" needle="$2"; shift 2
+  if "$@" >"$tmpdir/out" 2>&1; then
+    echo "FAIL: $label unexpectedly succeeded" >&2; cat "$tmpdir/out" >&2; exit 1
+  fi
+  grep -q -- "$needle" "$tmpdir/out" || { echo "FAIL: $label lacks '$needle'" >&2; cat "$tmpdir/out" >&2; exit 1; }
+}
+
+printf 'fixture\n' > "$tmpdir/oqto-0.0.1-x86_64-unknown-linux-gnu.tar.gz"
+(cd "$tmpdir" && sha256sum oqto-0.0.1-x86_64-unknown-linux-gnu.tar.gz > oqto-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
+artifact=(--artifact "$tmpdir/oqto-0.0.1-x86_64-unknown-linux-gnu.tar.gz"
+  --checksum "$tmpdir/oqto-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256")
+common=(--host test-local --config "$tmpdir/hosts.toml" --dry-run)
+
+# Release vs development dependency policy.
+release_output="$("$DEPLOY" "${common[@]}" "${artifact[@]}" --mode release 2>&1)"
 grep -q 'dependency gate: eavs >=' <<<"$release_output"
-if grep -q 'installed version preserved' <<<"$release_output"; then
-  echo "release mode unexpectedly used development dependency policy" >&2
-  exit 1
-fi
-
-dev_output="$($DEPLOY "${common[@]}" --mode dev 2>&1)"
-grep -q 'Development dependency mode: preserving target-installed tools' <<<"$dev_output"
+refute 'release mode' 'installed version preserved' "$release_output"
+dev_output="$("$DEPLOY" "${common[@]}" "${artifact[@]}" --mode dev 2>&1)"
 grep -q 'dependency presence gate: eavs (installed version preserved)' <<<"$dev_output"
-if grep -q 'dependency gate: eavs >=' <<<"$dev_output"; then
-  echo "dev mode unexpectedly enforced the release version pin" >&2
-  exit 1
-fi
+refute 'dev mode' 'dependency gate: eavs >=' "$dev_output"
+expect_fail "unknown mode" "Invalid --mode 'unsupported'" "$DEPLOY" --mode unsupported --config "$tmpdir/hosts.toml"
 
-if "$DEPLOY" --mode unsupported --config "$tmpdir/hosts.toml" >/dev/null 2>"$tmpdir/error"; then
-  echo "unknown deploy mode unexpectedly succeeded" >&2
-  exit 1
-fi
-grep -q "Invalid --mode 'unsupported'" "$tmpdir/error"
+# Activation goes through the verified bootstrap and one root transaction.
+grep -q 'verified-setup-bootstrap.py' <<<"$release_output"
+grep -q 'transaction=.*/deploy-transaction.py' <<<"$release_output"
+grep -q 'python3 "$transaction" activate' <<<"$release_output"
+grep -q -- '--profile personal --principal test' <<<"$release_output"
+refute 'activation' 'migrate-oqto-log\|pkill\|mmry-jsonl' "$release_output"
 
+# History is never part of activation; backfill is explicit and separate.
+refute 'activation' 'python3 "$transaction" backfill' "$release_output"
+backfill_output="$("$DEPLOY" "${common[@]}" --backfill-only --backfill-modes sync-identities,validate 2>&1)"
+grep -q 'python3 "$transaction" backfill' <<<"$backfill_output"
+grep -qE -- '--modes sync-identities\\?,validate' <<<"$backfill_output"  # %q escapes the comma
+refute 'backfill-only' 'activate\|dist-stage\|verified-setup-bootstrap' "$backfill_output"
+expect_fail "destructive backfill mode" "--backfill-modes must list only" \
+  "$DEPLOY" "${common[@]}" --backfill-only --backfill-modes rebuild-from-jsonl
+expect_fail "conflicting backfill flags" "mutually exclusive" \
+  "$DEPLOY" "${common[@]}" --backfill --backfill-only
+
+# Overrides are explicit and forwarded verbatim.
+override_output="$("$DEPLOY" "${common[@]}" "${artifact[@]}" --allow-downgrade --allow-dirty-source 2>&1)"
+grep -q -- '--allow-downgrade' <<<"$override_output"
+grep -q -- '--allow-dirty-source' <<<"$override_output"
+refute 'default policy' '--allow-downgrade' "$release_output"
+
+# Artifact inputs and removed legacy flags fail closed.
 printf 'not a release\n' > "$tmpdir/unverified.tar.gz"
-if "$DEPLOY" "${common[@]}" --mode release --artifact "$tmpdir/unverified.tar.gz" >"$tmpdir/unverified.out" 2>&1; then
-  echo "deploy accepted an artifact without independent checksum input" >&2
-  exit 1
-fi
-grep -q 'checksum' "$tmpdir/unverified.out"
-sha256sum "$tmpdir/unverified.tar.gz" > "$tmpdir/unverified.tar.gz.sha256"
-verified_output="$("$DEPLOY" "${common[@]}" --mode release \
-  --artifact "$tmpdir/unverified.tar.gz" --checksum "$tmpdir/unverified.tar.gz.sha256" 2>&1)"
-grep -q 'dependency gate: eavs >=' <<<"$verified_output"
+expect_fail "artifact without checksum" "checksum" "$DEPLOY" "${common[@]}" --artifact "$tmpdir/unverified.tar.gz"
+for legacy in --skip-build --allow-legacy-path --prepare-only --resume --skip-frontend --remote-build --trace-streams; do
+  expect_fail "legacy flag $legacy" "Unknown option" "$DEPLOY" "${common[@]}" "$legacy"
+done
 
-help_output="$($DEPLOY --help)"
-grep -q -- '--mode MODE' <<<"$help_output"
+# Building from a dirty or untracked worktree is refused before host contact.
+checkout="$tmpdir/checkout"
+mkdir -p "$checkout/scripts/dist" "$checkout/deploy" "$checkout/backend"
+cp "$DEPLOY" "$checkout/scripts/deploy.sh"
+cp "$ROOT_DIR/scripts/dist/verify-immutable-migrations.py" "$checkout/scripts/dist/"
+cp "$ROOT_DIR/dependencies.toml" "$checkout/"
+printf '[workspace.package]\nversion = "0.0.1"\n' > "$checkout/backend/Cargo.toml"
+cp "$tmpdir/hosts.toml" "$checkout/deploy/hosts.toml"
+migration=backend/crates/oqto/migrations/20260901001_oqto_apps_v0.sql
+mkdir -p "$checkout/$(dirname "$migration")"
+cp "$ROOT_DIR/$migration" "$checkout/$migration"
+git -C "$checkout" init -q
+git -C "$checkout" -c user.email=t@example.invalid -c user.name=t add -A
+git -C "$checkout" -c user.email=t@example.invalid -c user.name=t commit -qm fixture
+printf 'scratch\n' > "$checkout/untracked.txt"
+expect_fail "dirty build" "uncommitted or untracked" "$checkout/scripts/deploy.sh" --host test-local --dry-run
 
-# The release bootstrap may never regress to an elevated wildcard tar
-# extraction or a host PATH fallback when an artifact is available.
-python3 - "$DEPLOY" <<'PY'
-from pathlib import Path
-import sys
-text = Path(sys.argv[1]).read_text()
-for name in ("acquire_managed_tools", "deploy_via_oqto_setup_install"):
-    body = text.split(f"\n{name}() {{\n", 1)[1].split("\n}\n", 1)[0]
-    assert "stage_private_remote_release" in body, name
-    assert "verified-setup-bootstrap.py" in body, name
-    assert "tar -xzf" not in body and "--wildcards" not in body, name
-PY
+help_output="$("$DEPLOY" --help)"
+grep -q -- '--backfill-only' <<<"$help_output"
+grep -q -- '--allow-downgrade' <<<"$help_output"
 
 echo "deploy mode tests passed"
