@@ -312,6 +312,10 @@ check-pi-stable:
 test-sandboxed-bundled-pi runner runtime:
     python3 -B scripts/dist/test-sandboxed-bundled-pi.py "{{runner}}" "{{runtime}}"
 
+# Prevent local speech isolation headers drifting out of generated Caddy profiles.
+test-speech-isolation:
+    python3 -B scripts/tests/test-speech-isolation.py
+
 # Combined immutable Node runtime and runner identity regression gates
 _test-node-canary:
     python3 -B scripts/tests/test-node-cli-links.py

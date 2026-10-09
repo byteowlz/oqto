@@ -354,7 +354,10 @@ cat > /etc/caddy/Caddyfile <<EOF
         file_server
     }
 
+    # Local speech also requires HTTPS/loopback at the outer serving origin.
     header {
+        Cross-Origin-Opener-Policy same-origin
+        Cross-Origin-Embedder-Policy require-corp
         X-Content-Type-Options nosniff
         X-Frame-Options SAMEORIGIN
         Referrer-Policy strict-origin-when-cross-origin
