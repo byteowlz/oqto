@@ -10,8 +10,11 @@ python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 # templates must be synced onto disk (scripts/dist/sync.sh) before packaging.
 python3 scripts/lint/verify-dist-manifest.py
 
-VERSION="${1:-$(date +%Y%m%d%H%M%S)}"
-TARGET="${2:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}"
+# The version must be the declared Cargo workspace version (optionally with a
+# tag-style leading v); the target defaults to this host's Rust triple, the
+# only names oqto-setup install accepts.
+VERSION="${1:-$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml","rb"))["workspace"]["package"]["version"])')}"
+TARGET="${2:-$(uname -m)-unknown-linux-gnu}"
 OUT_DIR="${OUT_DIR:-dist/out}"
 NAME="oqto-${VERSION}-${TARGET}"
 STAGE_DIR="$OUT_DIR/$NAME"
@@ -25,6 +28,11 @@ cp -R dist/immutable "$STAGE_DIR/"
 rm -f "$STAGE_DIR/immutable/bin/.gitkeep"
 cp -R dist/mutable-templates "$STAGE_DIR/"
 cp dist/manifest.toml "$STAGE_DIR/manifest.toml"
+# Record version + source commit; refuses mismatched versions and dirty trees.
+provenance_args=()
+[[ "${OQTO_DIST_ALLOW_DIRTY:-0}" == "1" ]] && provenance_args+=(--allow-dirty)
+python3 scripts/dist/record-release-provenance.py --root "$ROOT_DIR" \
+  --manifest "$STAGE_DIR/manifest.toml" --version "$VERSION" "${provenance_args[@]}"
 
 # .gitkeep exists only so git tracks otherwise-empty directories. Shipping it
 # leaks a repository artifact into provisioned user content (agent skills and
