@@ -58,6 +58,12 @@ def main() -> int:
         "(it is built at release time via scripts/dist/stage-frontend.sh)",
     )
     parser.add_argument(
+        "--allow-missing-runtime",
+        action="store_true",
+        help="Do not fail when runtime helpers (bundled Pi runtime, provider login) "
+        "are missing on disk (they are staged at release time via scripts/dist/)",
+    )
+    parser.add_argument(
         "--target", choices=("full", "runner_only"), default="full",
         help="Validate the full distribution or the explicit Linux runner-only artifact",
     )
@@ -170,10 +176,14 @@ def main() -> int:
             # The frontend bundle is built at release time
             # (scripts/dist/stage-frontend.sh) and is not tracked in git.
             is_frontend = kind == "frontend"
+            # The bundled Pi runtime and provider-login helper are staged at
+            # release time (scripts/dist/stage-*.sh) and are not tracked in git.
+            is_runtime = kind == "runtime-helper"
             exempt = (
                 (is_binary and args.allow_missing_binaries)
                 or (is_extension and args.allow_missing_extensions)
                 or (is_frontend and args.allow_missing_frontend)
+                or (is_runtime and args.allow_missing_runtime)
             )
             if missing_source and not exempt:
                 fail(errors, f"{prefix}.source does not exist: {source}")
