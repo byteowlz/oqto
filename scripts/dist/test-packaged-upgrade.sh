@@ -76,11 +76,24 @@ if "$new_setup" install --artifact "$candidate" --checksum "$candidate.sha256" \
   --doctor-strict false >/private/reinstall.log 2>&1; then
   echo 'FAIL active release was unexpectedly overwritten' >&2; exit 1
 fi
-grep -q 'refusing to overwrite an active or last-good release' /private/reinstall.log
+grep -q 'only strictly newer releases install' /private/reinstall.log
 test "$(basename "$(readlink /private/releases/current)")" = "$new_id"
 /private/bin/oqto --version
 test -f /private/web/index.html
 sha256sum --check /private/before.sha256
 echo 'PASS identical reinstall refusal preserves active release and user config'
-echo 'PASS canonical development predecessor failed-activation restoration, upgrade and reinstall'
+# Downgrade to the predecessor is refused before extraction, without mutation.
+before_releases=$(ls /private/releases | sort | tr '\n' ' ')
+if "$new_setup" install --artifact "$previous" --checksum "$previous.sha256" \
+  --releases-root /private/releases --bin-dir /private/bin --web-root /private/web \
+  --doctor-strict false >/private/downgrade.log 2>&1; then
+  echo 'FAIL downgrade was installed without --allow-downgrade' >&2; exit 1
+fi
+cat /private/downgrade.log
+grep -q 'only strictly newer releases install' /private/downgrade.log
+test "$(basename "$(readlink /private/releases/current)")" = "$new_id"
+test "$(ls /private/releases | sort | tr '\n' ' ')" = "$before_releases"
+sha256sum --check /private/before.sha256
+echo 'PASS downgrade refusal preserves active release, stages and user config'
+echo 'PASS canonical development predecessor failed-activation restoration, upgrade, reinstall and downgrade refusal'
 CONTAINER
