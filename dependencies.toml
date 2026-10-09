@@ -13,13 +13,13 @@ description = "Main platform (this repo)"
 # `oqto-setup acquire`. Refresh with `just update-deps`.
 eavs = "0.8.1"
 mmry = "0.13.4"
-trx = "0.6.3"
+trx = "0.7.1"
 agntz = "0.3.2"
 sx = "2.5.0"
-scrpr = "1.1.2"
+scrpr = "1.3.0"
 tmpltr = "0.3.2"
-sldr = "0.8.1"
-skdlr = "0.2.8"
+sldr = "0.10.0"
+skdlr = "0.3.0"
 ignr = "0.1.3"
 
 # Exact entrypoint ownership for `oqto-setup acquire --install-bin`. These
