@@ -29,6 +29,21 @@ There must be exactly one acquisition path: **manifest-driven download of prebui
 - **Checked dependency binaries have explicit ownership and a separate atomic activation pointer** (partial implementation `oqto-vemr.9.3`, 2026-09-27). `[binary_owners]` in `dependencies.toml` names the executable entries allowed for each pinned byteowlz tool; undeclared/colliding/Oqto-platform names fail closed. `oqto-setup acquire --install-bin` validates *all* staged tool archives before writing entrypoints, refuses unmanaged regular files and symlinks (including previously installed direct binaries), and stages binaries under an Oqto-owned release directory with one `current` switch for upgrades. Existing managed entrypoint symlinks point through that pointer. This is distinct from platform release activation and does not silently adopt old `/usr/local/bin` files: the operator must inventory/back up/migrate those explicitly. The current tool store is under `<bin_dir>/.oqto-tools/`; its final canonical storage location and old-version pruning are not accepted yet. For `--install-bin`, the installer rejects `--dest`, downloads into a fresh installer-owned `0700` directory beneath a verified root-owned sticky `/tmp` (macOS `/private/tmp`), validates hashes there, and extracts those same protected bytes before cleaning the stage. Artifact-only `acquire --dest` remains a distinct staging operation and does not install tools. This addresses the unprivileged-user archive-swap seam; privileged canaries and signing/provenance remain separate release gates. First-install new entrypoint symlinks are provisioned before the pointer switch, so a crash at that instant can leave dangling links; do not claim full crash-atomic first installation. Future acquisition targets must preserve these refusal semantics, not restore a direct tar→PATH overwrite.
 - **The embedded-installer bootstrap has a pre-execution trust boundary** (clarification 2026-09-25, partial implementation `oqto-vemr.9.2`). Because `oqto-setup` cannot validate itself before it is extracted from a release archive, one small standard-library bootstrap checks the independently obtained per-artifact SHA-256 and canonical full layout, accepts only bounded regular members, and writes exactly one installer into an owner-private directory. The matrix and deploy reuse this boundary; neither may run wildcard tar extraction or select an installer with `find`. After bootstrap, only `oqto-setup` owns activation. This prevents unchecked extraction/execution, **not** source-authenticity or signing; release signatures and native local/remote deploy proof remain mandatory. Separately, `oqto-setup` uses one bounded tar extractor for release and checksummed tool archives, rather than an elevated external tar extraction for tool acquisition.
 
+### Shared tool publication qualification (2026-10-08)
+
+Private acquisition and incomplete release assembly use installer-owned `0700`
+directories. A completed published release and its store directories must instead
+be installer-owned `0755`, with executable files `0755` and the lock `0600`.
+Root installation therefore produces root-owned releases that agent Principals
+can traverse/execute but cannot modify. Existing stores with unexpected ownership
+or permissions fail closed, including idempotent upgrades; they are not silently
+chmodded or adopted. Operator-audited migration/rollback remains explicit.
+An isolated rootless-container qualification exercises the canonical installer,
+then a capability-free second UID executes tools and is denied writes. Changing
+only the published release to `0700` must deny execution under that UID.
+This is DAC immutability against agent Principals, not a read-only mount or an
+immutable inode flag, and does not remove the first-install crash window above.
+
 ## Non-goals
 
 - Not a redesign. ADR-0016's layout, manifest, file-class model, and activation contract stand unchanged — this ADR is about deleting the bash that shadows them.

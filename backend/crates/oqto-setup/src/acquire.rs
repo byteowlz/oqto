@@ -349,6 +349,30 @@ fn current_tool_release(root: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+/// A shared store must be traversable and writable only by its installer.
+/// In a root installation this enforces root ownership; unprivileged isolated
+/// installations retain the same ownership contract with their effective UID.
+fn set_public_directory_mode(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+fn validate_tool_store_directory(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o755
+    {
+        bail!(
+            "tool store directory must be installer-owned mode 0755: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Install an entire verified set through one versioned directory and a single
 /// `current` pointer switch. Existing files/symlinks are never adopted. Only
 /// entrypoints already pointing to our managed release may be upgraded.
@@ -411,7 +435,10 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
     }
 
     match std::fs::symlink_metadata(bin_dir) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir_all(bin_dir)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(bin_dir)?;
+            set_public_directory_mode(bin_dir)?;
+        }
         Err(err) => return Err(err).with_context(|| format!("reading {}", bin_dir.display())),
         Ok(meta) if meta.file_type().is_dir() => (),
         Ok(_) => bail!(
@@ -419,6 +446,7 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
             bin_dir.display()
         ),
     }
+    validate_tool_store_directory(bin_dir)?;
     let root = bin_dir.join(".oqto-tools");
     match std::fs::symlink_metadata(&root) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -435,6 +463,7 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
                 }
             }
             std::fs::create_dir(&root)?;
+            set_public_directory_mode(&root)?;
         }
         Err(err) => return Err(err).with_context(|| format!("reading {}", root.display())),
         Ok(meta) if meta.file_type().is_dir() => (),
@@ -442,11 +471,16 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
     }
     let releases = root.join("releases");
     match std::fs::symlink_metadata(&releases) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&releases)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&releases)?;
+            set_public_directory_mode(&releases)?;
+        }
         Err(err) => return Err(err).with_context(|| format!("reading {}", releases.display())),
         Ok(meta) if meta.file_type().is_dir() => (),
         Ok(_) => bail!("unmanaged tool release store: {}", releases.display()),
     }
+    validate_tool_store_directory(&root)?;
+    validate_tool_store_directory(&releases)?;
     use std::os::unix::fs::OpenOptionsExt;
     let lock_path = root.join(".lock");
     let lock = std::fs::OpenOptions::new()
@@ -456,7 +490,12 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(&lock_path)?;
-    if !lock.metadata()?.file_type().is_file() {
+    use std::os::unix::fs::MetadataExt;
+    let lock_metadata = lock.metadata()?;
+    if !lock_metadata.file_type().is_file()
+        || lock_metadata.uid() != unsafe { libc::geteuid() }
+        || lock_metadata.mode() & 0o777 != 0o600
+    {
         bail!("unsafe tool release lock: {}", lock_path.display());
     }
     lock.lock().context("locking tool release state")?;
@@ -464,10 +503,16 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
     let previous = current_tool_release(&root)?;
     let mut previous_names = BTreeSet::new();
     if let Some(ref prior) = previous {
+        validate_tool_store_directory(prior)?;
         for entry in std::fs::read_dir(prior)? {
             let entry = entry?;
             let bin = entry.file_name().to_string_lossy().into_owned();
-            if !valid_bin_name(&bin) || !entry.file_type()?.is_file() {
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            if !valid_bin_name(&bin)
+                || !metadata.file_type().is_file()
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.mode() & 0o777 != 0o755
+            {
                 bail!("unsafe managed tool release entry: {bin}");
             }
             previous_names.insert(bin);
@@ -506,6 +551,8 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
     let release = tempfile::Builder::new()
         .prefix(".oqto-acq-")
         .tempdir_in(&releases)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(release.path(), std::fs::Permissions::from_mode(0o700))?;
     if let Some(ref prior) = previous {
         for bin in &previous_names {
             std::fs::copy(prior.join(bin), release.path().join(bin))?;
@@ -531,6 +578,11 @@ pub fn install_staged(staged: &[StagedTool<'_>], bin_dir: &Path) -> Result<Vec<S
                 .with_context(|| format!("creating tool entrypoint {}", dest.display()))?;
             added.push(dest);
         }
+        // Publication is not a private download stage. Agents must be able
+        // to traverse the release, but cannot mutate installer-owned bytes.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(release.path(), std::fs::Permissions::from_mode(0o755))?;
+        validate_tool_store_directory(release.path())?;
         let final_release = release.keep();
         let next = tempfile::Builder::new()
             .prefix(".oqto-pointer-")
@@ -618,6 +670,18 @@ mod tests {
         drop(stage);
         assert!(!path.exists());
         Ok(())
+    }
+
+    #[test]
+    fn tool_store_refuses_nonpublic_or_writable_directories() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir()?;
+        for mode in [0o700, 0o775, 0o777] {
+            std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(mode))?;
+            assert!(validate_tool_store_directory(root.path()).is_err());
+        }
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755))?;
+        validate_tool_store_directory(root.path())
     }
 
     #[test]
@@ -823,6 +887,9 @@ mod tests {
         )?;
         assert_eq!(installed, vec!["tool"]);
         assert_eq!(std::fs::read(bin_dir.join("tool"))?, b"tool");
+        use std::os::unix::fs::MetadataExt;
+        let published = std::fs::read_link(bin_dir.join(".oqto-tools/current"))?;
+        assert_eq!(std::fs::metadata(published)?.mode() & 0o777, 0o755);
         assert!(!bin_dir.join("README").exists());
         assert!(!bin_dir.join("helper").exists());
         assert!(
