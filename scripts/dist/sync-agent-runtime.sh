@@ -19,23 +19,34 @@ EXT_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 DO_PI=true
 DO_EXT=true
 
-# Extensions installed by default (mirrors scripts/setup/06-pi-extensions.sh).
-PI_DEFAULT_EXTENSIONS=(
-  pi-auto-rename pi-azure-empty-response-guard pi-introspection pi-oqto-bridge
-  pi-oqto-todos pi-custom-context-files pi-read-image-guard pi-read-file-guard
-  pi-openai-completions-convert-think-tags
-)
+# Extensions installed by default. oqto-usermgr embeds this same file for
+# new-principal provisioning; this script handles setup/deploy backfills.
+PI_DEFAULT_EXTENSIONS_FILE="${PI_DEFAULT_EXTENSIONS_FILE:-$SCRIPT_DIR/pi-default-extensions.txt}"
+[[ -f "$PI_DEFAULT_EXTENSIONS_FILE" ]] || {
+  echo "error: Pi default extension list missing: $PI_DEFAULT_EXTENSIONS_FILE" >&2
+  exit 1
+}
+mapfile -t PI_DEFAULT_EXTENSIONS < <(grep -Ev '^[[:space:]]*(#|$)' "$PI_DEFAULT_EXTENSIONS_FILE")
+[[ " ${PI_DEFAULT_EXTENSIONS[*]} " == *" pi-history-search "* ]] || {
+  echo "error: canonical Pi extension list must include pi-history-search" >&2
+  exit 1
+}
 
-# Superseded extension dir names left by the octo->oqto and pre-`pi-` renames.
-# These register the same tools as their pi-* successors, so a stale copy
-# alongside the canonical one makes Pi fail to load with a fatal tool conflict
-# (aborting RPC startup -> zero models -> deploy verification failure). They are
-# byteowlz-owned names, never user-custom, so pruning them is safe.
+# Superseded or fully removed extension dir names. Pruning them on every sync
+# both clears stale duplicates from the octo->oqto and pre-`pi-` renames (a
+# stale copy alongside its pi-* successor aborts Pi RPC startup with a fatal
+# tool conflict -> zero models -> deploy verification failure) and retires
+# extensions that have been dropped entirely. All are byteowlz-owned names,
+# never user-custom, so pruning is safe.
+# pi-openai-completions-convert-think-tags: removed -- MiniMax works on the
+# built-in openai-completions api via reasoning_content; the think-tag adapter
+# is no longer needed (see oqto-4brd).
 PI_LEGACY_EXTENSIONS=(
   auto-rename azure-empty-response-guard introspection
   oqto-bridge octo-bridge oqto-todos octo-todos
   custom-context-files read-image-guard read-file-guard
   openai-completions-convert-think-tags
+  pi-openai-completions-convert-think-tags
 )
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +64,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 log() { printf '[agent-sync] %s\n' "$*"; }
+# One timestamp per run names every preserved backup.
+SYNC_STAMP="${SYNC_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 err() { printf '[agent-sync] error: %s\n' "$*" >&2; }
 
 # Read a value from dependencies.toml [external]: read_pin <key>
@@ -101,7 +114,12 @@ ext_cache() {
     git -C "$cache" remote set-url origin "$EXT_REPO" >/dev/null 2>&1 || true
     git -C "$cache" fetch --quiet --tags origin >/dev/null 2>&1 || true
   else
-    rm -rf "$cache"; mkdir -p "$(dirname "$cache")"
+    # Never discard an unknown cache directory; keep it beside the fresh clone.
+    if [[ -e "$cache" || -L "$cache" ]]; then
+      mv -- "$cache" "$cache.pre-oqto-$SYNC_STAMP" || { err "cannot preserve $cache"; return 1; }
+      log "preserved non-git extension cache at $cache.pre-oqto-$SYNC_STAMP"
+    fi
+    mkdir -p "$(dirname "$cache")"
     git clone --quiet "$EXT_REPO" "$cache" >/dev/null 2>&1 || { err "clone failed: $EXT_REPO"; return 1; }
   fi
   git -C "$cache" checkout --quiet --force "$EXT_REF" >/dev/null 2>&1 \
@@ -110,29 +128,77 @@ ext_cache() {
   echo "$cache"
 }
 
-# Install the default extensions into <home>/.pi/agent/extensions, owned by the
-# home's owner. Args: <home> <src>
+# Install into a home as its owner; only /etc/skel is installed as root.
+# The source must be the world-readable system staging tree, not the invoking
+# user's private git cache. Args: <home> <src>
 install_ext_for_home() {
   local home="$1" src="$2"
-  local dir="$home/.pi/agent/extensions"
-  local owner; owner="$(stat -c '%U:%G' "$home" 2>/dev/null || echo 'root:root')"
-  sudo mkdir -p "$dir"
-  # Prune superseded legacy extension dirs first, so a stale duplicate can't
-  # conflict with its pi-* successor and abort Pi startup.
-  local legacy
+  local dir="$home/.pi/agent/extensions" owner group parent legacy ext
+  owner="$(stat -c '%U' "$home")" || return 1
+  group="$(stat -c '%G' "$home")" || return 1
+
+  as_owner() {
+    if [[ "$owner" == root ]]; then
+      sudo -- "$@"
+    else
+      sudo -H -u "$owner" -- "$@"
+    fi
+  }
+
+  # Repair only deployment-created parent directories, never arbitrary user
+  # config. A previous interrupted root install may have left them root-owned.
+  if [[ "$owner" != root ]]; then
+    for parent in "$home/.pi" "$home/.pi/agent" "$dir"; do
+      if [[ -d "$parent" && "$(stat -c '%U' "$parent")" == root ]]; then
+        sudo chown "$owner:$group" "$parent" || return 1
+      fi
+    done
+  fi
+  as_owner mkdir -p "$dir" || return 1
+
+  # Only deployment-owned names are touched, and never destroyed: a changed or
+  # retired managed extension moves to a timestamped backup owned by the user,
+  # the replacement is assembled beside it first, and identical content is left
+  # alone so repeated syncs are no-ops. Custom extensions are never read.
+  local backups="$home/.pi/agent/extension-backups/$SYNC_STAMP"
+  preserve() {
+    local path="$1"
+    if [[ "$owner" != root && ! -L "$path" ]]; then
+      sudo chown -hR "$owner:$group" "$path" || return 1
+    fi
+    local dest="$backups/${path##*/}"
+    [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$$.$RANDOM"
+    as_owner mkdir -p "$backups" || return 1
+    as_owner mv -T -- "$path" "$dest" || return 1
+    log "  preserved $path -> $dest"
+  }
   for legacy in "${PI_LEGACY_EXTENSIONS[@]}"; do
-    [[ -e "$dir/$legacy" ]] || continue
-    sudo rm -rf "$dir/$legacy"
-    log "  pruned legacy extension: $home/.pi/agent/extensions/$legacy"
+    [[ -e "$dir/$legacy" || -L "$dir/$legacy" ]] || continue
+    preserve "$dir/$legacy" || return 1
   done
-  local ext
   for ext in "${PI_DEFAULT_EXTENSIONS[@]}"; do
-    [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; continue; }
-    sudo rm -rf "$dir/$ext"
-    sudo cp -r "$src/$ext" "$dir/$ext"
-    sudo rm -f "$dir/$ext/install.sh"
+    [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; return 1; }
+    if [[ -d "$dir/$ext" && ! -L "$dir/$ext" ]] \
+      && diff -rq --exclude=install.sh -- "$src/$ext" "$dir/$ext" >/dev/null 2>&1; then
+      continue
+    fi
+    local staged="$dir/.oqto-staging-$ext"
+    as_owner rm -rf -- "$staged" || return 1
+    if ! as_owner cp -r -- "$src/$ext" "$staged"; then
+      as_owner rm -rf -- "$staged"
+      err "copy failed for $ext in $home; existing extension left in place"
+      return 1
+    fi
+    as_owner rm -f -- "$staged/install.sh" || return 1
+    if [[ -e "$dir/$ext" || -L "$dir/$ext" ]]; then
+      preserve "$dir/$ext" || return 1
+    fi
+    as_owner mv -- "$staged" "$dir/$ext" || return 1
+    [[ "$(stat -c '%U' "$dir/$ext")" == "$owner" ]] || {
+      err "extension not owned by $owner after install: $dir/$ext"
+      return 1
+    }
   done
-  sudo chown -R "$owner" "$home/.pi" 2>/dev/null || true
 }
 
 sync_extensions() {
@@ -148,23 +214,44 @@ sync_extensions() {
   [[ "$missing" -eq 0 ]] || return 1
 
   log "syncing extensions to /usr/share/oqto/pi-agent-extensions (new-user source)"
-  sudo mkdir -p /usr/share/oqto/pi-agent-extensions
-  sudo rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/
+  sudo mkdir -p /usr/share/oqto/pi-agent-extensions || return 1
+  sudo rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/ || return 1
 
   # Every existing platform user + the invoking user + /etc/skel (new users).
   local home count=0
   for home in /home/oqto_* "$HOME" /etc/skel; do
     [[ -d "$home" ]] || continue
-    install_ext_for_home "$home" "$src"
+    install_ext_for_home "$home" /usr/share/oqto/pi-agent-extensions || return 1
     count=$((count + 1))
     log "  extensions -> $home"
   done
   log "extensions synced to $count location(s)"
 }
 
-log "manifest=$MANIFEST  pi=${PI_VERSION:-<unset>}  pi-extensions=${EXT_REF:-<unset>}"
-rc=0
-$DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
-$DO_EXT && { sync_extensions || rc=1; }
-[[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
-exit "$rc"
+verify_managed_pi_selection() {
+  local config="$HOME/.config/oqto/config.toml"
+  [[ -f "$config" ]] || return 0
+  local configured
+  configured="$(sed -n '/^\[pi\]/,/^\[/{s/^executable *= *"\([^"]*\)".*/\1/p}' "$config" | head -1)"
+  case "$configured" in
+    */.bun/bin/pi|*/.local/bin/pi)
+      err "stale Pi override shadows the managed runtime: $configured"
+      err "back up $config and set [pi].executable = \"pi\""
+      return 1
+      ;;
+  esac
+}
+
+sync_agent_runtime_main() {
+  log "manifest=$MANIFEST  pi=${PI_VERSION:-<unset>}  pi-extensions=${EXT_REF:-<unset>}"
+  local rc=0
+  $DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
+  $DO_PI && { verify_managed_pi_selection || rc=1; }
+  $DO_EXT && { sync_extensions || rc=1; }
+  [[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
+  return "$rc"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  sync_agent_runtime_main
+fi

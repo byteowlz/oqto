@@ -5,24 +5,10 @@
  */
 
 import type { A2UIMessage, A2UIUserAction } from "@/lib/a2ui/types";
+import type { A2UISurfaceState } from "@/lib/chat-render-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export interface A2UISurfaceState {
-	surfaceId: string;
-	sessionId: string;
-	messages: A2UIMessage[];
-	blocking: boolean;
-	requestId?: string;
-	createdAt: Date;
-	/** ID of the message this surface is anchored to */
-	anchorMessageId?: string;
-	/** Whether user has answered */
-	answered?: boolean;
-	/** The action name that was selected */
-	answeredAction?: string;
-	/** When the user answered */
-	answeredAt?: Date;
-}
+export type { A2UISurfaceState } from "@/lib/chat-render-types";
 
 export interface UseA2UIOptions {
 	/** Filter surfaces to a specific session ID */

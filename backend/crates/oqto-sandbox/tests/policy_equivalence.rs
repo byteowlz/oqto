@@ -107,7 +107,7 @@ fn real_bwrap_agrees_with_the_resolver() {
         );
     }
 
-    let args = compile_filesystem_args(&policy, &HostPaths);
+    let args = compile_filesystem_args(&policy, &HostPaths, &[]);
 
     for (relative, expected) in [
         ("open/file", Access::Write),
@@ -145,7 +145,7 @@ fn a_masked_path_is_not_merely_unbound() {
     without_mask.add_rule(ResolvedRule::new(base, Access::Write, origin()).expect("valid rule"));
     assert_eq!(
         observed_access(
-            &compile_filesystem_args(&without_mask, &HostPaths),
+            &compile_filesystem_args(&without_mask, &HostPaths, &[]),
             &base.join("secret/file")
         ),
         Access::Write,
@@ -158,7 +158,7 @@ fn a_masked_path_is_not_merely_unbound() {
     );
     assert_eq!(
         observed_access(
-            &compile_filesystem_args(&with_mask, &HostPaths),
+            &compile_filesystem_args(&with_mask, &HostPaths, &[]),
             &base.join("secret/file")
         ),
         Access::None,

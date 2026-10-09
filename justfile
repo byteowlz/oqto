@@ -80,13 +80,26 @@ dist-sync:
 dist-stage-binaries *ARGS:
     ./scripts/dist/stage-binaries.sh {{ARGS}}
 
+# Ship the checksum-qualified official Pi1 archive with the release.
+dist-stage-pi-runtime:
+    ./scripts/dist/stage-pi-runtime.sh
+
+# Prepare an explicit new Node/npm Pi runtime candidate (no live promotion).
+dist-stage-pi-node-runtime output:
+    ./scripts/dist/stage-pi-node-runtime.sh '{{output}}'
+
+# Locked acquisition and preserve-first staging contracts (no downloads).
+test-pi-node-runtime:
+    python3 -B scripts/tests/test-pi-node-runtime.py
+
 # Stage the built frontend into dist/immutable/frontend/ (use --build to build first)
 dist-stage-frontend *ARGS:
     ./scripts/dist/stage-frontend.sh {{ARGS}}
 
 # Package dist payload as release tarball (+sha256)
-dist-package version="dev" target="local":
-    ./scripts/dist/package.sh {{version}} {{target}}
+# Package the declared Cargo version for this host; refuses dirty worktrees.
+dist-package version="" target="":
+    ./scripts/dist/package.sh "{{version}}" "{{target}}"
 
 # =============================================================================
 # Test
@@ -292,7 +305,33 @@ install-system:
 # Dependencies
 # =============================================================================
 
-# Deterministically compatibility-test the latest Pi release (no changes)
+# Discover official stable Pi without changing accepted pins or live state
+check-pi-stable:
+    python3 -B scripts/release/pi-update.py
+
+# Private real-sandbox RPC/provider/cold-restore proof; never touches live stores.
+test-sandboxed-bundled-pi runner runtime:
+    python3 -B scripts/dist/test-sandboxed-bundled-pi.py "{{runner}}" "{{runtime}}"
+
+# Prevent local speech isolation headers drifting out of generated Caddy profiles.
+test-speech-isolation:
+    python3 -B scripts/tests/test-speech-isolation.py
+
+# Combined immutable Node runtime and runner identity regression gates
+_test-node-canary:
+    python3 -B scripts/tests/test-node-cli-links.py
+    python3 -B scripts/tests/test-pi-node-runtime.py
+    python3 -B scripts/tests/test-agent-check-root.py
+    cd backend && cargo test -p oqto-runner -p oqto-setup -p oqto-provisioning
+    cd backend && cargo test -p oqto-runner --test runtime_guards_cli wrong_uid_native_launch_fails_before_state_or_workers -- --ignored --exact
+
+# Regression gates for isolated exact-pin candidate preparation
+_test-pi-updates:
+    python3 -B scripts/tests/test-pi-update.py
+    python3 -B scripts/tests/test-pi-node-runtime.py
+    bash -n scripts/dist/stage-pi-node-runtime.sh scripts/dist/test-node-pi-cpu.sh scripts/dist/test-node-pi-runner.sh
+
+# Legacy standalone smoke only; not Node/npm release acceptance
 check-agent-updates:
     ./scripts/dist/check-agent-runtime.sh
 
@@ -305,9 +344,10 @@ update-pi-local:
     ./scripts/dist/check-agent-runtime.sh --install-user
     systemctl --user try-restart oqto-runner
 
-# Exercise the deterministic runtime installer against a local fake release
+# Exercise the deterministic runtime installer and read-only personal onboarding inventory
 _test-pi-runtime:
     ./scripts/dist/test-pi-runtime.sh
+    python3 -B scripts/dist/test-personal-pi-preflight.py
 
 # Re-verify installer behavior plus the currently pinned Pi runtime/checksums
 verify-agent-runtime: _test-pi-runtime
@@ -415,13 +455,11 @@ acquire-deps arch="x86-64":
         (cd backend && cargo build -q -p oqto-setup)
         SETUP="$(pwd)/backend/target/debug/oqto-setup"
     fi
-    STAGE="$(mktemp -d)"
-    trap 'rm -rf "$STAGE"' EXIT
     echo "Acquiring + installing prebuilt deps (arch={{arch}}) -> /usr/local/bin"
+    # The installer privately stages and checks the exact bytes it extracts.
     sudo "$SETUP" acquire \
         --manifest "$(pwd)/dependencies.toml" \
         --arch "{{arch}}" \
-        --dest "$STAGE" \
         --install-bin /usr/local/bin
 
 # Install/update all byteowlz dependencies from sibling source repos
@@ -751,7 +789,9 @@ bump version:
             ;;
     esac
 
+    [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $new_version" >&2; exit 1; }
     echo "Bumping $current -> $new_version"
+    python3 "$ROOT/scripts/release/sync-platform-pin.py" "$new_version"
 
     sed -i 's/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
     sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
@@ -821,7 +861,8 @@ install-hooks:
 # Deployment
 # =============================================================================
 
-# Deploy to all configured hosts (build + upload + restart)
+# Deploy to all configured hosts: build a clean versioned release (or use
+# --artifact/--checksum) and activate it through the oqto-setup transaction.
 deploy *ARGS:
     ./scripts/deploy.sh {{ARGS}}
 
@@ -829,29 +870,50 @@ deploy *ARGS:
 deploy-host name *ARGS:
     ./scripts/deploy.sh --host {{name}} {{ARGS}}
 
-# Deploy to a specific host with runner stream tracing enabled (default trace dir)
-deploy-host-debug name *ARGS:
-    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir /tmp/oqto-stream-traces {{ARGS}}
+# Protected owner-correct oqto-log backfill only; binaries are not touched
+deploy-backfill name *ARGS:
+    ./scripts/deploy.sh --host {{name}} --backfill-only {{ARGS}}
 
-# Deploy to a specific host with runner stream tracing enabled (custom trace dir)
-deploy-host-debug-dir name trace_dir *ARGS:
-    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir {{trace_dir}} {{ARGS}}
+# Offline publication gate tests (no build, download, or deployment)
+test-release-publication-gates: test-release-tag-version test-release-assets
 
-# Deploy without rebuilding (use existing artifacts)
-deploy-quick *ARGS:
-    ./scripts/deploy.sh --skip-build {{ARGS}}
+# Verify tag matches Cargo, dependency pin, and frontend package versions
+test-release-tag-version:
+    python3 -B scripts/tests/test-release-tag-version.py
 
-# Verify release/dev dependency policy behavior without deploying
+# Reject incomplete or unsafe canonical Linux full release artifacts
+test-release-assets:
+    python3 -B scripts/tests/test-release-assets.py
+
+# Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
 test-deploy-mode:
     ./scripts/tests/deploy-mode-test.sh
+    ./scripts/tests/test-deploy-private-staging.sh
+    ./scripts/tests/test-deploy-bootstrap-invocation.sh
+    python3 -B scripts/tests/test-verified-setup-bootstrap.py
+    python3 -B scripts/tests/test-deploy-transaction.py
+    python3 -B scripts/tests/test-release-provenance.py
 
-# Deploy only backend binaries (skip frontend)
-deploy-backend *ARGS:
-    ./scripts/deploy.sh --skip-frontend {{ARGS}}
+# Offline install/update matrix preflight regression checks (no root or host changes)
+test-install-matrix:
+    ./scripts/e2e/tests/test-install-update-matrix.sh
 
-# Deploy only frontend (skip backend binaries)
-deploy-frontend *ARGS:
-    ./scripts/deploy.sh --skip-backend {{ARGS}}
+# Runner-only manifest is a fail-closed candidate, not an install-ready artifact
+test-runner-only-manifest:
+    python3 -B scripts/lint/test_runner_only_manifest.py
+
+# Installed plan/doctor must never compile checkout sources or accept stale binaries
+test-setup-installed-doctor:
+    ./scripts/tests/test-setup-installed-doctor.sh
+
+# Release dependency pin must equal the declared Cargo workspace version
+test-release-version-sync:
+    python3 -B scripts/tests/test-sync-platform-pin.py
+    python3 scripts/tests/test-release-version-sync.py
+
+# Dist sources resolve to pinned refs, preserving dirty or unknown local caches
+test-dist-sync-pins:
+    ./scripts/tests/test-dist-sync-pins.sh
 
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:
@@ -904,3 +966,19 @@ update-pi: update-pi-local
 # Runs only when git working tree changed since the last successful check.
 agent-check-on-change profile="quick":
     ./scripts/dev/agent-check-on-change.sh {{profile}}
+
+# Publish Oqto's setup skill to the canonical byteowlz skills repository.
+sync-skills:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="${SKILLISSUES:-$HOME/byteowlz/skillissues}"
+    test -d "$target/skills" || { echo "skillissues repo not found: $target" >&2; exit 1; }
+    rm -rf "$target/skills/oqto-setup"
+    cp -a skills/oqto-setup "$target/skills/"
+    just --justfile "$target/Justfile" update-readme
+    git -C "$target" add skills/oqto-setup README.md
+    if [[ -n "$(git -C "$target" status --porcelain -- skills/oqto-setup README.md)" ]]; then
+        git -C "$target" commit -m "skills/oqto-setup: sync from oqto_refactor" -- skills/oqto-setup README.md
+    else
+        echo "oqto-setup is already up to date"
+    fi

@@ -1,6 +1,3 @@
-pub use oqto_history::oqto_log::paths;
+pub use oqto_history::oqto_log::{importer, validator};
 
-pub mod importer;
 pub mod ops;
-pub mod store;
-pub mod validator;

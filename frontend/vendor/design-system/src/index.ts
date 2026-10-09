@@ -42,6 +42,14 @@ export {
 	RADIUS_VARS,
 } from "./radius.js";
 export { darken, lighten, withAlpha } from "./color.js";
+export { readTokenHex, NEUTRAL_TOKEN_HEX } from "./read-token-hex.js";
+export {
+	EFFECT_VARS,
+	SHADOW_PRESETS,
+	effectVars,
+	matchShadowPreset,
+} from "./effects.js";
+export type { ShadowPresetId } from "./effects.js";
 
 // Closed role layer.
 export { ROLE_FOR_SLOT, ABSTRACT_ROLES } from "./roles.js";
@@ -58,4 +66,5 @@ export {
 	oqtoLight,
 	ember,
 	nordBase16,
+	nordLight,
 } from "./schemes/index.js";

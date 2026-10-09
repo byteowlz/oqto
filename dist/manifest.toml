@@ -3,9 +3,24 @@ id = "oqto-dist"
 description = "Oqto distribution manifest (draft)"
 
 [release]
+target = "full"
+pi_version = "1.1.0"
+pi_runtime = "bundled-official-node-npm"
+node_version = "24.14.1"
+node_archive_sha256 = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
+pi_npm_integrity = "sha512-SeEi/4hdcHNgA9UWlefZl7ZZpm3dzi2OoxNjDHsBJ9o298LNOtbL4DGKgitlEj6uCTccvtw6f2hlCkTPVJ2RXg=="
+pi_package_lock_sha256 = "6fcbdcc4ea1f3ee6a0fcd3845c1a32f3ccf152ae418158167d41d97ca791c83a"
 layout = "transactional"
 root = "/var/lib/oqto/releases"
 current_symlink = "/var/lib/oqto/releases/current"
+
+# Candidate Linux artifact composition only; activation/doctor must explicitly opt in
+# before this target can be installed. Pi chat is mandatory and externally provisioned.
+[targets.runner_only]
+platform = "linux"
+transport = "user-systemd-socket"
+pi_runtime = "external-required"
+assets = ["bin-oqto-setup", "bin-oqto-runner", "bin-oqto-files", "systemd-user-oqto-runner-only"]
 
 # Canonical file classes:
 # - immutable_symlink: shipped in release, exposed via symlink, never edited in-place
@@ -13,6 +28,32 @@ current_symlink = "/var/lib/oqto/releases/current"
 # - runtime_generated: created by services/runtimes; never shipped
 
 # ---------- Immutable shipped assets ----------
+
+[[assets]]
+id = "pi-runtime-archive"
+class = "immutable_symlink"
+kind = "runtime-helper"
+source = "dist/immutable/pi-runtime"
+stage_path = "pi-runtime"
+install_path = "/usr/local/share/oqto/pi-runtime"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "provider-login-worker"
+class = "immutable_symlink"
+kind = "runtime-helper"
+source = "dist/immutable/provider-login"
+stage_path = "provider-login"
+install_path = "/usr/local/share/oqto/provider-login"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
 
 [[assets]]
 id = "bin-oqto"
@@ -34,6 +75,19 @@ kind = "binary"
 source = "dist/immutable/bin/oqtoctl"
 stage_path = "bin/oqtoctl"
 install_path = "/usr/local/bin/oqtoctl"
+install_method = "symlink_to_current"
+owner = "root"
+group = "root"
+mode = "0755"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "bin-oqto-ssh-proxy"
+class = "immutable_symlink"
+kind = "binary"
+source = "dist/immutable/bin/oqto-ssh-proxy"
+stage_path = "bin/oqto-ssh-proxy"
+install_path = "/usr/local/bin/oqto-ssh-proxy"
 install_method = "symlink_to_current"
 owner = "root"
 group = "root"
@@ -161,6 +215,19 @@ group = "root"
 mode = "0644"
 profiles = ["personal", "team"]
 
+[[assets]]
+id = "systemd-user-oqto-runner-only"
+class = "immutable_symlink"
+kind = "unit-template"
+source = "dist/immutable/systemd/user/oqto-runner-only.service"
+stage_path = "systemd/user/oqto-runner-only.service"
+install_path = "/usr/local/share/oqto/systemd/oqto-runner-only.service"
+install_method = "copy"
+owner = "root"
+group = "root"
+mode = "0644"
+profiles = ["runner_only"]
+
 # ---------- Mutable admin config (copy once) ----------
 
 [[assets]]
@@ -211,8 +278,32 @@ items = [
   "pi-introspection",
   "pi-markdown-export",
   "pi-oqto-bridge",
-  "pi-oqto-todos",
+  "pi-todolist",
+  "pi-capabilities",
+  "pi-selection",
+  "pi-azure-empty-response-guard",
+  "pi-read-image-guard",
+  "pi-read-file-guard",
 ]
+
+# ---------- Published workspace OCI image ----------
+# The per-Workspace runner image is a published OCI artifact, not an installed
+# file. It is pulled by Podman at provision time. This table is the release
+# metadata that oqto-setup/deploy uses to generate production placement config;
+# it is filled by the workspace-image workflow on release and must agree with
+# the Cargo workspace version (ADR-0016/0018). Production deploys pin the exact
+# reference + digest; `latest`/moving aliases are for humans only.
+[workspace_image]
+registry = "ghcr.io"
+repository = "byteowlz/oqto-workspace"
+# `version` equals the Cargo workspace release semver and the release tag (minus
+# leading `v`). Fill from the workspace-image workflow output.
+version = ""
+# Multi-arch manifest digest (`sha256:...`). Required for production pinning.
+digest = ""
+compat_label = "io.oqto.version"
+role_label = "io.oqto.role"
+architectures = ["linux/amd64", "linux/arm64"]
 
 # ---------- Mutable user/workspace defaults (copy once) ----------
 
@@ -325,11 +416,56 @@ install_method = "copy"
 profiles = ["personal", "team"]
 
 [[assets]]
-id = "pi-extension-pi-oqto-todos"
+id = "pi-extension-pi-todolist"
 class = "immutable_symlink"
 kind = "pi-extension"
-source = "dist/immutable/defaults/pi-agent/extensions/pi-oqto-todos"
-install_path = "~/.pi/agent/extensions/pi-oqto-todos"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-todolist"
+install_path = "~/.pi/agent/extensions/pi-todolist"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-capabilities"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-capabilities"
+install_path = "~/.pi/agent/extensions/pi-capabilities"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-selection"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-selection"
+install_path = "~/.pi/agent/extensions/pi-selection"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-azure-empty-response-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-azure-empty-response-guard"
+install_path = "~/.pi/agent/extensions/pi-azure-empty-response-guard"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-read-image-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-read-image-guard"
+install_path = "~/.pi/agent/extensions/pi-read-image-guard"
+install_method = "copy"
+profiles = ["personal", "team"]
+
+[[assets]]
+id = "pi-extension-pi-read-file-guard"
+class = "immutable_symlink"
+kind = "pi-extension"
+source = "dist/immutable/defaults/pi-agent/extensions/pi-read-file-guard"
+install_path = "~/.pi/agent/extensions/pi-read-file-guard"
 install_method = "copy"
 profiles = ["personal", "team"]
 

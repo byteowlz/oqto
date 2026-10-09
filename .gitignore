@@ -66,6 +66,10 @@ dist/immutable/defaults/pi-agent/extensions/
 
 # Frontend bundle is built at release time (scripts/dist/stage-frontend.sh).
 dist/immutable/frontend/
+# Generated from tools/provider-login by scripts/dist/sync.sh.
+dist/immutable/provider-login/
+# Verified official Pi archives are generated release artifacts.
+dist/immutable/pi-runtime/
 
 # Node dependencies (never tracked anywhere)
 node_modules/

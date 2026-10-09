@@ -1,0 +1,3923 @@
+/* Workbench Lab shell — mirrors the production Oqto shell layout and density. */
+
+.wb-shell {
+	display: flex;
+	height: 100dvh;
+	overflow: hidden;
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+	font-size: 14px;
+}
+
+.wb-shell *,
+.wb-shell *::before,
+.wb-shell *::after {
+	box-sizing: border-box;
+}
+
+/*
+ * The shell's button reset belongs in the base layer. Unlayered CSS beats
+ * every `@layer utilities` rule whatever the specificity, so an unlayered
+ * reset here silently stripped the padding off shared chat components
+ * (tool call headers) that style themselves with utility classes.
+ */
+@layer base {
+	:where(.wb-shell) :where(button) {
+		font: inherit;
+		color: inherit;
+		background: none;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+	}
+}
+
+/*
+ * The shared globals.css ships a `* { border-radius: 0 !important }` flatten
+ * reset (experiment artifact from the mini-apps commit) that defeats the
+ * radius dial (ADR-0015) inside the lab shell and also flattens the circular
+ * status/task dots. Re-enable token-driven radius here with class/element
+ * specificity that beats the universal reset. Box-shadow and backdrop-blur
+ * have no equivalent reset and stay non-important below. App-wide removal of
+ * the reset is tracked once the radius dial is adopted in production too.
+ */
+.wb-shell .wb-chat-card,
+.wb-shell .wb-panel {
+	border-radius: var(--radius-lg, 0) !important;
+}
+
+/* Bleeds to the card edges (negative margins), so its background must share
+   the card's top corners or it paints square over the rounded corner. */
+.wb-shell .wb-wa-tabs {
+	border-top-left-radius: var(--radius-lg, 0) !important;
+	border-top-right-radius: var(--radius-lg, 0) !important;
+}
+
+.wb-shell .wb-chat-card > .wb-task-progress {
+	border-radius: 0 0 var(--radius-md, 0) var(--radius-md, 0) !important;
+}
+
+/* The timeline loses its bottom corners when the rail is glued below it. */
+.wb-shell .wb-chat-panel:has(+ .wb-task-progress) {
+	border-bottom-left-radius: 0 !important;
+	border-bottom-right-radius: 0 !important;
+}
+
+.wb-shell .wb-chat-panel,
+.wb-shell .wb-msg,
+.wb-shell .wb-composer,
+.wb-shell .wb-theme-lab__panel,
+.wb-shell .wb-task-progress__details,
+.wb-shell .wb-mobile-tabs {
+	border-radius: var(--radius-md, 0) !important;
+}
+
+@layer base {
+	.wb-shell .wb-tool,
+	.wb-shell .wb-task-progress__tooltip,
+	.wb-shell .wb-composer__pop,
+	.wb-shell button,
+	.wb-shell input,
+	.wb-shell textarea,
+	.wb-shell select {
+		border-radius: var(--radius-sm, 0) !important;
+	}
+}
+
+.wb-shell .wb-task-progress__dot,
+.wb-shell .wb-task-progress__details li > span {
+	border-radius: 50% !important;
+}
+
+.wb-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
+	color: var(--muted-foreground);
+	border: 1px solid transparent;
+}
+
+.wb-icon-button:hover {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--muted) 50%, transparent);
+}
+
+.wb-icon-button svg {
+	width: 16px;
+	height: 16px;
+}
+
+.wb-icon-button[data-active="true"] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+.wb-sidebar {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 260px;
+	width: 260px;
+	min-width: 260px;
+	max-width: 260px;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--sidebar);
+}
+
+.wb-sidebar__logo {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 80px;
+	flex-shrink: 0;
+	padding: 0 16px;
+}
+
+.wb-sidebar__logo img {
+	height: 56px;
+	width: auto;
+	object-fit: contain;
+}
+
+.wb-sidebar__logo .wb-icon-button {
+	position: absolute;
+	right: 12px;
+}
+
+.wb-sidebar__rule {
+	flex-shrink: 0;
+	height: 1px;
+	margin: 0 16px;
+	background: color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+.wb-sidebar__rule--muted {
+	background: color-mix(in srgb, var(--sidebar-border) 60%, transparent);
+	margin: 6px 12px;
+}
+
+.wb-sidebar__search {
+	position: relative;
+	flex-shrink: 0;
+	margin: 12px 10px 6px;
+}
+
+.wb-search-mode {
+	position: absolute;
+	left: 6px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 4px;
+	color: var(--muted-foreground);
+}
+
+.wb-search-mode svg {
+	width: 12px;
+	height: 12px;
+}
+
+.wb-search-mode svg:last-child {
+	width: 10px;
+	height: 10px;
+}
+
+.wb-sidebar__search input {
+	width: 100%;
+	padding: 8px 32px 8px 48px;
+	font: inherit;
+	font-size: 12px;
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+	border: 1px solid var(--sidebar-border);
+	outline: 0;
+}
+
+.wb-sidebar__search input::placeholder {
+	color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+
+.wb-sidebar__search input:focus {
+	border-color: color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+.wb-sessions-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding: 8px 14px;
+	font-size: 12px;
+}
+
+.wb-sessions-header__title {
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--muted-foreground);
+}
+
+.wb-sessions-header__count {
+	color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+
+.wb-sessions-header__actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.wb-sessions-header__actions .wb-icon-button {
+	padding: 4px;
+}
+
+.wb-sessions-header__actions svg {
+	width: 12px;
+	height: 12px;
+}
+
+.wb-session-tree {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 0 10px;
+}
+
+.wb-project__row {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	font-size: 12px;
+	color: var(--muted-foreground);
+}
+
+.wb-project__row svg {
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
+}
+
+.wb-project__disclosure {
+	display: inline-flex;
+	align-items: center;
+	padding: 7px 3px 7px 4px;
+}
+
+.wb-project__disclosure:hover {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+}
+
+.wb-project__select {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	flex: 1;
+	min-width: 0;
+	padding: 7px 6px;
+	text-align: left;
+}
+
+.wb-project__select:hover {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--sidebar-accent) 50%, transparent);
+}
+
+.wb-project__select > svg {
+	color: var(--muted-foreground);
+}
+
+.wb-project__name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--foreground);
+}
+
+.wb-project__count {
+	flex-shrink: 0;
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-project__sessions {
+	padding-left: 14px;
+	padding-bottom: 6px;
+}
+
+.wb-session-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 7px;
+	width: 100%;
+	padding: 6px 9px;
+	margin-bottom: 2px;
+	border: 1px solid transparent;
+	color: var(--muted-foreground);
+	text-align: left;
+}
+
+.wb-session-item:hover {
+	background: var(--sidebar-accent);
+}
+
+.wb-session-item[data-active="true"] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-session-item > svg {
+	width: 12px;
+	height: 12px;
+	margin-top: 2px;
+	flex-shrink: 0;
+	color: color-mix(in srgb, var(--primary) 70%, transparent);
+}
+
+.wb-session-item__copy {
+	display: block;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.wb-session-item__title {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.wb-session-item__date {
+	display: block;
+	margin-top: 2px;
+	font-size: 9px;
+	color: var(--muted-foreground);
+}
+
+.wb-sidebar__footer {
+	flex-shrink: 0;
+}
+
+.wb-sidebar__preview {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	align-items: start;
+	gap: 8px;
+	padding: 10px 14px;
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-sidebar__preview > span {
+	padding-top: 3px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.wb-theme-picker {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 2px;
+}
+
+.wb-theme-picker__option {
+	padding: 4px 8px;
+	border: 1px solid var(--sidebar-border);
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-theme-picker__option:hover {
+	color: var(--foreground);
+}
+
+.wb-theme-picker__option[data-active="true"] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-language-button {
+	padding: 4px 8px;
+	border: 1px solid var(--sidebar-border);
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-language-button:hover {
+	color: var(--foreground);
+}
+
+.wb-sidebar__user {
+	padding: 8px 18px 4px;
+	font-size: 14px;
+}
+
+.wb-sidebar__footer-icons {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 14px 16px;
+}
+
+/* ---------------------------------------------------------------- content */
+
+.wb-content {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+}
+
+.wb-workarea {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	gap: 16px;
+	padding: 24px;
+}
+
+.wb-shell[data-files-placement="left"] .wb-workarea {
+	flex-direction: row-reverse;
+}
+
+.wb-shell[data-files-placement="hidden"] .wb-workarea > .wb-panel {
+	display: none;
+}
+
+.wb-shell[data-navigator-placement="hidden"] > .wb-sidebar {
+	display: none;
+}
+
+.wb-shell[data-density="compact"] .wb-workarea {
+	gap: 8px;
+	padding: 12px;
+}
+
+.wb-shell[data-density="comfortable"] .wb-workarea {
+	gap: 24px;
+	padding: 32px;
+}
+
+.wb-config-lens {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 25px;
+	padding: 3px 10px;
+	color: var(--muted-foreground);
+	background: color-mix(in srgb, var(--primary) 8%, var(--background));
+	border-top: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-config-lens strong {
+	color: var(--primary);
+	font-weight: 600;
+}
+
+.wb-config-lens[data-invalid="true"] {
+	color: var(--destructive);
+	background: color-mix(in srgb, var(--destructive) 10%, var(--background));
+}
+
+/* ------------------------------------------------------------- chat card */
+
+.wb-main {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+}
+
+.wb-chat-card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	background: var(--card);
+	/*
+	 * No frame of its own. The turns carry their own boundary and so does the
+	 * composer, so a border here is a frame drawn around a stack of frames.
+	 *
+	 * One inset governs the whole column: the timeline reads it as padding,
+	 * the composer as a margin, and the header the same. That is what keeps a
+	 * turn's edge on the same pixel as the prompt box below it — aligning
+	 * them by construction rather than by two numbers that happen to match.
+	 */
+	--chat-inset: 16px;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	padding: var(--chat-inset) 0;
+}
+
+.wb-wa-tabs {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+	margin: -24px -24px 20px;
+	padding: 8px 12px;
+	min-height: 46px;
+	background: color-mix(in srgb, var(--muted) 30%, transparent);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.wb-wa-tab {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	max-width: 240px;
+	padding: 7px 12px;
+	border: 1px solid transparent;
+	font-size: 12px;
+	color: var(--muted-foreground);
+}
+
+.wb-wa-tab:hover {
+	border-color: var(--border);
+	background: color-mix(in srgb, var(--muted) 50%, transparent);
+}
+
+.wb-wa-tab[data-active="true"] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-wa-tab > svg {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+}
+
+.wb-wa-tab[data-owner="session"] > svg:first-child {
+	color: var(--primary);
+}
+
+.wb-wa-tab__label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-wa-tab__owner,
+.wb-wa-tab__pin {
+	width: 10px;
+	height: 10px;
+	flex-shrink: 0;
+	color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+
+.wb-wa-tab--new {
+	flex-shrink: 0;
+	padding: 7px 8px;
+	margin-left: 2px;
+}
+
+.wb-wa-tabs__spacer {
+	flex: 1;
+}
+
+.wb-editor {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	border: 1px solid var(--border);
+	background: var(--code-bg, var(--background));
+}
+
+.wb-editor__header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+}
+
+.wb-editor__header svg {
+	width: 14px;
+	height: 14px;
+	color: var(--chart-1);
+}
+
+.wb-editor__scope {
+	margin-left: auto;
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-editor__body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 12px 0;
+}
+
+.wb-editor__line {
+	display: flex;
+	gap: 16px;
+	padding: 0 16px;
+	font-size: 12px;
+	line-height: 1.7;
+	white-space: pre;
+}
+
+.wb-editor__number {
+	flex-shrink: 0;
+	width: 24px;
+	text-align: right;
+	color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+	user-select: none;
+}
+
+.wb-editor__line code {
+	font-family: inherit;
+	tab-size: 2;
+}
+
+.wb-terminal {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 16px;
+	border: 1px solid var(--border);
+	background: var(--terminal-bg, var(--background));
+	font-size: 12px;
+	line-height: 1.7;
+}
+
+.wb-terminal__line {
+	white-space: pre-wrap;
+	color: var(--muted-foreground);
+}
+
+.wb-terminal__line[data-prompt="true"] {
+	color: var(--primary);
+}
+
+/* Context-aware Session items in the global statusbar: model (click opens
+   the picker) and context readout (hover/focus opens details). Scoped to the
+   selected Session; migrates into each chat card if side-by-side lands. */
+.wb-statusbar__meta {
+	position: relative;
+	flex-shrink: 0;
+	display: inline-flex;
+}
+
+.wb-statusbar__meta > button {
+	padding: 2px 6px;
+	font-size: 11px;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+}
+
+.wb-statusbar__meta > button:hover,
+.wb-statusbar__meta > button[aria-expanded="true"] {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.wb-composer__pop {
+	position: absolute;
+	z-index: 12;
+	bottom: calc(100% + 6px);
+	left: 0;
+	margin: 0;
+	padding: 6px;
+	background: var(--popover);
+	border: 1px solid var(--border);
+	box-shadow: var(--shadow-lg, none);
+}
+
+.wb-composer__model-menu {
+	display: grid;
+	min-width: 140px;
+}
+
+.wb-composer__model-menu button {
+	display: block;
+	width: 100%;
+	padding: 6px 8px;
+	text-align: left;
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.wb-composer__model-menu button:hover {
+	background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.wb-composer__model-menu button[aria-pressed="true"] {
+	color: var(--primary);
+}
+
+.wb-composer__context-details {
+	display: none;
+	left: auto;
+	right: 0;
+	grid-template-columns: auto auto;
+	gap: 4px 14px;
+	padding: 8px 10px;
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.wb-statusbar__meta:hover .wb-composer__context-details,
+.wb-statusbar__meta:focus-within .wb-composer__context-details {
+	display: grid;
+}
+
+.wb-composer__context-details dt {
+	color: var(--muted-foreground);
+}
+
+.wb-composer__context-details dd {
+	margin: 0;
+	text-align: right;
+	color: var(--foreground);
+}
+
+.wb-chat-panel {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	padding: 0 var(--chat-inset);
+}
+
+/* -------------------------------------------------------------- messages */
+
+.wb-msg {
+	overflow: hidden;
+	min-width: 0;
+	border-radius: var(--radius-md, 0);
+	box-shadow: var(--shadow-sm, none);
+}
+
+.wb-msg + .wb-msg {
+	margin-top: 24px;
+}
+
+.wb-msg[data-author="user"] {
+	margin-left: 32px;
+	background: color-mix(in srgb, var(--primary) 20%, transparent);
+	border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+}
+
+.wb-shell.dark .wb-msg[data-author="user"] {
+	background: color-mix(in srgb, var(--primary) 10%, transparent);
+	border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+.wb-msg[data-author="agent"] {
+	margin-right: 32px;
+	background: color-mix(in srgb, var(--muted) 50%, transparent);
+	border: 1px solid var(--border);
+}
+
+.wb-msg__header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-msg[data-author="user"] .wb-msg__header {
+	border-bottom-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+.wb-msg__header > svg {
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	color: var(--primary);
+}
+
+.wb-msg__name {
+	font-size: 14px;
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.wb-msg__spacer {
+	flex: 1;
+}
+
+.wb-msg__time {
+	flex-shrink: 0;
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-msg__header .wb-icon-button {
+	padding: 2px;
+}
+
+.wb-msg__header .wb-icon-button svg {
+	width: 12px;
+	height: 12px;
+}
+
+.wb-msg__body {
+	padding: 12px 16px;
+	min-width: 0;
+}
+
+.wb-msg__body p {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.wb-tool {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	padding: 8px 12px;
+	background: var(--background);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm, 0);
+	font-size: 12px;
+}
+
+.wb-tool > svg {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+}
+
+.wb-tool[data-kind="read"] > svg {
+	color: var(--chart-1);
+}
+
+.wb-tool[data-kind="edit"] > svg {
+	color: var(--chart-4);
+}
+
+.wb-tool[data-kind="test"] > svg {
+	color: var(--chart-2);
+}
+
+.wb-tool__label {
+	flex-shrink: 0;
+	color: var(--muted-foreground);
+}
+
+.wb-tool__target {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.wb-message-parts,
+.wb-message-part {
+	display: grid;
+	gap: 10px;
+	min-width: 0;
+}
+
+.wb-message-parts .markdown-content {
+	min-width: 0;
+	max-width: 100%;
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.wb-file-refs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.wb-file-refs button,
+.wb-structured-file-ref {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	width: fit-content;
+	max-width: 100%;
+	padding: 5px 8px;
+	color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 8%, var(--background));
+	border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-file-refs button svg,
+.wb-structured-file-ref svg {
+	width: 13px;
+	height: 13px;
+	flex-shrink: 0;
+}
+
+.wb-thinking-part {
+	padding: 7px 9px;
+	color: var(--muted-foreground);
+	background: color-mix(in srgb, var(--muted) 35%, transparent);
+	border-left: 2px solid var(--border);
+	font-size: 12px;
+}
+
+.wb-thinking-part summary {
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.wb-resource-preview {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--card);
+}
+
+.wb-resource-preview__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 42px;
+	padding: 0 8px 0 14px;
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-resource-preview__header strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-resource-preview__body {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* -------------------------------------------------------------- composer */
+
+.wb-composer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	margin-top: 16px;
+	padding: 6px 10px;
+	background: color-mix(in srgb, var(--muted) 60%, transparent);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 0);
+}
+
+/* On the same inset as the turns above it: the timeline spends --chat-inset
+   as padding inside the scroller, so the composer has to spend it as a margin
+   outside one, or the prompt box ends up wider than every message in it. */
+.wb-chat-card > .wb-composer {
+	margin-inline: var(--chat-inset);
+}
+
+.wb-composer:focus-within {
+	border-color: var(--ring);
+}
+
+.wb-composer textarea {
+	flex: 1;
+	min-width: 0;
+	min-height: 32px;
+	max-height: 200px;
+	padding: 8px 6px;
+	font: inherit;
+	font-size: 14px;
+	color: var(--foreground);
+	background: transparent;
+	border: 0;
+	outline: 0;
+	resize: none;
+}
+
+.wb-composer textarea::placeholder {
+	color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------------ right panel */
+
+.wb-panel {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 360px;
+	min-height: 0;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg, 0);
+	box-shadow: var(--shadow-sm, none);
+}
+
+.wb-files-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-shrink: 0;
+	padding: 10px;
+	border-bottom: 1px solid var(--border);
+}
+
+/* A narrow pane fits its own controls plus the Container's: the buttons give
+   up padding before the breadcrumb gives up its name. */
+.wb-files:not([data-fidelity="expanded"]) .wb-files-toolbar .wb-icon-button {
+	padding: 4px;
+}
+
+.wb-files-crumb {
+	flex: 0 1 auto;
+	min-inline-size: 3.5rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-toolbar__breadcrumb {
+	margin-left: 10px;
+	font-size: 14px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-toolbar__spacer {
+	flex: 1;
+}
+
+.wb-files-toolbar__divider {
+	width: 1px;
+	height: 16px;
+	margin: 0 4px;
+	background: var(--border);
+}
+
+.wb-tree {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	margin: 0;
+	padding: 8px 6px;
+	list-style: none;
+}
+
+.wb-tree__row {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 7px 10px;
+	color: var(--muted-foreground);
+	text-align: left;
+}
+
+.wb-tree__row[data-depth="1"] {
+	padding-left: 28px;
+}
+
+.wb-tree__row[data-depth="2"] {
+	padding-left: 46px;
+}
+
+.wb-tree__row:hover {
+	background: var(--muted);
+	color: var(--foreground);
+}
+
+.wb-tree__row svg {
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+}
+
+.wb-tree__spacer {
+	width: 16px;
+	flex-shrink: 0;
+}
+
+.wb-tree__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 14px;
+	min-width: 0;
+}
+
+.wb-tree__count {
+	margin-left: auto;
+	padding-left: 8px;
+	padding-right: 10px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+.wb-tree__row[data-changed="true"] {
+	background: color-mix(in srgb, var(--chart-4) 15%, transparent);
+	color: var(--foreground);
+}
+
+.wb-tree__row[data-changed="true"]:hover {
+	background: color-mix(in srgb, var(--chart-4) 20%, transparent);
+}
+
+/* -------------------------------------------------------- task progress */
+
+.wb-task-progress {
+	position: relative;
+	flex-shrink: 0;
+	border-top: 1px solid var(--border);
+	background: var(--card);
+}
+
+/* Attached to the bottom of the timeline: overlapping border, no gap. */
+.wb-chat-card > .wb-task-progress {
+	margin-top: -1px;
+	border: 1px solid var(--border);
+	background: color-mix(in srgb, var(--muted) 30%, transparent);
+}
+
+.wb-task-progress__rail {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+	align-items: center;
+	gap: 8px;
+	min-height: 40px;
+	padding: 6px 8px 6px 12px;
+}
+
+.wb-task-progress__label {
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.wb-task-progress__active {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__points {
+	display: flex;
+	align-items: center;
+}
+
+.wb-task-progress__connector {
+	width: 13px;
+	height: 1px;
+	background: var(--border);
+}
+
+.wb-task-progress__point {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 22px;
+	padding: 0;
+}
+
+.wb-task-progress__dot {
+	width: 8px;
+	height: 8px;
+	border: 1px solid var(--muted-foreground);
+	border-radius: 50%;
+	background: var(--card);
+}
+
+.wb-task-progress__point[data-status="completed"] .wb-task-progress__dot {
+	border-color: var(--primary);
+	background: var(--primary);
+}
+
+.wb-task-progress__point[data-status="active"] .wb-task-progress__dot {
+	width: 10px;
+	height: 10px;
+	border: 3px solid var(--primary);
+	background: var(--card);
+}
+
+.wb-task-progress__tooltip {
+	display: none;
+	position: absolute;
+	z-index: 4;
+	left: 50%;
+	bottom: calc(100% + 6px);
+	width: 190px;
+	padding: 8px 10px;
+	transform: translateX(-50%);
+	background: var(--popover);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm, 0);
+	box-shadow: var(--shadow-md, none);
+	color: var(--foreground);
+	text-align: left;
+	pointer-events: none;
+}
+
+.wb-task-progress__point:hover .wb-task-progress__tooltip,
+.wb-task-progress__point:focus-visible .wb-task-progress__tooltip {
+	display: grid;
+	gap: 3px;
+}
+
+.wb-task-progress[data-expanded="true"] .wb-task-progress__tooltip {
+	display: none;
+}
+
+.wb-task-progress__tooltip strong {
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.wb-task-progress__tooltip small {
+	font-size: 9px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__count {
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__toggle svg,
+.wb-task-progress__details header button svg {
+	width: 14px;
+	height: 14px;
+}
+
+.wb-task-progress__details {
+	position: absolute;
+	z-index: 3;
+	left: 8px;
+	right: 8px;
+	bottom: 44px;
+	max-height: min(360px, 60vh);
+	overflow: auto;
+	background: var(--popover);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 0);
+	box-shadow: var(--shadow-lg, none);
+}
+
+.wb-task-progress__details header {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 10px;
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-task-progress__details header strong {
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.wb-task-progress__details header span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 9px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__details header button {
+	display: inline-flex;
+	padding: 3px;
+	color: var(--muted-foreground);
+}
+
+.wb-task-progress__details ol {
+	margin: 0;
+	padding: 8px;
+	list-style: none;
+}
+
+.wb-task-progress__details li {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 8px;
+	border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.wb-task-progress__details li:last-child {
+	border-bottom: 0;
+}
+
+.wb-task-progress__details li > span {
+	width: 8px;
+	height: 8px;
+	border: 1px solid var(--muted-foreground);
+	border-radius: 50%;
+}
+
+.wb-task-progress__details li[data-status="completed"] > span {
+	border-color: var(--primary);
+	background: var(--primary);
+}
+
+.wb-task-progress__details li[data-status="active"] > span {
+	border: 3px solid var(--primary);
+}
+
+.wb-task-progress__details li strong {
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.wb-task-progress__details li small {
+	font-size: 9px;
+	color: var(--muted-foreground);
+}
+
+.wb-mobile-chrome {
+	display: none;
+	flex-shrink: 0;
+	min-width: 0;
+}
+
+.wb-sessions-backdrop {
+	display: none;
+}
+
+/* ------------------------------------------------------------ status mark */
+
+.wb-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--muted-foreground);
+}
+
+.wb-status__glyph {
+	width: 6px;
+	height: 6px;
+}
+
+.wb-status--working .wb-status__glyph {
+	background: var(--primary);
+}
+
+.wb-status--blocked .wb-status__glyph {
+	background: var(--destructive);
+}
+
+.wb-status--done .wb-status__glyph {
+	background: var(--chart-2);
+}
+
+.wb-status--idle .wb-status__glyph {
+	background: var(--muted-foreground);
+}
+
+.wb-status--unknown .wb-status__glyph {
+	background: var(--border);
+}
+
+/* ---------------------------------------------------------- theme lab */
+
+.wb-theme-lab {
+	position: fixed;
+	z-index: 30;
+	right: 12px;
+	bottom: 34px;
+}
+
+.wb-theme-lab__toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	font-size: 11px;
+	color: var(--muted-foreground);
+	background: var(--card);
+	border: 1px solid var(--border);
+}
+
+.wb-theme-lab__toggle svg {
+	width: 13px;
+	height: 13px;
+}
+
+.wb-theme-lab__toggle[aria-expanded="true"],
+.wb-theme-lab__toggle:hover {
+	color: var(--foreground);
+	border-color: var(--primary);
+}
+
+.wb-theme-lab__panel {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 6px);
+	width: 300px;
+	max-height: min(70vh, 560px);
+	overflow-y: auto;
+	padding: 12px;
+	background: var(--popover);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 0);
+	box-shadow: var(--shadow-lg, none);
+}
+
+.wb-theme-lab__panel header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 10px;
+}
+
+.wb-theme-lab__panel header strong {
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.wb-theme-lab__panel header button {
+	display: inline-flex;
+	padding: 5px;
+	color: var(--muted-foreground);
+	border: 1px solid var(--border);
+}
+
+.wb-theme-lab__panel header button svg {
+	width: 13px;
+	height: 13px;
+}
+
+.wb-theme-lab__rows {
+	display: grid;
+	gap: 6px;
+	margin: 0 0 12px;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-theme-lab__rows li {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: center;
+	gap: 8px;
+}
+
+.wb-theme-lab__rows label {
+	font-size: 11px;
+}
+
+.wb-theme-lab__rows input[type="color"] {
+	width: 34px;
+	height: 24px;
+	padding: 2px;
+	background: var(--card);
+	border: 1px solid var(--border);
+}
+
+.wb-theme-lab__rows input[type="range"] {
+	width: 120px;
+	accent-color: var(--primary);
+}
+
+.wb-theme-lab__rows li span {
+	font-size: 10px;
+	color: var(--muted-foreground);
+}
+
+.wb-theme-lab__rows li button {
+	display: inline-flex;
+	padding: 3px;
+	color: var(--muted-foreground);
+}
+
+.wb-theme-lab__rows li button svg {
+	width: 12px;
+	height: 12px;
+}
+
+.wb-theme-lab__json-label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 11px;
+	color: var(--muted-foreground);
+}
+
+.wb-theme-lab__panel textarea {
+	width: 100%;
+	padding: 8px;
+	font-family: var(--font-mono, monospace);
+	font-size: 10px;
+	line-height: 1.5;
+	color: var(--foreground);
+	background: var(--card);
+	border: 1px solid var(--border);
+	resize: vertical;
+}
+
+.wb-theme-lab__error {
+	margin: 6px 0 0;
+	font-size: 10px;
+	color: var(--destructive);
+}
+
+.wb-theme-lab__apply {
+	margin-top: 8px;
+	padding: 6px 10px;
+	font-size: 11px;
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border: 1px solid var(--primary);
+}
+
+/* -------------------------------------------------------------- statusbar */
+
+.wb-statusbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-shrink: 0;
+	height: 24px;
+	padding: 0 16px;
+	background: color-mix(in srgb, var(--sidebar) 80%, transparent);
+	border-top: 1px solid var(--sidebar-border);
+	font-size: 10px;
+	color: var(--muted-foreground);
+	user-select: none;
+}
+
+.wb-statusbar__group {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.wb-statusbar__item {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-statusbar__item svg {
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
+}
+
+.wb-statusbar__item--dim {
+	opacity: 0.6;
+}
+
+.wb-settings-pane {
+	overflow-y: auto;
+}
+
+.wb-settings-pane__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 42px;
+	padding: 0 10px 0 14px;
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+}
+
+.wb-settings-pane__section {
+	display: grid;
+	gap: 10px;
+	padding: 14px;
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-settings-pane__section h2 {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--muted-foreground);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-settings-pane .wb-theme-picker {
+	flex-wrap: wrap;
+}
+
+.wb-settings-pane .wb-theme-lab[data-embedded="true"] {
+	position: static;
+	z-index: auto;
+}
+
+.wb-settings-pane .wb-theme-lab__panel {
+	position: static;
+	width: auto;
+	max-height: none;
+	padding: 14px;
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+}
+
+.wb-settings-pane > .wb-config-lens {
+	margin-top: auto;
+	border-top: 1px solid var(--border);
+}
+
+.wb-statusbar__button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	color: inherit;
+	background: transparent;
+	border: 0;
+}
+
+.wb-statusbar__button:hover,
+.wb-statusbar__button[aria-expanded="true"] {
+	color: var(--foreground);
+	background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+
+.wb-statusbar__button svg {
+	width: 12px;
+	height: 12px;
+}
+
+/* ------------------------------------------------------------ mobile tabs */
+
+.wb-mobile-tabs {
+	display: none;
+	gap: 4px;
+	flex-shrink: 0;
+	padding: 6px;
+	background: var(--card);
+	border-bottom: 1px solid var(--border);
+}
+
+.wb-mobile-tabs__item {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 8px;
+	border: 1px solid transparent;
+	font-size: 12px;
+	color: var(--muted-foreground);
+}
+
+.wb-mobile-tabs__item[data-active="true"] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-mobile-tabs__item svg {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 1023px) {
+	/*
+	 * The mobile navigation is a full-screen drawer, not a side panel: the
+	 * base rail sizing is fixed at 260px, so every one of those three width
+	 * declarations has to be released here for the drawer to fill the screen.
+	 */
+	.wb-sidebar {
+		position: fixed;
+		z-index: 20;
+		inset: 0;
+		flex: 1 1 auto;
+		width: 100%;
+		min-width: 0;
+		max-width: none;
+		visibility: hidden;
+	}
+
+	.wb-shell[data-sessions-open="true"] .wb-sidebar {
+		visibility: visible;
+	}
+
+	.wb-shell[data-sessions-open="true"] .wb-sessions-backdrop {
+		display: block;
+		position: fixed;
+		z-index: 19;
+		inset: 0;
+		width: 100%;
+		background: color-mix(in srgb, var(--base00) 60%, transparent);
+		backdrop-filter: blur(var(--backdrop-blur, 0px));
+	}
+
+	.wb-mobile-chrome {
+		position: relative;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto auto;
+		align-items: center;
+		gap: 8px;
+		padding: 0 6px 0 4px;
+		min-height: 44px;
+		background: var(--sidebar);
+		border-bottom: 1px solid var(--sidebar-border);
+	}
+
+	.wb-mobile-chrome__sessions {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 8px;
+		color: var(--muted-foreground);
+	}
+
+	.wb-mobile-chrome__sessions svg {
+		width: 18px;
+		height: 18px;
+	}
+
+	.wb-mobile-chrome__identity {
+		display: grid;
+		min-width: 0;
+	}
+
+	.wb-mobile-chrome__identity strong {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1.25;
+	}
+
+	.wb-mobile-chrome__identity small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 9px;
+		line-height: 1.2;
+		color: var(--muted-foreground);
+	}
+
+	.wb-mobile-chrome__menu {
+		display: inline-flex;
+		align-items: center;
+		gap: 1px;
+		padding: 6px 5px 6px 7px;
+		border: 1px solid var(--border);
+		color: var(--foreground);
+	}
+
+	.wb-mobile-chrome__menu svg:first-child {
+		width: 15px;
+		height: 15px;
+	}
+
+	.wb-mobile-chrome__menu svg:last-child {
+		width: 12px;
+		height: 12px;
+		color: var(--muted-foreground);
+	}
+
+	.wb-mobile-tabs {
+		display: grid;
+		position: absolute;
+		z-index: 12;
+		top: calc(100% + 2px);
+		right: 6px;
+		width: min(240px, 78vw);
+		gap: 2px;
+		padding: 6px;
+		background: var(--popover);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md, 0);
+		box-shadow: var(--shadow-lg, none);
+	}
+
+	.wb-mobile-tabs__item {
+		justify-content: flex-start;
+		padding: 9px 10px;
+	}
+
+	.wb-mobile-tabs__item span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-task-progress[data-placement="desktop"] {
+		display: none;
+	}
+
+	.wb-task-progress[data-placement="mobile"] {
+		border-top: 0;
+		background: none;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__rail {
+		grid-template-columns: auto auto;
+		gap: 5px;
+		min-height: 0;
+		height: 100%;
+		padding: 0;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__toggle {
+		display: none;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__connector {
+		width: 6px;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__point {
+		width: 12px;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__label,
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__active {
+		display: none;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__connector {
+		width: 8px;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__tooltip {
+		display: none;
+	}
+
+	.wb-task-progress[data-placement="mobile"] .wb-task-progress__details {
+		position: fixed;
+		z-index: 10;
+		left: 8px;
+		right: 8px;
+		bottom: 48px;
+		max-height: 55dvh;
+	}
+
+	.wb-workarea {
+		padding: 4px;
+		gap: 4px;
+	}
+
+	/*
+	 * Full-bleed on a narrow screen: the turns run to both edges, so their
+	 * own borders are the only vertical lines and nothing is spent on a
+	 * stripe of chrome down a 390px viewport. The composer keeps an inset
+	 * because it is not a turn and should not touch the edge.
+	 */
+	.wb-chat-card {
+		--chat-inset: 12px;
+		padding: 0;
+	}
+
+	.wb-chat-panel {
+		padding-inline: 0;
+	}
+
+	.wb-chat-card > .wb-composer {
+		margin: 8px var(--chat-inset) 12px;
+	}
+
+	.wb-wa-tabs {
+		display: none;
+	}
+
+	.wb-msg[data-author="user"] {
+		margin-left: 0;
+	}
+
+	.wb-msg[data-author="agent"] {
+		margin-right: 0;
+	}
+
+	.wb-panel {
+		flex: 1;
+	}
+
+	.wb-workarea[data-view="chat"] .wb-panel {
+		display: none;
+	}
+
+	.wb-workarea[data-view="files"] .wb-main {
+		display: none;
+	}
+
+	.wb-statusbar {
+		height: 40px;
+		padding: 0 16px;
+	}
+}
+
+/* -------------------------------------------------- corner-mode shell grid */
+
+.wb-corner-frame,
+.wb-corner-content {
+	display: contents;
+}
+
+.wb-corner-top,
+.wb-corner-composer,
+.wb-corner-status,
+.wb-corner-scrim,
+.wb-corner-navigator,
+.wb-corner-menu,
+.wb-corner-radial {
+	display: none;
+}
+
+@media (max-width: 1023px) {
+	.wb-shell[data-mobile-mode="corner"] .wb-mobile-chrome,
+	.wb-shell[data-mobile-mode="corner"] > .wb-content > .wb-config-lens,
+	.wb-shell[data-mobile-mode="corner"] > .wb-content > .wb-statusbar {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-frame {
+		position: relative;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+		background: var(--background);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-content {
+		display: flex;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
+		display: grid;
+		grid-template-columns: 44px minmax(0, 1fr) 44px;
+		align-items: center;
+		gap: 8px;
+		padding-inline: max(8px, env(safe-area-inset-left))
+			max(8px, env(safe-area-inset-right));
+		background: var(--background);
+		border-color: var(--border);
+		z-index: 22;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top {
+		min-height: calc(56px + env(safe-area-inset-top));
+		padding-top: env(safe-area-inset-top);
+		/* Chrome bars are the near-black rail surface, per the v4 gallery. */
+		background: var(--sidebar);
+		border-bottom: 1px solid var(--border);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer {
+		padding-block: 7px 4px;
+		/* Og v4: top chrome is the black rail, the bottom bar is page grey. */
+		background: var(--background);
+	}
+
+	/* Long-pressing the chrome must never start a mobile text selection. */
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-top,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-composer,
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-status {
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
+	}
+
+	.wb-corner-button {
+		position: relative;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		touch-action: none;
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
+		color: var(--muted-foreground);
+		background: transparent;
+		border: 0;
+	}
+
+	.wb-corner-button:hover,
+	.wb-corner-button[data-open="true"] {
+		color: var(--primary);
+		background: color-mix(in srgb, var(--primary) 7%, transparent);
+	}
+
+	.wb-corner-button:focus-visible {
+		outline: 1px solid var(--ring);
+		outline-offset: -3px;
+	}
+
+	.wb-corner-button:active {
+		color: var(--foreground);
+		background: color-mix(in srgb, var(--primary) 11%, transparent);
+		transform: scale(0.95);
+	}
+
+	.wb-corner-button svg {
+		width: 21px;
+		height: 21px;
+	}
+
+	.wb-corner-button__hold {
+		position: absolute;
+		right: 5px;
+		bottom: 5px;
+		width: 3px;
+		height: 3px;
+		background: currentColor;
+		border-radius: 50%;
+		opacity: 0.55;
+	}
+
+	.wb-corner-identity {
+		display: grid;
+		min-width: 0;
+		text-align: center;
+	}
+
+	.wb-corner-identity strong,
+	.wb-corner-identity small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-identity strong {
+		font-size: 12px;
+	}
+
+	.wb-corner-identity small {
+		color: var(--muted-foreground);
+		font-size: 9px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-workarea {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-card {
+		padding: 0;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-panel {
+		padding: 10px 8px;
+		background: transparent;
+		border: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg + .wb-msg {
+		margin-top: 10px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg {
+		box-shadow: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg[data-author="agent"] {
+		margin-right: 44px;
+		background: var(--card);
+		border-color: var(--border);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg[data-author="user"] {
+		margin-left: 44px;
+		background: color-mix(in oklab, var(--primary) 8%, var(--background));
+		border-color: var(--primary);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header {
+		/* Og v4 anatomy: name and time together, no icons, no spread. */
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 9px 11px 0;
+		border-bottom: 0;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__spacer {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header > svg,
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__header .wb-icon-button {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__name {
+		color: var(--primary);
+		font-size: 10px;
+		font-weight: 600;
+	}
+
+	.wb-shell[data-mobile-mode="corner"]
+		.wb-msg[data-author="user"]
+		.wb-msg__name {
+		color: var(--foreground);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__time {
+		color: var(--muted-foreground);
+		font-size: 10px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__body {
+		padding: 4px 11px 9px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-msg__body p {
+		font-size: 12.5px;
+		line-height: 1.5;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-tool {
+		margin-top: 6px;
+		padding: 4px 8px;
+		font-size: 10.5px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-chat-card > .wb-composer {
+		display: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-theme-lab {
+		display: none;
+	}
+
+	.wb-corner-composer textarea {
+		width: 100%;
+		min-width: 0;
+		height: 44px;
+		min-height: 44px;
+		max-height: 88px;
+		resize: none;
+		padding: 11px 12px;
+		font: inherit;
+		color: var(--foreground);
+		/* One flat bar: the prompt shares the row surface, no box around it. */
+		background: transparent;
+		border: 0;
+		outline: none;
+	}
+
+	.wb-corner-composer textarea:focus {
+		border: 0;
+		outline: none;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-status {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		min-width: 0;
+		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
+		color: var(--muted-foreground);
+		/* The status line is black rail, framing the grey composer above it. */
+		background: var(--sidebar);
+		border-top: 0;
+		font-family: var(--font-mono);
+		font-size: 9px;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	.wb-corner-status span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.wb-corner-status span:first-child {
+		color: var(--primary);
+	}
+
+	.wb-corner-status span:first-child i {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		background: currentColor;
+		/* globals.css flattens every radius with !important; dots need the
+		   same specificity to stay circular. */
+		border-radius: 50% !important;
+	}
+
+	.wb-corner-status [data-status="blocked"] {
+		color: var(--destructive);
+	}
+
+	.wb-corner-status [data-status="done"] {
+		color: var(--info);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-scrim {
+		position: absolute;
+		display: block;
+		inset: 0;
+		z-index: 25;
+		background: color-mix(in srgb, black 48%, transparent);
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-navigator {
+		position: absolute;
+		display: grid;
+		grid-template-columns: 58px minmax(0, 1fr);
+		inset: calc(56px + env(safe-area-inset-top)) 0 0;
+		z-index: 30;
+		min-height: 0;
+		background: var(--background);
+	}
+
+	.wb-corner-ribbon {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		min-height: 0;
+		padding: 7px;
+		overflow-y: auto;
+		background: var(--sidebar);
+		border-right: 1px solid var(--border);
+	}
+
+	.wb-corner-ribbon button {
+		position: relative;
+		display: grid;
+		justify-items: center;
+		gap: 1px;
+		width: 44px;
+		min-height: 44px;
+		padding: 4px 2px;
+		color: var(--muted-foreground);
+		border: 1px solid transparent;
+	}
+
+	.wb-corner-ribbon button[data-active="true"] {
+		color: var(--foreground);
+		background: color-mix(in srgb, var(--primary) 10%, transparent);
+		border-color: var(--primary);
+	}
+
+	.wb-corner-ribbon button > span {
+		display: grid;
+		place-items: center;
+		width: 24px;
+		height: 24px;
+		color: var(--foreground);
+		background: var(--muted);
+		font-size: 9px;
+		font-weight: 700;
+	}
+
+	.wb-corner-face {
+		width: 26px;
+		height: 26px;
+		object-fit: contain;
+	}
+
+	.wb-corner-menu .wb-corner-face {
+		width: 24px;
+		height: 24px;
+	}
+
+	.wb-corner-ribbon button svg {
+		width: 18px;
+		height: 18px;
+	}
+
+	.wb-corner-ribbon .wb-corner-attention {
+		position: absolute;
+		top: 3px;
+		right: 3px;
+		width: 6px;
+		height: 6px;
+		background: var(--muted-foreground);
+		border-radius: 50% !important;
+	}
+
+	.wb-corner-ribbon .wb-corner-attention[data-status="working"] {
+		background: var(--primary);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="blocked"] {
+		background: var(--destructive);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="done"] {
+		background: var(--info);
+	}
+	.wb-corner-ribbon .wb-corner-attention[data-status="idle"] {
+		display: none;
+	}
+
+	.wb-corner-ribbon small {
+		max-width: 40px;
+		overflow: hidden;
+		font-size: 7px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-nav-main {
+		display: grid;
+		grid-template-rows: auto auto minmax(0, 1fr) auto;
+		min-width: 0;
+		min-height: 0;
+		background: var(--background);
+	}
+
+	.wb-corner-nav-main > header {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 8px;
+		min-height: 50px;
+		padding: 7px 10px;
+		border-bottom: 2px solid var(--primary);
+	}
+
+	.wb-corner-nav-main > header > svg {
+		width: 20px;
+	}
+
+	.wb-corner-nav-main > header span {
+		display: grid;
+		min-width: 0;
+	}
+
+	.wb-corner-nav-main > header strong,
+	.wb-corner-nav-main > header small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-nav-main > header strong {
+		font-size: 11px;
+	}
+
+	.wb-corner-nav-main > header small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-corner-nav-main > header button {
+		min-height: 34px;
+		padding: 4px 7px;
+		color: var(--muted-foreground);
+		border: 1px solid var(--border);
+		font-size: 8px;
+		letter-spacing: 0.08em;
+	}
+
+	.wb-corner-search {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 7px;
+		margin: 6px 8px;
+		padding: 7px 9px;
+		background: var(--card);
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-search svg {
+		width: 15px;
+		color: var(--muted-foreground);
+	}
+
+	.wb-corner-search input {
+		min-width: 0;
+		background: transparent;
+		border: 0;
+		outline: 0;
+		font-size: 11px;
+	}
+
+	.wb-corner-session-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-height: 0;
+		padding: 0 8px 8px;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+
+	.wb-corner-session-list > button {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 8px;
+		min-height: 48px;
+		padding: 7px 9px;
+		text-align: left;
+		background: var(--card);
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-session-list > button[data-current="true"] {
+		border-color: var(--primary);
+	}
+
+	.wb-corner-session-list i,
+	.wb-corner-menu i {
+		width: 7px;
+		height: 7px;
+		background: var(--muted-foreground);
+		border-radius: 50% !important;
+	}
+
+	.wb-corner-session-list i[data-status="working"],
+	.wb-corner-menu i[data-status="working"] {
+		background: var(--primary);
+	}
+
+	.wb-corner-session-list i[data-status="blocked"],
+	.wb-corner-menu i[data-status="blocked"] {
+		background: var(--destructive);
+	}
+
+	.wb-corner-session-list i[data-status="done"],
+	.wb-corner-menu i[data-status="done"] {
+		background: var(--info);
+	}
+
+	.wb-corner-session-list span {
+		display: grid;
+		min-width: 0;
+	}
+
+	.wb-corner-session-list strong,
+	.wb-corner-session-list small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wb-corner-session-list strong {
+		font-size: 10px;
+		font-weight: 500;
+	}
+
+	.wb-corner-session-list em {
+		color: var(--muted-foreground);
+		font-size: 8px;
+		font-style: normal;
+	}
+
+	.wb-corner-session-list small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-corner-session-list .wb-corner-new {
+		grid-template-columns: auto minmax(0, 1fr);
+		color: var(--muted-foreground);
+		background: transparent;
+		border-style: dashed;
+	}
+
+	.wb-corner-session-list .wb-corner-new svg {
+		width: 15px;
+	}
+
+	.wb-corner-nav-main > footer {
+		padding: 6px 9px;
+		color: var(--muted-foreground);
+		background: color-mix(in srgb, black 30%, transparent);
+		border-top: 1px solid var(--border);
+		font-size: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-menu {
+		position: absolute;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr);
+		left: 8px;
+		right: 8px;
+		bottom: calc(74px + env(safe-area-inset-bottom));
+		z-index: 31;
+		max-height: 48%;
+		background: var(--card);
+		border: 1px solid var(--border);
+		box-shadow: var(--shadow-lg, none);
+	}
+
+	.wb-corner-menu > header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		min-height: 44px;
+		padding: 6px 10px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.wb-corner-menu > header button {
+		display: grid;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+	}
+
+	.wb-corner-menu > header svg {
+		width: 17px;
+	}
+
+	.wb-corner-menu > div {
+		display: grid;
+		gap: 3px;
+		padding: 6px;
+		overflow-y: auto;
+	}
+
+	.wb-corner-menu > div > button {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 9px;
+		min-height: 44px;
+		padding: 7px 9px;
+		text-align: left;
+		border: 1px solid var(--border);
+	}
+
+	.wb-corner-menu > div > button[data-current="true"] {
+		border-color: var(--primary);
+	}
+
+	.wb-corner-menu > div svg {
+		width: 19px;
+	}
+
+	.wb-corner-menu > div strong {
+		font-size: 10px;
+	}
+
+	.wb-corner-menu > div small {
+		color: var(--muted-foreground);
+		font-size: 8px;
+	}
+
+	.wb-shell[data-mobile-mode="corner"] .wb-corner-radial {
+		position: absolute;
+		display: block;
+		inset: 0;
+		z-index: 32;
+		pointer-events: none;
+	}
+
+	.wb-corner-radial > button {
+		position: absolute;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		color: var(--foreground);
+		background: var(--card);
+		border: 1px solid var(--border);
+		pointer-events: auto;
+	}
+
+	.wb-corner-radial > button:hover,
+	.wb-corner-radial > button:focus-visible {
+		color: var(--primary);
+		border-color: var(--primary);
+	}
+
+	.wb-corner-radial > button svg {
+		width: 19px;
+	}
+
+	.wb-corner-radial [data-action="attach"] {
+		right: 74px;
+		bottom: 68px;
+	}
+	.wb-corner-radial [data-action="voice"] {
+		right: 22px;
+		bottom: 116px;
+	}
+	.wb-corner-radial [data-action="model"] {
+		right: 84px;
+		bottom: 128px;
+	}
+	.wb-corner-radial [data-action="fork"] {
+		right: 136px;
+		bottom: 86px;
+	}
+	.wb-corner-radial .wb-corner-radial__cancel {
+		right: 8px;
+		bottom: calc(30px + env(safe-area-inset-bottom));
+		border-style: dashed;
+		border-radius: 50% !important;
+	}
+}
+
+/* Shell load states */
+.wb-shell-notice {
+	display: grid;
+	place-content: center;
+	gap: 12px;
+	min-height: 100dvh;
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+	text-align: center;
+}
+
+.wb-shell-notice button {
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	padding: 8px 16px;
+	min-height: 44px;
+	cursor: pointer;
+}
+
+/* Gallery work-area pane */
+.wb-gallery {
+	flex: 1;
+	overflow: auto;
+	padding: 16px;
+	background: var(--card);
+}
+
+.wb-gallery__empty {
+	color: var(--muted-foreground);
+	margin: 0;
+}
+
+.wb-gallery__grid {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+	gap: 12px;
+}
+
+.wb-gallery__grid button {
+	display: grid;
+	gap: 4px;
+	width: 100%;
+	padding: 8px;
+	border: 1px solid var(--border);
+	background: var(--background);
+	color: var(--foreground);
+	cursor: pointer;
+	text-align: left;
+	font-family: var(--font-mono);
+}
+
+.wb-gallery__grid img {
+	width: 100%;
+	height: auto;
+	background: var(--muted, var(--border));
+}
+
+.wb-gallery__grid small {
+	color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------- virtual timeline */
+
+.wb-chat-panel {
+	/* iOS hardening: contain the gesture in the timeline, keep native
+	   momentum in this nested scroller. */
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
+.wb-timeline {
+	position: relative;
+	width: 100%;
+	height: var(--timeline-size, auto);
+}
+
+/* Touch devices render the page in plain flow so iOS keeps native
+   momentum; no absolute positioning, no transforms. */
+.wb-timeline--plain {
+	height: auto;
+}
+
+.wb-timeline--plain .wb-timeline-row {
+	position: static;
+	transform: none;
+}
+
+.wb-timeline-row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	padding-bottom: var(--chat-turn-gap);
+	transform: translateY(var(--row-offset, 0));
+}
+
+/*
+ * The virtualizer measures the row with offsetHeight, which excludes margins,
+ * so a turn's own bottom margin would go uncounted and the rows would overlap.
+ * Inside a timeline row the row owns the gap.
+ */
+.wb-timeline-row > .chat-turn {
+	margin-block-end: 0;
+}
+
+.wb-load-earlier {
+	display: block;
+	margin: 0 auto 12px;
+	padding: 6px 14px;
+	font-size: 12px;
+	color: var(--muted-foreground);
+	background: color-mix(in srgb, var(--muted) 40%, transparent);
+	border: 1px solid var(--border);
+	cursor: pointer;
+}
+
+.wb-load-earlier:hover:not(:disabled),
+.wb-load-earlier:focus-visible {
+	color: var(--foreground);
+}
+
+.wb-chat-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	/* On the same inset as the turns and the composer below it. */
+	margin-inline: var(--chat-inset);
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--muted-foreground);
+	user-select: none;
+}
+
+.wb-chat-header__meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.wb-chat-header__item {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-chat-header__model {
+	color: var(--foreground);
+	opacity: 0.72;
+}
+
+.wb-chat-header__sep {
+	opacity: 0.4;
+}
+
+.wb-chat-header .wb-chat-header__meta + * {
+	flex-shrink: 0;
+}
+
+/* The presentation's own actions and the Container's, on one line. */
+.wb-chat-header__actions {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: 2px;
+}
+
+@media (max-width: 1023px) {
+	/* The mobile top bar already carries session meta; no duplicated header. */
+	.wb-shell .wb-chat-header {
+		display: none;
+	}
+}
+
+.wb-chat-header__gauge {
+	display: block;
+	width: 180px;
+	flex-shrink: 0;
+}
+
+/* Files pane: a dense, virtualized listing. Rows are absolutely placed by
+   the virtualizer, so only what fits on screen exists in the DOM. Colour
+   comes from palette roles keyed by entry kind, never per-extension hexes. */
+.wb-files {
+	overflow: hidden;
+}
+
+.wb-files .wb-files-toolbar {
+	gap: 2px;
+	padding: 6px 8px;
+}
+
+.wb-files-crumb-group {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	color: var(--muted-foreground);
+}
+
+.wb-files-crumb-group svg {
+	width: 12px;
+	height: 12px;
+	opacity: 0.6;
+}
+
+.wb-files-crumb {
+	max-width: 160px;
+	padding: 3px 6px;
+	overflow: hidden;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-crumb:last-of-type {
+	color: var(--foreground);
+}
+
+.wb-files-crumb:hover {
+	color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.wb-files-filter {
+	flex: none;
+	padding: 7px 12px;
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: color-mix(in srgb, var(--muted) 22%, transparent);
+	color: var(--foreground);
+	font: inherit;
+	font-size: 12px;
+}
+
+.wb-files-filter::placeholder {
+	color: var(--muted-foreground);
+}
+
+.wb-files-rows {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	outline: none;
+}
+
+.wb-files-rows:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.wb-files-viewport {
+	position: relative;
+	height: var(--wb-files-height);
+	width: 100%;
+}
+
+.wb-files-row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	transform: translateY(var(--wb-files-offset));
+}
+
+.wb-files-note {
+	padding: 16px 12px;
+	color: var(--muted-foreground);
+	font-size: 12px;
+}
+
+/* Rows: tight, scannable, with the kind's colour on the icon only. */
+.wb-files .wb-tree__row {
+	gap: 8px;
+	padding: 4px 10px;
+	border-left: 2px solid transparent;
+	color: var(--foreground);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.wb-files .wb-tree__row svg {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	color: var(--muted-foreground);
+}
+
+.wb-files .wb-tree__row[data-kind="folder"] svg {
+	color: var(--primary);
+}
+
+.wb-files .wb-tree__row[data-kind="code"] svg {
+	color: var(--chart-1);
+}
+
+.wb-files .wb-tree__row[data-kind="markup"] svg,
+.wb-files .wb-tree__row[data-kind="document"] svg {
+	color: var(--chart-2);
+}
+
+.wb-files .wb-tree__row[data-kind="data"] svg {
+	color: var(--chart-3);
+}
+
+.wb-files .wb-tree__row[data-kind="image"] svg,
+.wb-files .wb-tree__row[data-kind="media"] svg {
+	color: var(--chart-4);
+}
+
+.wb-files .wb-tree__row[data-kind="archive"] svg,
+.wb-files .wb-tree__row[data-kind="binary"] svg {
+	color: var(--chart-5);
+}
+
+.wb-files .wb-tree__row[data-kind="folder"] .wb-tree__name {
+	font-weight: 500;
+}
+
+.wb-files .wb-tree__row:hover {
+	background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.wb-files .wb-tree__row[data-selected] {
+	background: color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.wb-files .wb-tree__row[data-cursor] {
+	border-left-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.wb-files .wb-tree__row[data-changed] .wb-tree__name::after {
+	content: "";
+	display: inline-block;
+	width: 5px;
+	height: 5px;
+	margin-left: 6px;
+	vertical-align: middle;
+	border-radius: 50%;
+	background: var(--chart-4);
+}
+
+.wb-files .wb-tree__name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-tree__link {
+	opacity: 0.7;
+}
+
+.wb-tree__meta {
+	flex: none;
+	padding-left: 10px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.wb-tree__meta:last-of-type {
+	min-width: 62px;
+	text-align: right;
+}
+
+/* Quick Look: facts and a lightweight preview of the cursor row. */
+.wb-files-preview {
+	flex: none;
+	max-height: 45%;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 12px;
+	border-top: 1px solid var(--border);
+	background: color-mix(in srgb, var(--muted) 25%, transparent);
+	overflow: hidden;
+}
+
+.wb-files-preview__name {
+	color: var(--foreground);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-preview__facts {
+	display: flex;
+	gap: 10px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-files-preview__body {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	overflow: auto;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.wb-files-preview__image {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+	align-self: flex-start;
+}
+
+.wb-files-preview__frame {
+	width: 100%;
+	height: 100%;
+	border: none;
+	background: var(--background);
+}
+
+.wb-files-preview__media {
+	max-width: 100%;
+	max-height: 100%;
+	align-self: flex-start;
+}
+
+.wb-files-status {
+	display: flex;
+	flex: none;
+	gap: 12px;
+	padding: 5px 12px;
+	border-top: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.wb-files-status__spacer {
+	flex: 1;
+}
+
+.wb-files-confirm {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--foreground);
+}
+
+.wb-files-confirm span {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-files-confirm button,
+.wb-files-status button {
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-files-confirm button:first-of-type {
+	border-color: var(--destructive);
+	color: var(--destructive);
+}
+
+.wb-files-status button:hover,
+.wb-files-confirm button:hover {
+	color: var(--foreground);
+	border-color: var(--primary);
+}
+
+/* Fidelity: the pane earns Miller columns only when its Container is wide
+   enough (ADR-0037). Both layouts render the same rows. */
+.wb-files-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	outline: none;
+}
+
+.wb-files-body:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.wb-files-body > .wb-files-rows {
+	flex: 1;
+}
+
+.wb-files-columns {
+	display: grid;
+	flex: 1;
+	min-height: 0;
+	grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.4fr);
+}
+
+.wb-files-column {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	flex-direction: column;
+	border-left: 1px solid var(--border);
+}
+
+.wb-files-column:first-child {
+	border-left: 0;
+}
+
+.wb-files-column[data-role="parent"] .wb-tree__row {
+	color: var(--muted-foreground);
+}
+
+.wb-files-column[data-role="preview"] .wb-files-preview {
+	flex: 1;
+	max-height: none;
+	border-top: 0;
+	background: transparent;
+}
+
+.wb-files[data-fidelity="compact"] .wb-tree__meta {
+	display: none;
+}
+
+.wb-files .wb-icon-button[data-active] {
+	color: var(--primary);
+}
+
+.wb-files .wb-icon-button[data-descending] svg {
+	transform: scaleY(-1);
+}
+
+/* Tree view: depth as an indent, an expander that does not steal the row's
+   click, and the same row body as the list view. */
+.wb-files .wb-tree__row[data-depth="1"] {
+	padding-left: 24px;
+}
+.wb-files .wb-tree__row[data-depth="2"] {
+	padding-left: 38px;
+}
+.wb-files .wb-tree__row[data-depth="3"] {
+	padding-left: 52px;
+}
+.wb-files .wb-tree__row[data-depth="4"] {
+	padding-left: 66px;
+}
+.wb-files .wb-tree__row[data-depth="5"] {
+	padding-left: 80px;
+}
+
+.wb-tree__expander {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--muted-foreground);
+}
+
+.wb-tree__expander:hover {
+	color: var(--foreground);
+}
+
+/* ------------------------------------------------------------------ todos */
+
+.wb-todos {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-block-size: 0;
+	padding: 12px;
+	overflow-y: auto;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-todos__empty,
+.wb-todos__summary {
+	margin: 0;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-todos__list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-todos__list li {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--card);
+	color: var(--foreground);
+}
+
+.wb-todos__list li svg {
+	inline-size: 14px;
+	block-size: 14px;
+	color: var(--muted-foreground);
+}
+
+.wb-todos__list li[data-status="active"] svg {
+	color: var(--primary);
+}
+
+.wb-todos__list li[data-status="completed"] {
+	color: var(--muted-foreground);
+}
+
+.wb-todos__list li small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------- file pane */
+
+.wb-file {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	background: var(--card);
+}
+
+.wb-file__bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-file__name {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+	direction: rtl;
+	text-align: start;
+}
+
+.wb-file__dirty {
+	flex: none;
+	color: var(--primary);
+	text-transform: uppercase;
+	font-size: 10px;
+}
+
+.wb-file__body {
+	display: flex;
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow: auto;
+}
+
+.wb-file__note {
+	margin: 12px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-file__editor {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	padding: 12px;
+	border: 0;
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	resize: none;
+}
+
+.wb-file__editor:focus-visible {
+	outline: none;
+}
+
+.wb-file__body .wb-files-preview__body {
+	margin: 0;
+	padding: 12px;
+}
+
+/* ----------------------------------------------------------------- issues */
+
+.wb-issues {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-issues__bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__body {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow-y: auto;
+	padding: 8px;
+}
+
+.wb-issues__note {
+	margin: 4px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__group h3 {
+	margin: 8px 0 4px;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-issues__group ul {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-issues__group li {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--card);
+}
+
+.wb-issues__id {
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-issues__title {
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wb-issues__blocked {
+	grid-column: 1 / -1;
+	color: var(--destructive, var(--primary));
+	font-size: 10px;
+}
+
+.wb-issues__group li[data-status="closed"] .wb-issues__title {
+	color: var(--muted-foreground);
+	text-decoration: line-through;
+}
+
+/* --------------------------------------------------------------- terminal */
+
+.wb-terminal {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	background: var(--terminal-bg, var(--background));
+}
+
+.wb-terminal__note {
+	margin: 8px;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-terminal__surface {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	min-inline-size: 0;
+	overflow: hidden;
+}
+
+/*
+ * wterm renders to the DOM and reads its palette from custom properties, so
+ * the terminal wears the shell's theme instead of a stock one. Its own card
+ * chrome is dropped: the Container already is the card.
+ */
+.wb-terminal__surface.wterm {
+	padding: 8px 10px;
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--terminal-bg, var(--background));
+	--term-bg: var(--terminal-bg, var(--background));
+	--term-fg: var(--terminal-fg, var(--foreground));
+	--term-cursor: var(--primary);
+	--term-font-family: var(--font-mono);
+	--term-font-size: 12px;
+	--term-line-height: 1.45;
+}
+
+/* ------------------------------------------------------ files menu */
+
+/*
+ * The host-owned resource menu. It is positioned from the pointer through
+ * custom properties so the surface itself carries no measured layout.
+ */
+.wb-files-menu {
+	position: fixed;
+	z-index: 40;
+	/* Clamped to the viewport: a menu opened near an edge stays whole. */
+	inset-block-start: min(var(--wb-menu-y), calc(100dvh - 16rem));
+	inset-inline-start: min(var(--wb-menu-x), calc(100dvw - 17rem));
+	min-inline-size: 180px;
+	max-inline-size: 260px;
+	/* A long destination list scrolls rather than running off the screen. */
+	max-block-size: 15rem;
+	overflow-y: auto;
+	padding: 4px;
+	border: 1px solid var(--border);
+	/* Card and popover are the same token in several schemes, and shadows can
+	   be off; the surface lifts itself so the menu never blends into the pane. */
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
+	box-shadow: var(--shadow-md, none);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-files-menu__group + .wb-files-menu__group {
+	margin-block-start: 4px;
+	padding-block-start: 4px;
+	border-block-start: 1px solid var(--border);
+}
+
+.wb-files-menu button {
+	display: block;
+	inline-size: 100%;
+	padding: 6px 8px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.wb-files-menu button:hover,
+.wb-files-menu button:focus-visible {
+	background: var(--muted);
+}
+
+.wb-files-menu button[data-danger] {
+	color: var(--destructive, var(--primary));
+}
+
+.wb-files-menu__backdrop {
+	position: fixed;
+	z-index: 39;
+	inset: 0;
+	border: 0;
+	background: none;
+}
+
+/* ----------------------------------------------------------- chat detail */
+
+.wb-chat-detail {
+	display: grid;
+	gap: 4px;
+}
+
+.wb-chat-detail button {
+	display: grid;
+	gap: 2px;
+	padding: 8px 10px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	text-align: start;
+	cursor: pointer;
+}
+
+.wb-chat-detail button:hover {
+	border-color: var(--primary);
+}
+
+.wb-chat-detail button[data-active] {
+	border-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.wb-chat-detail strong {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.wb-chat-detail small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	line-height: 1.4;
+}
+
+/* -------------------------------------------------------------- keyboard */
+
+.wb-keys {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 11px;
+}
+
+.wb-keys li {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 6px;
+}
+
+.wb-keys li > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+}
+
+.wb-keys button {
+	padding: 3px 6px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.wb-keys button:hover {
+	border-color: var(--primary);
+}
+
+.wb-keys button[data-overridden] {
+	color: var(--primary);
+}
+
+.wb-keys button[data-recording] {
+	border-color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
+.wb-keys__reset {
+	border-color: transparent !important;
+	background: none !important;
+	color: var(--muted-foreground) !important;
+}
+
+/* -------------------------------------------------------------------- git */
+
+.wb-git {
+	display: flex;
+	flex-direction: column;
+	min-block-size: 0;
+	block-size: 100%;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.wb-git__bar {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-end: 1px solid var(--border);
+}
+
+.wb-git__branch {
+	padding: 2px 4px;
+	border: 0;
+	background: none;
+	color: var(--primary);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.wb-git__branch:disabled {
+	cursor: default;
+}
+
+.wb-git__branches {
+	position: absolute;
+	z-index: 5;
+	inset-block-start: 28px;
+	inset-inline-start: 8px;
+	min-inline-size: 160px;
+	max-block-size: 12rem;
+	overflow-y: auto;
+	margin: 0;
+	padding: 4px;
+	border: 1px solid var(--border);
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
+	list-style: none;
+}
+
+.wb-git__branches button {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	inline-size: 100%;
+	padding: 4px 6px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	text-align: start;
+	cursor: pointer;
+}
+
+.wb-git__branches button:hover {
+	background: var(--muted);
+}
+
+.wb-git__branches small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+}
+
+.wb-git__note[data-failed] {
+	color: var(--destructive, var(--primary));
+}
+
+.wb-git__bar small {
+	color: var(--muted-foreground);
+	font-size: 10px;
+	margin-inline-end: auto;
+}
+
+.wb-git__body {
+	flex: 1 1 auto;
+	min-block-size: 0;
+	overflow-y: auto;
+	padding: 8px;
+}
+
+.wb-git__note {
+	margin: 4px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+}
+
+.wb-git__group h3 {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin: 8px 0 4px;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.wb-git__group h3 button {
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 10px;
+	text-transform: none;
+	letter-spacing: 0;
+	cursor: pointer;
+}
+
+.wb-git__group h3 button:hover {
+	color: var(--foreground);
+}
+
+.wb-git__group ul {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wb-git__group li {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 1fr) 20px;
+	align-items: center;
+	gap: 6px;
+}
+
+.wb-git__code {
+	color: var(--muted-foreground);
+	text-align: center;
+}
+
+.wb-git__code[data-code="M"] {
+	color: var(--primary);
+}
+
+.wb-git__code[data-code="D"] {
+	color: var(--destructive, var(--primary));
+}
+
+.wb-git__path {
+	min-inline-size: 0;
+	padding: 3px 4px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	cursor: pointer;
+}
+
+.wb-git__path:hover {
+	background: var(--muted);
+}
+
+.wb-git__move {
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.wb-git__move:hover {
+	color: var(--foreground);
+}
+
+/* The plain patch, shown until the renderer arrives or when it cannot. */
+.wb-git__patch {
+	margin: 0;
+	padding: 8px;
+	color: var(--foreground);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: pre;
+	overflow-x: auto;
+}
+
+/* The patch renderer brings its own layout; the pane gives it a frame. */
+.wb-git__diff {
+	margin: 8px 0 0;
+	border: 1px solid var(--border);
+	background: var(--card);
+	overflow: hidden;
+	font-size: 11px;
+}
+
+.wb-git__commit {
+	display: flex;
+	gap: 6px;
+	flex: none;
+	padding: 6px 8px;
+	border-block-start: 1px solid var(--border);
+}
+
+.wb-git__commit input {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	padding: 4px 6px;
+	border: 1px solid var(--border);
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.wb-git__commit button {
+	flex: none;
+	padding: 4px 8px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--foreground);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.wb-git__commit button:disabled {
+	color: var(--muted-foreground);
+	cursor: default;
+}

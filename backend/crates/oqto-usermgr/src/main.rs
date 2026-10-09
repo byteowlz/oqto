@@ -20,9 +20,15 @@
 
 use oqto_usermgr::validate::*;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
+use std::os::unix::{
+    fs::{OpenOptionsExt, PermissionsExt},
+    net::UnixListener,
+};
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const SOCKET_PATH: &str = "/run/oqto/usermgr.sock";
 
@@ -30,20 +36,221 @@ const SOCKET_PATH: &str = "/run/oqto/usermgr.sock";
 const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 
 /// Default extensions to install for new users.
-const PI_DEFAULT_EXTENSIONS: &[&str] = &[
-    "pi-auto-rename",
-    "pi-azure-empty-response-guard",
-    "pi-introspection",
-    "pi-oqto-bridge",
-    "pi-oqto-todos",
-    "pi-custom-context-files",
-    "pi-read-image-guard",
-    "pi-read-file-guard",
-    "pi-openai-completions-convert-think-tags",
-];
+///
+/// The deploy/setup sync script consumes the same file, so existing-principal
+/// backfills and new-principal provisioning cannot silently drift apart.
+const PI_DEFAULT_EXTENSIONS: &str =
+    include_str!("../../../../scripts/dist/pi-default-extensions.txt");
+
+fn pi_default_extensions() -> impl Iterator<Item = &'static str> {
+    PI_DEFAULT_EXTENSIONS
+        .lines()
+        .filter(|line| !line.is_empty())
+}
+
+fn runner_service_content(home: &str, socket_path: &str, user_path: &str) -> String {
+    format!(
+        r#"[Unit]
+Description=Oqto Runner - Process isolation daemon
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=notify
+ExecStart={RUNNER_BINARY} --socket {socket_path}
+Restart=always
+RestartSec=3
+Environment=RUST_LOG=info
+Environment=PATH={user_path}
+Environment=HOME={home}
+# systemd waits up to 30s for READY=1 before declaring failure
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target
+"#
+    )
+}
+
+#[cfg(test)]
+mod pi_extension_tests {
+    use super::{pi_default_extensions, runner_service_content};
+
+    #[test]
+    fn shared_principal_defaults_include_history_search() {
+        assert!(pi_default_extensions().any(|name| name == "pi-history-search"));
+    }
+
+    #[test]
+    fn shared_principal_default_names_are_canonical() {
+        assert!(pi_default_extensions().all(|name| {
+            name.starts_with("pi-")
+                && name
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '-')
+        }));
+    }
+
+    #[test]
+    fn runner_start_limits_belong_to_the_unit_section() {
+        let service = runner_service_content(
+            "/home/oqto_test",
+            "/run/oqto/runner-sockets/oqto_test/oqto-runner.sock",
+            "/usr/local/bin:/usr/bin",
+        );
+        let unit = service
+            .split("[Service]")
+            .next()
+            .expect("unit section exists");
+        let service_section = service
+            .split("[Service]")
+            .nth(1)
+            .expect("service section exists")
+            .split("[Install]")
+            .next()
+            .expect("install section exists");
+        assert!(unit.contains("StartLimitIntervalSec=120"));
+        assert!(unit.contains("StartLimitBurst=10"));
+        assert!(!service_section.contains("StartLimit"));
+    }
+}
+
+#[cfg(test)]
+mod config_path_tests {
+    use super::ensure_user_config_file_shape;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn test_root(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "oqto-usermgr-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is valid")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn preserves_empty_directory_and_creates_mode_0600_file() {
+        let root = test_root("empty-config-dir");
+        let path = root.join(".config/oqto/config.toml");
+        std::fs::create_dir_all(&path).expect("creates malformed directory");
+
+        let preserved = ensure_user_config_file_shape(&path)
+            .expect("empty historical directory is safely repairable")
+            .expect("malformed directory is preserved");
+
+        assert!(path.is_file());
+        assert!(preserved.is_dir());
+        assert_eq!(
+            std::fs::metadata(&path)
+                .expect("config metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        std::fs::remove_dir_all(root).expect("cleans test root");
+    }
+
+    #[test]
+    fn rejects_non_empty_config_directory() {
+        let root = test_root("non-empty-config-dir");
+        let path = root.join(".config/oqto/config.toml");
+        std::fs::create_dir_all(&path).expect("creates malformed directory");
+        std::fs::write(path.join("owned-data"), "preserve me").expect("writes user data");
+
+        let error = ensure_user_config_file_shape(&path)
+            .expect_err("non-empty user directory must fail closed");
+
+        assert!(error.contains("operator repair required"));
+        assert_eq!(
+            std::fs::read_to_string(path.join("owned-data")).expect("user data remains"),
+            "preserve me"
+        );
+        std::fs::remove_dir_all(root).expect("cleans test root");
+    }
+}
+
+#[cfg(test)]
+mod password_aging_tests {
+    use super::disable_password_aging;
+
+    #[test]
+    fn rejects_invalid_usernames_before_exec() {
+        // Must fail closed on validation and never reach chage with an
+        // unvalidated name (defense in depth: callers validate too).
+        for bad in ["", "wismut", "oqto_ bad", "oqto_;rm", "oqto_\n"] {
+            assert!(
+                disable_password_aging(bad).is_err(),
+                "must reject invalid username {bad:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod template_deploy_tests {
+    use super::deploy_template_dir;
+    use std::{fs, path::PathBuf};
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oqto-usermgr-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is valid")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("creates test root");
+        root
+    }
+
+    #[test]
+    fn merges_template_trees_and_preserves_existing_user_files() {
+        let root = temp_root("template-merge");
+        let src = root.join("src");
+        fs::create_dir_all(src.join("nested")).expect("creates template tree");
+        fs::write(src.join("nested/skill.md"), "template").expect("writes template");
+
+        let dest = root.join("dest");
+        fs::create_dir_all(dest.join("nested")).expect("creates user tree");
+        fs::write(dest.join("nested/user-file.txt"), "keep me").expect("writes user file");
+
+        deploy_template_dir(&src, &dest);
+
+        assert_eq!(
+            fs::read_to_string(dest.join("nested/skill.md")).expect("template copied"),
+            "template"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("nested/user-file.txt")).expect("user file preserved"),
+            "keep me"
+        );
+        fs::remove_dir_all(&root).expect("cleans test root");
+    }
+
+    #[test]
+    fn missing_template_source_is_a_no_op() {
+        let root = temp_root("template-missing");
+        let dest = root.join("dest");
+
+        deploy_template_dir(&root.join("does-not-exist"), &dest);
+
+        assert!(!dest.exists(), "must not create the destination");
+        fs::remove_dir_all(&root).expect("cleans test root");
+    }
+}
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
-const ALLOWED_PATH_PREFIXES: &[&str] = &["/run/oqto/runner-sockets/", "/home/oqto_"];
+const ALLOWED_PATH_PREFIXES: &[&str] = &[
+    "/run/oqto/runner-sockets/",
+    "/home/oqto_",
+    // Placement state volumes (host->container migration copies).
+    "/var/lib/oqto/",
+];
 
 // --- Protocol types ---
 
@@ -229,6 +436,7 @@ fn dispatch(req: &Request) -> Response {
         "chown" => cmd_chown(&req.args),
         "chmod" => cmd_chmod(&req.args),
         "enable-linger" => cmd_enable_linger(&req.args),
+        "disable-password-aging" => cmd_disable_password_aging(&req.args),
         "start-user-service" => cmd_start_user_service(&req.args),
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "create-workspace" => cmd_create_workspace(&req.args),
@@ -416,6 +624,11 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
         ],
     ) {
         Ok(_) => {
+            // Newly created users must never inherit PASS_MAX_DAYS aging: an
+            // expired shadow password later breaks user@{uid}.service via PAM.
+            if let Err(e) = disable_password_aging(username) {
+                return Response::error(format!("disable password aging: {e}"));
+            }
             let home = format!("/home/{username}");
             if create_home && let Err(e) = claim_home_for_service_group(&home, username, group) {
                 return Response::error(e);
@@ -438,6 +651,68 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
         }
         Err(e) => Response::error(e),
     }
+}
+
+/// Ensure the runner config path is a mode-0600 regular file.
+///
+/// A historical provisioner could create `config.toml` as an empty directory.
+/// Preserve that object under a timestamped name before creating the valid,
+/// empty TOML file. Non-empty directories and non-regular objects fail closed.
+fn ensure_user_config_file_shape(path: &Path) -> Result<Option<PathBuf>, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("config path {} has no parent", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("creating {}: {error}", parent.display()))?;
+
+    let mut preserved = None;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => {
+            let is_empty = std::fs::read_dir(path)
+                .map_err(|error| format!("reading {}: {error}", path.display()))?
+                .next()
+                .is_none();
+            if !is_empty {
+                return Err(format!(
+                    "{} is a non-empty directory; operator repair required",
+                    path.display()
+                ));
+            }
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| format!("reading system time: {error}"))?
+                .as_secs();
+            let backup = path.with_file_name(format!("config.toml.invalid-directory.{timestamp}"));
+            std::fs::rename(path, &backup).map_err(|error| {
+                format!(
+                    "preserving malformed {} as {}: {error}",
+                    path.display(),
+                    backup.display()
+                )
+            })?;
+            preserved = Some(backup);
+        }
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(format!(
+                "{} is not a regular file; operator repair required",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("inspecting {}: {error}", path.display())),
+    }
+
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| format!("creating {}: {error}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("setting mode on {}: {error}", path.display()))?;
+    Ok(preserved)
 }
 
 /// Create the user's own group, gid mirroring their uid.
@@ -746,6 +1021,30 @@ fn cmd_enable_linger(args: &serde_json::Value) -> Response {
     }
 }
 
+fn cmd_disable_password_aging(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    match disable_password_aging(username) {
+        Ok(_) => Response::success(),
+        Err(e) => Response::error(e),
+    }
+}
+
+/// Disable shadow password aging for a platform user.
+///
+/// `useradd` inherits `PASS_MAX_DAYS` from `/etc/login.defs` (commonly 90).
+/// Once that window passes, the expired shadow password makes PAM refuse to
+/// open `user@{uid}.service` (status 224/PAM, "Authentication token is no
+/// longer valid"), which takes down the whole user runtime. Platform accounts
+/// never authenticate with a password (the field stays locked `!`), so aging
+/// only ever causes harm; `-M -1 -E -1` is idempotent and safe to re-run.
+fn disable_password_aging(username: &str) -> Result<(), String> {
+    validate_username(username)?;
+    run_cmd("/usr/bin/chage", &["-M", "-1", "-E", "-1", username]).map(|_| ())
+}
+
 fn cmd_start_user_service(args: &serde_json::Value) -> Response {
     let uid = match get_u32(args, "uid") {
         Ok(u) => u,
@@ -790,6 +1089,10 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         Ok(u) => u,
         Err(r) => return r,
     };
+    let force = args
+        .get("force")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     if let Err(e) = validate_username(username) {
         return Response::error(e);
@@ -837,24 +1140,8 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         }
     }
 
-    // Fast path: if runner socket exists and is connectable, skip the full setup.
-    // This avoids expensive daemon-reload + restart on every login when the runner
-    // is already healthy.
-    if std::path::Path::new(&socket_path).exists() {
-        if let Ok(conn) = std::os::unix::net::UnixStream::connect(&socket_path) {
-            drop(conn);
-            eprintln!("oqto-usermgr: runner already running for {username} (fast path)");
-            return Response::success();
-        }
-        // Socket exists but not connectable -- stale socket, fall through to full setup
-        eprintln!("oqto-usermgr: stale socket for {username}, doing full setup");
-    }
-
-    // Construct service file content server-side
-    // Service file contents are constructed after home dir is resolved (below),
-    // since we need the home path for the Environment=PATH directive.
-
-    // Get user home directory from passwd (not from client)
+    // Construct service file content server-side after resolving the home path.
+    // Get user home directory from passwd (not from client).
     let home = match run_cmd("/usr/bin/getent", &["passwd", username]) {
         Ok(output) => {
             let fields: Vec<&str> = output.trim().split(':').collect();
@@ -873,36 +1160,37 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         ));
     }
 
-    // Construct a PATH that includes the user's local bin dirs and system paths.
-    // Systemd user services run with a minimal environment.
+    let config_path = PathBuf::from(format!("{home}/.config/oqto/config.toml"));
+    if let Err(error) = ensure_user_config_file_shape(&config_path) {
+        return Response::error(error);
+    }
+    let config_path_string = config_path.to_string_lossy().into_owned();
+    if let Err(error) = run_cmd(
+        "/usr/bin/chown",
+        &[&format!("{username}:{group}"), &config_path_string],
+    ) {
+        return Response::error(format!("chown {}: {error}", config_path.display()));
+    }
+
+    // Construct expected service content before the fast path. A connectable
+    // old runner must not hide a stale or invalid generated unit.
     let user_path =
         format!("{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin");
-
-    // Service file contents -- all constructed server-side, never from client input.
-    // Memory is embedded mmry-core (ADR-0010); oqto-runner uses Type=notify.
-    let runner_service = format!(
-        r#"[Unit]
-Description=Oqto Runner - Process isolation daemon
-
-[Service]
-Type=notify
-ExecStart={RUNNER_BINARY} --socket {socket_path}
-Restart=always
-RestartSec=3
-StartLimitIntervalSec=120
-StartLimitBurst=10
-Environment=RUST_LOG=info
-Environment=PATH={user_path}
-Environment=HOME={home}
-# systemd waits up to 30s for READY=1 before declaring failure
-TimeoutStartSec=30
-
-[Install]
-WantedBy=default.target
-"#
-    );
-
+    let runner_service = runner_service_content(&home, &socket_path, &user_path);
     let service_dir = format!("{home}/.config/systemd/user");
+    let service_path = format!("{service_dir}/oqto-runner.service");
+    let service_is_current =
+        std::fs::read_to_string(&service_path).is_ok_and(|current| current == runner_service);
+
+    // Fast path comes after config and unit convergence checks.
+    if !force && service_is_current && std::path::Path::new(&socket_path).exists() {
+        if let Ok(conn) = std::os::unix::net::UnixStream::connect(&socket_path) {
+            drop(conn);
+            eprintln!("oqto-usermgr: runner already running for {username} (fast path)");
+            return Response::success();
+        }
+        eprintln!("oqto-usermgr: stale socket for {username}, doing full setup");
+    }
 
     // 1. Create service directory
     if let Err(e) = run_cmd("/bin/mkdir", &["-p", &service_dir]) {
@@ -958,6 +1246,14 @@ WantedBy=default.target
     // 5. Enable linger
     if let Err(e) = run_cmd("/usr/bin/loginctl", &["enable-linger", username]) {
         return Response::error(format!("enable-linger: {e}"));
+    }
+
+    // Self-heal users created before password aging was disabled at creation:
+    // an expired shadow password makes PAM fail user@{uid}.service below. The
+    // fast path above only succeeds while the user manager is already up, so
+    // reaching this point means a (re)start is imminent and healing is needed.
+    if let Err(e) = disable_password_aging(username) {
+        return Response::error(format!("disable password aging: {e}"));
     }
 
     // 5. Start user systemd instance
@@ -1268,7 +1564,7 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     }
 
     let mut installed = 0u32;
-    for ext_name in PI_DEFAULT_EXTENSIONS {
+    for ext_name in pi_default_extensions() {
         let src_dir = src_root.join(ext_name);
         let actual_src = if src_dir.is_dir() && src_dir.join("index.ts").exists() {
             src_dir
@@ -1308,7 +1604,7 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     }
 
     // Final validation to avoid silent partial installs.
-    for ext_name in PI_DEFAULT_EXTENSIONS {
+    for ext_name in pi_default_extensions() {
         let ext_dir = std::path::Path::new(&dest_root).join(ext_name);
         if !ext_dir.is_dir() || !ext_dir.join("index.ts").exists() {
             return Response::error(format!(
@@ -1861,19 +2157,41 @@ fn write_user_dotfiles(home: &str, username: &str, group: &str) {
     }
 
     // Deploy global skills from the templates skills pool to ~/.pi/agent/skills/
-    let skills_src = std::path::Path::new("/usr/share/oqto/oqto-templates/skills");
-    let skills_dest = std::path::Path::new(home).join(".pi/agent/skills");
-    if skills_src.is_dir() {
-        if let Err(e) = std::fs::create_dir_all(&skills_dest) {
-            eprintln!("warning: creating skills dir: {e}");
-        } else if let Err(e) = copy_dir_recursive(skills_src, &skills_dest) {
-            eprintln!("warning: copying skills from templates: {e}");
-        }
-    }
+    deploy_template_dir(
+        Path::new("/usr/share/oqto/oqto-templates/skills"),
+        &PathBuf::from(home).join(".pi/agent/skills"),
+    );
+
+    // Deploy the offline Oqto App SDK store so `oqto-app-init` and App builds
+    // resolve @byteowlz/oqto-app-sdk without network egress.
+    deploy_template_dir(
+        Path::new("/usr/share/oqto/oqto-templates/app-sdk"),
+        &PathBuf::from(home).join(".local/share/oqto/app-sdk"),
+    );
 
     // chown the entire home to the user
     let owner = format!("{username}:{group}");
     let _ = run_cmd("/usr/bin/chown", &["-R", &owner, home]);
+}
+
+/// Copy a shared templates subtree into a user's home, merging with whatever
+/// already exists. Best-effort: provisioning failures here degrade to a
+/// warning because they never affect authorization or runtime correctness.
+fn deploy_template_dir(src: &Path, dest: &Path) {
+    if !src.is_dir() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(dest) {
+        eprintln!("warning: creating {}: {error}", dest.display());
+        return;
+    }
+    if let Err(error) = copy_dir_recursive(src, dest) {
+        eprintln!(
+            "warning: copying templates from {} to {}: {error}",
+            src.display(),
+            dest.display()
+        );
+    }
 }
 
 /// Recursively copy all files from src into dst, merging with existing directories.
@@ -1932,6 +2250,9 @@ alias grep='grep --color=auto'
 
 # PATH
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
+# Offline Oqto App SDK store (provisioned from the oqto-templates pool)
+export OQTO_APP_SDK_HOME="$HOME/.local/share/oqto/app-sdk"
 
 # Starship prompt
 if command -v starship &>/dev/null; then

@@ -14,7 +14,7 @@ export interface ThumbnailImageProps {
 	videoSrc?: string;
 	duration?: string;
 	size?: number;
-	onClick?: () => void;
+	onClick?: (event: React.MouseEvent) => void;
 	selected?: boolean;
 	className?: string;
 }
@@ -92,7 +92,16 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 				className,
 			)}
 			style={{ width: size, height: size }}
-			onClick={onClick}
+			onClick={
+				onClick
+					? (event) => {
+							// The thumbnail owns its click; without this the parent card
+							// also opens the file preview, which covers the lightbox on mobile
+							event.stopPropagation();
+							onClick(event);
+						}
+					: undefined
+			}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
 		>

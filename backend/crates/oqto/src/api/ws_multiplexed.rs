@@ -65,8 +65,8 @@ static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, ClientIdEntry
 
 mod agent;
 mod files;
+mod git;
 mod history;
-mod system;
 mod terminal;
 
 fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {
@@ -195,9 +195,9 @@ pub enum Channel {
     Files,
     Terminal,
     Trx,
+    Git,
     Session,
     System,
-    Bus,
 }
 
 // ============================================================================
@@ -212,8 +212,87 @@ pub enum WsCommand {
     Files(FilesWsCommand),
     Terminal(TerminalWsCommand),
     Trx(TrxWsCommand),
+    Git(GitWsCommand),
     Session(SessionWsCommand),
-    Bus(crate::bus::BusCommand),
+}
+
+/// Git channel commands. Every one names the work directory it acts on; the
+/// handler validates that the caller owns it before any process runs.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GitWsCommand {
+    /// Branch, upstream distance, and the working tree's changed entries.
+    Status {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    /// Unified diff for one path, staged or in the working tree.
+    Diff {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        path: String,
+        #[serde(default)]
+        staged: bool,
+    },
+    /// Most recent commits, newest first.
+    Log {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    Stage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        paths: Vec<String>,
+    },
+    Unstage {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        paths: Vec<String>,
+    },
+    /// Commits what is staged; never stages on the caller's behalf.
+    Commit {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        message: String,
+    },
+    /// Local branches, and which checkout owns each.
+    Branches {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    /// Moves the working tree to another branch. Refused while it has changes.
+    Switch {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        branch: String,
+    },
+    /// Network operations against the configured remote. Non-interactive:
+    /// they fail rather than wait for a passphrase or a host-key answer.
+    Fetch {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    Pull {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    Push {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
 }
 
 /// Files channel commands.
@@ -467,8 +546,8 @@ pub enum WsEvent {
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Trx(TrxWsEvent),
+    Git(GitWsEvent),
     System(SystemWsEvent),
-    Bus(crate::bus::BusWsEvent),
 }
 
 /// Files channel events (placeholder).
@@ -705,6 +784,112 @@ impl TreeTraversalContext {
     }
 }
 
+/// Git channel events. Every result carries the id of the command it answers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GitWsEvent {
+    StatusResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Current branch, or the detached HEAD's short commit.
+        branch: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        upstream: Option<String>,
+        ahead: usize,
+        behind: usize,
+        entries: Vec<GitStatusEntry>,
+        /// True when the listing was capped; the counts still describe the tree.
+        truncated: bool,
+    },
+    DiffResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        path: String,
+        staged: bool,
+        patch: String,
+        truncated: bool,
+    },
+    LogResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        commits: Vec<GitCommitSummary>,
+    },
+    StageResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        success: bool,
+    },
+    UnstageResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        success: bool,
+    },
+    CommitResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        commit: String,
+        success: bool,
+    },
+    BranchesResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        current: String,
+        branches: Vec<GitBranch>,
+    },
+    SwitchResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        branch: String,
+        success: bool,
+    },
+    /// Answers fetch, pull and push alike: what git said, and where the
+    /// branch now stands relative to its upstream.
+    RemoteResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        operation: String,
+        summary: String,
+        success: bool,
+    },
+    Error {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        error: String,
+    },
+}
+
+/// One changed path, with git's own two status codes kept distinct.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitStatusEntry {
+    pub path: String,
+    /// Status in the index ("M", "A", "D", "R", "?" for untracked, " " for none).
+    pub index: String,
+    /// Status in the working tree, same alphabet.
+    pub worktree: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
+}
+
+/// A local branch. `worktree` is set when another checkout already holds it,
+/// which is why switching to it would fail.
+#[derive(Debug, Clone, Serialize)]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitCommitSummary {
+    pub id: String,
+    pub short_id: String,
+    pub summary: String,
+    pub author: String,
+    /// Unix seconds.
+    pub timestamp: i64,
+}
+
 /// TRX channel events.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -745,6 +930,9 @@ pub enum SystemWsEvent {
     },
     /// Ping for keep-alive
     Ping,
+    /// App authority changed after durable state was committed.
+    #[serde(rename = "app.lifecycle")]
+    AppLifecycle { instance_id: String, state: String },
     /// Shared workspace membership/metadata changed.
     #[serde(rename = "shared_workspace.updated")]
     SharedWorkspaceUpdated {
@@ -851,26 +1039,23 @@ async fn runner_client_for_path(
     state: &AppState,
     user_id: &str,
     workspace_path: Option<&str>,
-) -> Option<(RunnerClient, ExecutionTarget)> {
-    let path = workspace_path?;
-    match resolve_target_for_workspace_path(state, user_id, path).await {
-        Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
-            Ok(Some(client)) => Some((client, target)),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::warn!(path = %path, error = %e, "runner client resolution failed for workspace path target");
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!(path = %path, error = %e, "runner target resolution failed for workspace path");
-            None
-        }
-    }
+) -> anyhow::Result<Option<(RunnerClient, ExecutionTarget)>> {
+    let Some(path) = workspace_path else {
+        return Ok(None);
+    };
+    // None means no requested workspace, never denied access or a failed dial.
+    // Those failures must reach the caller before any personal-runner fallback.
+    let target = resolve_target_for_workspace_path(state, user_id, path).await?;
+    let client = resolve_runner_for_target(state, user_id, &target)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace runner is unavailable"))?;
+    Ok(Some((client, target)))
 }
 
 /// State for a WebSocket connection, shared between command handler and event forwarder.
 struct WsConnectionState {
+    /// Connection/Session bindings minted by the authenticated gateway, never metadata.
+    control_bindings: HashMap<String, String>,
     /// Subscribed Pi session IDs.
     subscribed_sessions: HashSet<String>,
     /// Channel for sending events to the WebSocket writer.
@@ -893,17 +1078,19 @@ struct WsConnectionState {
     /// Active file watchers keyed by workspace_path.
     /// The JoinHandle is aborted when the watcher is replaced or the connection closes.
     file_watchers: HashMap<String, tokio::task::JoinHandle<()>>,
-    /// Runner overrides for sessions in shared workspaces.
-    /// When a session is created with a cwd inside a shared workspace, the runner
-    /// for that workspace's Linux user is stored here so subsequent commands
-    /// (prompt, get_state, etc.) route to the correct runner.
-    session_runner_overrides: HashMap<String, RunnerClient>,
-    /// Bus subscriber ID for this connection.
-    bus_subscriber_id: crate::bus::SubscriberId,
     /// Whether the authenticated principal may open interactive terminals.
     /// Decided once at connect from the JWT role; terminals bypass the agent
     /// seam, so ordinary users never get one.
     terminal_allowed: bool,
+}
+
+impl WsConnectionState {
+    fn control_binding_for_session(&mut self, session_id: &str) -> String {
+        self.control_bindings
+            .entry(session_id.to_owned())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -951,6 +1138,7 @@ async fn handle_multiplexed_ws(
 
     // Create connection state
     let conn_state = Arc::new(tokio::sync::Mutex::new(WsConnectionState {
+        control_bindings: HashMap::new(),
         subscribed_sessions: HashSet::new(),
         event_tx: event_tx.clone(),
         pi_subscriptions: HashSet::new(),
@@ -959,8 +1147,6 @@ async fn handle_multiplexed_ws(
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
-        session_runner_overrides: HashMap::new(),
-        bus_subscriber_id: 0, // Set after bus registration
         terminal_allowed,
     }));
 
@@ -980,6 +1166,12 @@ async fn handle_multiplexed_ws(
 
         let convert_hub_event = |event: LegacyHubEvent| -> Option<WsEvent> {
             match event {
+                LegacyHubEvent::AppLifecycle { instance_id, state } => {
+                    Some(WsEvent::System(SystemWsEvent::AppLifecycle {
+                        instance_id,
+                        state,
+                    }))
+                }
                 LegacyHubEvent::SharedWorkspaceUpdated {
                     workspace_id,
                     change,
@@ -1054,22 +1246,6 @@ async fn handle_multiplexed_ws(
         }
     });
 
-    // Register bus subscriber for this WS connection.
-    let (bus_sub_id, mut bus_rx) = state.bus.register(&user_id);
-    {
-        let mut cs = conn_state.lock().await;
-        cs.bus_subscriber_id = bus_sub_id;
-    }
-    let event_tx_for_bus = event_tx.clone();
-    let bus_forwarder = tokio::spawn(async move {
-        while let Some(bus_event) = bus_rx.recv().await {
-            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(Box::new(bus_event)));
-            if event_tx_for_bus.send(ws_event).is_err() {
-                break;
-            }
-        }
-    });
-
     // Per-channel workers avoid head-of-line blocking.
     // A slow files.tree must never block agent prompt/abort/session commands.
     let (agent_cmd_tx, agent_cmd_rx) = mpsc::channel::<WsCommand>(256);
@@ -1120,7 +1296,6 @@ async fn handle_multiplexed_ws(
                                 let target_tx = match &cmd {
                                     WsCommand::Agent(_) => &agent_cmd_tx,
                                     WsCommand::Files(_) => &files_cmd_tx,
-                                    WsCommand::Bus(_) => &misc_cmd_tx,
                                     _ => &misc_cmd_tx,
                                 };
 
@@ -1168,8 +1343,6 @@ async fn handle_multiplexed_ws(
     // Cleanup
     event_writer.abort();
     hub_forwarder.abort();
-    bus_forwarder.abort();
-    state.bus.unregister(bus_sub_id);
     agent_worker.abort();
     files_worker.abort();
     misc_worker.abort();
@@ -1258,7 +1431,11 @@ async fn process_ws_command(
 
     let cmd_id = ws_command_id(&cmd);
 
+    // With container placement active, agent commands are routed per-command
+    // to placement runners; the connection-level host runner is only a
+    // fallback and must not fail-close commands a placement runner can serve.
     if matches!(&cmd, WsCommand::Agent(_))
+        && state.placement_manager.is_none()
         && let Some(client) = rc_snapshot.as_ref()
         && let Err(err) = client.ensure_ready_with_recovery().await
     {
@@ -1414,7 +1591,7 @@ async fn validate_workspace_path_for_user(
 async fn handle_ws_command(
     cmd: WsCommand,
     user_id: &str,
-    is_admin: bool,
+    _is_admin: bool,
     state: &AppState,
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -1452,11 +1629,9 @@ async fn handle_ws_command(
             terminal::handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
+        WsCommand::Git(git_cmd) => git::handle_git_command(git_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await
-        }
-        WsCommand::Bus(bus_cmd) => {
-            system::handle_bus_command(bus_cmd, user_id, is_admin, state, conn_state).await
         }
     }
 }
@@ -1518,13 +1693,20 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | TrxWsCommand::Close { id, .. }
             | TrxWsCommand::Sync { id, .. } => id.clone(),
         },
-        WsCommand::Session(_) => None,
-        WsCommand::Bus(bus_cmd) => match bus_cmd {
-            crate::bus::BusCommand::Publish { id, .. }
-            | crate::bus::BusCommand::Subscribe { id, .. }
-            | crate::bus::BusCommand::Unsubscribe { id, .. }
-            | crate::bus::BusCommand::Pull { id, .. } => id.clone(),
+        WsCommand::Git(git_cmd) => match git_cmd {
+            GitWsCommand::Status { id, .. }
+            | GitWsCommand::Diff { id, .. }
+            | GitWsCommand::Log { id, .. }
+            | GitWsCommand::Stage { id, .. }
+            | GitWsCommand::Unstage { id, .. }
+            | GitWsCommand::Commit { id, .. }
+            | GitWsCommand::Branches { id, .. }
+            | GitWsCommand::Switch { id, .. }
+            | GitWsCommand::Fetch { id, .. }
+            | GitWsCommand::Pull { id, .. }
+            | GitWsCommand::Push { id, .. } => id.clone(),
         },
+        WsCommand::Session(_) => None,
     }
 }
 
@@ -1549,11 +1731,14 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 oqto_protocol::commands::CommandPayload::InputResponse { .. } => {
                     "agent.input_response"
                 }
-                oqto_protocol::commands::CommandPayload::GetState => "agent.get_state",
-                oqto_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
+                oqto_protocol::commands::CommandPayload::GetState { .. } => "agent.get_state",
+                oqto_protocol::commands::CommandPayload::GetMessages { .. } => "agent.get_messages",
                 oqto_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
                 oqto_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
                 oqto_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
+                oqto_protocol::commands::CommandPayload::ExtensionControl(_) => {
+                    "agent.extension_control"
+                }
                 oqto_protocol::commands::CommandPayload::GetForkPoints => "agent.get_fork_points",
                 oqto_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
                 oqto_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
@@ -1655,18 +1840,38 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
             };
             (label.to_string(), None, workspace_path)
         }
+        WsCommand::Git(git_cmd) => {
+            let label = match git_cmd {
+                GitWsCommand::Status { .. } => "git.status",
+                GitWsCommand::Diff { .. } => "git.diff",
+                GitWsCommand::Log { .. } => "git.log",
+                GitWsCommand::Stage { .. } => "git.stage",
+                GitWsCommand::Unstage { .. } => "git.unstage",
+                GitWsCommand::Commit { .. } => "git.commit",
+                GitWsCommand::Branches { .. } => "git.branches",
+                GitWsCommand::Switch { .. } => "git.switch",
+                GitWsCommand::Fetch { .. } => "git.fetch",
+                GitWsCommand::Pull { .. } => "git.pull",
+                GitWsCommand::Push { .. } => "git.push",
+            };
+            let workspace_path = match git_cmd {
+                GitWsCommand::Status { workspace_path, .. }
+                | GitWsCommand::Diff { workspace_path, .. }
+                | GitWsCommand::Log { workspace_path, .. }
+                | GitWsCommand::Stage { workspace_path, .. }
+                | GitWsCommand::Unstage { workspace_path, .. }
+                | GitWsCommand::Commit { workspace_path, .. }
+                | GitWsCommand::Branches { workspace_path, .. }
+                | GitWsCommand::Switch { workspace_path, .. }
+                | GitWsCommand::Fetch { workspace_path, .. }
+                | GitWsCommand::Pull { workspace_path, .. }
+                | GitWsCommand::Push { workspace_path, .. } => Some(workspace_path.clone()),
+            };
+            (label.to_string(), None, workspace_path)
+        }
         WsCommand::Session(session_cmd) => {
             let session_id = history::extract_legacy_session_id(&session_cmd.cmd);
             ("session.legacy".to_string(), session_id, None)
-        }
-        WsCommand::Bus(bus_cmd) => {
-            let label = match &bus_cmd {
-                crate::bus::BusCommand::Publish { topic, .. } => format!("bus.publish.{}", topic),
-                crate::bus::BusCommand::Subscribe { .. } => "bus.subscribe".to_string(),
-                crate::bus::BusCommand::Unsubscribe { .. } => "bus.unsubscribe".to_string(),
-                crate::bus::BusCommand::Pull { .. } => "bus.pull".to_string(),
-            };
-            (label, None, None)
         }
     }
 }
@@ -2158,39 +2363,6 @@ async fn forward_pi_events(
 // Streaming events now flow as canonical events through the PiTranslator
 // in pi_manager.rs and are forwarded directly via WsEvent::Agent.
 
-/// Emit a workspace/files.* bus event (fire-and-forget).
-fn emit_file_bus_event(
-    bus: &Arc<crate::bus::BusEngine>,
-    user_id: &str,
-    workspace_path: Option<&str>,
-    topic: &str,
-    payload: serde_json::Value,
-) {
-    use crate::bus::{BusEvent, BusScope, EventSource};
-
-    let scope_id = workspace_path.unwrap_or("local").to_string();
-    // Use Service source: file ops are already authorized by the file handler,
-    // so the bus event is a system notification, not a user-initiated publish.
-    let event = BusEvent::new(
-        BusScope::Workspace,
-        scope_id,
-        format!("files.{}", topic),
-        payload,
-        EventSource::Service {
-            service: "files".to_string(),
-            user_id: Some(user_id.to_string()),
-        },
-    );
-    let topic_log = format!("files.{}", topic);
-    let bus = bus.clone();
-    tokio::spawn(async move {
-        match bus.publish_internal(event).await {
-            Ok(()) => log::debug!("Bus: emitted file event {}", topic_log),
-            Err(e) => log::warn!("Bus: failed to emit file event {}: {}", topic_log, e),
-        }
-    });
-}
-
 /// Handle Files channel commands.
 async fn handle_copy_to_workspace(
     id: Option<String>,
@@ -2645,6 +2817,12 @@ async fn handle_unwatch_files(
 }
 
 #[cfg(test)]
+mod admission_tests;
+
+#[cfg(test)]
+mod auth_gateway_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2672,7 +2850,10 @@ mod tests {
         match cmd {
             WsCommand::Agent(oqto_protocol::commands::Command {
                 session_id,
-                payload: oqto_protocol::commands::CommandPayload::GetState,
+                payload:
+                    oqto_protocol::commands::CommandPayload::GetState {
+                        workspace_path: None,
+                    },
                 ..
             }) => {
                 assert_eq!(session_id, "ses_456");
@@ -2880,6 +3061,7 @@ mod tests {
         response_watchdogs.insert("ses-test".to_string(), watchdog);
 
         let conn_state = Arc::new(tokio::sync::Mutex::new(WsConnectionState {
+            control_bindings: HashMap::new(),
             subscribed_sessions: HashSet::new(),
             event_tx: event_tx.clone(),
             pi_subscriptions: HashSet::new(),
@@ -2888,8 +3070,6 @@ mod tests {
             pi_session_meta: HashMap::new(),
             terminal_sessions: HashMap::new(),
             file_watchers: HashMap::new(),
-            session_runner_overrides: HashMap::new(),
-            bus_subscriber_id: 0,
             terminal_allowed: true,
         }));
 
@@ -2930,16 +3110,17 @@ mod tests {
 
     #[tokio::test]
     async fn session_identity_isolation_client_ids_are_scoped_per_session() {
-        clear_client_ids_for_session("sess-a").await;
-        clear_client_ids_for_session("sess-b").await;
+        // Disjoint from the concurrent test: this cache is process-global.
+        clear_client_ids_for_session("scoped-sess-a").await;
+        clear_client_ids_for_session("scoped-sess-b").await;
 
-        mark_client_id_accepted("sess-a", Some("cid-1")).await;
+        mark_client_id_accepted("scoped-sess-a", Some("cid-1")).await;
 
-        assert!(has_accepted_client_id("sess-a", Some("cid-1")).await);
-        assert!(!has_accepted_client_id("sess-b", Some("cid-1")).await);
+        assert!(has_accepted_client_id("scoped-sess-a", Some("cid-1")).await);
+        assert!(!has_accepted_client_id("scoped-sess-b", Some("cid-1")).await);
 
-        clear_client_ids_for_session("sess-a").await;
-        clear_client_ids_for_session("sess-b").await;
+        clear_client_ids_for_session("scoped-sess-a").await;
+        clear_client_ids_for_session("scoped-sess-b").await;
     }
 
     #[tokio::test]

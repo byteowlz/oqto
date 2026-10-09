@@ -65,6 +65,8 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { HistorySession } from "./MachineHistory";
+import { SidebarMachines } from "./SidebarMachines";
 
 export interface SessionsByProject {
 	key: string;
@@ -128,6 +130,8 @@ export interface SidebarSessionsProps {
 	onProjectOverview: (directory: string) => void;
 	onSessionClick: (sessionId: string) => void;
 	onNewChatInProject: (directory: string) => void;
+	/** Continue a chat stored on another machine, in the main chat view. */
+	onResumeMachineSession?: (session: HistorySession) => void;
 	onPinSession: (sessionId: string) => void;
 	onRenameSession: (sessionId: string) => void;
 	onDeleteSession: (sessionId: string) => void;
@@ -150,7 +154,7 @@ export interface SidebarSessionsProps {
 	onSessionSearchChange?: (query: string) => void;
 	searchMode?: SearchMode;
 	onSearchModeChange?: (mode: SearchMode) => void;
-	/** Optional slot rendered between the search bar and the SESSIONS header */
+	/** Optional slot rendered between the search bar and the MACHINES header */
 	belowSearchSlot?: React.ReactNode;
 }
 
@@ -182,6 +186,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onProjectOverview,
 	onSessionClick,
 	onNewChatInProject,
+	onResumeMachineSession,
 	onPinSession,
 	onRenameSession,
 	onDeleteSession,
@@ -614,7 +619,15 @@ export const SidebarSessions = memo(function SidebarSessions({
 					</div>
 				)}
 				{belowSearchSlot}
-				{/* Sessions header - between search and chat list */}
+				<h2
+					className={cn(
+						"uppercase tracking-wide text-muted-foreground py-1.5 px-1",
+						sizeClasses.headerText,
+					)}
+				>
+					{t("oqtoUi.runnerTargets.title")}
+				</h2>
+				{/* Local machine actions and its session list; remote machines follow below. */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
 						{onToggleSessionsExpanded && (
@@ -622,7 +635,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								type="button"
 								onClick={onToggleSessionsExpanded}
 								className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded p-0.5"
-								aria-label={t("sessions.title")}
+								aria-label={t("oqtoUi.runnerTargets.thisMachine")}
 							>
 								{sessionsExpanded ? (
 									<ChevronDown className={sizeClasses.iconSize} />
@@ -632,12 +645,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 							</button>
 						)}
 						<span
-							className={cn(
-								"uppercase tracking-wide text-muted-foreground",
-								sizeClasses.headerText,
-							)}
+							className={cn("text-muted-foreground", sizeClasses.headerText)}
 						>
-							{t("sessions.title")}
+							{t("oqtoUi.runnerTargets.thisMachine")}
 						</span>
 						<span
 							className={cn(
@@ -1286,6 +1296,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 					)}
 				</div>
 			)}
+			<div className="px-1">
+				<SidebarMachines
+					onNewSessionInDirectory={onNewChatInProject}
+					onResumeMachineSession={onResumeMachineSession}
+					isMobile={isMobile}
+				/>
+			</div>
 		</div>
 	);
 });

@@ -75,10 +75,34 @@ A future supervisor capability may select a defense-in-depth backend that works 
 Containerizing obscures the host-as-truth debug story (host files owned by mapped subuids, processes in PID namespaces). This is **a first-class deliverable of this epic, not an afterthought** — otherwise debugging regresses:
 
 - **Mandatory labels** (`oqto.workspace`, `oqto.account`, `oqto.placement`) on every container/volume — the identity layer replacing `/etc/passwd`.
-- **`oqtoctl` debug verbs** (`ws ls / ps / exec / logs / inspect / fs`) — thin, label-driven wrappers over podman now, kubectl later (identical mental model).
-- `podman unshare` makes mapped subuids legible again; `podman exec` is the new `sudo -u`.
+- **`oqtoctl` debug verbs** (`ws ls / ps / exec / logs / inspect / fs`) — one Workspace vocabulary across placement backends.
+- `exec` and `fs` use the canonical runner protocol; backend-specific status/log/inspection lives behind `PlacementOperator`.
 - **Logs always exported to oqto-log + host journal**, never trapped in a container.
 - A **Workspace → placement registry** (PlacementStore) answers "where is X". Transparency moves from the host filesystem to a queryable control plane — which is required anyway the moment you go multi-host/k8s, where "ssh and ls" never worked.
+
+## Operability (resolved 2026-07-29)
+
+`oqtoctl ws` is the stable operator surface: `ls`, `show`, `ps`, `logs`,
+`inspect`, `exec`, and `fs`. The unreleased longer `placement` spelling has no
+compatibility alias. Workspace/placement IDs resolve through `PlacementStore`.
+
+Workspace operations are placement-neutral: `exec` uses the runner's managed
+process protocol and `fs` its typed filesystem protocol. LocalProcess execution
+is oqto-sandboxed because it has no outer boundary; RootlessPodman execution
+already occurs inside the Workspace container (in-container defense-in-depth is
+tracked by oqto-nppq.7/.11). Runtime operations dispatch through
+`PlacementOperator`: LocalProcess uses runner health and typed inspection;
+RootlessPodman uses label-validated Podman inspection and journald logs. Local
+per-placement logs fail explicitly until local runner processes have durable
+journal identities.
+
+The current CLI adapter operates on the local registry/host. A remote placement
+operator must run behind the authenticated backend admin API; the public `ws`
+contract and runner-mediated Workspace operations remain unchanged.
+`OQTO_PLACEMENT_STORE` allows explicit local registry selection for repair and
+testing. Bind-mount sources are identified by persisted `PlacementSpec` (they
+are not Podman volume objects and cannot carry Podman labels). Runtime
+stdout/stderr uses journald; agent/session history remains oqto-log authority.
 
 ## Consequences
 
@@ -87,6 +111,27 @@ Containerizing obscures the host-as-truth debug story (host files owned by mappe
 - The per-workspace image is downstream of ADR-0018's complete prebuilt bundle (`oqto-vemr.9`).
 - `RunnerHello` gains a `placement`/capability field; sessions stay placement-agnostic.
 - The existing all-in-one `deploy/docker` image is superseded for multi-tenant use; may remain as a personal/demo image.
+
+## Volume layout (resolved 2026-07-29)
+
+Two host directories per Workspace, both mounted into exactly one container
+(single-writer-local; never shared/NFS):
+
+| Host (backend-owned roots) | Container | Contents |
+|---|---|---|
+| `<data>/placements/<ws_id>/` | `/home/oqto` | durable state volume: `~/.pi` (Pi-owned session JSONL — sacred), `~/.local/share/mmry`, `~/.local/state/oqto` (oqto-log SQLite), `~/.cargo`, `~/.npm`, `~/.local`, venvs — agent tool installs persist without image rebuild |
+| workspace path (canonical) | same path + `/workspace` | work-dir files; canonical path preserved so session metadata and Pi JSONL cwd references stay stable |
+| `<state>/placements/<ws_id>/rsock/` | `/run/oqto` | runner socket (container-owned under auto userns) |
+| `<state>/placements/<ws_id>/endpoints/` | `/run/oqto/endpoints` | granted endpoint sockets (backend-owned) |
+
+Container = ephemeral compute; volume = durable truth; a filesystem snapshot
+of the two volumes is a consistent Workspace backup. Under `userns=auto`,
+volumes are chowned (`:U`) into the container's disjoint subuid range: tenant
+separation on the host filesystem, at the cost that backend post-start writes
+must go through the runner (oqto-nppq.15). Proof:
+`oqto-placement/tests/volume_truth_live.rs` — destroy + recreate under a new
+subuid range preserves Pi JSONL, mmry, oqto-log, tool installs, and
+workspace files.
 
 ## Remaining open questions
 

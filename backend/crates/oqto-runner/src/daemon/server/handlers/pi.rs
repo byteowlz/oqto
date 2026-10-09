@@ -37,6 +37,13 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::PiSetSessionName(r) => runner.pi_set_session_name(r).await,
         RunnerRequest::PiExportHtml(r) => runner.pi_export_html(r).await,
         RunnerRequest::AgentGetCommands(r) => runner.agent_get_commands(r).await,
+        RunnerRequest::AgentControl(r) => match runner.pi_manager.control(r).await {
+            Ok(result) => RunnerResponse::AgentControl(result),
+            Err(error) => error_response(
+                ErrorCode::Internal,
+                format!("Control unavailable: {error:#}"),
+            ),
+        },
         RunnerRequest::PiBash(r) => runner.pi_bash(r).await,
         RunnerRequest::PiAbortBash(r) => runner.pi_abort_bash(r).await,
         RunnerRequest::PiExtensionUiResponse(r) => runner.pi_extension_ui_response(r).await,

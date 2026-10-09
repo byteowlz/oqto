@@ -66,6 +66,34 @@ impl Default for RunnerUserPlane {
 
 #[async_trait]
 impl UserPlane for RunnerUserPlane {
+    async fn run_app_operation(
+        &self,
+        request: AppOperationExecution,
+    ) -> Result<AppOperationExecutionResult> {
+        use oqto_runner::protocol::RunAppOperationRequest;
+        self.client
+            .ensure_ready_with_recovery()
+            .await
+            .context("runner readiness")?;
+        let response = self
+            .client
+            .run_app_operation(RunAppOperationRequest {
+                content_digest: request.content_digest,
+                app_id: request.app_id,
+                operation_id: request.operation_id,
+                work_directory: request.work_directory,
+                input: request.input,
+            })
+            .await
+            .context("runner App operation")?;
+        Ok(AppOperationExecutionResult {
+            success: response.success,
+            code: response.code,
+            message: response.message,
+            output: response.output,
+        })
+    }
+
     async fn read_file(
         &self,
         path: &Path,

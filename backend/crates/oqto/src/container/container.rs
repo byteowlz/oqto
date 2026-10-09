@@ -114,6 +114,9 @@ pub struct ContainerConfig {
     pub ports: Vec<PortMapping>,
     /// Volume mounts (host_path -> container_path).
     pub volumes: Vec<(String, String)>,
+    /// Read-only volume mounts (host_path -> container_path). Host content
+    /// the container must see but never mutate (e.g. the App SDK store).
+    pub read_only_volumes: Vec<(String, String)>,
     /// Working directory inside the container.
     pub workdir: Option<String>,
     /// Labels for the container.
@@ -214,6 +217,17 @@ impl ContainerConfig {
         container_path: impl Into<String>,
     ) -> Self {
         self.volumes.push((host_path.into(), container_path.into()));
+        self
+    }
+
+    /// Mount a host path read-only into the container.
+    pub fn volume_read_only(
+        mut self,
+        host_path: impl Into<String>,
+        container_path: impl Into<String>,
+    ) -> Self {
+        self.read_only_volumes
+            .push((host_path.into(), container_path.into()));
         self
     }
 

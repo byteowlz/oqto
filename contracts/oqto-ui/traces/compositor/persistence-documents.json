@@ -1,0 +1,525 @@
+{
+	"format": "oqto-compositor-persistence",
+	"formatVersion": 2,
+	"schemaVersion": 2,
+	"name": "persistence-documents",
+	"description": "Raw layout documents with the typed decode outcome a conforming host must produce: valid round trips (unknown variants preserved), a schema v1 document migrated to v2, and corrupted documents with their failure reasons.",
+	"documents": [
+		{
+			"name": "classic-preset-valid",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 0,
+					"idSeed": 8,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 2,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1"
+				}
+			}
+		},
+		{
+			"name": "unknown-variants-preserved",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]},\"futureArrangementField\":\"kept\"}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}],\"futureContainerField\":\"kept\"},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\",\"futureContentField\":true}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"kind-from-the-future\"}]}],\"futureTopLevel\":{\"anything\":[1,2,3]}}",
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 0,
+					"idSeed": 8,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-0",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-0",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-1",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "track-2",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "track-3",
+										"size": {
+											"unit": "fraction",
+											"value": 2,
+											"min": 360
+										}
+									},
+									{
+										"id": "track-4",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-5",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-7",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 1,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1",
+							"extensions": {
+								"futureArrangementField": "kept"
+							}
+						}
+					],
+					"containers": [
+						{
+							"id": "container-5",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false,
+							"extensions": {
+								"futureContainerField": "kept"
+							}
+						},
+						{
+							"id": "container-6",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat",
+									"extensions": {
+										"futureContentField": true
+									}
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-7",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "kind-from-the-future"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false
+						}
+					],
+					"focusedContentId": "chat:session-1",
+					"extensions": {
+						"futureTopLevel": {
+							"anything": [
+								1,
+								2,
+								3
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "schema-v1-migrated",
+			"raw": "{\"schemaVersion\":1,\"revision\":3,\"idSeed\":8,\"strategy\":\"grid\",\"focusedContentId\":\"chat:session-1\",\"grid\":{\"columns\":[{\"id\":\"column-1\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240},\"cells\":[{\"containerId\":\"container-0\",\"size\":{\"unit\":\"fraction\",\"value\":1}}]},{\"id\":\"column-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360},\"cells\":[{\"containerId\":\"container-2\",\"size\":{\"unit\":\"fraction\",\"value\":1}},{\"containerId\":\"container-6\",\"size\":{\"unit\":\"fraction\",\"value\":1}}]},{\"id\":\"column-5\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280},\"cells\":[{\"containerId\":\"container-4\",\"size\":{\"unit\":\"fraction\",\"value\":1}}]}]},\"containers\":[{\"id\":\"container-0\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-2\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-6\",\"emptyBehavior\":\"remove\",\"collapsed\":false,\"activeContentId\":\"terminal:x\",\"stack\":[{\"id\":\"terminal:x\",\"kind\":\"terminal\"}]},{\"id\":\"container-4\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}],\"futureField\":1}],\"futureTopLevel\":true}",
+			"expected": {
+				"ok": true,
+				"snapshot": {
+					"schemaVersion": 2,
+					"revision": 3,
+					"idSeed": 11,
+					"strategy": "grid",
+					"activeArrangementId": "arrangement-10",
+					"activeWorkspace": {
+						"kind": "all"
+					},
+					"arrangements": [
+						{
+							"id": "arrangement-10",
+							"grid": {
+								"rows": [
+									{
+										"id": "track-8",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									},
+									{
+										"id": "track-9",
+										"size": {
+											"unit": "fraction",
+											"value": 1
+										}
+									}
+								],
+								"columns": [
+									{
+										"id": "column-1",
+										"size": {
+											"unit": "fixed",
+											"value": 320,
+											"min": 240
+										}
+									},
+									{
+										"id": "column-3",
+										"size": {
+											"unit": "fraction",
+											"value": 2,
+											"min": 360
+										}
+									},
+									{
+										"id": "column-5",
+										"size": {
+											"unit": "fraction",
+											"value": 1,
+											"min": 280
+										}
+									}
+								],
+								"placements": [
+									{
+										"containerId": "container-0",
+										"row": 0,
+										"column": 0,
+										"rowSpan": 2,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-2",
+										"row": 0,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-6",
+										"row": 1,
+										"column": 1,
+										"rowSpan": 1,
+										"colSpan": 1
+									},
+									{
+										"containerId": "container-4",
+										"row": 0,
+										"column": 2,
+										"rowSpan": 2,
+										"colSpan": 1
+									}
+								]
+							},
+							"scrollAnchorColumnId": null,
+							"lastFocusedContentId": "chat:session-1"
+						}
+					],
+					"containers": [
+						{
+							"id": "container-0",
+							"role": "navigation",
+							"emptyBehavior": "collapse",
+							"stack": [
+								{
+									"id": "sessions:catalog",
+									"kind": "sessions"
+								}
+							],
+							"activeContentId": "sessions:catalog",
+							"collapsed": false
+						},
+						{
+							"id": "container-2",
+							"role": "primary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "chat:session-1",
+									"kind": "chat"
+								}
+							],
+							"activeContentId": "chat:session-1",
+							"collapsed": false
+						},
+						{
+							"id": "container-6",
+							"emptyBehavior": "remove",
+							"stack": [
+								{
+									"id": "terminal:x",
+									"kind": "terminal"
+								}
+							],
+							"activeContentId": "terminal:x",
+							"collapsed": false
+						},
+						{
+							"id": "container-4",
+							"role": "auxiliary",
+							"emptyBehavior": "retain",
+							"stack": [
+								{
+									"id": "files:workdir-1",
+									"kind": "files"
+								}
+							],
+							"activeContentId": "files:workdir-1",
+							"collapsed": false,
+							"extensions": {
+								"futureField": 1
+							}
+						}
+					],
+					"focusedContentId": "chat:session-1",
+					"extensions": {
+						"futureTopLevel": true
+					}
+				}
+			}
+		},
+		{
+			"name": "truncated-json",
+			"raw": "{\"schemaVersion\": 2, \"rev",
+			"expected": {
+				"ok": false,
+				"reason": "parse-error"
+			}
+		},
+		{
+			"name": "non-object-root",
+			"raw": "[1,2,3]",
+			"expected": {
+				"ok": false,
+				"reason": "invalid-shape"
+			}
+		},
+		{
+			"name": "missing-schema-version",
+			"raw": "{\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invalid-shape"
+			}
+		},
+		{
+			"name": "newer-schema-version",
+			"raw": "{\"schemaVersion\":99,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "unsupported-version"
+			}
+		},
+		{
+			"name": "unknown-empty-behavior",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"detonate\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invalid-shape"
+			}
+		},
+		{
+			"name": "malformed-active-workspace",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"galaxy\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invalid-shape"
+			}
+		},
+		{
+			"name": "negative-track-size",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":-5,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invalid-shape"
+			}
+		},
+		{
+			"name": "overlapping-placements",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invariant-violation"
+			}
+		},
+		{
+			"name": "active-content-not-in-stack",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"nonexistent\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invariant-violation"
+			}
+		},
+		{
+			"name": "focus-on-unplaced-content",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-0\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"nonexistent\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invariant-violation"
+			}
+		},
+		{
+			"name": "unknown-active-arrangement",
+			"raw": "{\"schemaVersion\":2,\"revision\":0,\"idSeed\":8,\"strategy\":\"grid\",\"activeArrangementId\":\"arrangement-404\",\"activeWorkspace\":{\"kind\":\"all\"},\"focusedContentId\":\"chat:session-1\",\"arrangements\":[{\"id\":\"arrangement-0\",\"scrollAnchorColumnId\":null,\"lastFocusedContentId\":\"chat:session-1\",\"grid\":{\"rows\":[{\"id\":\"track-1\",\"size\":{\"unit\":\"fraction\",\"value\":1}}],\"columns\":[{\"id\":\"track-2\",\"size\":{\"unit\":\"fixed\",\"value\":320,\"min\":240}},{\"id\":\"track-3\",\"size\":{\"unit\":\"fraction\",\"value\":2,\"min\":360}},{\"id\":\"track-4\",\"size\":{\"unit\":\"fraction\",\"value\":1,\"min\":280}}],\"placements\":[{\"containerId\":\"container-5\",\"row\":0,\"column\":0,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-6\",\"row\":0,\"column\":1,\"rowSpan\":1,\"colSpan\":1},{\"containerId\":\"container-7\",\"row\":0,\"column\":2,\"rowSpan\":1,\"colSpan\":1}]}}],\"containers\":[{\"id\":\"container-5\",\"role\":\"navigation\",\"emptyBehavior\":\"collapse\",\"collapsed\":false,\"activeContentId\":\"sessions:catalog\",\"stack\":[{\"id\":\"sessions:catalog\",\"kind\":\"sessions\"}]},{\"id\":\"container-6\",\"role\":\"primary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"chat:session-1\",\"stack\":[{\"id\":\"chat:session-1\",\"kind\":\"chat\"}]},{\"id\":\"container-7\",\"role\":\"auxiliary\",\"emptyBehavior\":\"retain\",\"collapsed\":false,\"activeContentId\":\"files:workdir-1\",\"stack\":[{\"id\":\"files:workdir-1\",\"kind\":\"files\"}]}]}",
+			"expected": {
+				"ok": false,
+				"reason": "invariant-violation"
+			}
+		}
+	]
+}

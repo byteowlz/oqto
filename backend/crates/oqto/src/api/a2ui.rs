@@ -99,6 +99,9 @@ pub fn new_pending_requests() -> PendingA2uiRequests {
 ///
 /// For non-blocking requests, returns immediately after sending to frontend.
 /// For blocking requests, waits for user response (up to timeout).
+// The axum IntoResponse error contract requires the concrete (status, body)
+// tuple; boxing it would break the handler signature for no runtime benefit.
+#[allow(clippy::result_large_err)]
 pub async fn send_surface(
     State(state): State<AppState>,
     Json(request): Json<A2uiSurfaceRequest>,

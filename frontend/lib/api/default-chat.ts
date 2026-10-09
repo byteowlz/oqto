@@ -99,6 +99,7 @@ export type PiModelInfo = {
 	contextWindow: number;
 	maxTokens: number;
 	reasoning?: boolean;
+	thinkingLevelMap?: Record<string, string | null>;
 };
 
 export type PiPromptCommandInfo = {

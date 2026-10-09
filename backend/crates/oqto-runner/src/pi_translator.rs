@@ -112,11 +112,13 @@ impl PiTranslator {
             PiEvent::AgentEnd { messages } => self.on_agent_end(messages),
             PiEvent::TurnStart => vec![],
             PiEvent::TurnEnd { .. } => vec![],
+            // Idleness is already conveyed by turn and message completion.
+            PiEvent::AgentSettled => vec![],
             PiEvent::MessageStart { message } => self.on_message_start(message),
             PiEvent::MessageUpdate {
                 assistant_message_event,
                 message,
-            } => self.on_message_update(assistant_message_event, message),
+            } => self.on_message_update(assistant_message_event, message.as_ref()),
             PiEvent::MessageEnd { message } => self.on_message_end(message),
             PiEvent::ToolExecutionStart {
                 tool_call_id,
@@ -298,7 +300,7 @@ impl PiTranslator {
     fn on_message_update(
         &mut self,
         ame: &AssistantMessageEvent,
-        message: &AgentMessage,
+        message: Option<&AgentMessage>,
     ) -> Vec<EventPayload> {
         let msg_id = self.ensure_message_id();
 
@@ -367,7 +369,7 @@ impl PiTranslator {
                 let error_text = error
                     .as_ref()
                     .and_then(extract_error_message)
-                    .or_else(|| extract_error_message(message))
+                    .or_else(|| message.and_then(extract_error_message))
                     .unwrap_or_else(|| reason.clone());
 
                 // During retry cycles, suppress per-attempt AgentError events.
@@ -523,6 +525,17 @@ impl PiTranslator {
         if req.method == "setStatus"
             && let Some(ref key) = req.status_key
         {
+            if oqto_protocol::control::is_control_status(key)
+                && let Some(text) = req.status_text.as_deref()
+                && (text.len() > oqto_protocol::control::CONTROL_MAX_BYTES
+                    || !serde_json::from_str::<serde_json::Value>(text)
+                        .ok()
+                        .is_some_and(|value| {
+                            value.get("version").and_then(|v| v.as_u64()) == Some(1)
+                        }))
+            {
+                return vec![];
+            }
             if key == "oqto_phase" {
                 return self.on_oqto_phase_status(req.status_text.as_deref());
             }
@@ -1055,7 +1068,7 @@ mod tests {
 
         // TextDelta
         let events = t.translate(&PiEvent::MessageUpdate {
-            message: msg.clone(),
+            message: Some(msg.clone()),
             assistant_message_event: Box::new(AssistantMessageEvent::TextDelta {
                 content_index: 0,
                 delta: "Hello".to_string(),
@@ -1071,7 +1084,7 @@ mod tests {
 
         // ThinkingDelta
         let events = t.translate(&PiEvent::MessageUpdate {
-            message: msg.clone(),
+            message: Some(msg.clone()),
             assistant_message_event: Box::new(AssistantMessageEvent::ThinkingDelta {
                 content_index: 0,
                 delta: "Hmm...".to_string(),
@@ -1622,7 +1635,7 @@ mod tests {
         };
 
         let events = t.translate(&PiEvent::MessageUpdate {
-            message: msg,
+            message: Some(msg),
             assistant_message_event: Box::new(AssistantMessageEvent::Error {
                 reason: "error".to_string(),
                 error: Some(error),

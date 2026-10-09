@@ -8,66 +8,15 @@
  * parts with UI-specific metadata (streaming state, client correlation).
  */
 
-import type { Part, Sender, ToolStatus, Usage } from "@/lib/canonical-types";
+import type { ToolStatus } from "@/lib/canonical-types";
+import type { DisplayMessage } from "@/lib/chat-render-types";
+export type {
+	CompactionPart,
+	DisplayMessage,
+	DisplayPart,
+	ErrorPart,
+} from "@/lib/chat-render-types";
 import type { AgentState } from "@/lib/control-plane-client";
-
-// ============================================================================
-// Display-only part variants (not persisted, frontend-only)
-// ============================================================================
-
-/** Context-compaction notice shown inline in the chat. */
-export type CompactionPart = { type: "compaction"; id: string; text: string };
-
-/** Inline error notice (e.g. stream failure, LLM error with retry). */
-export type ErrorPart = {
-	type: "error";
-	id: string;
-	text: string;
-	/** When set, the agent is retrying the failed request. */
-	retryAttempt?: number;
-	/** Total retry attempts allowed. */
-	retryMax?: number;
-	/** True while a retry is in progress (waiting / executing). */
-	retrying?: boolean;
-};
-
-/**
- * A display part is either a canonical Part or a display-only variant.
- *
- * Renderers should handle all canonical `Part` types plus the two
- * display-only extensions (`compaction`, `error`).
- */
-export type DisplayPart = Part | CompactionPart | ErrorPart;
-
-// ============================================================================
-// Display message
-// ============================================================================
-
-/** A message ready for rendering in the chat UI. */
-export type DisplayMessage = {
-	id: string;
-	role: "user" | "assistant" | "system";
-	parts: DisplayPart[];
-	timestamp: number;
-	/** Parent message/turn ID for tree rendering when provided by oqto-log. */
-	parentId?: string | null;
-	/** Branch ID for tree rendering when provided by oqto-log. */
-	branchId?: string | null;
-	/** True while the assistant is still streaming tokens for this message. */
-	isStreaming?: boolean;
-	/** Token usage / cost metadata. */
-	usage?: Usage;
-	/** Client-generated ID for optimistic message matching.
-	 * Used to correlate frontend optimistic messages with server-confirmed versions. */
-	clientId?: string;
-	/** Model ID used for this message (from oqto-log or streaming). */
-	model?: string | null;
-	/** Provider ID used for this message (from oqto-log or streaming). */
-	provider?: string | null;
-	/** Sender attribution for multi-user workspaces.
-	 * When set, the chat UI shows sender.name instead of "You". */
-	sender?: Sender;
-};
 
 /** Send mode for messages */
 export type SendMode = "prompt" | "steer" | "follow_up";

@@ -22,6 +22,7 @@ sqlx.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tonic.workspace = true
+thiserror.workspace = true
 tower.workspace = true
 tracing.workspace = true
 uuid.workspace = true

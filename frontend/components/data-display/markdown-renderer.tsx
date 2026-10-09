@@ -1,5 +1,9 @@
 "use client";
 
+import {
+	type FileReferenceDetail,
+	extractFileReferenceDetails,
+} from "@/lib/file-types";
 import { cn } from "@/lib/utils";
 import { Check, Code, Copy, Minus, Plus, RotateCcw } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -10,6 +14,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -26,9 +31,33 @@ interface MarkdownRendererProps {
 	className?: string;
 	enableMermaid?: boolean;
 	isStreaming?: boolean;
+	onFileReferenceOpen?: (reference: FileReferenceDetail) => void;
+	/**
+	 * Enlarge an image the reader clicked. The renderer reports which one and
+	 * which others share the message; where it opens — a lightbox, a Gallery
+	 * Content — is the host's decision, as with file references.
+	 */
+	onImageOpen?: (image: MarkdownImage, siblings: MarkdownImage[]) => void;
+}
+
+/** An image as it appears in rendered markdown. */
+export interface MarkdownImage {
+	src: string;
+	alt: string;
 }
 
 const MermaidEnabledContext = createContext(true);
+const FileReferenceOpenContext = createContext<
+	((reference: FileReferenceDetail) => void) | undefined
+>(undefined);
+const ImageOpenContext = createContext<
+	((image: MarkdownImage, siblings: MarkdownImage[]) => void) | undefined
+>(undefined);
+/**
+ * Every image in the current document, so a click can hand the host the whole
+ * set and an index into it rather than one orphaned picture.
+ */
+const ImageSetContext = createContext<MarkdownImage[]>([]);
 
 const CopyButton = memo(function CopyButton({
 	text,
@@ -380,6 +409,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const isDarkMode = resolvedTheme === "dark";
 
 	const enableMermaid = useContext(MermaidEnabledContext);
+	const onFileReferenceOpen = useContext(FileReferenceOpenContext);
 	const match = /language-(\w+)/.exec(className || "");
 	const codeString = normalizeCodeContent(children);
 	const language = match ? match[1].toLowerCase() : "text";
@@ -391,13 +421,20 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const [isExpanded, setIsExpanded] = useState(!shouldCollapse);
 
 	if (isInline) {
+		const reference = extractFileReferenceDetails(`\`${codeString}\``)[0];
+		if (reference && onFileReferenceOpen) {
+			return (
+				<button
+					type="button"
+					className="markdown-file-reference-inline inline border-0 bg-transparent p-0 text-left text-[0.85em] font-mono text-primary underline underline-offset-2 whitespace-normal [overflow-wrap:anywhere] hover:text-primary/80"
+					onClick={() => onFileReferenceOpen(reference)}
+				>
+					{children}
+				</button>
+			);
+		}
 		return (
-			<code
-				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]"
-				style={{
-					backgroundColor: "var(--code-inline-bg)",
-				}}
-			>
+			<code className="markdown-inline-code px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]">
 				{children}
 			</code>
 		);
@@ -479,7 +516,44 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 const remarkPlugins = [remarkGfm];
 
 // Define components outside component to avoid recreation on every render
+/**
+ * An inline image the reader can open.
+ *
+ * It stays an <img> wrapped in a button rather than becoming one: a button
+ * with a background image would lose the intrinsic sizing that keeps the
+ * markdown flow honest, and the alt text would stop being the accessible
+ * name of the picture. The button only adds the affordance.
+ */
+function MarkdownImageView({ src, alt }: { src: string; alt: string }) {
+	const onImageOpen = useContext(ImageOpenContext);
+	const siblings = useContext(ImageSetContext);
+	const image = { src, alt };
+
+	if (!onImageOpen) {
+		return <img src={src} alt={alt} loading="lazy" decoding="async" />;
+	}
+
+	return (
+		<button
+			type="button"
+			className="markdown-image block max-w-full cursor-zoom-in border-0 bg-transparent p-0"
+			onClick={() => onImageOpen(image, siblings)}
+			aria-label={alt ? `${alt} — enlarge` : "Enlarge image"}
+		>
+			<img src={src} alt={alt} loading="lazy" decoding="async" />
+		</button>
+	);
+}
+
 const markdownComponents: Components = {
+	img({ src, alt }) {
+		return (
+			<MarkdownImageView
+				src={typeof src === "string" ? src : ""}
+				alt={typeof alt === "string" ? alt : ""}
+			/>
+		);
+	},
 	code({ className, children }) {
 		return (
 			<CodeBlockWithTheme className={className}>{children}</CodeBlockWithTheme>
@@ -517,17 +591,19 @@ const markdownComponents: Components = {
 		);
 	},
 	ul({ children }) {
-		return <ul className="list-none mb-3 space-y-1 pl-0">{children}</ul>;
+		return (
+			<ul className="mb-3 space-y-1 pl-3 [list-style-type:square]">
+				{children}
+			</ul>
+		);
 	},
 	ol({ children }) {
-		return <ol className="list-none mb-3 space-y-1 pl-0">{children}</ol>;
+		return <ol className="list-decimal mb-3 space-y-1 pl-3">{children}</ol>;
 	},
-	li({ children, ordered, index }) {
-		const marker = ordered ? `${(index ?? 0) + 1}.` : "•";
+	li({ children }) {
 		return (
-			<li className="flex items-start gap-2 text-foreground leading-relaxed">
-				<span className="text-foreground/70 shrink-0">{marker}</span>
-				<span className="min-w-0 flex-1 [&>p]:m-0 [&>p]:block">{children}</span>
+			<li className="text-foreground leading-relaxed ml-5 list-item">
+				<span className="min-w-0 [&>p]:m-0 [&>p]:block">{children}</span>
 			</li>
 		);
 	},
@@ -606,6 +682,25 @@ function stripPiCitations(content: string) {
 		.trimEnd();
 }
 
+/** Markdown image syntax, outside fenced code. */
+function collectImages(content: string): MarkdownImage[] {
+	const withoutFences = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, "");
+	const found: MarkdownImage[] = [];
+	const seen = new Set<string>();
+	const pattern = /!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?[^)]*\)/g;
+	for (
+		let match = pattern.exec(withoutFences);
+		match !== null;
+		match = pattern.exec(withoutFences)
+	) {
+		const src = match[2];
+		if (!src || seen.has(src)) continue;
+		seen.add(src);
+		found.push({ src, alt: match[1] ?? "" });
+	}
+	return found;
+}
+
 function resolveHyphenationLang() {
 	if (typeof document !== "undefined") {
 		const htmlLang = document.documentElement.lang.trim();
@@ -626,9 +721,15 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	className,
 	enableMermaid = true,
 	isStreaming = false,
+	onFileReferenceOpen,
+	onImageOpen,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
 	const hyphenationLang = resolveHyphenationLang();
+	const images = useMemo(
+		() => collectImages(sanitizedContent),
+		[sanitizedContent],
+	);
 	return (
 		<div
 			className={cn(
@@ -638,14 +739,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 			)}
 			lang={hyphenationLang}
 		>
-			<MermaidEnabledContext.Provider value={enableMermaid}>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins}
-					components={markdownComponents}
-				>
-					{sanitizedContent}
-				</ReactMarkdown>
-			</MermaidEnabledContext.Provider>
+			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
+				<ImageOpenContext.Provider value={onImageOpen}>
+					<ImageSetContext.Provider value={images}>
+						<MermaidEnabledContext.Provider value={enableMermaid}>
+							<ReactMarkdown
+								remarkPlugins={remarkPlugins}
+								components={markdownComponents}
+							>
+								{sanitizedContent}
+							</ReactMarkdown>
+						</MermaidEnabledContext.Provider>
+					</ImageSetContext.Provider>
+				</ImageOpenContext.Provider>
+			</FileReferenceOpenContext.Provider>
 		</div>
 	);
 });

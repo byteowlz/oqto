@@ -333,7 +333,10 @@
 				}
 			}
 		],
-		"expected": [{ "id": "b-a1", "role": "assistant", "text": "B one answer" }]
+		"expected": [
+			{ "id": "b-u1", "role": "user", "text": "B one" },
+			{ "id": "b-a1", "role": "assistant", "text": "B one answer" }
+		]
 	},
 	{
 		"id": "2026-03-04-client-id-reconcile-tmp-to-persisted",

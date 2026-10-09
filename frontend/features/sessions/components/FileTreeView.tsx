@@ -76,6 +76,36 @@ import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
 import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
 import { ThumbnailImage } from "./ThumbnailImage";
 
+function WorkspaceEntryIcon({
+	filename,
+	isDirectory,
+	size,
+	className,
+}: {
+	filename: string;
+	isDirectory: boolean;
+	size: number;
+	className?: string;
+}) {
+	if (isDirectory && filename.endsWith(".oqtoapp")) {
+		return (
+			<AppWindow
+				size={size}
+				className={cn("text-primary", className)}
+				aria-label="Oqto App package"
+			/>
+		);
+	}
+	return (
+		<FileIcon
+			filename={filename}
+			isDirectory={isDirectory}
+			size={size}
+			className={className}
+		/>
+	);
+}
+
 export type FileNode = {
 	name: string;
 	path: string;
@@ -1486,10 +1516,43 @@ export function FileTreeView({
 			if (dirIdx >= 0) {
 				setLightboxIndex(dirIdx);
 				setLightboxOpen(true);
+				return;
+			}
+			// Collapsed directory: its children may never have been fetched, so
+			// the media list cannot contain them yet. Load, then open via the
+			// pending path below.
+			const node = findNode(tree, filePath);
+			if (node?.type === "directory") {
+				setPendingGalleryPath(dirPrefix);
+				void lazyLoadChildren(filePath);
 			}
 		},
-		[lightboxItems],
+		[lightboxItems, tree, findNode, lazyLoadChildren],
 	);
+
+	const [pendingGalleryPath, setPendingGalleryPath] = useState<string | null>(
+		null,
+	);
+
+	// useeffect-guardrail: allow — lightbox items derive from async tree merges;
+	// a deferred gallery request can only resolve once the loaded media lands
+	useEffect(() => {
+		if (!pendingGalleryPath) return;
+		const idx = lightboxItems.findIndex((item) =>
+			item.path.startsWith(pendingGalleryPath),
+		);
+		if (idx >= 0) {
+			setPendingGalleryPath(null);
+			setLightboxIndex(idx);
+			setLightboxOpen(true);
+			return;
+		}
+		const dirPath = pendingGalleryPath.replace(/\/$/, "");
+		if (!loadingDirs.has(dirPath)) {
+			// Load finished (or failed) and the folder holds no media
+			setPendingGalleryPath(null);
+		}
+	}, [pendingGalleryPath, lightboxItems, loadingDirs]);
 
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
@@ -2355,6 +2418,7 @@ function FileContextMenu({
 	const isVideo = node.type === "file" && isVideoFile(node.name);
 	const isMedia = isImage || isVideo;
 	const isHtml = node.type === "file" && /\.html?$/i.test(node.name);
+	const isOqtoApp = isDirectory && node.name.endsWith(".oqtoapp");
 
 	return (
 		<ContextMenu>
@@ -2369,7 +2433,7 @@ function FileContextMenu({
 						<ContextMenuSeparator />
 					</>
 				)}
-				{isHtml && onOpenAsApp && (
+				{(isHtml || isOqtoApp) && onOpenAsApp && (
 					<>
 						<ContextMenuItem onClick={() => onOpenAsApp(node.path)}>
 							<AppWindow className="w-4 h-4 mr-2" />
@@ -2626,9 +2690,11 @@ function TreeRow({
 	};
 
 	const handleDoubleClick = () => {
-		if (isDir) {
-			onNavigateToFolder(node.path);
+		if (isDir && node.name.endsWith(".oqtoapp") && onOpenAsApp) {
+			onOpenAsApp(node.path);
+			return;
 		}
+		if (isDir) onNavigateToFolder(node.path);
 	};
 
 	return (
@@ -2680,7 +2746,7 @@ function TreeRow({
 					) : (
 						<span className="w-4 flex-shrink-0" />
 					)}
-					<FileIcon
+					<WorkspaceEntryIcon
 						filename={node.name}
 						isDirectory={isDir}
 						size={18}
@@ -2867,7 +2933,7 @@ function ListView({
 								)}
 							>
 								<div className="flex-1 min-w-0 flex items-center gap-2">
-									<FileIcon
+									<WorkspaceEntryIcon
 										filename={file.name}
 										isDirectory={file.type === "directory"}
 										size={20}
@@ -3035,7 +3101,7 @@ function GridView({
 									}}
 								/>
 							) : (
-								<FileIcon
+								<WorkspaceEntryIcon
 									filename={file.name}
 									isDirectory={file.type === "directory"}
 									size={48}

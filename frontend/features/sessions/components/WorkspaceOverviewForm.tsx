@@ -72,7 +72,7 @@ export function WorkspaceOverviewForm({
 
 	const sortedProfiles = sandboxProfiles.length
 		? [...sandboxProfiles].sort()
-		: ["development", "minimal", "strict"];
+		: ["development", "development-macos", "minimal", "strict"];
 
 	const modelOptions = availableModels
 		.filter((model) => model.provider && model.id)

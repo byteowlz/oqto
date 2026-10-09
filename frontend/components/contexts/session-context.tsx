@@ -85,6 +85,8 @@ export interface SessionContextValue {
 	createOptimisticChatSession: (
 		sessionId: string,
 		workspacePath?: string,
+		sharedWorkspaceId?: string,
+		existingSession?: ChatSession,
 	) => string;
 	clearOptimisticChatSession: (sessionId: string) => void;
 	replaceOptimisticChatSession: (

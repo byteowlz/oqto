@@ -3,13 +3,18 @@
 import { ContextWindowGauge } from "@/components/data-display";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { type Features, getFeatures } from "@/features/chat/api";
+import { openOqtoAppTab } from "@/features/sessions/app-tabs";
+import type { AppTab } from "@/features/sessions/components/AppView";
 import {
 	type FileTreeState,
 	initialFileTreeState,
 } from "@/features/sessions/components/FileTreeView";
+import { shouldMountInUtilityPane } from "@/features/sessions/layout-visibility";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useMayUseTerminal } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
+import type { AppInstanceSummary } from "@/src/generated/AppInstanceSummary";
+import type { AppPresentationDocument } from "@/src/generated/AppPresentationDocument";
 
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -20,6 +25,7 @@ import {
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
+import { normalizeWorkspaceFileReference } from "@/lib/workspace-resource";
 import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import {
 	AppWindow,
@@ -607,32 +613,57 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, []);
 
 	// --- App tabs state ---
-	const [appTabs, setAppTabs] = useState<
-		Array<{
-			id: string;
-			filePath: string;
-			title: string;
-			content: string;
-			pinned: boolean;
-		}>
-	>([]);
+	const [appTabs, setAppTabs] = useState<AppTab[]>([]);
 	const [activeAppTabId, setActiveAppTabId] = useState<string | null>(null);
 
-	const handleOpenAsApp = useCallback((filePath: string) => {
-		setAppTabs((prev) => {
-			const existing = prev.find((t) => t.filePath === filePath);
-			if (existing) {
-				setActiveAppTabId(existing.id);
-				return prev;
+	const handleOpenAsApp = useCallback(
+		(filePath: string) => {
+			if (filePath.endsWith(".oqtoapp")) {
+				setActiveView("app");
+				setExpandedView("app");
+				return;
 			}
-			const id = `app-${Date.now()}`;
-			const name = filePath.split("/").pop() ?? filePath;
-			const title = name.replace(/\.html?$/i, "");
-			setActiveAppTabId(id);
-			return [...prev, { id, filePath, title, content: "", pinned: false }];
-		});
-		setExpandedView("app");
-	}, []);
+			setAppTabs((prev) => {
+				const existing = prev.find(
+					(t) => t.kind === "legacy-html" && t.filePath === filePath,
+				);
+				if (existing) {
+					setActiveAppTabId(existing.id);
+					return prev;
+				}
+				const id = `app-${Date.now()}`;
+				const name = filePath.split("/").pop() ?? filePath;
+				const title = name.replace(/\.html?$/i, "");
+				setActiveAppTabId(id);
+				return [
+					...prev,
+					{
+						kind: "legacy-html",
+						id,
+						filePath,
+						title,
+						content: "",
+						pinned: false,
+					},
+				];
+			});
+			setExpandedView("app");
+		},
+		[setActiveView],
+	);
+
+	const handleOpenOqtoApp = useCallback(
+		(instance: AppInstanceSummary, presentation: AppPresentationDocument) => {
+			setAppTabs((previous) => {
+				const opened = openOqtoAppTab(previous, instance, presentation);
+				setActiveAppTabId(opened.activeTabId);
+				return opened.tabs;
+			});
+			setActiveView("app");
+			setExpandedView("app");
+		},
+		[setActiveView],
+	);
 
 	const handleCloseAppTab = useCallback(
 		(id: string) => {
@@ -651,9 +682,9 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleUpdateAppTab = useCallback(
-		(id: string, patch: Partial<(typeof appTabs)[number]>) => {
+		(id: string, patch: Partial<AppTab>) => {
 			setAppTabs((prev) =>
-				prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+				prev.map((t) => (t.id === id ? ({ ...t, ...patch } as AppTab) : t)),
 			);
 		},
 		[],
@@ -686,18 +717,11 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const handleOpenChatFileReference = useCallback(
 		(filePath: string) => {
-			const trimmed = filePath.trim();
-			if (!trimmed) return;
-			const withoutAt = trimmed.replace(/^@+/, "");
-			const workspaceRelative = normalizedWorkspacePath
-				? withoutAt.replace(
-						new RegExp(
-							`^${normalizedWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`,
-						),
-						"",
-					)
-				: withoutAt;
-			const normalizedPath = workspaceRelative.replace(/^\.\//, "");
+			const normalizedPath = normalizeWorkspaceFileReference(
+				filePath,
+				normalizedWorkspacePath,
+			);
+			if (!normalizedPath) return;
 
 			setActiveView("files");
 			if (isChatPreviewableFile(normalizedPath)) {
@@ -779,7 +803,10 @@ export const SessionScreen = memo(function SessionScreen() {
 									handleOpenAsApp(signal.path);
 								} else if (signal.action === "close") {
 									setAppTabs((prev) => {
-										const tab = prev.find((t) => t.filePath === signal.path);
+										const tab = prev.find(
+											(t) =>
+												t.kind === "legacy-html" && t.filePath === signal.path,
+										);
 										if (tab) handleCloseAppTab(tab.id);
 										return prev;
 									});
@@ -1103,7 +1130,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, []);
 
 	const chatHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-20">
+		<div className="pb-3 border-b border-border pr-20">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
@@ -1138,7 +1165,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const overviewHeader = (
-		<div className="pb-3 mb-3 border-b border-border pr-20">
+		<div className="pb-3 border-b border-border pr-20">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
@@ -1237,7 +1264,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								icon={Globe}
 								label="Browser"
 							/>
-							{appTabs.length > 0 && (
+							{normalizedWorkspacePath && (
 								<TabButton
 									activeView={activeView}
 									onSelect={setActiveView}
@@ -1364,6 +1391,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									onSetActiveTab={setActiveAppTabId}
 									onCloseTab={handleCloseAppTab}
 									onUpdateTab={handleUpdateAppTab}
+									onOpenOqtoApp={handleOpenOqtoApp}
 									onExpand={() => setExpandedView("app")}
 								/>
 							</Suspense>
@@ -1460,6 +1488,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										onSetActiveTab={setActiveAppTabId}
 										onCloseTab={handleCloseAppTab}
 										onUpdateTab={handleUpdateAppTab}
+										onOpenOqtoApp={handleOpenOqtoApp}
 										isExpanded
 										onCollapse={() => setExpandedView(null)}
 									/>
@@ -1623,7 +1652,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									icon={Globe}
 									label="Browser"
 								/>
-								{appTabs.length > 0 && (
+								{normalizedWorkspacePath && (
 									<CollapsedTabButton
 										activeView={activeView}
 										onSelect={(view) => {
@@ -1702,7 +1731,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										label="Browser"
 										hideLabel
 									/>
-									{appTabs.length > 0 && (
+									{normalizedWorkspacePath && (
 										<TabButton
 											activeView={activeView}
 											onSelect={setActiveView}
@@ -1834,7 +1863,11 @@ export const SessionScreen = memo(function SessionScreen() {
 											/>
 										</Suspense>
 									</div>
-									{activeView === "app" && (
+									{shouldMountInUtilityPane(
+										activeView,
+										expandedView,
+										"app",
+									) && (
 										<Suspense fallback={viewLoadingFallback}>
 											<AppView
 												workspacePath={normalizedWorkspacePath}
@@ -1843,6 +1876,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												onSetActiveTab={setActiveAppTabId}
 												onCloseTab={handleCloseAppTab}
 												onUpdateTab={handleUpdateAppTab}
+												onOpenOqtoApp={handleOpenOqtoApp}
 												onExpand={() => setExpandedView("app")}
 											/>
 										</Suspense>

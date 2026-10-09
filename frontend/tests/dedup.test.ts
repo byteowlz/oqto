@@ -1,4 +1,5 @@
 import {
+	hasExplicitStreamingAssistant,
 	mergeServerMessages,
 	normalizeMessages,
 	shouldPreserveLocalMessage,
@@ -55,6 +56,27 @@ describe("shouldPreserveLocalMessage", () => {
 		expect(
 			shouldPreserveLocalMessage(textMsg("history-s1-1", "user", "x")),
 		).toBe(false);
+	});
+});
+
+describe("explicit streaming detection", () => {
+	it("does not treat stale temporary IDs as an active turn", () => {
+		expect(
+			hasExplicitStreamingAssistant([
+				textMsg("pi-msg-7", "assistant", "stale call"),
+				textMsg("tmp:old", "assistant", "stale result"),
+			]),
+		).toBe(false);
+	});
+
+	it("recognizes only an explicitly streaming assistant message", () => {
+		expect(
+			hasExplicitStreamingAssistant([
+				textMsg("tmp:active", "assistant", "draft", {
+					isStreaming: true,
+				}),
+			]),
+		).toBe(true);
 	});
 });
 

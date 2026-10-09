@@ -15,22 +15,32 @@
 
 pub(crate) mod admin;
 mod api_keys;
+mod apps;
 mod auth;
 mod chat;
 mod feedback;
 mod invites;
 mod misc;
 mod oauth;
-mod projects;
+pub(crate) mod projects;
 mod sessions;
 mod settings;
 mod shared_workspaces;
 pub mod trx;
+mod ui_config;
 
 // Re-export all public types and handlers
 
 // API key handlers
 pub use api_keys::{create_api_key, delete_api_key, list_api_keys, revoke_api_key};
+
+// Runtime-discovered Oqto App handlers
+pub use apps::{
+    decide_app_permissions, delete_app_kv, get_app_file_resources, get_app_kv, get_app_permissions,
+    get_app_presentation, invoke_app_operation, list_app_candidates, list_app_files,
+    list_app_instances, publish_app, read_app_file, revoke_app_permissions, set_app_kv,
+    write_app_file,
+};
 
 // Session handlers and types
 pub use sessions::{
@@ -41,8 +51,8 @@ pub use sessions::{
 
 // Chat history handlers and types
 pub use chat::{
-    backfill_chat_history, delete_chat_session, get_chat_messages, get_chat_session,
-    list_chat_history, list_chat_history_grouped, update_chat_session,
+    backfill_chat_history, delete_chat_session, get_chat_messages, get_chat_messages_page,
+    get_chat_session, list_chat_history, list_chat_history_grouped, update_chat_session,
 };
 pub use feedback::create_feedback;
 
@@ -57,7 +67,7 @@ pub use projects::{
 // Admin handlers and types
 pub use admin::{
     admin_cleanup_local_sessions, admin_force_stop_session, admin_list_sessions,
-    admin_metrics_stream, get_admin_stats, get_bus_stats, publish_bus_event,
+    admin_metrics_stream, get_admin_stats,
 };
 
 // User management (admin)
@@ -92,11 +102,13 @@ pub use misc::{
     codexbar_usage, features, fetch_feed, health, scheduler_delete, scheduler_overview,
     search_in_session, search_sessions, ws_debug,
 };
+pub use ui_config::get_oqto_ui_config;
 
 // Shared workspace handlers
 pub use shared_workspaces::{
     add_shared_workspace_member, add_shared_workspace_workdir, admin_delete_shared_workspace,
-    admin_get_shared_workspace, admin_list_shared_workspaces, admin_remove_shared_workspace_member,
+    admin_get_shared_workspace, admin_list_shared_workspaces,
+    admin_migrate_shared_workspace_placement, admin_remove_shared_workspace_member,
     admin_transfer_shared_workspace_ownership, convert_to_shared_workspace,
     create_shared_workspace, delete_shared_workspace, delete_shared_workspace_workdir,
     get_shared_workspace, list_shared_workspace_members, list_shared_workspace_workdirs,

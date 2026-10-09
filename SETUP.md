@@ -27,40 +27,51 @@ Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisit
 
 ### Bootstrap install (fresh machine, no repo clone)
 
-Use the bootstrap installer to fetch `oqto-setup` and a release artifact from
-GitHub Releases, verify checksums, install `oqto-setup`, and activate Oqto.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | bash
-```
-
-Pin a specific version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
-  bash -s -- --version v0.4.0
-```
-
-Run setup immediately if this repo is already checked out:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/byteowlz/oqto/main/scripts/install.sh | \
-  bash -s -- --run-setup-sh -- --personal
-```
-
-Repository-clone/dev path still works and is documented below.
+**Not yet a verified release path.** `scripts/install.sh` currently expects a
+standalone `oqto-setup` asset and per-asset `.sha256` files, whereas the release
+workflow publishes a bundle and combined `checksums.txt`. Until the bootstrap
+path is reconciled and exercised on a clean VM, do not pipe it into a shell as
+installation advice. The repository-clone/dev path is documented below; the
+release-artifact matrix can be preflighted safely as described next.
 
 ### Install/update validation matrix
 
-Use the matrix runner to validate fresh artifact install + doctor strict + setup wrapper paths.
+Use **one isolated Linux VM per profile/scenario**, either snapshotted or
+explicitly disposable (`--disposable-vm` with its real hostname). Plan and
+preflight are read-only; preflight validates the host state, matching target,
+bundle hash, matching embedded `oqto-setup`, and its required glibc version
+without installing anything. Execute requires **one** recovery choice: a
+snapshot reference (operator attestation, not a Proxmox lookup) or the actual
+hostname of a user-authorized throwaway VM. Neither is needed for preflight. The installer currently needs a per-artifact SHA-256 line; combined
+`checksums.txt` is rejected rather than misread as a different artifact. The
+matrix also rejects the old published flat `bin/` bundle: a canonical dist
+bundle must have `manifest.toml` and its required `immutable/bin/` executables.
 
 ```bash
-# Plan mode (prints commands)
-./scripts/e2e/install-update-matrix.sh
-
-# Execute for personal profile only
-./scripts/e2e/install-update-matrix.sh --execute --profiles "personal"
+./scripts/e2e/install-update-matrix.sh  # read-only overview
+# Set these to the operator-created snapshot and matching artifact/checksum:
+snapshot_id=before-oqto-install
+artifact=dist/out/oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+checksum=dist/out/oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
+./scripts/e2e/install-update-matrix.sh --preflight \
+  --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
+  --artifact "$artifact" --checksum "$checksum"
+# Only after reviewing preflight, on the snapshotted VM:
+./scripts/e2e/install-update-matrix.sh --execute \
+  --scenario fresh --snapshot-id "$snapshot_id" --profiles personal \
+  --artifact "$artifact" --checksum "$checksum"
+# Alternative ONLY if the operator explicitly designates this VM disposable:
+# replace --snapshot-id "$snapshot_id" with --disposable-vm "$(hostname -s)".
 ```
+
+A host with an existing active Oqto release is an **upgrade** candidate, not
+a clean-install host. macOS setup is not implemented and this Linux matrix
+fails closed on macOS. An execution run does not yet prove Pi/provider,
+sandbox profile, rollback or Windows Desktop behavior; those require separate
+functional gates. `./setup.sh --personal --doctor` and `--plan` use the installed
+`oqtoctl`/`oqto-setup` and fail closed if incompatible; they do not silently
+compile checkout sources. For a deliberate development-only source run, invoke
+`cargo run` explicitly from `backend/`. See `docs/agents/install-matrix-safety.md`.
 
 
 ### Option 1: Interactive Setup Script (Development/Local)
@@ -264,7 +275,7 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 ./scripts/dist/sync-agent-runtime.sh --skip-extensions
 ```
 
-This stages the pinned official standalone release, verifies its SHA-256 and RPC model discovery, then atomically promotes the root-owned deployment baseline. `just update-pi-local` maintains the preferred rootless channel under `~/.local/share/oqto/pi-runtimes/current` without Git changes. Neither path resolves npm dependencies or modifies user-global Bun packages.
+This stages the pinned official standalone release, verifies its SHA-256, version and successful Pi RPC response, then atomically promotes the root-owned deployment baseline. An **empty model list is valid at this binary-install step**: a fresh user cannot complete Pi provider OAuth until Pi is installed. `just update-pi-local` maintains the preferred rootless channel under `~/.local/share/oqto/pi-runtimes/current` without Git changes. Neither binary check proves model readiness or a real chat turn; those are separate post-login release gates (`oqto-vemr.9.1.3`). Neither path resolves npm dependencies or modifies user-global Bun packages.
 
 **Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
 
@@ -735,7 +746,7 @@ Key configuration sections:
 ## EAVS Setup and Models
 
 EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.).
-EAVS is required for Oqto; setup.sh always installs and configures it.
+The **current legacy `setup.sh` still requires and installs EAVS**. This is a documented implementation gap, not the desired personal-install contract: the first personal path must allow native Pi Codex/ChatGPT provider login without an EAVS service. EAVS remains an explicit optional gateway choice for personal installs (`oqto-vemr.9.1.3`); do not skip current strict doctor checks until the target-aware provisioning/doctor implementation and real chat proof exist.
 
 ### What setup.sh does
 

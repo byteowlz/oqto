@@ -834,7 +834,11 @@ fn oqto_log_result_to_search_hit(
             hit.session_id
         ),
         session_id: Some(session_id),
-        workspace: hit.workspace_id,
+        // workspace_id is an opaque oqto-log store key (hashed into a db
+        // path), not a filesystem directory. Clients expect a real path here;
+        // hand back None so they fall back to the session list instead of
+        // building bogus project groups from an opaque id.
+        workspace: None,
         message_id: Some(hit.message_id),
         line_number: None,
         snippet: Some(hit.snippet),

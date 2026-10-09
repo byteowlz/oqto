@@ -13,6 +13,10 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./"),
+			"@byteowlz/design-system": path.resolve(
+				__dirname,
+				"vendor/design-system/src/index.ts",
+			),
 		},
 	},
 });

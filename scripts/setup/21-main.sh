@@ -73,6 +73,9 @@ Environment Variables:
   OQTO_USER_MODE          single or multi (default: single)
   OQTO_BACKEND_MODE       local or container (default: local)
   OQTO_CONTAINER_RUNTIME  docker, podman, or auto (default: auto)
+  OQTO_PLACEMENT_MODE     local or container (default: local)
+                          container = per-Workspace rootless Podman (needs Podman >= 4.0)
+  OQTO_WORKSPACE_IMAGE    Workspace image override (default: version-matched release)
   OQTO_INSTALL_DEPS       yes or no (default: yes)
   OQTO_INSTALL_SERVICE    yes or no (default: yes)
   OQTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
@@ -176,6 +179,7 @@ print_setup_summary() {
   echo "Profile:        $profile"
   echo "User mode:      ${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
   echo "Backend mode:   ${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+  echo "Placement:      ${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
   echo "Auth mode:      $(if [[ "$OQTO_DEV_MODE" == "true" ]]; then echo "development"; else echo "production/real auth"; fi)"
   echo "Hardening:      ${OQTO_HARDEN_SERVER:-prompt}"
   echo "Services:       ${OQTO_INSTALL_SERVICE:-yes}"
@@ -227,18 +231,17 @@ run_setup_doctor() {
     apply_service_args+=(--apply-services)
   fi
 
-  if [[ -d "$SCRIPT_DIR/backend/crates/oqtoctl" ]]; then
-    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqtoctl -- doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}")
-    return $?
+  # An installed host should evaluate the *activated* contract, not compile
+  # whatever happens to be checked out in this source tree.
+  if ! command_exists oqtoctl; then
+    log_error "oqtoctl is not installed; install a release artifact before running setup doctor"
+    return 1
   fi
-
-  if command_exists oqtoctl && oqtoctl doctor --help 2>/dev/null | grep -q -- '--contract'; then
-    oqtoctl doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}"
-    return $?
+  if ! oqtoctl doctor --help 2>/dev/null | grep -q -- '--contract'; then
+    log_error "installed oqtoctl does not support --contract; refuse source-build fallback"
+    return 1
   fi
-
-  log_error "oqtoctl with doctor --contract is not installed and backend source is unavailable; cannot run setup doctor"
-  return 1
+  oqtoctl doctor --contract --profile "$profile" "${json_args[@]}" "${strict_args[@]}" "${apply_args[@]}" "${apply_runner_args[@]}" "${apply_service_args[@]}"
 }
 
 run_setup_plan() {
@@ -251,18 +254,15 @@ run_setup_plan() {
     json_args+=(--json)
   fi
 
-  if [[ -d "$SCRIPT_DIR/backend/crates/oqto-setup" ]]; then
-    (cd "$SCRIPT_DIR/backend" && cargo run -q -p oqto-setup -- plan --profile "$profile" "${json_args[@]}")
-    return $?
+  if ! command_exists oqto-setup; then
+    log_error "oqto-setup is not installed; install a release artifact before rendering setup plan"
+    return 1
   fi
-
-  if command_exists oqto-setup && oqto-setup --help 2>/dev/null | grep -q 'plan'; then
-    oqto-setup plan --profile "$profile" "${json_args[@]}"
-    return $?
+  if ! oqto-setup --help 2>/dev/null | grep -q 'plan'; then
+    log_error "installed oqto-setup does not support plan; refuse source-build fallback"
+    return 1
   fi
-
-  log_error "oqto-setup is not installed and backend source is unavailable; cannot render setup plan"
-  return 1
+  oqto-setup plan --profile "$profile" "${json_args[@]}"
 }
 
 main() {
@@ -589,6 +589,7 @@ BANNER
     if [[ "$NONINTERACTIVE" != "true" ]]; then
       select_user_mode
       select_backend_mode
+      select_placement_mode
       select_deployment_mode
     else
       # Non-interactive: dev mode is disabled unless explicitly enabled
@@ -596,8 +597,20 @@ BANNER
         OQTO_DEV_MODE="false"
       fi
       PRODUCTION_MODE="$([[ "$OQTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
+      SELECTED_PLACEMENT_MODE="$OQTO_PLACEMENT_MODE"
     fi
   fi
+
+  # Fail closed on an unsupported placement value rather than silently
+  # falling back to host placement.
+  SELECTED_PLACEMENT_MODE="${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
+  case "$SELECTED_PLACEMENT_MODE" in
+  local | container) ;;
+  *)
+    log_error "Unsupported OQTO_PLACEMENT_MODE '$SELECTED_PLACEMENT_MODE' (expected 'local' or 'container')"
+    exit 1
+    ;;
+  esac
 
   print_setup_summary
 
@@ -622,7 +635,7 @@ BANNER
 
     # Pi extensions - verify they're actually on disk
     verify_or_rerun "pi_extensions" "Pi extensions" \
-      "test -d $HOME/.pi/agent/extensions/pi-oqto-bridge && test -d $HOME/.pi/agent/extensions/pi-custom-context-files && test -d $HOME/.pi/agent/extensions/pi-openai-completions-convert-think-tags" \
+      "test -d $HOME/.pi/agent/extensions/pi-oqto-bridge && test -d $HOME/.pi/agent/extensions/pi-custom-context-files" \
       "$(if [[ "$SELECTED_USER_MODE" == "multi" ]]; then echo install_pi_extensions_all_users; else echo install_pi_extensions; fi)"
 
     # Agent tools

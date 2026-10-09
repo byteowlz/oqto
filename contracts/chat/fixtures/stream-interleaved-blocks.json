@@ -1,0 +1,59 @@
+{
+	"format": "oqto-chat-stream",
+	"formatVersion": 1,
+	"name": "interleaved-blocks",
+	"why": "Reasoning and content stream as two sequences whose deltas interleave; each block is reassembled by its content index, never by arrival order, so a word cannot be split across a thinking block.",
+	"events": [
+		{
+			"type": "message_start",
+			"message": {
+				"role": "assistant",
+				"content": []
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "thinking_delta",
+				"contentIndex": 0,
+				"delta": "Let me write a python"
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "text_delta",
+				"contentIndex": 1,
+				"delta": "Sc"
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "thinking_delta",
+				"contentIndex": 0,
+				"delta": " script."
+			}
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "text_delta",
+				"contentIndex": 1,
+				"delta": "affold is in place."
+			}
+		}
+	],
+	"expect": {
+		"blocks": [
+			{
+				"type": "thinking",
+				"text": "Let me write a python script."
+			},
+			{
+				"type": "text",
+				"text": "Scaffold is in place."
+			}
+		]
+	}
+}

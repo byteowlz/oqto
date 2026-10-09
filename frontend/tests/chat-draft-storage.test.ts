@@ -1,7 +1,7 @@
 import {
 	buildLegacyDraftStorageKey,
 	buildSessionDraftStorageKey,
-} from "@/features/chat/hooks/draft-storage";
+} from "@/lib/chat-draft-storage";
 import { describe, expect, it } from "vitest";
 
 describe("chat draft storage keys", () => {

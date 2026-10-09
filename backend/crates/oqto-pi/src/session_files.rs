@@ -47,7 +47,15 @@ fn sessions_base_dir() -> Option<PathBuf> {
 ///
 /// Returns the full path to the session file if found.
 pub fn find_session_file(session_id: &str, cwd: Option<&Path>) -> Option<PathBuf> {
-    let base = sessions_base_dir()?;
+    find_session_file_in(&sessions_base_dir()?, session_id, cwd)
+}
+
+/// Find a Pi session JSONL file beneath an explicit sessions directory.
+///
+/// Only the host that owns the files can resolve them, so callers acting for
+/// another machine must supply that machine's directory rather than relying on
+/// this process's `$HOME`.
+pub fn find_session_file_in(base: &Path, session_id: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     if !base.exists() {
         debug!("Pi sessions directory not found: {:?}", base);
         return None;
@@ -65,7 +73,7 @@ pub fn find_session_file(session_id: &str, cwd: Option<&Path>) -> Option<PathBuf
     }
 
     // Fall back: search all session directories
-    find_in_all_directories(&base, &suffix)
+    find_in_all_directories(base, &suffix)
 }
 
 /// Search a specific directory for a session file with the given suffix.

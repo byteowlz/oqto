@@ -29,6 +29,13 @@ impl WorkspaceConfig {
         workspace.join(".oqto").join("config.toml")
     }
 
+    /// Whether this work directory delegated provider-side fetching to model
+    /// providers. The egress crate owns the `[egress]` table; this stays as the
+    /// call site sandbox consumers already use.
+    pub fn delegated_fetch_enabled(workspace: &Path) -> bool {
+        oqto_egress::load_policy(workspace, String::new()).delegated_fetch
+    }
+
     pub fn models_json_path(workspace: &Path) -> PathBuf {
         workspace.join(".oqto").join("models.json")
     }
@@ -118,5 +125,45 @@ impl WorkspaceConfig {
         }
 
         Ok(serde_json::to_string_pretty(&merged)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegated_fetch_is_denied_by_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        assert!(!WorkspaceConfig::delegated_fetch_enabled(dir.path()));
+    }
+
+    #[test]
+    fn workspace_config_accepts_an_egress_section() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".oqto")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".oqto").join("config.toml"),
+            "[models]\nmode = \"merge\"\n\n[egress]\ndelegated_fetch = true\n",
+        )
+        .expect("write");
+
+        assert!(WorkspaceConfig::delegated_fetch_enabled(dir.path()));
+    }
+
+    /// A broken config must narrow, never widen: a file that fails to parse
+    /// denies delegated fetch instead of inheriting an unpredictable default.
+    #[test]
+    fn a_broken_config_denies_delegated_fetch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".oqto")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".oqto").join("config.toml"),
+            "not [valid toml",
+        )
+        .expect("write");
+
+        assert!(!WorkspaceConfig::delegated_fetch_enabled(dir.path()));
     }
 }

@@ -3,18 +3,58 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 DIST_CACHE_DIR="${OQTO_DIST_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/oqto/dist-sources}"
 OQTO_TEMPLATES_URL="${OQTO_TEMPLATES_URL:-https://github.com/byteowlz/oqto-templates.git}"
 PI_AGENT_EXTENSIONS_URL="${PI_AGENT_EXTENSIONS_URL:-https://github.com/byteowlz/pi-agent-extensions.git}"
-OQTO_TEMPLATES_REF="${OQTO_TEMPLATES_REF:-main}"
-PI_AGENT_EXTENSIONS_REF="${PI_AGENT_EXTENSIONS_REF:-main}"
+# The release and the installed Pi runtime must use the same locked inputs.
+# Never package a moving `main` checkout as though it were a reproducible build.
+read_source_pin() {
+  local key="$1"
+  awk -F '"' -v key="$key" '
+    /^\[external\]/ { in_external = 1; next }
+    /^\[/ { in_external = 0 }
+    in_external && $1 ~ "^[[:space:]]*" key "[[:space:]]*=" { print $2; exit }
+  ' "$ROOT_DIR/dependencies.toml"
+}
+
+pinned_templates="$(read_source_pin oqto-templates)"
+pinned_extensions="$(read_source_pin pi-extensions)"
+[[ "$pinned_templates" =~ ^[0-9a-f]{7,40}$ && "$pinned_extensions" =~ ^[0-9a-f]{7,40}$ ]] || {
+  echo 'error: dependencies.toml must pin oqto-templates and pi-extensions to commit IDs' >&2
+  exit 1
+}
+OQTO_TEMPLATES_REF="${OQTO_TEMPLATES_REF:-$pinned_templates}"
+PI_AGENT_EXTENSIONS_REF="${PI_AGENT_EXTENSIONS_REF:-$pinned_extensions}"
+[[ "$OQTO_TEMPLATES_REF" == "$pinned_templates" && "$PI_AGENT_EXTENSIONS_REF" == "$pinned_extensions" ]] || {
+  echo 'error: source ref overrides must match dependencies.toml; update the pin first' >&2
+  exit 1
+}
+if [[ "${1:-}" == '--print-refs' ]]; then
+  printf 'oqto-templates=%s\npi-agent-extensions=%s\n' "$OQTO_TEMPLATES_REF" "$PI_AGENT_EXTENSIONS_REF"
+  exit 0
+fi
+[[ $# -eq 0 ]] || { echo "error: unknown sync arg: $1" >&2; exit 2; }
 
 resolve_source_repo() {
   local name="$1" local_path="$2" url="$3" ref="$4"
   local cached_path="$DIST_CACHE_DIR/$name"
 
-  if [[ -d "$local_path/.git" || -d "$local_path" ]]; then
+  if [[ -e "$local_path" ]]; then
+    local actual expected
+    actual="$(git -C "$local_path" rev-parse HEAD 2>/dev/null)" || {
+      echo "error: $name at $local_path is not a verifiable git checkout" >&2
+      return 1
+    }
+    expected="$(git -C "$local_path" rev-parse "${ref}^{commit}" 2>/dev/null)" || {
+      echo "error: pinned $name commit $ref is unavailable in $local_path" >&2
+      return 1
+    }
+    [[ "$actual" == "$expected" && -z "$(git -C "$local_path" status --porcelain)" ]] || {
+      echo "error: $name at $local_path is dirty or does not match pinned commit $ref" >&2
+      return 1
+    }
     echo "$local_path"
     return 0
   fi
@@ -26,15 +66,29 @@ resolve_source_repo() {
 
   mkdir -p "$DIST_CACHE_DIR"
   if [[ ! -d "$cached_path/.git" ]]; then
+    [[ ! -e "$cached_path" ]] || {
+      echo "error: refusing to overwrite unknown $name cache at $cached_path" >&2
+      return 1
+    }
     echo "[dist-sync] $name missing at $local_path; cloning $url into $cached_path" >&2
-    rm -rf "$cached_path"
     git clone --filter=blob:none "$url" "$cached_path" >&2
   else
     echo "[dist-sync] $name missing at $local_path; updating cached checkout $cached_path" >&2
     git -C "$cached_path" fetch --tags --prune origin >&2
   fi
 
-  git -C "$cached_path" checkout --detach "$ref" >&2 || git -C "$cached_path" checkout "$ref" >&2
+  [[ -z "$(git -C "$cached_path" status --porcelain)" ]] || {
+    echo "error: refusing to switch dirty $name cache at $cached_path" >&2
+    return 1
+  }
+  git -C "$cached_path" checkout --detach "$ref" >&2
+  local actual expected
+  actual="$(git -C "$cached_path" rev-parse HEAD)"
+  expected="$(git -C "$cached_path" rev-parse "${ref}^{commit}")"
+  [[ "$actual" == "$expected" && -z "$(git -C "$cached_path" status --porcelain)" ]] || {
+    echo "error: cached $name is dirty or not at pinned commit $ref" >&2
+    return 1
+  }
   echo "$cached_path"
 }
 
@@ -53,6 +107,12 @@ mkdir -p dist/immutable/defaults/pi-agent \
          dist/immutable/defaults/pi-agent/extensions \
          dist/immutable/defaults/workdir-templates \
          dist/immutable/defaults/onboarding-templates/onboarding
+
+# Runner-owned auth helper; no credentials or user configuration are shipped.
+mkdir -p dist/immutable/provider-login
+for file in worker.mjs broker.mjs pi-runtime.mjs README.md; do
+  cp "tools/provider-login/$file" "dist/immutable/provider-login/$file"
+done
 
 # Sync canonical template families from oqto-templates.
 cp "$TEMPLATES_REPO/pi-agent/AGENTS.md" dist/immutable/defaults/pi-agent/AGENTS.md
@@ -87,17 +147,17 @@ fi
 cp -R "$TEMPLATES_REPO/onboarding-templates/onboarding/." dist/immutable/defaults/onboarding-templates/onboarding/
 
 # Canonical shipped extension set (must stay in sync with dist/manifest.toml [pi_agent_extensions].items)
-EXTENSIONS=(
-  pi-auto-rename
-  pi-custom-context-files
-  pi-env-ctx
-  pi-error-recovery
-  pi-history-search
-  pi-introspection
-  pi-markdown-export
-  pi-oqto-bridge
-  pi-oqto-todos
+mapfile -t EXTENSIONS < <(python3 - <<'PY'
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+with open("dist/manifest.toml", "rb") as source:
+    for item in tomllib.load(source)["pi_agent_extensions"]["items"]:
+        print(item)
+PY
 )
+[[ ${#EXTENSIONS[@]} -gt 0 ]] || { echo 'error: no canonical extensions in manifest' >&2; exit 1; }
 
 for ext in "${EXTENSIONS[@]}"; do
   src="$EXTENSIONS_REPO/$ext"

@@ -404,10 +404,12 @@ export function getSyntaxLanguage(filename: string): string {
  * Extract @file references from text content, excluding those inside code blocks.
  * Returns unique file paths without the @ prefix.
  */
-type FileReferenceDetail = {
+export type FileReferenceDetail = {
 	filePath: string;
 	label: string;
 	raw: string;
+	startLine?: number;
+	endLine?: number;
 };
 
 function stripTrailingPunctuation(value: string) {
@@ -429,43 +431,74 @@ function splitReferenceSuffix(value: string) {
 export function extractFileReferenceDetails(
 	content: string,
 ): FileReferenceDetail[] {
-	// Remove code blocks (both fenced ``` and inline `)
-	// Fenced code blocks: ```...``` or ~~~...~~~
+	// Fenced blocks describe code, not navigable references. Inline code is
+	// deliberately retained: agents naturally emit paths as `src/foo.rs:42`.
 	const withoutFencedBlocks = content.replace(
 		/```[\s\S]*?```|~~~[\s\S]*?~~~/g,
 		"",
 	);
-	// Inline code: `...`
 	const withoutInlineCode = withoutFencedBlocks.replace(/`[^`\n]+`/g, "");
-
-	const fileRefPattern = /@([^\s@`"'<>()[\]{}]+)/g;
 	const details: FileReferenceDetail[] = [];
 	const seen = new Set<string>();
 
+	const addReference = (raw: string) => {
+		const { filePath: withRange, suffix } = splitReferenceSuffix(raw);
+		const rangeMatch = withRange.match(/^(.*?):(\d+)(?:-(\d+))?$/);
+		const filePath = rangeMatch?.[1] ?? withRange;
+		if (
+			!/\.[a-zA-Z][a-zA-Z0-9]*$/.test(filePath) ||
+			/^(?:https?:|data:|blob:|\/\/)/i.test(filePath)
+		) {
+			return;
+		}
+		const startLine = rangeMatch ? Number(rangeMatch[2]) : undefined;
+		const endLine = rangeMatch?.[3] ? Number(rangeMatch[3]) : startLine;
+		const fileName = filePath.split("/").pop() || filePath;
+		const rangeLabel = startLine
+			? `:${startLine}${endLine !== startLine ? `-${endLine}` : ""}`
+			: "";
+		const label = `${fileName}${rangeLabel}${suffix ? ` ${suffix}` : ""}`;
+		const key = `${filePath}|${startLine ?? ""}|${endLine ?? ""}|${suffix}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		details.push({
+			filePath,
+			label,
+			raw,
+			...(startLine ? { startLine, endLine } : {}),
+		});
+	};
+
+	const fileRefPattern = /@([^\s@`"'<>()[\]{}]+)/g;
 	for (
 		let match = fileRefPattern.exec(withoutInlineCode);
 		match !== null;
 		match = fileRefPattern.exec(withoutInlineCode)
 	) {
-		const matchIndex = match.index;
 		const previousChar =
-			matchIndex > 0 ? withoutInlineCode.charAt(matchIndex - 1) : "";
-		// Ignore @ inside emails/user handles (e.g. ironport@fraunhofer.de)
-		if (/[A-Za-z0-9._%+-]/.test(previousChar)) {
-			continue;
-		}
+			match.index > 0 ? withoutInlineCode.charAt(match.index - 1) : "";
+		// Ignore @ inside emails/user handles (e.g. ironport@fraunhofer.de).
+		if (!/[A-Za-z0-9._%+-]/.test(previousChar)) addReference(match[1]);
+	}
 
-		const raw = match[1];
-		const { filePath, suffix } = splitReferenceSuffix(raw);
-		if (!/\.[a-zA-Z0-9]+$/.test(filePath)) {
-			continue;
+	const inlinePathPattern = /`([^`\n]+)`/g;
+	for (
+		let match = inlinePathPattern.exec(withoutFencedBlocks);
+		match !== null;
+		match = inlinePathPattern.exec(withoutFencedBlocks)
+	) {
+		const candidate = match[1].trim().replace(/^@+/, "");
+		const rootFile =
+			/^(?:readme|changelog|contributing|license)(?:\.[a-z0-9]+)?$|^(?:cargo\.toml|package\.json|agents\.md|context\.md)$/i.test(
+				candidate,
+			);
+		// A file chip is intentionally conservative: inline bare identifiers
+		// such as trx issue `oqto-a9j4.6` or `transport-contract.ts` are not
+		// resolvable paths. Structured file_ref and explicit @ references may
+		// still name a root-level file.
+		if (!/[\s|;&<>]/.test(candidate) && (candidate.includes("/") || rootFile)) {
+			addReference(candidate);
 		}
-		const fileName = filePath.split("/").pop() || filePath;
-		const label = suffix ? `${fileName} ${suffix}` : fileName;
-		const key = `${filePath}|${suffix}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		details.push({ filePath, label, raw });
 	}
 
 	return details;

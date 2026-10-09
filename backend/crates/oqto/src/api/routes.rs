@@ -96,8 +96,55 @@ fn create_router_with_config_and_auth(
                 .patch(proxy::proxy_sldr),
         )
         // Project management
+        .route("/oqto-ui/config", get(handlers::get_oqto_ui_config))
         .route("/projects", get(handlers::list_workspace_dirs))
         .route("/projects/logo/{*path}", get(handlers::get_project_logo))
+        // Runtime-discovered Oqto Apps (original-UI migration surface).
+        .route("/apps/candidates", get(handlers::list_app_candidates))
+        .route("/apps/publish", post(handlers::publish_app))
+        .route("/apps/instances", get(handlers::list_app_instances))
+        .route(
+            "/apps/instances/{instance_id}/presentation",
+            post(handlers::get_app_presentation),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions",
+            get(handlers::get_app_permissions),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions/decision",
+            post(handlers::decide_app_permissions),
+        )
+        .route(
+            "/apps/instances/{instance_id}/permissions/revoke",
+            post(handlers::revoke_app_permissions),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/resources",
+            post(handlers::get_app_file_resources),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/list",
+            post(handlers::list_app_files),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/read",
+            post(handlers::read_app_file),
+        )
+        .route(
+            "/apps/instances/{instance_id}/files/write",
+            post(handlers::write_app_file),
+        )
+        .route(
+            "/apps/instances/{instance_id}/operations/invoke",
+            post(handlers::invoke_app_operation),
+        )
+        .route(
+            "/apps/instances/{instance_id}/kv",
+            get(handlers::get_app_kv)
+                .put(handlers::set_app_kv)
+                .delete(handlers::delete_app_kv),
+        )
         .route(
             "/projects/locations",
             get(handlers::list_workspace_locations).post(handlers::upsert_workspace_location),
@@ -236,6 +283,15 @@ fn create_router_with_config_and_auth(
                 .delete(proxy::proxy_mmry_memory_for_workspace),
         )
         // User profile routes (authenticated users)
+        .route("/runner-targets", get(super::runner_targets::list))
+        .route(
+            "/runner-targets/{target}/history",
+            post(super::runner_targets::history_read),
+        )
+        .route(
+            "/runner-targets/{target}/provider-login",
+            post(super::runner_targets::provider_login),
+        )
         .route("/me", get(handlers::get_me))
         .route("/me", put(handlers::update_me))
         .route("/auth/change-password", post(handlers::change_password))
@@ -305,8 +361,6 @@ fn create_router_with_config_and_auth(
         )
         // Admin routes - stats
         .route("/admin/stats", get(handlers::get_admin_stats))
-        .route("/admin/bus/stats", get(handlers::get_bus_stats))
-        .route("/admin/bus/publish", post(handlers::publish_bus_event))
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
@@ -381,6 +435,10 @@ fn create_router_with_config_and_auth(
             patch(handlers::admin_transfer_shared_workspace_ownership),
         )
         .route(
+            "/admin/shared-workspaces/{workspace_id}/migrate-placement",
+            post(handlers::admin_migrate_shared_workspace_placement),
+        )
+        .route(
             "/admin/shared-workspaces/{workspace_id}/members/{user_id}",
             delete(handlers::admin_remove_shared_workspace_member),
         )
@@ -403,6 +461,10 @@ fn create_router_with_config_and_auth(
         .route(
             "/chat-history/{session_id}/messages",
             get(handlers::get_chat_messages),
+        )
+        .route(
+            "/chat-history/{session_id}/messages/page",
+            get(handlers::get_chat_messages_page),
         )
         // Session memory routes removed. Use workspace-scoped memory endpoints:
         // /workspace/memories*
@@ -501,7 +563,7 @@ fn create_router_with_config_and_auth(
             "/a2ui/surface/{session_id}/{surface_id}",
             delete(a2ui_handlers::delete_surface),
         )
-        .with_state(state);
+        .with_state(state.clone());
 
     let permissions_policy =
         HeaderValue::from_static("geolocation=(), microphone=(self), camera=()");

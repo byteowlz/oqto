@@ -64,6 +64,7 @@ impl PlacementSupervisor for LocalProcessSupervisor {
             kind: PlacementKind::LocalProcess,
             runner_endpoint: spec.runner_endpoint.clone(),
             runtime_name,
+            spec: Some(spec.clone()),
         })
     }
 

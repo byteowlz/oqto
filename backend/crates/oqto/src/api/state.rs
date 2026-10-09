@@ -278,12 +278,19 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// Placement registry used to resolve workspaces to typed runner endpoints.
     pub placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
+    /// Inventory only; registration never changes Workspace routing.
+    pub runner_targets: Arc<crate::runner::targets::RunnerTargets>,
+    /// Container placement lifecycle (provision/remove/reconcile). Present
+    /// only when placement mode is `container`.
+    pub placement_manager: Option<Arc<crate::runner::placement::PlacementManager>>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
     /// Audit logger for user-facing events.
     pub audit_logger: Option<Arc<crate::audit::AuditLogger>>,
     /// Feedback configuration.
     pub feedback: crate::feedback::FeedbackConfig,
+    /// Runtime-discovered Oqto App lifecycle and immutable artifact service.
+    pub apps: Option<Arc<crate::apps::AppRuntimeService>>,
     /// EAVS client for LLM proxy integration (user provisioning, model catalog).
     pub eavs_client: Option<Arc<crate::eavs::EavsClient>>,
     /// Paths to eavs config files (for admin provider management).
@@ -306,7 +313,6 @@ pub struct AppState {
     /// Shared workspace service for multi-user collaborative workspaces.
     pub shared_workspaces: Option<Arc<SharedWorkspaceService>>,
     /// Event bus engine for scoped pub/sub.
-    pub bus: Arc<crate::bus::BusEngine>,
     /// User-plane request/error counters by path and operation.
     pub user_plane_metrics: Arc<crate::user_plane::UserPlaneMetrics>,
     /// Path to a reference models.json to copy to new users when eavs is not configured.
@@ -363,9 +369,12 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             placement_store: None,
+            runner_targets: Arc::new(crate::runner::targets::RunnerTargets::default()),
+            placement_manager: None,
             session_targets: Arc::new(session_targets),
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
+            apps: None,
             eavs_client: None,
             eavs_config: None,
             eavs_oauth_enabled: false,
@@ -376,11 +385,6 @@ impl AppState {
             pi_default_model: None,
             pi_models_template_path: None,
             shared_workspaces: None,
-            bus: {
-                let bus = Arc::new(crate::bus::BusEngine::new(None));
-                bus.start_background_flusher();
-                bus
-            },
             user_plane_metrics: Arc::new(crate::user_plane::UserPlaneMetrics::default()),
         }
     }
@@ -404,6 +408,11 @@ impl AppState {
 
     pub fn with_feedback_config(mut self, config: crate::feedback::FeedbackConfig) -> Self {
         self.feedback = config;
+        self
+    }
+
+    pub fn with_apps(mut self, service: crate::apps::AppRuntimeService) -> Self {
+        self.apps = Some(Arc::new(service));
         self
     }
 
@@ -450,6 +459,14 @@ impl AppState {
         self
     }
 
+    pub fn with_placement_manager(
+        mut self,
+        manager: Arc<crate::runner::placement::PlacementManager>,
+    ) -> Self {
+        self.placement_manager = Some(manager);
+        self
+    }
+
     /// Set the onboarding service.
     pub fn with_onboarding(mut self, service: OnboardingService) -> Self {
         self.onboarding = Some(Arc::new(service));
@@ -490,10 +507,6 @@ impl AppState {
     pub fn with_shared_workspaces(mut self, service: SharedWorkspaceService) -> Self {
         let sw = Arc::new(service);
         self.shared_workspaces = Some(sw.clone());
-        // Rebuild bus engine with shared workspace access for membership checks
-        let bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
-        bus.start_background_flusher();
-        self.bus = bus;
         self
     }
 

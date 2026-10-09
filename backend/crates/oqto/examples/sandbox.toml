@@ -31,6 +31,13 @@ enabled = true
 # Or use a custom profile defined below
 profile = "development"
 
+# Top-level overrides union with the selected profile. Runner control sockets
+# live under /run/user in single-user mode and /run/oqto in team
+# mode. Workspaces must never see either tree -- the runner refuses to start
+# when its control socket is visible under the loaded policy (reachability is
+# not an authorization boundary).
+deny_read = ["/run/user", "/run/oqto"]
+
 # ==============================================================================
 # Built-in Profile Presets
 # ==============================================================================

@@ -32,4 +32,6 @@
 //! This server-side module only keeps backend-specific target routing because it
 //! depends on `AppState` and shared-workspace services.
 
+pub mod placement;
 pub mod router;
+pub mod targets;

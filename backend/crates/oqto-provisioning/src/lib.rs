@@ -4,6 +4,8 @@
 //! typed contract instead of scattering path, permission, and service knowledge
 //! across shell scripts and CLI commands.
 
+pub mod bundled_runtime;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -384,7 +386,7 @@ pub fn evaluate_manifest(
             }
             findings.push(ContractFinding {
                 id: format!("service.{}.missing-fact", desired.name),
-                severity: CheckSeverity::Warning,
+                severity: CheckSeverity::Error,
                 expected: format!(
                     "{} enabled={} active={}",
                     desired.name, desired.enabled, desired.active
@@ -395,10 +397,8 @@ pub fn evaluate_manifest(
             continue;
         };
 
-        if observed
-            .enabled
-            .is_some_and(|enabled| enabled != desired.enabled)
-        {
+        // Unknown required service state is not readiness evidence.
+        if observed.enabled != Some(desired.enabled) {
             findings.push(ContractFinding {
                 id: format!("service.{}.enabled", desired.name),
                 severity: CheckSeverity::Error,
@@ -410,10 +410,7 @@ pub fn evaluate_manifest(
                 remediation: format!("systemctl enable {}", desired.name),
             });
         }
-        if observed
-            .active
-            .is_some_and(|active| active != desired.active)
-        {
+        if observed.active != Some(desired.active) {
             findings.push(ContractFinding {
                 id: format!("service.{}.active", desired.name),
                 severity: CheckSeverity::Error,
@@ -511,6 +508,37 @@ mod tests {
                 .iter()
                 .any(|check| check.id == "team.runner.socket.canonical")
         );
+    }
+
+    #[test]
+    fn required_service_missing_unknown_or_false_is_not_readiness() {
+        let manifest = personal_manifest();
+        let mut facts = HostFacts::default();
+        assert!(
+            evaluate_manifest(&manifest, &facts)
+                .iter()
+                .any(|finding| finding.id == "service.oqto.service.missing-fact"
+                    && finding.severity == CheckSeverity::Error)
+        );
+        for state in [None, Some(false), Some(true)] {
+            for service in &manifest.services {
+                facts.services.insert(
+                    service.name.clone(),
+                    ObservedService {
+                        enabled: state,
+                        active: state,
+                    },
+                );
+            }
+            let findings = evaluate_manifest(&manifest, &facts);
+            let errors = findings
+                .iter()
+                .filter(|finding| {
+                    finding.id.starts_with("service.") && finding.severity == CheckSeverity::Error
+                })
+                .count();
+            assert_eq!(errors, if state == Some(true) { 0 } else { 6 });
+        }
     }
 
     #[test]

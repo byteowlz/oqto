@@ -1,128 +1,204 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install/update validation matrix for oqto-vemr.8
-#
-# Default behavior is PLAN mode (prints commands). Use --execute to run.
+# Artifact-based install/update validation for oqto-vemr.8.
+# Plan and preflight are read-only. Execute is intentionally VM-only and
+# requires a snapshot reference OR an explicitly named throwaway VM; never source-builds.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
-OQTO_SETUP_BIN="$ROOT_DIR/backend/target/release/oqto-setup"
-
-EXECUTE="false"
+MODE=plan
 PROFILE_SET="personal team"
-TARGET="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-VERSION="matrix-$(date +%Y%m%d%H%M%S)"
+SCENARIO=""
+SNAPSHOT_ID=""
+DISPOSABLE_HOST=""
 ARTIFACT=""
 CHECKSUM=""
+ACTIVE_RELEASE=/var/lib/oqto/releases/current
 
 usage() {
-  cat <<EOF
-Usage: $0 [options]
+  cat <<'EOF'
+Usage: scripts/e2e/install-update-matrix.sh [options]
 
 Options:
-  --execute                 Execute commands (default: plan only)
-  --profiles "..."          Profiles to validate (default: "personal team")
-  --artifact FILE           Use prebuilt artifact instead of building via dist workflow
-  --checksum FILE           Checksum file for --artifact
-  --version LABEL           Artifact version label when building (default: matrix timestamp)
+  --preflight               Validate an artifact and target without changing anything
+  --execute                 Install on an isolated test VM (never source-build)
+  --scenario fresh|upgrade  Required for preflight/execute
+  --snapshot-id REF         Operator VM snapshot reference (not independently verified)
+  --disposable-vm HOSTNAME  No-snapshot alternative: hostname must match this throwaway VM
+  --profiles "personal"     Exactly one profile for preflight/execute; plan may show both
+  --artifact FILE           Canonical dist bundle containing immutable/bin/oqto-setup
+  --checksum FILE           Single-artifact SHA-256 line for that exact bundle
   -h, --help                Show help
 
 Examples:
-  $0
-  $0 --execute --profiles "personal"
-  $0 --execute --artifact dist/out/oqto-<v>-<target>.tar.gz --checksum dist/out/...sha256
+  scripts/e2e/install-update-matrix.sh
+  scripts/e2e/install-update-matrix.sh --preflight --scenario upgrade \
+    --snapshot-id before-upgrade --profiles personal \
+    --artifact oqto-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --checksum artifact.sha256
+
+For --execute, provide exactly one recovery choice: --snapshot-id or
+--disposable-vm matching the current hostname. Never execute on a working host.
+See docs/agents/install-matrix-safety.md.
 EOF
 }
 
-run_cmd() {
-  local cmd="$1"
-  echo "[matrix] $cmd"
-  if [[ "$EXECUTE" == "true" ]]; then
-    bash -lc "$cmd"
-  fi
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+show_cmd() {
+  printf '[matrix]'
+  printf ' %q' "$@"
+  printf '\n'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --execute)
-      EXECUTE="true"; shift ;;
-    --profiles)
-      PROFILE_SET="$2"; shift 2 ;;
-    --artifact)
-      ARTIFACT="$2"; shift 2 ;;
-    --checksum)
-      CHECKSUM="$2"; shift 2 ;;
-    --version)
-      VERSION="$2"; shift 2 ;;
-    -h|--help)
-      usage; exit 0 ;;
-    *)
-      echo "error: unknown arg: $1" >&2
-      usage
-      exit 1 ;;
+    --preflight|--execute)
+      [[ "$MODE" == plan ]] || fail 'choose only one of --preflight and --execute'
+      MODE="${1#--}"; shift ;;
+    --scenario|--snapshot-id|--disposable-vm|--profiles|--artifact|--checksum)
+      [[ $# -ge 2 ]] || fail "missing value for $1"
+      case "$1" in
+        --scenario) SCENARIO="$2" ;;
+        --snapshot-id) SNAPSHOT_ID="$2" ;;
+        --disposable-vm) DISPOSABLE_HOST="$2" ;;
+        --profiles) PROFILE_SET="$2" ;;
+        --artifact) ARTIFACT="$2" ;;
+        --checksum) CHECKSUM="$2" ;;
+      esac
+      shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown argument: $1" ;;
   esac
 done
 
-if [[ -n "$ARTIFACT" && ! -f "$ARTIFACT" ]]; then
-  echo "error: artifact not found: $ARTIFACT" >&2
-  exit 1
-fi
-if [[ -n "$CHECKSUM" && ! -f "$CHECKSUM" ]]; then
-  echo "error: checksum not found: $CHECKSUM" >&2
-  exit 1
-fi
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64) TARGET=x86_64-unknown-linux-gnu ;;
+  Linux:aarch64) TARGET=aarch64-unknown-linux-gnu ;;
+  Darwin:x86_64) TARGET=x86_64-apple-darwin ;;
+  Darwin:arm64) TARGET=aarch64-apple-darwin ;;
+  *) fail 'unsupported host OS/architecture for the install matrix' ;;
+esac
 
-if [[ "$EXECUTE" == "true" && ! -x "$OQTO_SETUP_BIN" ]]; then
-  echo "error: oqto-setup binary not found at $OQTO_SETUP_BIN" >&2
-  echo "run: just dist-stage-binaries --build" >&2
-  exit 1
-fi
-
-if [[ -z "$ARTIFACT" ]]; then
-  ARTIFACT="$ROOT_DIR/dist/out/oqto-${VERSION}-${TARGET}.tar.gz"
-  CHECKSUM="${ARTIFACT}.sha256"
-  run_cmd "just dist-sync"
-  run_cmd "just dist-stage-binaries --build"
-  run_cmd "just lint-dist-manifest-strict"
-  run_cmd "just dist-package '$VERSION' '$TARGET'"
-fi
-
-if [[ "$EXECUTE" == "true" ]]; then
-  if [[ ! -f "$ARTIFACT" ]]; then
-    echo "error: artifact missing after build: $ARTIFACT" >&2
-    exit 1
-  fi
-  if [[ ! -f "$CHECKSUM" ]]; then
-    echo "error: checksum missing after build: $CHECKSUM" >&2
-    exit 1
-  fi
-fi
-
-for profile in $PROFILE_SET; do
-  echo ""
-  echo "=== MATRIX PROFILE: $profile ==="
-
-  run_cmd "sudo '$OQTO_SETUP_BIN' install --artifact '$ARTIFACT' --checksum '$CHECKSUM'"
-
-  # Authoritative gate: strict contract doctor.
-  run_cmd "oqtoctl doctor --contract --profile '$profile' --strict"
-
-  # Parity smoke check: setup wrapper should run doctor path too, but we only
-  # retain summary lines to avoid duplicate full reports.
-  setup_env="CARGO_HOME='$HOME/.cargo' RUSTUP_HOME='${RUSTUP_HOME:-$HOME/.rustup}' CARGO_TOOLCHAIN='${CARGO_TOOLCHAIN:-stable}'"
-  doctor_summary_pattern='Evaluated finding summary|Contract finding summary|No evaluated contract drift detected|No inspected contract drift detected|setup contract drift detected'
-  if [[ "$profile" == "team" ]]; then
-    doctor_summary_pattern="$doctor_summary_pattern|Suggested remediation commands"
-  fi
-
-  if [[ "$profile" == "personal" ]]; then
-    run_cmd "$setup_env ./setup.sh --personal --doctor | rg -n '$doctor_summary_pattern'"
-  else
-    run_cmd "$setup_env ./setup.sh --team --doctor | rg -n '$doctor_summary_pattern'"
-  fi
-
+read -r -a PROFILES <<< "$PROFILE_SET"
+[[ ${#PROFILES[@]} -gt 0 ]] || fail 'choose at least one profile'
+for profile in "${PROFILES[@]}"; do
+  [[ "$profile" == personal || "$profile" == team ]] || fail "unknown profile: $profile"
 done
 
-echo ""
-echo "Install/update matrix complete (mode: $([[ "$EXECUTE" == "true" ]] && echo execute || echo plan))."
+if [[ "$MODE" != plan ]]; then
+  [[ "$(uname -s)" == Linux ]] || fail 'macOS activation is not implemented; native Mac tests must not run this Linux installer'
+  [[ ${#PROFILES[@]} -eq 1 ]] || fail 'one profile per isolated VM/reset; do not install personal and team sequentially'
+  [[ "$SCENARIO" == fresh || "$SCENARIO" == upgrade ]] || fail 'choose --scenario fresh or upgrade'
+  [[ -z "$SNAPSHOT_ID" || -z "$DISPOSABLE_HOST" ]] || fail 'choose either --snapshot-id or --disposable-vm, not both'
+  if [[ -n "$DISPOSABLE_HOST" ]]; then
+    local_host="$(uname -n)"
+    local_host="${local_host%%.*}"
+    [[ "$DISPOSABLE_HOST" == "$local_host" ]] || fail "disposable VM hostname mismatch: expected $local_host"
+  fi
+  if [[ "$MODE" == execute ]]; then
+    [[ -n "$SNAPSHOT_ID" || -n "$DISPOSABLE_HOST" ]] || fail 'execute requires --snapshot-id or --disposable-vm HOSTNAME'
+  fi
+  [[ -n "$ARTIFACT" && -n "$CHECKSUM" ]] || fail 'provide a release --artifact and per-artifact --checksum; source builds are not an install test'
+  [[ -f "$ARTIFACT" && -f "$CHECKSUM" ]] || fail 'release artifact or checksum does not exist'
+
+  artifact_name="$(basename "$ARTIFACT")"
+  [[ "$artifact_name" == oqto-v*"-${TARGET}.tar.gz" ]] || fail "release artifact does not match host target ${TARGET}: ${artifact_name}"
+  if [[ -e "$ACTIVE_RELEASE" || -L "$ACTIVE_RELEASE" ]]; then
+    [[ "$SCENARIO" == upgrade ]] || fail "fresh-install test refused: ${ACTIVE_RELEASE} already exists; reset the test VM"
+    [[ -d "$ACTIVE_RELEASE" ]] || fail "active release pointer is broken: ${ACTIVE_RELEASE}"
+  else
+    [[ "$SCENARIO" == fresh ]] || fail 'upgrade test requires an existing active release'
+  fi
+
+  # oqto-setup install currently accepts one sha256 line, not a combined
+  # checksums.txt. Reject ambiguous/mismatched lines before any root action.
+  mapfile -t checksum_lines < "$CHECKSUM"
+  [[ ${#checksum_lines[@]} -eq 1 ]] || fail 'provide one per-artifact checksum line, not a combined checksums.txt'
+  read -r expected checksum_name extra <<< "${checksum_lines[0]}"
+  [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || fail 'invalid SHA-256 checksum'
+  [[ -z "${extra:-}" && -n "${checksum_name:-}" ]] || fail 'checksum must include exactly one artifact filename'
+  [[ "${checksum_name#\*}" == "$artifact_name" || "${checksum_name#\*}" == "$ARTIFACT" ]] || fail 'checksum filename does not match artifact'
+  actual="$(sha256sum "$ARTIFACT")"
+  actual="${actual%% *}"
+  [[ "${actual,,}" == "${expected,,}" ]] || fail 'release artifact checksum mismatch'
+
+  staging="${artifact_name%.tar.gz}"
+  setup_member="${staging}/immutable/bin/oqto-setup"
+  # The old GitHub release workflow ships a flat bin/ layout without the
+  # canonical manifest. Do not activate it as a complete ADR-0016 release.
+  if ! members="$(tar -tzf "$ARTIFACT" 2>&1)"; then
+    fail 'verified bundle is not a valid gzip tar archive'
+  fi
+  while IFS= read -r member; do
+    case "$member" in
+      "$staging/immutable/bin/".*) fail 'canonical bundle must not ship hidden bin entries (including .gitkeep)' ;;
+    esac
+  done <<< "$members"
+  for required in manifest.toml \
+    immutable/bin/oqto immutable/bin/oqtoctl immutable/bin/oqto-setup \
+    immutable/bin/oqto-runner immutable/bin/oqto-files \
+    immutable/bin/oqto-sandbox immutable/bin/oqto-usermgr \
+    immutable/bin/pi-bridge immutable/bin/oqto-ssh-proxy immutable/frontend/index.html; do
+    member="${staging}/${required}"
+    member_count="$(grep -Fxc "$member" <<< "$members" || true)"
+    [[ "$member_count" == 1 ]] || fail "canonical release bundle must contain exactly one ${member}"
+  done
+  member_metadata="$(tar -tvzf "$ARTIFACT" "$setup_member")"
+  [[ "${member_metadata:0:1}" == - ]] || fail 'embedded oqto-setup must be a regular file, not a link'
+  command -v strings >/dev/null || fail 'binutils strings is required for read-only Linux runtime compatibility preflight'
+  required_glibc="$(tar -xOf "$ARTIFACT" "$setup_member" | LC_ALL=C strings | grep -E '^GLIBC_[0-9]+(\.[0-9]+){1,2}$' | sort -Vu | tail -1 || true)"
+  if [[ -n "$required_glibc" ]]; then
+    host_glibc="$(getconf GNU_LIBC_VERSION)"
+    [[ "$host_glibc" == 'glibc '* ]] || fail 'cannot determine host glibc version'
+    host_glibc="${host_glibc#glibc }"
+    oldest="$(printf '%s\n%s\n' "$host_glibc" "${required_glibc#GLIBC_}" | sort -V | head -1)"
+    [[ "$oldest" == "${required_glibc#GLIBC_}" ]] || fail "embedded oqto-setup requires ${required_glibc}, host has GLIBC_${host_glibc}"
+  fi
+  recovery=not-provided
+  [[ -z "$SNAPSHOT_ID" ]] || recovery="snapshot:$SNAPSHOT_ID"
+  [[ -z "$DISPOSABLE_HOST" ]] || recovery="disposable:$DISPOSABLE_HOST"
+  printf '[matrix] read-only preflight passed: scenario=%s profile=%s target=%s recovery=%s\n' \
+    "$SCENARIO" "${PROFILES[0]}" "$TARGET" "$recovery"
+fi
+
+if [[ "$MODE" == preflight ]]; then
+  exit 0
+fi
+
+if [[ "$MODE" == plan ]]; then
+  printf '[matrix] read-only plan; no source build, download, sudo, service restart, or config write\n'
+  if [[ -z "$ARTIFACT" || -z "$CHECKSUM" ]]; then
+    printf '[matrix] obtain a target-matched release bundle and its per-artifact SHA-256 before preflight/execute\n'
+  fi
+  for profile in "${PROFILES[@]}"; do
+    printf '[matrix] %s: snapshot or name disposable VM; preflight with --scenario fresh|upgrade; then execute there\n' "$profile"
+    show_cmd oqtoctl doctor --contract --profile "$profile" --strict
+  done
+  exit 0
+fi
+
+# No root action above this line. Extract the matching installer only AFTER the
+# bundle hash has been checked, rather than running a stale host oqto-setup.
+tmpdir="$(mktemp -d)"
+trap 'rm -rf -- "$tmpdir"' EXIT
+staged_artifact="$tmpdir/$artifact_name"
+cp -- "$ARTIFACT" "$staged_artifact"
+chmod 0400 "$staged_artifact"
+staged_hash="$(sha256sum "$staged_artifact")"
+staged_hash="${staged_hash%% *}"
+[[ "${staged_hash,,}" == "${expected,,}" ]] || fail 'staged bundle changed since preflight; refusing privileged install'
+python3 "$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py" \
+  --artifact "$staged_artifact" --checksum "$CHECKSUM" --output "$tmpdir/oqto-setup"
+show_cmd sudo "$tmpdir/oqto-setup" install --artifact "$staged_artifact" --checksum "$CHECKSUM"
+sudo "$tmpdir/oqto-setup" install --artifact "$staged_artifact" --checksum "$CHECKSUM"
+
+profile="${PROFILES[0]}"
+show_cmd oqtoctl doctor --contract --profile "$profile" --strict
+oqtoctl doctor --contract --profile "$profile" --strict
+if [[ "$profile" == personal ]]; then
+  ./setup.sh --personal --doctor
+else
+  ./setup.sh --team --doctor
+fi
+printf '[matrix] %s %s install checks passed; verify runtime Pi/sandbox and rollback separately\n' "$SCENARIO" "$profile"

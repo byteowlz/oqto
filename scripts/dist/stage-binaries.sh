@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 # Guard against system-wide cargo homes (e.g. /usr/local/cargo) that are not
 # writable for normal users in CI/dev shells. RUSTUP_HOME may intentionally be
@@ -40,11 +41,12 @@ else
   echo "[dist-stage] WARNING: binaries may fail on hosts with older glibc than this build host." >&2
 fi
 
-# Release dir the built binaries land in (zigbuild uses the target subdir).
+# Honor the Cargo target directory so staging never reads stale local artifacts.
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/backend/target}"
 if $USE_ZIGBUILD; then
-  REL_DIR="backend/target/${TARGET_TRIPLE}/release"
+  REL_DIR="$BUILD_TARGET_DIR/${TARGET_TRIPLE}/release"
 else
-  REL_DIR="backend/target/release"
+  REL_DIR="$BUILD_TARGET_DIR/release"
 fi
 
 cargo_build() {
@@ -60,7 +62,7 @@ cargo_build() {
 BUILD_FIRST="${1:-}"
 if [[ "$BUILD_FIRST" == "--build" ]]; then
   cd backend
-  cargo_build --release -p oqto --bin oqto --bin oqto-sandbox --bin pi-bridge
+  cargo_build --release -p oqto --bin oqto --bin oqto-sandbox --bin oqto-ssh-proxy --bin pi-bridge
   cargo_build --release -p oqtoctl --bin oqtoctl
   cargo_build --release -p oqto-setup --bin oqto-setup
   cargo_build --release -p oqto-runner --bin oqto-runner
@@ -70,7 +72,7 @@ if [[ "$BUILD_FIRST" == "--build" ]]; then
 fi
 
 mkdir -p dist/immutable/bin
-for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-usermgr pi-bridge; do
+for bin in oqto oqtoctl oqto-setup oqto-runner oqto-files oqto-sandbox oqto-ssh-proxy oqto-usermgr pi-bridge; do
   src="$REL_DIR/$bin"
   dst="dist/immutable/bin/$bin"
   if [[ ! -x "$src" ]]; then

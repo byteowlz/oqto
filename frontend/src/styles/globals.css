@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../../lib/chat-rendering/chat-typography.css";
 
 /* JetBrainsMono Nerd Font - Optional custom fonts
    If fonts are not available in /public/fonts/, the system will fallback to ui-monospace */
@@ -175,6 +176,15 @@
 	--code-muted: #666666;
 	--code-accent: #0969da;
 	--code-success: #2d6a4f;
+
+	/* Derived-text tier: shades computed from the base foreground/background
+	 * so apps get a coherent hierarchy without hardcoding. Defined once on
+	 * :root; color-mix resolves var() at computed time, so these adapt to the
+	 * active (.dark) mode automatically. */
+	--subtle-foreground: color-mix(in oklch, var(--foreground) 58%, var(--background));
+	--readback-foreground: color-mix(in oklch, var(--foreground) 64%, var(--background));
+	--state-hover: color-mix(in oklab, var(--muted), var(--foreground) 12%);
+	--state-active: color-mix(in oklab, var(--muted), var(--foreground) 24%);
 }
 
 .dark {
@@ -365,6 +375,14 @@
 	word-break: normal;
 }
 
+/* Canonical Chat cards clip their outer surface to preserve tool/card anatomy.
+   Prose therefore has to wrap before reaching that boundary. Keep code blocks
+   on their dedicated horizontal-scrolling path below. */
+.markdown-content.canonical-message-prose p,
+.markdown-content.canonical-message-prose li > span {
+	overflow-wrap: anywhere;
+}
+
 .markdown-content pre {
 	overflow-x: auto;
 	max-width: 100%;
@@ -372,6 +390,12 @@
 
 .markdown-content code {
 	word-break: break-all;
+}
+
+/* The inline-code wash. It used to be an inline style, which no stylesheet
+   could reach: the chat scope needs to be able to quieten it. */
+.markdown-inline-code {
+	background-color: var(--code-inline-bg);
 }
 
 .stream-commit-slide-in-a,
@@ -434,7 +458,8 @@
 	}
 	/* Exclude compact UI elements */
 	.compact-header button,
-	.compact-header a {
+	.compact-header a,
+	.markdown-file-reference-inline {
 		min-height: unset;
 	}
 	/* Exclude chat input textarea - it has its own sizing */

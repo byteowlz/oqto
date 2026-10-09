@@ -4,6 +4,52 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
         RunnerRequest::GetCapabilities => runner.get_capabilities().await,
+        RunnerRequest::HistoryRead(request) => {
+            match crate::history_read::read(
+                runner.user_config.history_read.as_ref(),
+                runner.user_config.single_user && !runner.user_config.linux_users_enabled,
+                request,
+            )
+            .await
+            {
+                Ok(response) => RunnerResponse::HistoryRead(response),
+                Err(_) => error_response(
+                    ErrorCode::InvalidRequest,
+                    "History unavailable or access denied",
+                ),
+            }
+        }
+        RunnerRequest::ProviderLogin(request) => {
+            if !runner.user_config.single_user || runner.user_config.linux_users_enabled {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "Provider login requires a dedicated single-Account runner",
+                );
+            }
+            match runner
+                .provider_login
+                .request(
+                    runner.user_config.provider_login.as_ref(),
+                    runner.sandbox_config.as_ref(),
+                    &runner.user_config.pi_binary,
+                    &runner.user_config.runner_id,
+                    request,
+                )
+                .await
+            {
+                Ok(value) => {
+                    RunnerResponse::ProviderLogin(crate::provider_login::ProviderLoginResponse {
+                        data: value,
+                    })
+                }
+                Err(_) => error_response(
+                    ErrorCode::InvalidRequest,
+                    "Provider login unavailable or rejected",
+                ),
+            }
+        }
+        RunnerRequest::ExposePort(r) => runner.expose_port(r.port).await,
+        RunnerRequest::UnexposePort(r) => runner.unexpose_port(r.port).await,
         RunnerRequest::Shutdown => {
             info!("Shutdown requested");
             let _ = runner.shutdown_tx.send(());
@@ -18,6 +64,8 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::WriteStdin(_)
         | RunnerRequest::ReadStdout(_)
         | RunnerRequest::SubscribeStdout(_)) => super::process::handle_request(runner, req).await,
+
+        req @ RunnerRequest::RunAppOperation(_) => super::apps::handle_request(runner, req).await,
 
         req @ (RunnerRequest::ReadFile(_)
         | RunnerRequest::WriteFile(_)
@@ -85,6 +133,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::PiSetSessionName(_)
         | RunnerRequest::PiExportHtml(_)
         | RunnerRequest::AgentGetCommands(_)
+        | RunnerRequest::AgentControl(_)
         | RunnerRequest::PiBash(_)
         | RunnerRequest::PiAbortBash(_)
         | RunnerRequest::PiExtensionUiResponse(_)) => super::pi::handle_request(runner, req).await,

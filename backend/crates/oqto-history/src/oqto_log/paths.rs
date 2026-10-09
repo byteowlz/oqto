@@ -27,6 +27,20 @@ pub fn resolve_user_home_workspace_db_path(
     Ok(dir.join(OQTO_LOG_FILE_NAME))
 }
 
+/// Store path for a workspace without creating anything.
+///
+/// Read paths must not materialise directories for workspaces that have no
+/// history, otherwise merely listing sessions invents empty stores.
+pub fn existing_user_home_workspace_db_path(user_home: &Path, workspace_id: &str) -> PathBuf {
+    user_home
+        .join(".local")
+        .join("share")
+        .join("oqto")
+        .join("oqto-log")
+        .join(id_hash(workspace_id))
+        .join(OQTO_LOG_FILE_NAME)
+}
+
 fn id_hash(id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(id.as_bytes());

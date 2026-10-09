@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use super::{
-    DirEntry, FileContent, FileStat, MainChatMessage, MainChatSessionInfo, SessionInfo,
-    StartSessionRequest, StartSessionResponse, UserPlane,
+    AppOperationExecution, AppOperationExecutionResult, DirEntry, FileContent, FileStat,
+    MainChatMessage, MainChatSessionInfo, SessionInfo, StartSessionRequest, StartSessionResponse,
+    UserPlane,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -117,6 +118,14 @@ impl MeteredUserPlane {
 
 #[async_trait]
 impl UserPlane for MeteredUserPlane {
+    async fn run_app_operation(
+        &self,
+        request: AppOperationExecution,
+    ) -> Result<AppOperationExecutionResult> {
+        self.metered("run_app_operation", self.inner.run_app_operation(request))
+            .await
+    }
+
     async fn read_file(
         &self,
         path: &std::path::Path,

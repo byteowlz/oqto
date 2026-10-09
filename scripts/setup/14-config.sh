@@ -58,6 +58,11 @@ write_skdlr_agent_config() {
     sudo chmod 644 "$sandbox_config"
   fi
 
+  # Ensure both supported runner control-socket trees are denied to workspaces.
+  # If a workspace can see either socket, the runner refuses to start
+  # (reachability is not an authorization boundary).
+  ensure_sandbox_runtime_dir_deny "$sandbox_config"
+
   sudo tee "$skdlr_config" >/dev/null <<'EOF'
 # skdlr config for Oqto sandboxed agents
 # Forces all scheduled commands through oqto-sandbox
@@ -68,6 +73,35 @@ wrapper_args = ["--config", "/etc/oqto/sandbox.toml", "--workspace", "{workdir}"
 EOF
 
   sudo chmod 644 "$skdlr_config"
+}
+
+# Idempotently merge the single-user and team runner socket trees into the
+# top-level deny_read override. Preserve-first: back up before any change and
+# retain profile sections, comments, unknown entries, ownership, and mode.
+ensure_sandbox_runtime_dir_deny() {
+  local cfg="$1"
+  [[ -f "$cfg" ]] || return 0
+
+  if sudo python3 - "$cfg" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as handle:
+    denied = tomllib.load(handle).get("deny_read", [])
+required = {"/run/user", "/run/oqto/runner-sockets"}
+raise SystemExit(0 if required.issubset(denied) else 1)
+PY
+  then
+    return 0
+  fi
+
+  local backup="${cfg}.backup.$(date +%Y%m%d%H%M%S)"
+  sudo cp -a "$cfg" "$backup"
+  if ! sudo python3 "$SCRIPT_DIR/scripts/dist/merge-sandbox-deny.py" \
+    "$cfg" "/run/user" "/run/oqto/runner-sockets"; then
+    sudo cp -a "$backup" "$cfg"
+    log_error "Could not safely merge runner socket denies into $cfg; restored $backup"
+    return 1
+  fi
+  log_info "Merged runner socket deny_read paths into $cfg (backup: $backup)"
 }
 
 generate_config() {
@@ -250,6 +284,49 @@ group = "oqto"
 shell = "/bin/zsh"
 use_sudo = true
 create_home = true
+EOF
+  fi
+
+  # Workspace placement (ADR-0019/0020). Container placement pins an exact
+  # version-matched image: the backend rejects label/digest drift fail-closed,
+  # so `latest` is never generated here.
+  local placement_mode="${SELECTED_PLACEMENT_MODE:-$OQTO_PLACEMENT_MODE}"
+  if [[ "$placement_mode" == "container" ]]; then
+    local placement_image="$OQTO_WORKSPACE_IMAGE"
+    if [[ -z "$placement_image" ]]; then
+      local workspace_version
+      workspace_version="$(resolve_oqto_version)"
+      if [[ -z "$workspace_version" ]]; then
+        log_error "Could not determine the Oqto version for the Workspace image tag"
+        log_info "Set OQTO_WORKSPACE_IMAGE explicitly (e.g. ghcr.io/byteowlz/oqto-workspace:0.6.0)"
+        return 1
+      fi
+      placement_image="ghcr.io/byteowlz/oqto-workspace:${workspace_version}"
+    fi
+
+    cat >>"$config_file" <<EOF
+
+[placement]
+mode = "container"
+image = "$placement_image"
+network = "isolated"
+
+# Disjoint subuid/subgid range per Workspace: host files of one tenant are
+# unreadable to another tenant and to the backend user.
+[placement.userns.auto]
+
+# network="isolated" means no egress; only the endpoints listed here are
+# reachable, bridged over a Unix socket into the container.
+[[placement.endpoints]]
+name = "eavs"
+port = ${EAVS_PORT}
+target = "127.0.0.1:${EAVS_PORT}"
+EOF
+  else
+    cat >>"$config_file" <<EOF
+
+[placement]
+mode = "local"
 EOF
   fi
 

@@ -1,55 +1,47 @@
 #!/usr/bin/env bash
-# Oqto deployment script with transactional activation, preflight gates,
-# canary rollout, health checks, and automatic rollback.
+# Oqto deployment driver (ADR-0018, ADR-0056).
+#
+# Thin host iteration only. Every stateful step runs on the target inside one
+# root transaction (scripts/dist/deploy-transaction.py) that calls the single
+# activation engine, `oqto-setup install`, with an in-transaction service
+# check. A failed check is rolled back by oqto-setup before last-good moves.
+#
+#   build   -> clean worktree only; artifact version == Cargo version
+#   install -> provenance/downgrade gates in oqto-setup; protected snapshots
+#   history -> never during activation; `--backfill`/`--backfill-only` run the
+#              separate owner-correct, snapshot-protected backfill transaction
 
+# Remote command strings are assembled locally on purpose; every interpolated
+# value is either regex-validated or quoted with printf %q first.
+# shellcheck disable=SC2029
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${ROOT_DIR}/deploy/hosts.toml"
+DEPENDENCY_POLICY_FILE="$ROOT_DIR/dependencies.toml"
+TRANSACTION="$ROOT_DIR/scripts/dist/deploy-transaction.py"
+BOOTSTRAP="$ROOT_DIR/scripts/dist/verified-setup-bootstrap.py"
+CANONICAL_WEB_ROOT="/var/www/oqto"
 DRY_RUN=false
-SKIP_BUILD=false
-SKIP_FRONTEND=false
-SKIP_BACKEND=false
-SKIP_SERVICES=false
-FORCE_RUNNER_RESTART=false
-USE_REMOTE_BUILD=false
-DEPLOY_ARTIFACT=""
-DEPLOY_CHECKSUM=""
-ALLOW_LEGACY_DEPLOY_PATH="false"
-REMOTE_BUILD_SERVER="${REMOTE_BUILD_SERVER:-}"
-USE_MOLD_LINKER="${OQTO_USE_MOLD_LINKER:-false}"
-PREPARE_ONLY=false
-ACTIVATE_ONLY=false
-TRACE_STREAMS=false
-TRACE_DIR="/tmp/oqto-stream-traces"
-RESUME=false
 STATUS_ONLY=false
 CANARY_ONLY=false
 CANARY_THEN_FLEET=false
-HEALTH_TIMEOUT_SECONDS=90
-MIN_FREE_MB=1024
-# How many old release directories to keep under $RELEASES_ROOT after a
-# successful activation. `current` and `last-good` are always preserved in
-# addition to this count. Set to 0 to disable pruning.
-KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
-# Fast oqto-log activation defaults: sync session identities before service
-# restart so sidebars are instant. Heavy message bootstrap is opt-in because
-# message sync is handled in background and must not dominate deploy time.
-OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-1}"
-OQTO_LOG_FAST_PATH="${OQTO_LOG_FAST_PATH:-true}"
-# Default to converging oqto-log from Pi JSONL on deploy, but use the
-# fingerprint fast path below so unchanged session trees skip full bootstrap.
-OQTO_LOG_FULL_BOOTSTRAP="${OQTO_LOG_FULL_BOOTSTRAP:-true}"
-OQTO_LOG_MULTI_USER_ALL_USERS="${OQTO_LOG_MULTI_USER_ALL_USERS:-true}"
-RELEASE_ID=""
-EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
-RELEASES_ROOT="/var/lib/oqto/releases"
-DEPENDENCY_POLICY_FILE="$ROOT_DIR/dependencies.toml"
-# release: enforce dependencies.toml and remediate through oqto-setup acquire.
-# dev: preserve target-installed managed tools; require presence but ignore version.
+DEPLOY_ARTIFACT=""
+DEPLOY_CHECKSUM=""
 DEPLOY_MODE="release"
+HEALTH_TIMEOUT_SECONDS=180
+MIN_FREE_MB=1024
+KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
+ALLOW_DOWNGRADE=false
+ALLOW_DIRTY_SOURCE=false
+ALLOW_BUSY_SESSIONS=false
+SYNC_EXTENSIONS=true
+BACKFILL=false
+BACKFILL_ONLY=false
+BACKFILL_MODES="sync-identities,bootstrap,validate"
+declare -a BACKFILL_PRINCIPALS=()
+declare -a HOST_FILTER=()
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -62,19 +54,12 @@ ok()   { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err()  { echo -e "${RED}[deploy]${NC} $*" >&2; }
 
-# OpenSSH 10+ can emit a repeated post-quantum/weak-KEX warning for every
-# connection. Deploy opens many short SSH sessions, so suppress that warning by
-# default for deploy-managed ssh/scp invocations. Operators can opt out with
-# OQTO_SUPPRESS_SSH_PQ_WARNING=false.
+# OpenSSH 10+ warns on every connection about weak KEX; deploy opens many.
 declare -a OQTO_SSH_OPTIONS=()
 if [[ "${OQTO_SUPPRESS_SSH_PQ_WARNING:-true}" == "true" ]] \
     && command ssh -G -o WarnWeakCrypto=no example.invalid >/dev/null 2>&1; then
     OQTO_SSH_OPTIONS+=("-o" "WarnWeakCrypto=no")
-    if [[ -z "${RSYNC_RSH:-}" ]]; then
-        export RSYNC_RSH="ssh -o WarnWeakCrypto=no"
-    fi
 fi
-
 ssh() { command ssh "${OQTO_SSH_OPTIONS[@]}" "$@"; }
 scp() { command scp "${OQTO_SSH_OPTIONS[@]}" "$@"; }
 
@@ -83,197 +68,159 @@ usage() {
 Usage:
   ./scripts/deploy.sh [OPTIONS]
 
-Options:
-  --host NAME              Deploy only to this host (can be repeated)
-  --mode MODE              Dependency policy: release (default) or dev
-                           dev preserves target-installed external tools and
-                           skips version reconciliation
-  --release-id ID          Explicit release ID (default: timestamp-gitsha)
-  --skip-build             Skip local build phase
-  --skip-frontend          Skip frontend staging and deploy
-  --skip-backend           Skip backend binary staging and deploy
-  --skip-services          Skip service restarts
-  --force-runner-restart   Multi-user: force-restart every per-user oqto-runner
-                           after activation so they pick up the new binary
-                           (bypasses the "already running" fast path). Use
-                           after runner-protocol changes.
-  --remote-build           Use remote-build for backend binaries (default: local cargo build)
-  --remote-build-server S  Remote-build server endpoint (host:port or URL). Optional if configured via REMOTE_BUILD_SERVER or ~/.config/remote-build/config.toml
-  --use-mold-linker        Opt into mold for local Rust builds. Also: OQTO_USE_MOLD_LINKER=true
-  --trace-streams          Enable runner stream tracing (OQTO_TRACE_STREAMS=1)
-  --trace-dir DIR          Runner stream trace directory (default: /tmp/oqto-stream-traces)
-  --prepare-only           Run preflight + prepare, do not activate
-  --activate-only          Activate previously prepared release
-  --resume                 Resume interrupted deployment (skip prepared/active phases)
-  --status                 Show release status per host, no changes
+Release selection:
+  --artifact FILE          Deploy this canonical release archive
+  --checksum FILE          Independent SHA-256 file (required with --artifact)
+                           Without --artifact, a release is built from a clean
+                           checkout at the declared Cargo version.
+Hosts:
+  --host NAME              Deploy only to this host (repeatable)
+  --config FILE            Alternate hosts config (default: deploy/hosts.toml)
   --canary                 Deploy only canary hosts
-  --canary-then-fleet      Deploy canary hosts first, then remaining hosts
-  --health-timeout SEC     Health check timeout after activation (default: 90)
-  --min-free-mb MB         Minimum free disk required for preflight (default: 1024)
-  --keep-releases N        Keep the N newest old releases after activation
-                           (current + last-good always preserved). 0 disables.
-                           Default: 3. Also: OQTO_KEEP_RELEASES env var.
-  --artifact FILE          Use oqto-setup install with this artifact tarball
-  --checksum FILE          Optional checksum file for --artifact
-  --allow-legacy-path      Allow old prepare/activate deploy path (default: disabled)
-  --dry-run                Print actions without executing
-  --config FILE            Use alternate hosts config
+  --canary-then-fleet      Canary hosts first, then the rest
+  --status                 Show active/last-good releases, change nothing
+  --dry-run                Print the plan, change nothing
+Policy:
+  --mode MODE              Tool dependency policy: release (default) or dev
+  --allow-downgrade        Install a release not newer than the active one
+  --allow-dirty-source     Install a release recorded as built from a dirty tree
+  --allow-busy-sessions    Proceed while agent sessions are streaming
+  --health-timeout SEC     Post-activation health budget (default: 180)
+  --keep-releases N        Superseded releases kept (default: 3; 0 disables)
+  --min-free-mb MB         Required free disk for preflight (default: 1024)
+  --skip-extensions        Do not sync the pinned Pi extension set
+History (never part of activation):
+  --backfill               After activation, run the protected oqto-log backfill
+  --backfill-only          Only run the protected backfill; no binaries change
+  --backfill-modes LIST    Comma list from sync-identities,bootstrap,validate,
+                           validate-changed (default: sync-identities,bootstrap,validate)
+  --backfill-principal U   Restrict backfill to this principal (repeatable)
   --help                   Show this help
 EOF
     exit 0
 }
 
-declare -a HOST_FILTER=()
-declare -a H_NAME=() H_SSH=() H_MODE=() H_USER=() H_FRONTEND=() H_WEB_ROOT=()
-declare -a H_BINARIES=() H_SERVICES=() H_LOCAL=() H_CANARY=()
-declare -a REQUIRED_DEP_BINARIES=()
-declare -A REQUIRED_DEP_VERSIONS=()
-
-# --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host) HOST_FILTER+=("$2"); shift 2 ;;
+        --config) CONFIG="$2"; shift 2 ;;
         --mode) DEPLOY_MODE="$2"; shift 2 ;;
-        --release-id) RELEASE_ID="$2"; shift 2 ;;
-        --skip-build) SKIP_BUILD=true; shift ;;
-        --skip-frontend) SKIP_FRONTEND=true; shift ;;
-        --skip-backend) SKIP_BACKEND=true; shift ;;
-        --skip-services) SKIP_SERVICES=true; shift ;;
-        --force-runner-restart) FORCE_RUNNER_RESTART=true; shift ;;
-        --remote-build) USE_REMOTE_BUILD=true; shift ;;
-        --remote-build-server) REMOTE_BUILD_SERVER="$2"; shift 2 ;;
-        --use-mold-linker) USE_MOLD_LINKER=true; shift ;;
-        --trace-streams) TRACE_STREAMS=true; shift ;;
-        --trace-dir) TRACE_DIR="$2"; shift 2 ;;
-        --prepare-only) PREPARE_ONLY=true; shift ;;
-        --activate-only) ACTIVATE_ONLY=true; shift ;;
-        --resume) RESUME=true; shift ;;
-        --status) STATUS_ONLY=true; shift ;;
-        --canary) CANARY_ONLY=true; shift ;;
-        --canary-then-fleet) CANARY_THEN_FLEET=true; shift ;;
-        --health-timeout) HEALTH_TIMEOUT_SECONDS="$2"; shift 2 ;;
-        --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
-        --keep-releases) KEEP_RELEASES="$2"; shift 2 ;;
         --artifact) DEPLOY_ARTIFACT="$2"; shift 2 ;;
         --checksum) DEPLOY_CHECKSUM="$2"; shift 2 ;;
-        --allow-legacy-path) ALLOW_LEGACY_DEPLOY_PATH="true"; shift ;;
+        --canary) CANARY_ONLY=true; shift ;;
+        --canary-then-fleet) CANARY_THEN_FLEET=true; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
-        --config) CONFIG="$2"; shift 2 ;;
+        --allow-downgrade) ALLOW_DOWNGRADE=true; shift ;;
+        --allow-dirty-source) ALLOW_DIRTY_SOURCE=true; shift ;;
+        --allow-busy-sessions) ALLOW_BUSY_SESSIONS=true; shift ;;
+        --health-timeout) HEALTH_TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --keep-releases) KEEP_RELEASES="$2"; shift 2 ;;
+        --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
+        --skip-extensions) SYNC_EXTENSIONS=false; shift ;;
+        --backfill) BACKFILL=true; shift ;;
+        --backfill-only) BACKFILL_ONLY=true; shift ;;
+        --backfill-modes) BACKFILL_MODES="$2"; shift 2 ;;
+        --backfill-principal) BACKFILL_PRINCIPALS+=("$2"); shift 2 ;;
         --help|-h) usage ;;
-        *) err "Unknown option: $1"; usage ;;
+        *) err "Unknown option: $1 (legacy prepare/activate/build flags were removed; see --help)"; exit 2 ;;
     esac
 done
 
+fail() { err "$*"; exit 1; }
+
 case "$DEPLOY_MODE" in
     release|dev) ;;
-    *)
-        err "Invalid --mode '$DEPLOY_MODE' (expected: release or dev)"
-        exit 1
-        ;;
+    *) fail "Invalid --mode '$DEPLOY_MODE' (expected: release or dev)" ;;
 esac
-
-if [[ ! -f "$CONFIG" ]]; then
-    err "Config not found: $CONFIG"
-    exit 1
-fi
-
-if [[ "$PREPARE_ONLY" == "true" && "$ACTIVATE_ONLY" == "true" ]]; then
-    err "--prepare-only and --activate-only are mutually exclusive"
-    exit 1
-fi
-
-if [[ "$CANARY_ONLY" == "true" && "$CANARY_THEN_FLEET" == "true" ]]; then
-    err "--canary and --canary-then-fleet are mutually exclusive"
-    exit 1
-fi
-
+[[ -f "$CONFIG" ]] || fail "Config not found: $CONFIG"
+[[ "$CANARY_ONLY" == true && "$CANARY_THEN_FLEET" == true ]] \
+    && fail "--canary and --canary-then-fleet are mutually exclusive"
+[[ "$BACKFILL" == true && "$BACKFILL_ONLY" == true ]] \
+    && fail "--backfill and --backfill-only are mutually exclusive"
+[[ "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ && "$KEEP_RELEASES" =~ ^[0-9]+$ && "$MIN_FREE_MB" =~ ^[0-9]+$ ]] \
+    || fail "--health-timeout, --keep-releases and --min-free-mb must be non-negative integers"
+[[ "$BACKFILL_MODES" =~ ^(sync-identities|bootstrap|validate|validate-changed)(,(sync-identities|bootstrap|validate|validate-changed))*$ ]] \
+    || fail "--backfill-modes must list only sync-identities, bootstrap, validate, validate-changed"
+for principal in "${BACKFILL_PRINCIPALS[@]}"; do
+    [[ "$principal" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "invalid --backfill-principal: $principal"
+done
 if [[ -n "$DEPLOY_ARTIFACT" ]]; then
-    if [[ ! -f "$DEPLOY_ARTIFACT" ]]; then
-        err "Artifact not found: $DEPLOY_ARTIFACT"
-        exit 1
-    fi
-    if [[ -n "$DEPLOY_CHECKSUM" && ! -f "$DEPLOY_CHECKSUM" ]]; then
-        err "Checksum file not found: $DEPLOY_CHECKSUM"
-        exit 1
-    fi
+    [[ -f "$DEPLOY_ARTIFACT" ]] || fail "Artifact not found: $DEPLOY_ARTIFACT"
+    [[ -n "$DEPLOY_CHECKSUM" && -f "$DEPLOY_CHECKSUM" ]] \
+        || fail "--artifact requires an existing --checksum file from a trusted independent source"
+elif [[ -n "$DEPLOY_CHECKSUM" ]]; then
+    fail "--checksum requires an explicit --artifact"
 fi
 
-prepare_default_artifact_if_needed() {
-    if [[ -n "$DEPLOY_ARTIFACT" || "$ALLOW_LEGACY_DEPLOY_PATH" == "true" ]]; then
-        return 0
-    fi
+# --- hosts ------------------------------------------------------------------
 
-    local target="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-    local version="$RELEASE_ID"
-    local out_dir="$ROOT_DIR/dist/out"
-    local artifact="$out_dir/oqto-${version}-${target}.tar.gz"
-    local checksum="${artifact}.sha256"
+declare -a H_NAME=() H_SSH=() H_MODE=() H_USER=() H_FRONTEND=() H_WEB_ROOT=() H_LOCAL=() H_CANARY=()
 
-    if [[ "$SKIP_BUILD" == "true" ]]; then
-        err "--skip-build cannot be used without --artifact unless --allow-legacy-path is set"
-        exit 1
-    fi
-
-    log "No --artifact provided; building deployment artifact from dist workflow..."
-    host_exec "true" "" "cd '$ROOT_DIR' && just dist-sync"
-    host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-binaries --build"
-    if [[ "$SKIP_FRONTEND" == "true" ]]; then
-        # The artifact always ships a bundle (oqto-setup fails closed without
-        # one); --skip-frontend only skips rebuilding it.
-        host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-frontend"
-    else
-        host_exec "true" "" "cd '$ROOT_DIR' && just dist-stage-frontend --build"
-    fi
-    host_exec "true" "" "cd '$ROOT_DIR' && just lint-dist-manifest-strict"
-    host_exec "true" "" "cd '$ROOT_DIR' && just dist-package '$version' '$target'"
-
-    if [[ "$DRY_RUN" != "true" ]]; then
-        if [[ ! -f "$artifact" ]]; then
-            err "Expected artifact not found after dist-package: $artifact"
-            exit 1
-        fi
-        if [[ ! -f "$checksum" ]]; then
-            err "Expected checksum not found after dist-package: $checksum"
-            exit 1
-        fi
-    fi
-
-    DEPLOY_ARTIFACT="$artifact"
-    DEPLOY_CHECKSUM="$checksum"
-    ok "Using generated artifact: $DEPLOY_ARTIFACT"
+parse_hosts() {
+    local rows
+    rows="$(python3 - "$CONFIG" <<'PY'
+import sys, tomllib
+hosts = tomllib.load(open(sys.argv[1], "rb")).get("host", [])
+for host in hosts:
+    fields = [host.get("name", ""), host.get("ssh", ""), host.get("mode", "single-user"),
+              host.get("user", ""), str(host.get("frontend", False)).lower(),
+              host.get("web_root", ""), str(host.get("local", False)).lower(),
+              str(host.get("canary", False)).lower()]
+    # Unit separator: unlike tab it is not IFS whitespace, so empty fields survive.
+    if any("\x1f" in f or "\n" in f for f in fields):
+        raise SystemExit("host fields must not contain control separators or newlines")
+    print("\x1f".join(fields))
+PY
+)" || fail "Invalid hosts config: $CONFIG"
+    local name ssh_target mode user frontend web_root is_local canary
+    while IFS=$'\x1f' read -r name ssh_target mode user frontend web_root is_local canary; do
+        [[ -n "$name" ]] || continue
+        H_NAME+=("$name"); H_SSH+=("$ssh_target"); H_MODE+=("$mode"); H_USER+=("$user")
+        H_FRONTEND+=("$frontend"); H_WEB_ROOT+=("$web_root"); H_LOCAL+=("$is_local"); H_CANARY+=("$canary")
+    done <<<"$rows"
+    [[ "${#H_NAME[@]}" -gt 0 ]] || fail "No hosts found in $CONFIG"
 }
 
+profile_for() {
+    case "$1" in
+        local|single-user) echo personal ;;
+        multi-user) echo team ;;
+        *) echo invalid ;;
+    esac
+}
 
-if [[ -z "$RELEASE_ID" ]]; then
-    git_sha="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || echo nogit)"
-    RELEASE_ID="$(date +%Y%m%d%H%M%S)-${git_sha}"
-fi
+should_deploy() {
+    local name="$1" filter
+    [[ "${#HOST_FILTER[@]}" -eq 0 ]] && return 0
+    for filter in "${HOST_FILTER[@]}"; do [[ "$filter" == "$name" ]] && return 0; done
+    return 1
+}
 
-# Validate hosts config TOML once up front.
-if ! python3 - <<PY >/dev/null 2>&1
-import tomllib
-with open("$CONFIG", "rb") as f:
-    tomllib.load(f)
-PY
-then
-    err "Invalid TOML: $CONFIG"
-    exit 1
-fi
+collect_targets() {
+    local include_canary="$1" include_rest="$2" i
+    local -n out_ref=$3
+    out_ref=()
+    for ((i = 0; i < ${#H_NAME[@]}; i++)); do
+        should_deploy "${H_NAME[$i]}" || continue
+        if [[ "${H_CANARY[$i]}" == true ]]; then
+            [[ "$include_canary" == true ]] || continue
+        else
+            [[ "$include_rest" == true ]] || continue
+        fi
+        out_ref+=("$i")
+    done
+}
 
 host_exec() {
-    local is_local="$1"
-    local ssh_target="$2"
-    local cmd="$3"
-    if [[ "$DRY_RUN" == "true" ]]; then
-        if [[ "$is_local" == "true" ]]; then
-            echo -e "${YELLOW}  [dry-run]${NC} local :: $cmd"
-        else
-            echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target :: $cmd"
-        fi
+    local is_local="$1" ssh_target="$2" cmd="$3"
+    if [[ "$DRY_RUN" == true ]]; then
+        local where="ssh $ssh_target"
+        [[ "$is_local" == true ]] && where=local
+        echo -e "${YELLOW}  [dry-run]${NC} $where :: $cmd"
         return 0
     fi
-
-    if [[ "$is_local" == "true" ]]; then
+    if [[ "$is_local" == true ]]; then
         bash -lc "$cmd"
     else
         ssh "$ssh_target" "bash -lc $(printf '%q' "$cmd")"
@@ -281,1960 +228,377 @@ host_exec() {
 }
 
 host_exec_sudo() {
-    local is_local="$1"
-    local ssh_target="$2"
-    local inner="$3"
-    host_exec "$is_local" "$ssh_target" "sudo -n bash -lc $(printf '%q' "$inner")"
+    host_exec "$1" "$2" "sudo -n bash -c $(printf '%q' "$3")"
 }
 
-SUDO_KEEPALIVE_PIDS=()
+# --- release artifact -------------------------------------------------------
 
-stop_sudo_keepalive() {
-    local pid
-    for pid in "${SUDO_KEEPALIVE_PIDS[@]:-}"; do
-        kill "$pid" >/dev/null 2>&1 || true
-    done
-    SUDO_KEEPALIVE_PIDS=()
+declared_version() {
+    python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["workspace"]["package"]["version"])' \
+        "$ROOT_DIR/backend/Cargo.toml"
 }
 
-start_sudo_keepalive() {
-    local is_local="$1"
-    local ssh_target="$2"
+require_clean_source() {
+    local dirty
+    dirty="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" \
+        || fail "cannot read git status of $ROOT_DIR"
+    if [[ -n "$dirty" ]]; then
+        err "Refusing to build a deployment from a worktree with uncommitted or untracked changes:"
+        printf '%s\n' "$dirty" | head -20 >&2
+        fail "commit, stash or deploy a prebuilt --artifact instead"
+    fi
+}
 
-    if [[ "$DRY_RUN" == "true" ]]; then
+build_artifact() {
+    local version target
+    version="$(declared_version)"
+    target="$(uname -m)-unknown-linux-gnu"
+    require_clean_source
+    python3 "$ROOT_DIR/scripts/release/check-tag-version.py" --tag "v$version" \
+        || fail "Cargo, dependency pin and frontend versions disagree; use 'just bump'"
+    DEPLOY_ARTIFACT="$ROOT_DIR/dist/out/oqto-${version}-${target}.tar.gz"
+    DEPLOY_CHECKSUM="${DEPLOY_ARTIFACT}.sha256"
+    log "Building release $version ($target) from $(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} just dist-sync / dist-stage-binaries --build / dist-stage-frontend --build / lint-dist-manifest-strict / dist-package $version $target"
         return 0
     fi
+    (
+        cd "$ROOT_DIR"
+        just dist-sync
+        DIST_REQUIRE_GLIBC_FLOOR="${DIST_REQUIRE_GLIBC_FLOOR:-1}" just dist-stage-binaries --build
+        just dist-stage-frontend --build
+        just lint-dist-manifest-strict
+        just dist-package "$version" "$target"
+    ) || fail "release build failed"
+    # The build itself must not dirty the tree (it would make provenance lie).
+    require_clean_source
+    [[ -f "$DEPLOY_ARTIFACT" && -f "$DEPLOY_CHECKSUM" ]] || fail "dist-package did not produce $DEPLOY_ARTIFACT"
+    ok "Built $DEPLOY_ARTIFACT"
+}
 
-    if [[ "$is_local" == "true" ]]; then
-        (
-            while true; do
-                sudo -n -v >/dev/null 2>&1 || exit 1
-                sleep 60
-            done
-        ) &
+# Stage files in a per-host private directory; never predictable /tmp names.
+stage_private_remote_release() {
+    local ssh_target="$1" remote_dir artifact_source checksum_source
+    local archive_name="${DEPLOY_ARTIFACT##*/}" checksum_name="${DEPLOY_CHECKSUM##*/}"
+    if [[ ! "$archive_name" =~ ^oqto-v?[0-9][a-zA-Z0-9._+-]*-(x86_64|aarch64)-unknown-linux-gnu\.tar\.gz$ \
+        || ! "$checksum_name" =~ ^[a-zA-Z0-9._+-]+$ ]]; then
+        err "unsafe release or checksum basename for remote staging"
+        return 1
+    fi
+    artifact_source="$(realpath -e -- "$DEPLOY_ARTIFACT")" || return 1
+    checksum_source="$(realpath -e -- "$DEPLOY_CHECKSUM")" || return 1
+    if [[ "${artifact_source##*/}" != "$archive_name" || "${checksum_source##*/}" != "$checksum_name" \
+        || "$artifact_source" == *:* || "$checksum_source" == *:* ]]; then
+        err "remote staging refuses ambiguous source paths"
+        return 1
+    fi
+    remote_dir="$(ssh "$ssh_target" 'umask 077; mktemp -d /tmp/oqto-deploy.XXXXXXXX')" || return 1
+    if [[ ! "$remote_dir" =~ ^/tmp/oqto-deploy\.[a-zA-Z0-9]{8}$ ]]; then
+        err "remote staging did not return a private canonical directory"
+        return 1
+    fi
+    if ! scp -- "$artifact_source" "$checksum_source" "$TRANSACTION" "$BOOTSTRAP" \
+        "$ssh_target:$remote_dir/" >/dev/null; then
+        ssh "$ssh_target" "rm -rf -- $(printf '%q' "$remote_dir")" >/dev/null 2>&1 || true
+        err "failed to stage release files privately"
+        return 1
+    fi
+    printf '%s\n' "$remote_dir"
+}
+
+cleanup_private_remote_release() {
+    local ssh_target="$1" remote_dir="$2"
+    [[ "$remote_dir" =~ ^/tmp/oqto-deploy\.[a-zA-Z0-9]{8}$ ]] || return 1
+    ssh "$ssh_target" "rm -rf -- $(printf '%q' "$remote_dir")"
+}
+
+# Paths of the artifact, checksum, transaction and bootstrap as seen on the
+# target. Sets STAGED_DIR (remote private dir or empty) and TARGET_* vars.
+stage_for_host() {
+    local is_local="$1" ssh_target="$2"
+    STAGED_DIR=""
+    if [[ "$is_local" == true ]]; then
+        TARGET_ARTIFACT="$DEPLOY_ARTIFACT"; TARGET_CHECKSUM="$DEPLOY_CHECKSUM"
+        TARGET_TRANSACTION="$TRANSACTION"; TARGET_BOOTSTRAP="$BOOTSTRAP"
+        return 0
+    fi
+    if [[ "$DRY_RUN" == true ]]; then
+        STAGED_DIR="/tmp/oqto-deploy.DRYRUN00"
     else
-        ssh -tt "$ssh_target" 'while true; do sudo -n -v >/dev/null 2>&1 || exit 1; sleep 60; done' >/dev/null 2>&1 &
+        STAGED_DIR="$(stage_private_remote_release "$ssh_target")" || return 1
     fi
-    SUDO_KEEPALIVE_PIDS+=("$!")
+    TARGET_ARTIFACT="$STAGED_DIR/${DEPLOY_ARTIFACT##*/}"
+    TARGET_CHECKSUM="$STAGED_DIR/${DEPLOY_CHECKSUM##*/}"
+    TARGET_TRANSACTION="$STAGED_DIR/${TRANSACTION##*/}"
+    TARGET_BOOTSTRAP="$STAGED_DIR/${BOOTSTRAP##*/}"
 }
 
-trap stop_sudo_keepalive EXIT
+# --- dependency policy -------------------------------------------------------
 
-emit_event() {
-    local is_local="$1"
-    local ssh_target="$2"
-    local host_name="$3"
-    local phase="$4"
-    local result="$5"
-    local reason_code="$6"
-
-    local actor="${USER:-unknown}"
-    local ts
-    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-    local payload
-    payload="$(python3 - <<PY
-import json
-print(json.dumps({
-  "timestamp": "$ts",
-  "release_id": "$RELEASE_ID",
-  "host": "$host_name",
-  "actor": "$actor",
-  "phase": "$phase",
-  "result": "$result",
-  "reason_code": "$reason_code"
-}, separators=(",", ":")))
-PY
-)"
-
-    local escaped
-    escaped="$(printf '%q' "$payload")"
-    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$(dirname "$EVENT_LOG_PATH")' && printf '%s\\n' $escaped >> '$EVENT_LOG_PATH'" || true
-}
-
-normalize_mode() {
-    local mode="$1"
-    case "$mode" in
-        local|single-user) echo "single-user" ;;
-        multi-user) echo "multi-user" ;;
-        *) echo "invalid" ;;
-    esac
-}
-
-version_ge() {
-    local current="$1"
-    local required="$2"
-    [[ "$(printf '%s\n%s\n' "$required" "$current" | sort -V | head -n1)" == "$required" ]]
-}
-
-resolve_remote_build_server() {
-    if [[ -n "$REMOTE_BUILD_SERVER" ]]; then
-        echo "$REMOTE_BUILD_SERVER"
-        return 0
-    fi
-
-    local cfg="$HOME/.config/remote-build/config.toml"
-    if [[ -f "$cfg" ]]; then
-        python3 - "$cfg" <<'PY' 2>/dev/null || true
-import sys, tomllib
-cfg_path = sys.argv[1]
-with open(cfg_path, 'rb') as f:
-    data = tomllib.load(f)
-for key in ('server', 'url', 'endpoint'):
-    value = data.get(key)
-    if isinstance(value, str) and value.strip():
-        print(value.strip())
-        break
-PY
-    fi
-}
-
-backend_artifact_dir() {
-    if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
-        echo "$ROOT_DIR/backend/target/release"
-    else
-        echo "$ROOT_DIR/backend/target/deploy-fast"
-    fi
-}
-
-check_remote_build_reachability() {
-    if [[ "$USE_REMOTE_BUILD" != "true" ]]; then
-        return 0
-    fi
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log "[dry-run] Skipping remote-build server reachability check"
-        return 0
-    fi
-
-    if ! command -v remote-build >/dev/null 2>&1; then
-        err "--remote-build requested but 'remote-build' is not installed or not in PATH"
-        return 1
-    fi
-
-    local endpoint
-    endpoint="$(resolve_remote_build_server)"
-    if [[ -z "$endpoint" ]]; then
-        err "--remote-build requested but remote-build server endpoint is unknown. Set --remote-build-server or REMOTE_BUILD_SERVER."
-        return 1
-    fi
-
-    if ! python3 - "$endpoint" <<'PY'; then
-import socket, sys
-from urllib.parse import urlparse
-raw = sys.argv[1].strip()
-if '://' in raw:
-    parsed = urlparse(raw)
-    host = parsed.hostname
-    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-else:
-    if ':' in raw:
-        host, port_s = raw.rsplit(':', 1)
-        port = int(port_s)
-    else:
-        host = raw
-        port = 443
-if not host:
-    raise SystemExit(2)
-conn = socket.create_connection((host, port), timeout=3)
-conn.close()
-print(f"{host}:{port}")
-PY
-        err "Remote-build server '$endpoint' is not reachable"
-        return 1
-    fi
-
-    ok "Remote-build server reachable: $endpoint"
-    return 0
-}
+declare -a REQUIRED_DEP_BINARIES=()
+declare -A REQUIRED_DEP_VERSIONS=()
 
 load_dependency_requirements() {
-    if [[ ! -f "$DEPENDENCY_POLICY_FILE" ]]; then
-        warn "Dependency policy file missing: $DEPENDENCY_POLICY_FILE"
-        return 0
-    fi
-
+    [[ -f "$DEPENDENCY_POLICY_FILE" ]] || fail "Dependency policy file missing: $DEPENDENCY_POLICY_FILE"
+    local bin ver
     while IFS='=' read -r bin ver; do
         [[ -z "$bin" || -z "$ver" ]] && continue
         REQUIRED_DEP_BINARIES+=("$bin")
         REQUIRED_DEP_VERSIONS["$bin"]="$ver"
-    done < <(python3 - <<PY
-import tomllib
-from pathlib import Path
-
-p = Path(r"$DEPENDENCY_POLICY_FILE")
-data = tomllib.loads(p.read_text())
-byteowlz = data.get("byteowlz", {})
-# Deploy/runtime-critical CLI dependencies. hstry is intentionally optional:
-# Oqto history is served by oqto-log; hstry may exist as an external/interop
-# tool, but deploy must not install, remediate, or gate on it.
-keys = ("eavs", "mmry", "trx", "agntz", "sx", "skdlr")
-for key in keys:
-    v = str(byteowlz.get(key, "")).strip()
-    if not v or v == "latest":
-        continue
-    print(f"{key}={v}")
+    done < <(python3 - "$DEPENDENCY_POLICY_FILE" <<'PY'
+import sys, tomllib
+byteowlz = tomllib.load(open(sys.argv[1], "rb")).get("byteowlz", {})
+# Deploy-critical CLIs; hstry is legacy interop and never gated (ADR-0005).
+for key in ("eavs", "mmry", "trx", "agntz", "sx", "skdlr"):
+    value = str(byteowlz.get(key, "")).strip()
+    if value and value != "latest":
+        print(f"{key}={value}")
 PY
 )
 }
 
-# Map tool names to their GitHub repo, cargo package, and language.
-# Format: "repo:package:lang" (package empty = same as tool, lang = rust|go)
-# Bring the managed byteowlz tools up to their pinned versions on the target via
-# the single prebuilt, checksum-verified acquisition path (`oqto-setup acquire`,
-# ADR-0018/0021). Whole-set + idempotent: replaces the per-tool GitHub-download +
-# cargo/go source-build remediation. The manifest is shipped inline so remote
-# hosts need nothing pre-staged; arch is resolved on the target. `--tools-only`
-# excludes the oqto platform bundle (deployed separately).
-#
-# Version skew: this runs as a preflight, BEFORE `oqto-setup install` updates the
-# platform — so the target's installed oqto-setup may predate `acquire
-# --tools-only`. Use the oqto-setup FROM the artifact being deployed (the new
-# one), which the bundle ships in bin/; fall back to the target's PATH oqto-setup
-# only when no artifact is set (legacy path).
-acquire_managed_tools() {
-    local is_local="$1" ssh_target="$2" name="$3"
-    local manifest="${ROOT_DIR}/dependencies.toml"
-
-    if [[ ! -f "$manifest" ]]; then
-        err "  dependencies.toml not found at $manifest"
-        return 1
-    fi
-
-    emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "start" "deps.acquire.start"
-    log "  Acquiring managed tools via oqto-setup acquire on $name..."
-
-    # Make the artifact reachable on the target (local: in place; remote: copy).
-    local artifact_on_target=""
-    if [[ -n "${DEPLOY_ARTIFACT:-}" && -f "$DEPLOY_ARTIFACT" ]]; then
-        if [[ "$is_local" == "true" ]]; then
-            artifact_on_target="$DEPLOY_ARTIFACT"
-        else
-            artifact_on_target="/tmp/$(basename "$DEPLOY_ARTIFACT")"
-            if ! scp "$DEPLOY_ARTIFACT" "$ssh_target:$artifact_on_target"; then
-                err "  failed to copy deploy artifact to $name"
-                return 1
-            fi
-        fi
-    fi
-
-    local script
-    script="$(cat <<REMOTE_EOF
-set -euo pipefail
-tmpdir="\$(mktemp -d)"
-trap 'rm -rf "\$tmpdir"' EXIT
-
-# Prefer the oqto-setup shipped in the artifact being deployed (no version skew).
-setup="oqto-setup"
-artifact="${artifact_on_target}"
-if [[ -n "\$artifact" && -f "\$artifact" ]]; then
-    if ! tar -xzf "\$artifact" -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
-        tar -xzf "\$artifact" -C "\$tmpdir" 2>/dev/null || true
-    fi
-    found="\$(find "\$tmpdir" -type f -name oqto-setup 2>/dev/null | head -1)"
-    if [[ -n "\$found" ]]; then chmod +x "\$found"; setup="\$found"; fi
-fi
-if [[ "\$setup" == "oqto-setup" ]] && ! command -v oqto-setup >/dev/null 2>&1; then
-    echo "oqto-setup not available on target (no artifact, none on PATH)" >&2
-    exit 1
-fi
-
-cat > "\$tmpdir/dependencies.toml" <<'DEPS_MANIFEST_EOF'
-$(cat "$manifest")
-DEPS_MANIFEST_EOF
-case "\$(uname -m)" in
-    x86_64|amd64)  arch_arg="x86-64" ;;
-    aarch64|arm64) arch_arg="aarch64" ;;
-    *) echo "unsupported architecture \$(uname -m)" >&2; exit 1 ;;
-esac
-"\$setup" acquire --manifest "\$tmpdir/dependencies.toml" --arch "\$arch_arg" \
-    --dest "\$tmpdir/acq" --install-bin /usr/local/bin --tools-only
-REMOTE_EOF
-)"
-
-    if host_exec_sudo "$is_local" "$ssh_target" "$script"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "pass" "deps.acquire.pass"
-        ok "  Acquired managed tools on $name"
-        return 0
-    else
-        emit_event "$is_local" "$ssh_target" "$name" "deps.acquire" "fail" "deps.acquire.fail"
-        err "  Failed to acquire managed tools on $name"
-        return 1
-    fi
+version_ge() {
+    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" ]]
 }
 
+installed_version() {
+    local is_local="$1" ssh_target="$2" dep="$3"
+    host_exec "$is_local" "$ssh_target" \
+        "{ /usr/local/bin/$dep --version 2>/dev/null || $dep --version 2>/dev/null; } | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" \
+        2>/dev/null || true
+}
 
+# Release mode: tools older than their pin are remediated through the
+# artifact's own oqto-setup (checksum-verified prebuilt acquisition). Newer
+# installed tools are always preserved. Dev mode only requires presence.
 check_dependency_compatibility() {
-    local name="$1" ssh_target="$2" is_local="$3" mode="$4"
-
-    if [[ "${#REQUIRED_DEP_BINARIES[@]}" -eq 0 ]]; then
-        return 0
-    fi
-
-    if [[ "$DEPLOY_MODE" == "dev" ]]; then
-        local dep installed output
+    local name="$1" ssh_target="$2" is_local="$3" dep current
+    local -a outdated=()
+    [[ "${#REQUIRED_DEP_BINARIES[@]}" -eq 0 ]] && return 0
+    if [[ "$DEPLOY_MODE" == dev ]]; then
         log "  Development dependency mode: preserving target-installed tools"
-        for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
-            if [[ "$DRY_RUN" == "true" ]]; then
-                echo -e "${YELLOW}  [dry-run]${NC} dependency presence gate: $dep (installed version preserved)"
-                continue
-            fi
-            if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep' || command -v '$dep' >/dev/null" 2>/dev/null; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.missing_dev"
-                err "  $dep is required but not installed on $name"
-                err "  Dev mode never installs external tools; install $dep on the target (for example with its 'just install') and retry."
-                return 1
-            fi
-            output="$(host_exec "$is_local" "$ssh_target" "{ /usr/local/bin/$dep --version 2>/dev/null || $dep --version 2>/dev/null; } | head -1" 2>/dev/null || true)"
-            installed="$(printf '%s' "$output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-            if [[ -n "$installed" ]]; then
-                log "  $dep: $installed installed (preserved; pin ${REQUIRED_DEP_VERSIONS[$dep]} not enforced)"
-            elif [[ -n "$output" ]]; then
-                log "  $dep: installed (preserved; version reported: $output)"
-            else
-                log "  $dep: installed (preserved; version unknown)"
-            fi
-        done
-        return 0
     fi
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        local dep
-        for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
-            echo -e "${YELLOW}  [dry-run]${NC} dependency gate: $dep >= ${REQUIRED_DEP_VERSIONS[$dep]}"
-        done
-        return 0
-    fi
-
-    # Pass 1: detect issues
-    local -a needs_remediation=()
-    local dep required current
     for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
-        required="${REQUIRED_DEP_VERSIONS[$dep]}"
-        local needs_fix="false"
-
-        if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep' || command -v '$dep' >/dev/null" 2>/dev/null; then
-            warn "  $dep: not installed (need >= $required)"
-            needs_fix="true"
-        else
-            # Check /usr/local/bin first (where we install), then fall back to PATH.
-            current="$(host_exec "$is_local" "$ssh_target" "{ /usr/local/bin/$dep --version 2>/dev/null || $dep --version 2>/dev/null; } | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
-            if [[ -z "$current" ]]; then
-                warn "  $dep: version unknown (need >= $required)"
-                needs_fix="true"
-            elif ! version_ge "$current" "$required"; then
-                warn "  $dep: $current installed, need >= $required"
-                needs_fix="true"
+        if [[ "$DRY_RUN" == true ]]; then
+            if [[ "$DEPLOY_MODE" == dev ]]; then
+                echo -e "${YELLOW}  [dry-run]${NC} dependency presence gate: $dep (installed version preserved)"
             else
-                log "  $dep: $current (ok)"
+                echo -e "${YELLOW}  [dry-run]${NC} dependency gate: $dep >= ${REQUIRED_DEP_VERSIONS[$dep]}"
             fi
-        fi
-
-        if [[ "$needs_fix" == "true" ]]; then
-            needs_remediation+=("$dep")
-        fi
-    done
-
-    # Pass 2: remediate
-    if [[ "${#needs_remediation[@]}" -gt 0 ]]; then
-        log "Remediating ${#needs_remediation[@]} dependency issue(s) on $name via oqto-setup acquire..."
-        # One prebuilt, checksum-verified acquisition of the whole managed set
-        # (idempotent) replaces the former per-tool download/source-build path.
-        if ! acquire_managed_tools "$is_local" "$ssh_target" "$name"; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.remediation_incomplete"
-            err "Dependency acquisition failed on $name"
-            return 1
-        fi
-
-        # Pass 3: re-verify
-        log "Re-verifying dependencies on $name..."
-        for dep in "${needs_remediation[@]}"; do
-            required="${REQUIRED_DEP_VERSIONS[$dep]}"
-            if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep'" 2>/dev/null; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_missing"
-                err "$dep still missing on $name after remediation"
-                return 1
-            fi
-            current="$(host_exec "$is_local" "$ssh_target" "/usr/local/bin/$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
-            if [[ -z "$current" ]] || ! version_ge "$current" "$required"; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_outdated"
-                err "$dep still outdated on $name after remediation ($current, need >= $required)"
-                return 1
-            fi
-            ok "  $dep: $current (remediated)"
-        done
-    fi
-
-    return 0
-}
-
-parse_hosts() {
-    local idx=-1
-    local in_host=false
-
-    while IFS= read -r line; do
-        line="${line%%#*}"
-        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        [[ -z "$line" ]] && continue
-
-        if [[ "$line" == "[[host]]" ]]; then
-            idx=$((idx + 1))
-            in_host=true
-            H_NAME[$idx]=""
-            H_SSH[$idx]=""
-            H_MODE[$idx]="single-user"
-            H_USER[$idx]=""
-            H_FRONTEND[$idx]="false"
-            H_WEB_ROOT[$idx]=""
-            H_BINARIES[$idx]=""
-            H_SERVICES[$idx]=""
-            H_LOCAL[$idx]="false"
-            H_CANARY[$idx]="false"
             continue
         fi
-
-        if [[ "$in_host" != "true" ]]; then
-            continue
+        current="$(installed_version "$is_local" "$ssh_target" "$dep")"
+        if [[ "$DEPLOY_MODE" == dev ]]; then
+            if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep' || command -v '$dep' >/dev/null" 2>/dev/null; then
+                err "  $dep is required but not installed on $name (dev mode never installs tools)"
+                return 1
+            fi
+            log "  $dep: ${current:-unknown version} (preserved)"
+        elif [[ -z "$current" ]] || ! version_ge "$current" "${REQUIRED_DEP_VERSIONS[$dep]}"; then
+            warn "  $dep: ${current:-missing} (need >= ${REQUIRED_DEP_VERSIONS[$dep]})"
+            outdated+=("$dep")
+        else
+            log "  $dep: $current (ok)"
         fi
-
-        local key val
-        key="$(echo "$line" | sed 's/[[:space:]]*=.*//')"
-        val="$(echo "$line" | sed 's/[^=]*=[[:space:]]*//')"
-        val="$(echo "$val" | sed 's/^"//;s/"$//')"
-
-        case "$key" in
-            name) H_NAME[$idx]="$val" ;;
-            ssh) H_SSH[$idx]="$val" ;;
-            mode) H_MODE[$idx]="$val" ;;
-            user) H_USER[$idx]="$val" ;;
-            frontend) H_FRONTEND[$idx]="$val" ;;
-            web_root) H_WEB_ROOT[$idx]="$val" ;;
-            local) H_LOCAL[$idx]="$val" ;;
-            canary) H_CANARY[$idx]="$val" ;;
-            binaries)
-                val="$(echo "$val" | tr -d '[]"' | tr ',' ' ')"
-                H_BINARIES[$idx]="$val"
-                ;;
-            services)
-                val="$(echo "$val" | tr -d '[]"' | tr ',' ' ')"
-                H_SERVICES[$idx]="$val"
-                ;;
-        esac
-    done < "$CONFIG"
-}
-
-parse_hosts
-load_dependency_requirements
-HOST_COUNT="${#H_NAME[@]}"
-if [[ "$HOST_COUNT" -eq 0 ]]; then
-    err "No hosts found in $CONFIG"
-    exit 1
-fi
-
-should_deploy() {
-    local name="$1"
-    if [[ ${#HOST_FILTER[@]} -eq 0 ]]; then
-        return 0
-    fi
-    for f in "${HOST_FILTER[@]}"; do
-        [[ "$f" == "$name" ]] && return 0
     done
+    [[ "${#outdated[@]}" -eq 0 ]] && return 0
+    err "  Outdated tools on $name: ${outdated[*]}"
+    err "  Acquire them first with the release's checksum-verified tool path:"
+    err "    oqto-setup acquire --manifest dependencies.toml --install-bin /usr/local/bin --tools-only"
+    err "  (or deploy with --mode dev to preserve the installed versions)."
     return 1
 }
 
-is_canary_host() {
-    local index="$1"
-    if [[ "${H_CANARY[$index]}" == "true" ]]; then
-        return 0
-    fi
-    return 1
-}
+# --- preflight ---------------------------------------------------------------
 
 preflight_host() {
-    local name="$1" ssh_target="$2" mode="$3" is_local="$4" binaries="$5"
-
-    emit_event "$is_local" "$ssh_target" "$name" "preflight" "start" "preflight.start"
-
-    if [[ "$is_local" != "true" ]]; then
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo -e "${YELLOW}  [dry-run]${NC} ssh connectivity check: $ssh_target"
-        else
-            log "Checking SSH connectivity to $ssh_target..."
-            if ! ssh -o ConnectTimeout=5 "$ssh_target" "echo ok" &>/dev/null; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "ssh.unreachable"
-                err "Cannot reach $ssh_target"
-                return 1
-            fi
-        fi
-    fi
-
-    if [[ "$mode" == "invalid" ]]; then
-        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "mode.invalid"
-        err "Host $name has invalid mode"
+    local i="$1" name="${H_NAME[$1]}" ssh_target="${H_SSH[$1]}" is_local="${H_LOCAL[$1]}"
+    local profile
+    profile="$(profile_for "${H_MODE[$i]}")"
+    [[ "$profile" != invalid ]] || { err "Host $name has invalid mode '${H_MODE[$i]}'"; return 1; }
+    if [[ "$profile" == personal && ( -z "${H_USER[$i]}" || "${H_USER[$i]}" == root ) ]]; then
+        err "Host $name: personal hosts need a non-root 'user' (the owning principal)"
         return 1
     fi
-
-    if [[ -z "$DEPLOY_ARTIFACT" && "$SKIP_BACKEND" != "true" ]]; then
-        local bin artifact_dir
-        artifact_dir="$(backend_artifact_dir)"
-        for bin in $binaries; do
-            if [[ ! -f "$artifact_dir/$bin" ]]; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "binary.missing.$bin"
-                err "Missing local build artifact: ${artifact_dir#$ROOT_DIR/}/$bin"
-                return 1
-            fi
-        done
-    fi
-
-    local disk_cmd
-    disk_cmd="free_mb=\$(df -Pm '$RELEASES_ROOT' 2>/dev/null | awk 'NR==2{print \$4}'); if [[ -z \"\$free_mb\" ]]; then free_mb=\$(df -Pm /var/lib | awk 'NR==2{print \$4}'); fi; [[ \$free_mb -ge $MIN_FREE_MB ]]"
-    if ! host_exec_sudo "$is_local" "$ssh_target" "$disk_cmd"; then
-        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "disk.low"
-        err "Preflight disk check failed on $name"
+    if [[ "${H_FRONTEND[$i]}" == true && -n "${H_WEB_ROOT[$i]}" && "${H_WEB_ROOT[$i]}" != "$CANONICAL_WEB_ROOT" ]]; then
+        err "Host $name: web_root must be $CANONICAL_WEB_ROOT (oqto-setup links the release frontend there)"
         return 1
     fi
-
-    if ! host_exec "$is_local" "$ssh_target" "command -v install >/dev/null"; then
-        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.missing"
-        err "Missing 'install' command on $name"
-        return 1
+    if [[ "$is_local" != true && "$DRY_RUN" != true ]]; then
+        ssh -o ConnectTimeout=5 "$ssh_target" true >/dev/null 2>&1 || { err "Cannot reach $ssh_target"; return 1; }
     fi
+    [[ "$BACKFILL_ONLY" == true || "$STATUS_ONLY" == true ]] && return 0
 
-    # systemctl is required for multi-user mode; optional for single-user (Docker support)
-    if [[ "$mode" == "multi-user" ]]; then
-        if ! host_exec "$is_local" "$ssh_target" "command -v systemctl >/dev/null"; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.systemctl.missing"
-            err "Multi-user mode requires systemctl on $name"
-            return 1
-        fi
+    host_exec_sudo "$is_local" "$ssh_target" \
+        "free=\$(df -Pm /var/lib 2>/dev/null | awk 'NR==2{print \$4}'); [[ \${free:-0} -ge $MIN_FREE_MB ]]" \
+        || { err "Less than ${MIN_FREE_MB}MB free under /var/lib on $name"; return 1; }
+    if [[ "$profile" == team ]]; then
+        host_exec_sudo "$is_local" "$ssh_target" \
+            "[[ \"\$(stat -c '%U:%G' /etc/oqto/sandbox.toml)\" == root:root && \$(stat -c '%a' /etc/oqto/sandbox.toml) -le 644 ]]" \
+            || { err "/etc/oqto/sandbox.toml on $name must exist, be root:root and not group/other-writable"; return 1; }
+        # Release activation does not install policy assets; an enforcing
+        # sandbox must already have its BPF or every runner spawn would fail.
+        host_exec_sudo "$is_local" "$ssh_target" \
+            "! grep -Eq '^[[:space:]]*(seccomp_enforce[[:space:]]*=[[:space:]]*true|seccomp(_mode)?[[:space:]]*=[[:space:]]*\"enforce\")' /etc/oqto/sandbox.toml || test -s /usr/local/share/oqto/seccomp/default.bpf" \
+            || { err "seccomp enforcement is configured on $name but /usr/local/share/oqto/seccomp/default.bpf is missing"; return 1; }
     fi
-
-    if ! check_dependency_compatibility "$name" "$ssh_target" "$is_local" "$mode"; then
-        return 1
-    fi
-
-    if [[ "$mode" == "multi-user" ]]; then
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo -e "${YELLOW}  [dry-run]${NC} multi-user sandbox/seccomp preflight checks"
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "pass" "preflight.pass"
-            ok "Preflight passed on $name"
-            return 0
-        fi
-
-        local sandbox_stat_cmd
-        sandbox_stat_cmd="test -f /etc/oqto/sandbox.toml && test -r /etc/oqto/sandbox.toml && stat -c '%U:%G %a' /etc/oqto/sandbox.toml"
-        local sandbox_stat
-        if ! sandbox_stat="$(host_exec_sudo "$is_local" "$ssh_target" "$sandbox_stat_cmd")"; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.missing"
-            err "Missing or unreadable /etc/oqto/sandbox.toml on $name"
-            return 1
-        fi
-
-        local owner perm
-        owner="$(echo "$sandbox_stat" | awk '{print $1}')"
-        perm="$(echo "$sandbox_stat" | awk '{print $2}')"
-        if [[ "$owner" != "root:root" ]]; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.owner"
-            err "sandbox.toml must be owned by root:root on $name"
-            return 1
-        fi
-        if [[ "$perm" -gt 644 ]]; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.perms"
-            err "sandbox.toml permissions too open ($perm) on $name"
-            return 1
-        fi
-
-        local seccomp_enforced
-        seccomp_enforced="$(host_exec_sudo "$is_local" "$ssh_target" "python3 - <<'PY'
-from pathlib import Path
-p=Path('/etc/oqto/sandbox.toml')
-text=p.read_text(errors='ignore') if p.exists() else ''
-needle=('seccomp_enforce = true','seccomp_mode = \"enforce\"','seccomp = \"enforce\"')
-print('true' if any(n in text for n in needle) else 'false')
-PY
-")"
-        if [[ "$seccomp_enforced" == "true" ]]; then
-            # deploy installs the BPF during activation (see install_seccomp_bpf),
-            # so gate on whether we can supply the policy for this host's arch
-            # rather than requiring it to pre-exist (avoids first-deploy deadlock).
-            local sc_arch
-            sc_arch="$(host_exec "$is_local" "$ssh_target" "uname -m")"
-            case "$sc_arch" in
-                x86_64|amd64) sc_arch="x86_64" ;;
-                aarch64|arm64) sc_arch="aarch64" ;;
-                *) sc_arch="" ;;
-            esac
-            local sc_src="$ROOT_DIR/backend/crates/oqto/examples/seccomp/default-${sc_arch}.bpf"
-            if [[ -z "$sc_arch" || ! -f "$sc_src" ]]; then
-                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "seccomp.bpf.source_missing"
-                err "seccomp enforce configured but source BPF missing for arch '$sc_arch' ($sc_src). Run scripts/sandbox/generate-seccomp-artifacts.sh"
-                return 1
-            fi
-        fi
-    fi
-
-    emit_event "$is_local" "$ssh_target" "$name" "preflight" "pass" "preflight.pass"
+    check_dependency_compatibility "$name" "$ssh_target" "$is_local" || return 1
     ok "Preflight passed on $name"
 }
 
-prepare_host() {
-    local name="$1" ssh_target="$2" is_local="$3" binaries="$4" frontend="$5" web_root="$6"
-    local release_dir="$RELEASES_ROOT/$RELEASE_ID"
+# --- target transactions -----------------------------------------------------
 
-    emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "start" "deploy.prepare.start"
-
-    if [[ "$RESUME" == "true" ]]; then
-        if host_exec_sudo "$is_local" "$ssh_target" "test -f '$release_dir/.prepared'"; then
-            log "Prepare already completed on $name (resume mode)"
-            emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "pass" "prepare.resume.skip"
-            return 0
-        fi
-    fi
-
-    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/bin' '$release_dir/meta/migrations'"
-
-    if [[ "$SKIP_BACKEND" != "true" ]]; then
-        local bin artifact_dir
-        artifact_dir="$(backend_artifact_dir)"
-        for bin in $binaries; do
-            local src="$artifact_dir/$bin"
-            if [[ "$is_local" == "true" ]]; then
-                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$src' '$release_dir/bin/$bin'"
-            else
-                if [[ "$DRY_RUN" == "true" ]]; then
-                    echo -e "${YELLOW}  [dry-run]${NC} scp $src $ssh_target:/tmp/oqto-${bin}-${RELEASE_ID}"
-                else
-                    local tmp_remote="/tmp/oqto-${bin}-${RELEASE_ID}"
-                    scp -q "$src" "$ssh_target:$tmp_remote"
-                    host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_remote' '$release_dir/bin/$bin' && rm -f '$tmp_remote'"
-                fi
-            fi
-        done
-    fi
-
-    # Stage migration scripts needed during activation (legacy mmry -> JSONL)
-    local mig_shell_src="$ROOT_DIR/scripts/migrate/migrate-mmry-jsonl.sh"
-    local mig_py_src="$ROOT_DIR/scripts/migrate/migrate_legacy_mmry_to_jsonl.py"
-    if [[ -f "$mig_shell_src" && -f "$mig_py_src" ]]; then
-        if [[ "$is_local" == "true" ]]; then
-            host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$mig_shell_src' '$release_dir/meta/migrations/migrate-mmry-jsonl.sh'"
-            host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$mig_py_src' '$release_dir/meta/migrations/migrate_legacy_mmry_to_jsonl.py'"
-        else
-            if [[ "$DRY_RUN" == "true" ]]; then
-                echo -e "${YELLOW}  [dry-run]${NC} scp $mig_shell_src $ssh_target:/tmp/oqto-migrate-mmry-${RELEASE_ID}.sh"
-                echo -e "${YELLOW}  [dry-run]${NC} scp $mig_py_src $ssh_target:/tmp/oqto-migrate-mmry-${RELEASE_ID}.py"
-            else
-                local tmp_mig_sh="/tmp/oqto-migrate-mmry-${RELEASE_ID}.sh"
-                local tmp_mig_py="/tmp/oqto-migrate-mmry-${RELEASE_ID}.py"
-                scp -q "$mig_shell_src" "$ssh_target:$tmp_mig_sh"
-                scp -q "$mig_py_src" "$ssh_target:$tmp_mig_py"
-                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_mig_sh' '$release_dir/meta/migrations/migrate-mmry-jsonl.sh' && rm -f '$tmp_mig_sh'"
-                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_mig_py' '$release_dir/meta/migrations/migrate_legacy_mmry_to_jsonl.py' && rm -f '$tmp_mig_py'"
-            fi
-        fi
-    fi
-
-    # Stage seccomp BPF artifacts (both arches); install_seccomp_bpf picks the
-    # host's arch at activation time. Shipping both keeps cross-arch fleets safe.
-    local seccomp_src_dir="$ROOT_DIR/backend/crates/oqto/examples/seccomp"
-    if [[ -f "$seccomp_src_dir/default-x86_64.bpf" || -f "$seccomp_src_dir/default-aarch64.bpf" ]]; then
-        host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/seccomp'"
-        local sc_arch sc_src
-        for sc_arch in x86_64 aarch64; do
-            sc_src="$seccomp_src_dir/default-${sc_arch}.bpf"
-            [[ -f "$sc_src" ]] || continue
-            if [[ "$is_local" == "true" ]]; then
-                host_exec_sudo "$is_local" "$ssh_target" "install -m 0644 '$sc_src' '$release_dir/seccomp/default-${sc_arch}.bpf'"
-            elif [[ "$DRY_RUN" == "true" ]]; then
-                echo -e "${YELLOW}  [dry-run]${NC} scp $sc_src $ssh_target:/tmp/oqto-seccomp-${sc_arch}-${RELEASE_ID}.bpf"
-            else
-                local tmp_sc="/tmp/oqto-seccomp-${sc_arch}-${RELEASE_ID}.bpf"
-                scp -q "$sc_src" "$ssh_target:$tmp_sc"
-                host_exec_sudo "$is_local" "$ssh_target" "install -m 0644 '$tmp_sc' '$release_dir/seccomp/default-${sc_arch}.bpf' && rm -f '$tmp_sc'"
-            fi
-        done
-    fi
-
-    if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
-        local dist_dir="$ROOT_DIR/frontend/dist"
-        if [[ -d "$dist_dir" ]]; then
-            host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/frontend'"
-            if [[ "$is_local" == "true" ]]; then
-                host_exec_sudo "$is_local" "$ssh_target" "rsync -a --delete '$dist_dir/' '$release_dir/frontend/'"
-            else
-                if [[ "$DRY_RUN" == "true" ]]; then
-                    echo -e "${YELLOW}  [dry-run]${NC} rsync -az --delete $dist_dir/ $ssh_target:$release_dir/frontend/"
-                else
-                    local tmp_frontend="/tmp/oqto-frontend-${RELEASE_ID}"
-                    ssh "$ssh_target" "rm -rf '$tmp_frontend' && mkdir -p '$tmp_frontend'"
-                    rsync -az --delete "$dist_dir/" "$ssh_target:$tmp_frontend/"
-                    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/frontend' && rsync -a --delete '$tmp_frontend/' '$release_dir/frontend/' && rm -rf '$tmp_frontend'"
-                fi
-            fi
-        fi
-        host_exec_sudo "$is_local" "$ssh_target" "printf '%s\n' '$web_root' > '$release_dir/meta/web_root'"
-    fi
-
-    host_exec_sudo "$is_local" "$ssh_target" "printf '%s\n' '$RELEASE_ID' > '$release_dir/meta/release_id' && touch '$release_dir/.prepared'"
-    emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "pass" "deploy.prepare.pass"
-    ok "Prepared release $RELEASE_ID on $name"
+transaction_args() {
+    local i="$1" profile
+    profile="$(profile_for "${H_MODE[$i]}")"
+    TX_ARGS=(--profile "$profile")
+    [[ "$profile" == personal ]] && TX_ARGS+=(--principal "${H_USER[$i]}")
+    [[ "$ALLOW_BUSY_SESSIONS" == true ]] && TX_ARGS+=(--allow-busy-sessions)
+    return 0
 }
 
-install_current_symlinks() {
-    local is_local="$1" ssh_target="$2" binaries="$3"
-    local current_link="$RELEASES_ROOT/current"
-    local bin
-    for bin in $binaries; do
-        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$current_link/bin/$bin' '/usr/local/bin/$bin'"
-    done
-
-    # Replace any stale per-user shadows of the same binary names with symlinks
-    # to the canonical /usr/local/bin path. Without this, a stale binary in
-    # ~/.local/bin or ~/.cargo/bin can win the PATH lookup of a user systemd
-    # service that uses ExecSearchPath, leaving the running daemon on an old
-    # version even after a successful deploy. Idempotent: noops if missing.
-    for bin in $binaries; do
-        host_exec "$is_local" "$ssh_target" "
-            for d in \"\$HOME/.local/bin\" \"\$HOME/.cargo/bin\"; do
-                target=\"\$d/$bin\"
-                if [[ -e \"\$target\" || -L \"\$target\" ]]; then
-                    if [[ -L \"\$target\" ]] && [[ \"\$(readlink -f \"\$target\")\" == \"$current_link/bin/$bin\" ]]; then
-                        continue
-                    fi
-                    mkdir -p \"\$d\" && ln -sfn '/usr/local/bin/$bin' \"\$target\"
-                fi
-            done
-        " || true
-    done
+run_transaction() {
+    local i="$1" is_local="${H_LOCAL[$1]}" ssh_target="${H_SSH[$1]}" verb="$2"
+    local status=0 script
+    stage_for_host "$is_local" "$ssh_target" || return 1
+    transaction_args "$i"
+    local -a args=("${TX_ARGS[@]}")
+    if [[ "$verb" == activate ]]; then
+        args+=(--artifact "$TARGET_ARTIFACT" --checksum "$TARGET_CHECKSUM" --setup "@SETUP@"
+            --health-budget "$HEALTH_TIMEOUT_SECONDS" --keep-releases "$KEEP_RELEASES")
+        [[ "$ALLOW_DOWNGRADE" == true ]] && args+=(--allow-downgrade)
+        [[ "$ALLOW_DIRTY_SOURCE" == true ]] && args+=(--allow-dirty-source)
+    else
+        args+=(--modes "$BACKFILL_MODES")
+        local principal
+        for principal in "${BACKFILL_PRINCIPALS[@]}"; do args+=(--only "$principal"); done
+    fi
+    local quoted
+    printf -v quoted '%q ' "${args[@]}"
+    # The installer comes only from the verified artifact, never from PATH.
+    script="set -euo pipefail
+umask 077
+tmp=\$(mktemp -d)
+trap 'rm -rf -- \"\$tmp\"' EXIT
+transaction=$(printf '%q' "$TARGET_TRANSACTION")"
+    if [[ "$verb" == activate ]]; then
+        script+="
+python3 $(printf '%q' "$TARGET_BOOTSTRAP") --artifact $(printf '%q' "$TARGET_ARTIFACT") \\
+    --checksum $(printf '%q' "$TARGET_CHECKSUM") --output \"\$tmp/oqto-setup\"
+args=(${quoted//@SETUP@/\"\$tmp/oqto-setup\"})"
+    else
+        script+="
+args=($quoted)"
+    fi
+    script+="
+python3 \"\$transaction\" $verb \"\${args[@]}\""
+    host_exec_sudo "$is_local" "$ssh_target" "$script" || status=$?
+    if [[ -n "$STAGED_DIR" && "$DRY_RUN" != true ]]; then
+        cleanup_private_remote_release "$ssh_target" "$STAGED_DIR" || status=1
+    fi
+    return "$status"
 }
 
-# Reinstall the user-scoped oqto-runner systemd unit from the repo so any
-# stale on-disk unit (e.g. one with ExecSearchPath pointing at ~/.local/bin)
-# is overwritten with the canonical version that uses an absolute ExecStart.
-#
-# We deliberately only sync oqto-runner here: other units in deploy/systemd/
-# (oqto.service etc.) are system-scope templates with User=/Group= directives
-# and are not valid for user systemd. Touching them would break single-user
-# deployments.
-#
-# Only runs on local deploys where we can read the repo directly.
-sync_single_user_unit_files() {
-    local is_local="$1" ssh_target="$2"
-    if [[ "$is_local" != "true" ]]; then
+sync_extensions_host() {
+    local i="$1" is_local="${H_LOCAL[$1]}" ssh_target="${H_SSH[$1]}"
+    local sync="$ROOT_DIR/scripts/dist/sync-agent-runtime.sh" list="$ROOT_DIR/scripts/dist/pi-default-extensions.txt"
+    [[ "$SYNC_EXTENSIONS" == true ]] || return 0
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} sync pinned Pi extensions (preserve-first, owner-correct) on ${H_NAME[$i]}"
         return 0
     fi
-
-    local src="$ROOT_DIR/deploy/systemd/oqto-runner.service"
-    if [[ ! -f "$src" ]]; then
-        return 0
-    fi
-
-    # Only install into user scope if a user unit already exists there; we do
-    # not want to create a brand new unit file for hosts that don't have one.
-    local user_unit="$HOME/.config/systemd/user/oqto-runner.service"
-    if [[ -f "$user_unit" ]]; then
-        install -m 0644 "$src" "$user_unit"
-        systemctl --user daemon-reload >/dev/null 2>&1 || true
-    fi
-}
-
-# Start fallback daemons in non-systemd single-user environments.
-# Currently only oqto-runner is supported because deploy quiesces it pre-migration,
-# and health checks require its socket to come back.
-start_single_user_service_fallback() {
-    local is_local="$1" ssh_target="$2" svc="$3"
-
-    if [[ "$svc" != "oqto-runner" ]]; then
-        return 1
-    fi
-
-    log "No systemd service for $svc, starting foreground daemon in background"
-    host_exec "$is_local" "$ssh_target" '
-        uid=$(id -u)
-        runtime_dir="${XDG_RUNTIME_DIR:-/run/user/${uid}}"
-        mkdir -p "$runtime_dir"
-
-        state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/oqto/deploy"
-        mkdir -p "$state_dir"
-
-        nohup /usr/local/bin/oqto-runner --socket "$runtime_dir/oqto-runner.sock" \
-            >"$state_dir/oqto-runner.log" 2>&1 < /dev/null &
-    ' || return 1
-
-    local attempts=0
-    while [[ "$attempts" -lt 10 ]]; do
-        if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
-            return 0
-        fi
-        attempts=$((attempts + 1))
-        sleep 1
-    done
-
-    return 1
-}
-
-# Restart a single-user service: try systemctl --user, then best-effort fallback.
-restart_single_user_service() {
-    local is_local="$1" ssh_target="$2" svc="$3"
-
-    # Prefer systemd user units when they exist, even if currently inactive.
-    # Using only `is-active` misclassifies installed-but-inactive units as missing.
-    if host_exec "$is_local" "$ssh_target" "state=\$(systemctl --user show '$svc' -p LoadState --value 2>/dev/null || echo not-found); [[ \"\$state\" != \"not-found\" ]]" 2>/dev/null; then
-        host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc' || systemctl --user start '$svc'" || true
+    log "[${H_NAME[$i]}] syncing pinned Pi extensions (runtime comes from the release)"
+    if [[ "$is_local" == true ]]; then
+        bash "$sync" --manifest "$DEPENDENCY_POLICY_FILE" --skip-pi
         return
     fi
-
-    # No systemd user unit: stop any existing process first.
-    local pids
-    pids=$(host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' 2>/dev/null" 2>/dev/null || true)
-    if [[ -n "$pids" ]]; then
-        log "No systemd service for $svc, sending SIGTERM to PID(s): $pids"
-        host_exec "$is_local" "$ssh_target" "kill -TERM $pids" || true
-        sleep 2
-        if host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' &>/dev/null" 2>/dev/null; then
-            warn "$svc still running after SIGTERM, sending SIGKILL"
-            host_exec "$is_local" "$ssh_target" "kill -KILL $pids" || true
-        fi
-    fi
-
-    if start_single_user_service_fallback "$is_local" "$ssh_target" "$svc"; then
-        return
-    fi
-
-    if [[ -n "$pids" ]]; then
-        warn "$svc was stopped but must be restarted manually (no systemd service found)"
-    else
-        warn "$svc: no systemd service and no running process found, skipping restart"
-    fi
-}
-
-restart_all_multi_user_runners() {
-    local is_local="$1" ssh_target="$2"
-
-    # Wait for oqtoctl control plane readiness after systemctl restart oqto.
-    # Retry quietly first to avoid transient "Connection refused" noise.
-    host_exec_sudo "$is_local" "$ssh_target" '
-        force_flag="'"${FORCE_RUNNER_RESTART}"'"
-        ready=0
-        for i in $(seq 1 30); do
-            if oqtoctl user list --json >/dev/null 2>&1; then
-                ready=1
-                break
-            fi
-            sleep 1
-        done
-
-        if [[ "$ready" != "1" ]]; then
-            echo "warn: oqtoctl not ready after 30s; skipping multi-user runner reconciliation" >&2
-            exit 0
-        fi
-
-        # Reconcile per-user runner service files first.
-        oqtoctl user sync-configs >/dev/null 2>&1 || true
-
-        # Restart/provision each user runner via usermgr API path.
-        users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
-        python3 - "$users_json" "$force_flag" <<"PY"
-import json, subprocess, sys
-raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
-force = (sys.argv[2] if len(sys.argv) > 2 else "false") == "true"
-try:
-    users = json.loads(raw)
-except Exception:
-    users = []
-for u in users:
-    username = u.get("username")
-    if not username:
-        continue
-    # setup-runner is idempotent; without --force it fast-paths when the
-    # runner is already up (keeps the old binary). --force reinstalls the
-    # unit and restarts, so runner-protocol changes actually take effect.
-    cmd = ["oqtoctl", "user", "setup-runner", username]
-    if force:
-        cmd.append("--force")
-    subprocess.run(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-PY
-    ' || true
-}
-
-configure_trace_environment() {
-    local is_local="$1" ssh_target="$2" mode="$3"
-
-    if [[ "$TRACE_STREAMS" != "true" ]]; then
-        return 0
-    fi
-
-    local qdir
-    qdir=$(printf '%q' "$TRACE_DIR")
-
-    if [[ "$mode" == "single-user" ]]; then
-        log "Enabling runner stream tracing (dir=$TRACE_DIR)"
-        host_exec "$is_local" "$ssh_target" "systemctl --user set-environment OQTO_TRACE_STREAMS=1 OQTO_TRACE_DIR=$qdir" || true
-    else
-        warn "--trace-streams currently auto-configures single-user runner env only"
-        warn "For multi-user, configure per-user runner env separately"
-    fi
-}
-
-restart_services_ordered() {
-    local is_local="$1" ssh_target="$2" mode="$3" services="$4"
-
-    if [[ "$SKIP_SERVICES" == "true" ]]; then
-        return 0
-    fi
-
-    configure_trace_environment "$is_local" "$ssh_target" "$mode"
-
-    # Ordered restarts: runner -> control plane (oqto) -> everything else.
-    if [[ "$mode" == "single-user" ]]; then
-        # Single-user: try systemd --user first, fall back to process signal.
-        # This keeps Docker/non-systemd environments working.
-        sync_single_user_unit_files "$is_local" "$ssh_target"
-        restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
-        restart_single_user_service "$is_local" "$ssh_target" "oqto"
-        # No per-user mmry service: memory is embedded mmry-core (ADR-0010).
-
-        local svc
-        for svc in $services; do
-            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
-                continue
-            fi
-            restart_single_user_service "$is_local" "$ssh_target" "$svc"
-        done
-    else
-        # Multi-user: oqto is system service; user runners are managed per-user via oqtoctl/usermgr.
-        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
-        restart_all_multi_user_runners "$is_local" "$ssh_target"
-
-        local svc
-        for svc in $services; do
-            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
-                continue
-            fi
-            host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
-        done
-    fi
-}
-
-run_mmry_jsonl_migration() {
-    local is_local="$1" ssh_target="$2" mode="$3"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        return 0
-    fi
-
-    local migrate_mode="auto"
-    if [[ "$mode" == "single-user" ]]; then
-        migrate_mode="single"
-    elif [[ "$mode" == "multi-user" ]]; then
-        migrate_mode="multi"
-    fi
-
-    local migrate_script="$RELEASES_ROOT/current/meta/migrations/migrate-mmry-jsonl.sh"
-    local migrate_py="$RELEASES_ROOT/current/meta/migrations/migrate_legacy_mmry_to_jsonl.py"
-    local cmd="if [[ -x '$migrate_script' ]]; then MMRY_MIGRATE_SCRIPT='$migrate_py' '$migrate_script' --mode $migrate_mode --quiet; else echo '[deploy] mmry migration script missing in release: $migrate_script'; fi"
-
-    if ! host_exec "$is_local" "$ssh_target" "$cmd"; then
-        warn "mmry JSONL migration step failed on target (continuing)"
-    fi
-}
-
-epoch_ms() {
-    date +%s%3N
-}
-
-oqto_log_fingerprint() {
-    local is_local="$1" ssh_target="$2"
-    host_exec "$is_local" "$ssh_target" '
-set -e
-base="$HOME/.pi/agent/sessions"
-ver="v1"
-if [[ ! -d "$base" ]]; then
-  printf "%s\n" "$ver:none"
-  exit 0
-fi
-sum=$(find "$base" -type f -name "*.jsonl" -printf "%T@ %s %p\n" 2>/dev/null | sha256sum | cut -d" " -f1)
-printf "%s\n" "$ver:$sum"
-' 2>/dev/null || echo "v1:error"
-}
-
-quiesce_oqto_log_writers() {
-    local is_local="$1" ssh_target="$2" mode="$3"
-
-    log "Quiescing oqto-log writers before migration ($mode)..."
-
-    if [[ "$mode" == "single-user" ]]; then
-        host_exec "$is_local" "$ssh_target" "systemctl --user stop oqto-runner >/dev/null 2>&1 || true; pkill -x oqto-runner >/dev/null 2>&1 || true" || true
-    else
-        # Multi-user: stop all per-user runner daemons to avoid SQLite write contention.
-        host_exec_sudo "$is_local" "$ssh_target" "pkill -x oqto-runner >/dev/null 2>&1 || true" || true
-    fi
-
-    # Active wait (bounded) for runner processes to fully exit and release locks.
-    local waited=0
-    while [[ "$waited" -lt 10 ]]; do
-        if host_exec "$is_local" "$ssh_target" "! pgrep -x oqto-runner >/dev/null 2>&1"; then
-            break
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-}
-
-run_oqto_log_migration_mode() {
-    local is_local="$1" ssh_target="$2" mode="$3" migrate_mode="$4"
-
-    if [[ "$mode" == "multi-user" && "$OQTO_LOG_MULTI_USER_ALL_USERS" == "true" ]]; then
-        host_exec "$is_local" "$ssh_target" "set -euo pipefail
-users=()
-while IFS= read -r u; do
-  [[ -n \"\$u\" ]] && users+=(\"\$u\")
-done < <(ls -1 /home 2>/dev/null | grep -E '^oqto_' || true)
-if [[ \${#users[@]} -eq 0 ]]; then
-  users+=(\"\${USER}\")
-fi
-for u in \"\${users[@]}\"; do
-  echo \"[deploy] oqto-log ${migrate_mode} as user=\$u\"
-  sudo -u \"\$u\" bash -lc 'set -euo pipefail
-    cfg_flag=()
-    if [[ -f /etc/oqto/config.toml ]]; then cfg_flag=(--config /etc/oqto/config.toml); fi
-    oqto \"\${cfg_flag[@]}\" runner migrate-oqto-log --mode ${migrate_mode}
-  '
-done"
-    else
-        host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode ${migrate_mode}"
-    fi
-}
-
-# Extract workspace paths from oqto-log bootstrap error messages.
-# Returns unique workspace paths with corruption indicators.
-extract_corrupted_workspaces_from_error() {
-    local error_output="$1"
-    echo "$error_output" | grep -oE 'workspace=[^[:space:]]+' | cut -d'=' -f2 | sort -u
-}
-
-# Compute the oqto-log database directory hash for a workspace path.
-workspace_to_db_hash() {
-    local workspace="$1"
-    echo -n "$workspace" | sha256sum | cut -c1-24
-}
-
-# Global marker file to track active auto-heal backup location (for rollback recovery).
-# Uses $HOME (not ~) so the path expands correctly on the remote shell where it's used.
-OQTO_LOG_AUTOHEAL_MARKER='$HOME/.local/share/oqto/oqto-log/.auto-heal-in-progress'
-
-# Auto-heal corrupted oqto-log databases by backing up, deleting, and rebuilding them.
-# Outputs the backup directory path on success (for later cleanup), empty on failure.
-# On failure, the backup is NOT cleaned up - caller must restore or clean up.
-auto_heal_oqto_log_corruption() {
-    local is_local="$1" ssh_target="$2" error_output="$3"
-    local corrupted_workspaces
-    corrupted_workspaces=$(extract_corrupted_workspaces_from_error "$error_output")
-
-    if [[ -z "$corrupted_workspaces" ]]; then
-        return 1
-    fi
-
-    # Create a backup location for this deploy session.
-    # Use $HOME so the path expands correctly on the remote shell.
-    local backup_dir="\$HOME/.local/share/oqto/oqto-log/.auto-heal-backup-$(date +%s)"
-    host_exec "$is_local" "$ssh_target" "mkdir -p \"$backup_dir\" && echo \"$backup_dir\" > \"$OQTO_LOG_AUTOHEAL_MARKER\"" || return 1
-
-    warn "Auto-healing corrupted oqto-log databases..."
-
-    local healed_any=false
-    while IFS= read -r workspace; do
-        [[ -z "$workspace" ]] && continue
-        local db_hash
-        db_hash=$(workspace_to_db_hash "$workspace")
-        warn "  Backing up corrupted oqto-log: $workspace (hash=$db_hash)"
-        host_exec "$is_local" "$ssh_target" "if [[ -d \"\$HOME/.local/share/oqto/oqto-log/${db_hash}\" ]]; then mv \"\$HOME/.local/share/oqto/oqto-log/${db_hash}\" \"$backup_dir/\"; fi" || true
-        healed_any=true
-    done <<< "$corrupted_workspaces"
-
-    if [[ "$healed_any" != "true" ]]; then
-        return 1
-    fi
-
-    # Re-run bootstrap after healing
-    log "Re-running oqto-log bootstrap after auto-heal..."
-    if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
-        ok "Auto-heal successful"
-        # Clean up backups on success and remove marker
-        host_exec "$is_local" "$ssh_target" "rm -rf \"$backup_dir\" \"$OQTO_LOG_AUTOHEAL_MARKER\"" || true
-        echo "$backup_dir"
-        return 0
-    else
-        warn "Auto-heal failed: bootstrap still failing after purge"
-        # Do NOT clean up backup here - caller must restore from it
-        return 1
-    fi
-}
-
-# Restore oqto-log databases from auto-heal backups.
-# Used during rollback to recover the pre-corruption state.
-restore_oqto_log_from_backup() {
-    local is_local="$1" ssh_target="$2" backup_dir="$3"
-
-    # If no backup_dir provided, check for marker file
-    if [[ -z "$backup_dir" ]]; then
-        backup_dir=$(host_exec "$is_local" "$ssh_target" "cat \"$OQTO_LOG_AUTOHEAL_MARKER\" 2>/dev/null || true")
-    fi
-    [[ -z "$backup_dir" ]] && return 0
-
-    log "Restoring oqto-log databases from backup..."
-    host_exec "$is_local" "$ssh_target" "
-        if [[ -d \"$backup_dir\" ]]; then
-            for db in \"$backup_dir\"/*; do
-                [[ -d \"\$db\" ]] || continue
-                hash=\$(basename \"\$db\")
-                rm -rf \"\$HOME/.local/share/oqto/oqto-log/\$hash\"
-                mv \"\$db\" \"\$HOME/.local/share/oqto/oqto-log/\"
-            done
-            rm -rf \"$backup_dir\"
-        fi
-        rm -f \"$OQTO_LOG_AUTOHEAL_MARKER\"
-    " || warn "Failed to restore some oqto-log backups"
-}
-
-# Assert the host actually serves the bundle we just shipped. A deploy that
-# leaves web_root pinned to an older release is otherwise invisible: the API is
-# healthy and only the browser sees stale UI (see trx oqto-6k9w).
-verify_web_root() {
-    local name="$1" ssh_target="$2" is_local="$3" web_root="$4"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo -e "${YELLOW}  [dry-run]${NC} verify $web_root/index.html matches the shipped bundle"
-        return 0
-    fi
-
-    local expected served
-    expected="$(sha256sum "$ROOT_DIR/dist/immutable/frontend/index.html" | cut -d' ' -f1)"
-    served="$(host_exec_sudo "$is_local" "$ssh_target" "sha256sum '$web_root/index.html' 2>/dev/null | cut -d' ' -f1" || true)"
-
-    if [[ "$served" != "$expected" ]]; then
-        err "[$name] web root $web_root does not serve the shipped bundle (expected $expected, got ${served:-<missing>})"
-        return 1
-    fi
-    ok "[$name] web root serves the shipped bundle"
-}
-
-health_check_host() {
-    local is_local="$1" ssh_target="$2" mode="$3"
-    local start
-    start="$(date +%s)"
-
-    while true; do
-        local elapsed
-        elapsed=$(( $(date +%s) - start ))
-        if [[ "$elapsed" -ge "$HEALTH_TIMEOUT_SECONDS" ]]; then
-            return 1
-        fi
-
-        local ok_backend="false" ok_runner="false" ok_deps="false"
-
-        if host_exec "$is_local" "$ssh_target" "curl -sf http://127.0.0.1:8080/api/health >/dev/null"; then
-            ok_backend="true"
-        fi
-
-        if [[ "$mode" == "single-user" ]]; then
-            if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
-                ok_runner="true"
-            fi
-        else
-            # Multi-user: ensure at least one installed user's runner socket exists.
-            if host_exec_sudo "$is_local" "$ssh_target" '
-                users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
-                python3 - "$users_json" <<"PY"
-import json, os, sys
-raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
-try:
-    users = json.loads(raw)
-except Exception:
-    users = []
-installed = [u for u in users if u.get("runner_installed")]
-if not installed:
-    sys.exit(0)
-for u in installed:
-    name = u.get("username")
-    if not name:
-        continue
-    sock = f"/run/oqto/runner-sockets/{name}/oqto-runner.sock"
-    if os.path.exists(sock):
-        sys.exit(0)
-sys.exit(1)
-PY
-            '; then
-                ok_runner="true"
-            fi
-        fi
-
-        if host_exec "$is_local" "$ssh_target" "command -v mmry >/dev/null"; then
-            ok_deps="true"
-        fi
-
-        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_deps" == "true" ]]; then
-            return 0
-        fi
-
-        sleep 2
-    done
-}
-
-prune_old_releases() {
-    local name="$1" ssh_target="$2" is_local="$3"
-    local keep="$KEEP_RELEASES"
-
-    if [[ "$keep" -le 0 ]]; then
-        return 0
-    fi
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo -e "${YELLOW}  [dry-run]${NC} prune old releases on $name (keep newest $keep + current + last-good)"
-        return 0
-    fi
-
-    # Build a remote shell snippet that:
-    # - collects release dirs sorted newest-first by mtime
-    # - always preserves `current` and `last-good` symlink targets
-    # - keeps the N newest of the remainder
-    # - rm -rf's everything else, emitting one line per pruned release
-    local prune_cmd
-    prune_cmd=$(cat <<PRUNE_EOF
-set -euo pipefail
-cd '$RELEASES_ROOT' 2>/dev/null || exit 0
-keep=$keep
-current_target=""
-last_good_target=""
-if [[ -L current ]]; then
-    current_target="\$(basename "\$(readlink -f current 2>/dev/null || true)")"
-fi
-if [[ -L last-good ]]; then
-    last_good_target="\$(basename "\$(readlink -f last-good 2>/dev/null || true)")"
-fi
-
-# Newest mtime first; only real directories, skip symlinks.
-mapfile -t releases < <(find . -maxdepth 1 -mindepth 1 -type d -printf '%T@ %f\n' | sort -rn | awk '{print \$2}')
-
-kept=0
-for d in "\${releases[@]}"; do
-    if [[ "\$d" == "\$current_target" || "\$d" == "\$last_good_target" ]]; then
-        continue
-    fi
-    if [[ "\$kept" -lt "\$keep" ]]; then
-        kept=\$((kept + 1))
-        continue
-    fi
-    rm -rf -- "\$d" && echo "pruned: \$d"
-done
-PRUNE_EOF
-)
-
-    local output
-    output="$(host_exec_sudo "$is_local" "$ssh_target" "$prune_cmd" 2>&1)" || {
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "fail" "prune.error"
-        warn "Prune on $name failed (non-fatal): $output"
-        return 0
-    }
-
-    local pruned_count
-    pruned_count="$(printf '%s' "$output" | grep -c '^pruned: ' || true)"
-    if [[ "$pruned_count" -gt 0 ]]; then
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "pass" "prune.removed.$pruned_count"
-        log "Pruned $pruned_count old release(s) on $name (kept newest $keep + current + last-good)"
-    else
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "pass" "prune.nothing"
-    fi
-}
-
-# Install the staged seccomp BPF for the host's architecture into the canonical
-# location, atomically as part of (de)activation. Mirrors the standalone
-# scripts/sandbox/install-seccomp-policy.sh so deploy converges the active policy
-# to the release being made current (and restores it on rollback). Reads from a
-# release's staged seccomp/ dir; older releases without it are skipped.
-install_seccomp_bpf() {
-    local is_local="$1" ssh_target="$2" name="$3" release_dir="$4"
-    local staged="$release_dir/seccomp"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo -e "${YELLOW}  [dry-run]${NC} install $staged/default-<arch>.bpf -> /usr/local/share/oqto/seccomp/default.bpf (+/etc/oqto/seccomp symlink)"
-        return 0
-    fi
-
-    if ! host_exec_sudo "$is_local" "$ssh_target" "test -d '$staged'"; then
-        return 0
-    fi
-
-    local host_arch
-    host_arch="$(host_exec "$is_local" "$ssh_target" "uname -m")"
-    case "$host_arch" in
-        x86_64|amd64) host_arch="x86_64" ;;
-        aarch64|arm64) host_arch="aarch64" ;;
-        *) warn "Unsupported arch '$host_arch' for seccomp install on $name; skipping"; return 0 ;;
-    esac
-
-    local artifact="$staged/default-${host_arch}.bpf"
-    if ! host_exec_sudo "$is_local" "$ssh_target" "test -f '$artifact'"; then
-        warn "No staged seccomp BPF for arch $host_arch on $name; skipping"
-        return 0
-    fi
-
-    # Policy is not a secret: keep world-readable so local-user sandboxes can
-    # open it without privileged group membership.
-    host_exec_sudo "$is_local" "$ssh_target" "install -d -m 0755 /usr/local/share/oqto/seccomp && install -m 0644 '$artifact' /usr/local/share/oqto/seccomp/default.bpf && install -d -m 0755 /etc/oqto/seccomp && ln -sfn /usr/local/share/oqto/seccomp/default.bpf /etc/oqto/seccomp/default.bpf"
-    ok "Installed seccomp BPF ($host_arch) on $name"
-}
-
-rollback_host() {
-    local name="$1" ssh_target="$2" is_local="$3" binaries="$4" mode="$5" services="$6"
-    local previous_release="$7"
-
-    emit_event "$is_local" "$ssh_target" "$name" "rollback" "start" "rollback.start"
-
-    # If there was an incomplete auto-heal, restore databases from backup
-    restore_oqto_log_from_backup "$is_local" "$ssh_target" ""
-
-    if [[ -z "$previous_release" ]]; then
-        emit_event "$is_local" "$ssh_target" "$name" "rollback" "fail" "rollback.no_previous_release"
-        err "Rollback failed on $name: no previous release"
-        return 1
-    fi
-
-    host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/current'"
-    install_current_symlinks "$is_local" "$ssh_target" "$binaries"
-    install_seccomp_bpf "$is_local" "$ssh_target" "$name" "$RELEASES_ROOT/$previous_release"
-    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
-
-    if health_check_host "$is_local" "$ssh_target" "$mode"; then
-        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/last-good'"
-        emit_event "$is_local" "$ssh_target" "$name" "rollback" "pass" "rollback.pass"
-        ok "Rollback succeeded on $name"
-        prune_old_releases "$name" "$ssh_target" "$is_local"
-        return 0
-    fi
-
-    emit_event "$is_local" "$ssh_target" "$name" "rollback" "fail" "rollback.health_failed"
-    err "Rollback health checks failed on $name"
-    return 1
-}
-
-run_oqto_log_deploy_gate() {
-    local name="$1" ssh_target="$2" is_local="$3" mode="$4"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        return 0
-    fi
-
-    # Mandatory oqto-log migration/validation gate for both artifact and legacy
-    # activation paths. Fast path: always sync identities, but only run the
-    # expensive message bootstrap when Pi JSONL fingerprint changed.
-    local oqto_quiesce_start oqto_quiesce_end
-    oqto_quiesce_start="$(epoch_ms)"
-    quiesce_oqto_log_writers "$is_local" "$ssh_target" "$mode"
-    oqto_quiesce_end="$(epoch_ms)"
-    log "[$name] oqto-log quiesce took $((oqto_quiesce_end - oqto_quiesce_start))ms"
-
-    local oqto_log_state_dir="\$HOME/.local/share/oqto/oqto-log"
-    local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
-    local oqto_log_current_fp oqto_log_previous_fp
-    oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
-    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f \"$oqto_log_state_file\" && cat \"$oqto_log_state_file\" || true" 2>/dev/null || true)"
-
-    local identity_start identity_end
-    identity_start="$(epoch_ms)"
-    if ! run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "sync-identities"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.identity_sync_failed"
-        warn "oqto-log identity sync failed on $name"
-        return 1
-    fi
-    identity_end="$(epoch_ms)"
-    log "[$name] oqto-log identity sync took $((identity_end - identity_start))ms"
-
-    local oqto_log_converged=true
-    local oqto_log_skip_bootstrap=false
-    if [[ "$OQTO_LOG_FAST_PATH" == "true" && -n "$oqto_log_current_fp" && "$oqto_log_current_fp" == "$oqto_log_previous_fp" ]]; then
-        oqto_log_skip_bootstrap=true
-        log "[$name] oqto-log fast-path hit (fingerprint unchanged); skipped message bootstrap"
-    fi
-
-    if [[ "$OQTO_LOG_FULL_BOOTSTRAP" == "true" && "$oqto_log_skip_bootstrap" != "true" ]]; then
-        oqto_log_converged=false
-        local oqto_log_pass=1
-        while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
-            log "[$name] oqto-log message bootstrap/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
-
-            local bootstrap_output
-            local bootstrap_start bootstrap_end validate_start validate_end
-            bootstrap_start="$(epoch_ms)"
-            if ! bootstrap_output=$(run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "bootstrap" 2>&1); then
-                if echo "$bootstrap_output" | grep -q "replace_failed"; then
-                    warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
-                    local heal_backup_dir
-                    heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
-                    if [[ $? -ne 0 ]]; then
-                        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
-                        warn "Auto-heal failed on $name"
-                        return 1
-                    fi
-                else
-                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
-                    warn "oqto-log bootstrap migration failed on $name"
-                    return 1
-                fi
-            fi
-            bootstrap_end="$(epoch_ms)"
-            log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
-
-            validate_start="$(epoch_ms)"
-            if run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "validate-changed"; then
-                validate_end="$(epoch_ms)"
-                log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
-                oqto_log_converged=true
-                break
-            fi
-
-            validate_end="$(epoch_ms)"
-            log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
-            if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
-                warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate"
-                sleep 1
-            fi
-            oqto_log_pass=$((oqto_log_pass + 1))
-        done
-    else
-        log "[$name] oqto-log message bootstrap disabled or skipped; background sync will refresh messages"
-    fi
-
-    if [[ "$oqto_log_converged" == "true" ]]; then
-        host_exec "$is_local" "$ssh_target" "mkdir -p \"$oqto_log_state_dir\" && printf '%s\n' '$oqto_log_current_fp' > \"$oqto_log_state_file\"" >/dev/null 2>&1 || true
-    else
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
-        warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name"
-        return 1
-    fi
-}
-
-activate_host() {
-    local name="$1" ssh_target="$2" is_local="$3" mode="$4" binaries="$5" services="$6" frontend="$7" web_root="$8"
-    local release_dir="$RELEASES_ROOT/$RELEASE_ID"
-
-    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "start" "deploy.activate.start"
-
-    if ! host_exec_sudo "$is_local" "$ssh_target" "test -f '$release_dir/.prepared'"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "activate.not_prepared"
-        err "Release $RELEASE_ID not prepared on $name"
-        return 1
-    fi
-
-    if [[ "$RESUME" == "true" ]]; then
-        if host_exec_sudo "$is_local" "$ssh_target" "[[ \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\" == \"$release_dir\" ]]"; then
-            log "Activation already applied on $name (resume mode)"
-            if health_check_host "$is_local" "$ssh_target" "$mode"; then
-                emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "activate.resume.skip"
-                return 0
-            fi
-        fi
-    fi
-
-    local previous_release
-    previous_release="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\"")"
-
-    host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/current'"
-    install_current_symlinks "$is_local" "$ssh_target" "$binaries"
-    install_seccomp_bpf "$is_local" "$ssh_target" "$name" "$release_dir"
-
-    if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
-        # Once a host has taken an artifact deploy, web_root is a symlink into the
-        # active release; rsyncing through it would rewrite that release in place.
-        host_exec_sudo "$is_local" "$ssh_target" "if [ -L '$web_root' ]; then echo 'refusing to rsync into symlinked web root $web_root (host is on the artifact deploy path)' >&2; exit 1; fi; mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
-    fi
-
-    # Mandatory oqto-log migration/validation gate.
-    # First quiesce runner writers so snapshot replacement can take exclusive
-    # SQLite write locks.
-    local oqto_quiesce_start oqto_quiesce_end
-    oqto_quiesce_start="$(epoch_ms)"
-    quiesce_oqto_log_writers "$is_local" "$ssh_target" "$mode"
-    oqto_quiesce_end="$(epoch_ms)"
-    log "[$name] oqto-log quiesce took $((oqto_quiesce_end - oqto_quiesce_start))ms"
-
-    # Run this BEFORE service restarts so migration gets an exclusive window
-    # without live writer contention from freshly restarted runners.
-    local oqto_log_state_dir="\$HOME/.local/share/oqto/oqto-log"
-    local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
-    local oqto_log_current_fp oqto_log_previous_fp
-    oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
-    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f \"$oqto_log_state_file\" && cat \"$oqto_log_state_file\" || true" 2>/dev/null || true)"
-
-    local identity_start identity_end
-    identity_start="$(epoch_ms)"
-    if ! run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "sync-identities"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.identity_sync_failed"
-        warn "oqto-log identity sync failed on $name, attempting rollback..."
-        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-        return 1
-    fi
-    identity_end="$(epoch_ms)"
-    log "[$name] oqto-log identity sync took $((identity_end - identity_start))ms"
-
-    local oqto_log_converged=true
-    local oqto_log_skip_bootstrap=false
-    if [[ "$OQTO_LOG_FAST_PATH" == "true" && -n "$oqto_log_current_fp" && "$oqto_log_current_fp" == "$oqto_log_previous_fp" ]]; then
-        oqto_log_skip_bootstrap=true
-        log "[$name] oqto-log fast-path hit (fingerprint unchanged); skipped message bootstrap"
-    fi
-
-    if [[ "$OQTO_LOG_FULL_BOOTSTRAP" == "true" && "$oqto_log_skip_bootstrap" != "true" ]]; then
-        oqto_log_converged=false
-        local oqto_log_pass=1
-        while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
-            log "[$name] oqto-log message bootstrap/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
-
-            local bootstrap_output
-            local bootstrap_start bootstrap_end validate_start validate_end
-            bootstrap_start="$(epoch_ms)"
-            if ! bootstrap_output=$(run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "bootstrap" 2>&1); then
-                if echo "$bootstrap_output" | grep -q "replace_failed"; then
-                    warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
-                    local heal_backup_dir
-                    heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
-                    if [[ $? -ne 0 ]]; then
-                        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
-                        warn "Auto-heal failed on $name, restoring from backup and rolling back..."
-                        restore_oqto_log_from_backup "$is_local" "$ssh_target" "$heal_backup_dir"
-                        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-                        return 1
-                    fi
-                else
-                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
-                    warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
-                    rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-                    return 1
-                fi
-            fi
-            bootstrap_end="$(epoch_ms)"
-            log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
-
-            validate_start="$(epoch_ms)"
-            if run_oqto_log_migration_mode "$is_local" "$ssh_target" "$mode" "validate-changed"; then
-                validate_end="$(epoch_ms)"
-                log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
-                oqto_log_converged=true
-                break
-            fi
-
-            validate_end="$(epoch_ms)"
-            log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
-            if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
-                warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate"
-                sleep 1
-            fi
-            oqto_log_pass=$((oqto_log_pass + 1))
-        done
-    else
-        log "[$name] oqto-log message bootstrap disabled; background sync will refresh messages"
-    fi
-
-    if [[ "$oqto_log_converged" == "true" ]]; then
-        host_exec "$is_local" "$ssh_target" "mkdir -p \"$oqto_log_state_dir\" && printf '%s\n' '$oqto_log_current_fp' > \"$oqto_log_state_file\"" >/dev/null 2>&1 || true
-    else
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
-        warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name, attempting rollback..."
-        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-        return 1
-    fi
-
-    # Migrate legacy mmry SQLite stores to workspace-local JSONL before restart.
-    run_mmry_jsonl_migration "$is_local" "$ssh_target" "$mode"
-
-    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
-
-    if health_check_host "$is_local" "$ssh_target" "$mode"; then
-        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/last-good'"
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "deploy.activate.pass"
-        ok "Activated release $RELEASE_ID on $name"
-        prune_old_releases "$name" "$ssh_target" "$is_local"
-        return 0
-    fi
-
-    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "health.failed"
-    warn "Health check failed on $name, attempting rollback..."
-    rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+    local dir
+    dir="$(ssh "$ssh_target" 'umask 077; mktemp -d /tmp/oqto-extensions.XXXXXXXX')" || return 1
+    [[ "$dir" =~ ^/tmp/oqto-extensions\.[a-zA-Z0-9]{8}$ ]] || return 1
+    scp -- "$sync" "$list" "$DEPENDENCY_POLICY_FILE" "$ssh_target:$dir/" >/dev/null || return 1
+    local q
+    q="$(printf '%q' "$dir")"
+    ssh "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi; rc=\$?; rm -rf -- $q; exit \$rc"
 }
 
 print_status_host() {
-    local name="$1" ssh_target="$2" is_local="$3"
-    local current last_good prepared
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log "[$name] release_id=$RELEASE_ID prepared=? current=? last_good=? (dry-run)"
-        return 0
-    fi
-
-    current="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\"")"
-    last_good="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/last-good' 2>/dev/null || true)\"")"
-    prepared="$(host_exec_sudo "$is_local" "$ssh_target" "test -f '$RELEASES_ROOT/$RELEASE_ID/.prepared' && echo yes || echo no")"
-
-    log "[$name] release_id=$RELEASE_ID prepared=$prepared current=${current:-none} last_good=${last_good:-none}"
-}
-
-build_artifacts() {
-    if [[ -n "$DEPLOY_ARTIFACT" ]]; then
-        log "Using prebuilt artifact path; skipping legacy build_artifacts phase"
-        return 0
-    fi
-
-    if [[ "$SKIP_BUILD" == "true" ]]; then
-        return 0
-    fi
-
-    log "Building artifacts..."
-    if [[ "$SKIP_BACKEND" != "true" ]]; then
-        if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
-            log "Backend build mode: remote-build"
-            check_remote_build_reachability || return 1
-        else
-            log "Backend build mode: local cargo build (profile=deploy-fast)"
-        fi
-        # Verify Cargo.lock is in sync with Cargo.toml
-        local toml_ver lock_ver
-        toml_ver=$(grep -m1 '^version = ' "$ROOT_DIR/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-        lock_ver=$(grep -A1 '^name = "oqto"$' "$ROOT_DIR/backend/Cargo.lock" | grep 'version' | head -1 | sed 's/.*"\(.*\)"/\1/')
-        if [[ "$toml_ver" != "$lock_ver" ]]; then
-            err "Cargo.lock is stale (Cargo.toml=$toml_ver, Cargo.lock=$lock_ver). Run 'just bump patch' or 'cd backend && cargo check' to regenerate."
-            return 1
-        fi
-        if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqtoctl --bin oqtoctl"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-runner --bin oqto-runner"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-files --bin oqto-files"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
-        else
-            # Local deploy builds prioritize iteration speed over max runtime perf.
-            # Keep strict --release for formal release workflows.
-            local cargo_env=""
-            if [[ "$USE_MOLD_LINKER" == "true" ]]; then
-                if ! command -v mold >/dev/null 2>&1; then
-                    err "--use-mold-linker requested but 'mold' is not installed or not in PATH"
-                    return 1
-                fi
-                log "Using mold linker for local Rust builds (explicit opt-in)"
-                cargo_env='RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-fuse-ld=mold"'
-            fi
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto --bin oqto --bin oqto-sandbox"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqtoctl --bin oqtoctl"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-runner --bin oqto-runner"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-files --bin oqto-files"
-            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-usermgr --bin oqto-usermgr"
-        fi
-    fi
-
-    if [[ "$SKIP_FRONTEND" != "true" ]]; then
-        host_exec "true" "" "cd '$ROOT_DIR/frontend' && bun run build"
-    fi
-
-    ok "Build completed"
-}
-
-deploy_via_oqto_setup_install() {
-    local name="$1" ssh_target="$2" is_local="$3"
-    local artifact_basename remote_artifact remote_checksum
-
-    artifact_basename="$(basename "$DEPLOY_ARTIFACT")"
-    remote_artifact="/tmp/${artifact_basename}"
-
-    # Path of the artifact (+ optional checksum) on the host that runs install.
-    local artifact_path checksum_path=""
-    if [[ "$is_local" == "true" ]]; then
-        artifact_path="$DEPLOY_ARTIFACT"
-        [[ -n "$DEPLOY_CHECKSUM" ]] && checksum_path="$DEPLOY_CHECKSUM"
-    else
-        artifact_path="$remote_artifact"
-        if [[ -n "$DEPLOY_CHECKSUM" ]]; then
-            remote_checksum="/tmp/$(basename "$DEPLOY_CHECKSUM")"
-            checksum_path="$remote_checksum"
-        fi
-    fi
-
-    # Install using the oqto-setup shipped INSIDE the artifact, run by absolute
-    # path under sudo. A bare `sudo oqto-setup` is unreliable on a target that
-    # has no oqto-setup yet, or whose sudo secure_path excludes /usr/local/bin
-    # (observed: "sudo: oqto-setup: command not found"). The bundle ships
-    # bin/oqto-setup; extracting + running it also guarantees the deployed
-    # version does the install.
-    local script
-    script="$(cat <<REMOTE_EOF
-set -e
-tmpdir="\$(mktemp -d)"
-trap 'rm -rf "\$tmpdir"' EXIT
-if ! tar -xzf '$artifact_path' -C "\$tmpdir" --wildcards '*/bin/oqto-setup' 2>/dev/null; then
-    tar -xzf '$artifact_path' -C "\$tmpdir"
-fi
-setup="\$(find "\$tmpdir" -type f -name oqto-setup | head -1)"
-[ -n "\$setup" ] || { echo 'oqto-setup not found in artifact' >&2; exit 1; }
-chmod +x "\$setup"
-# --doctor-strict false: the strict post-activation doctor requires the oqto
-# user services to be enabled+active, but deploy.sh starts them in the NEXT
-# phase (restart_services_ordered) and validates with health_check_host. Running
-# the gate here fails premature on a fresh host (and misdetects the profile as
-# single-user on a not-yet-configured multi-user host). deploy owns health.
-"\$setup" install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}
-REMOTE_EOF
-)"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp '$DEPLOY_ARTIFACT' '$ssh_target:$remote_artifact'"
-        echo -e "${YELLOW}  [dry-run]${NC} (sudo) extract oqto-setup from artifact + oqto-setup install --doctor-strict false --artifact '$artifact_path'${checksum_path:+ --checksum '$checksum_path'}"
-        return 0
-    fi
-
-    if [[ "$is_local" != "true" ]]; then
-        scp "$DEPLOY_ARTIFACT" "$ssh_target:$remote_artifact"
-        [[ -n "$DEPLOY_CHECKSUM" ]] && scp "$DEPLOY_CHECKSUM" "$ssh_target:$remote_checksum"
-    fi
-
-    host_exec_sudo "$is_local" "$ssh_target" "$script"
-}
-
-# Sync the agent runtime (pi + byteowlz pi-extensions) to the pinned versions
-# from dependencies.toml, system-wide + for every platform user, via the shared
-# scripts/dist/sync-agent-runtime.sh (same script setup uses).
-sync_agent_runtime_host() {
-    local is_local="$1" ssh_target="$2" name="$3"
-    local script="$ROOT_DIR/scripts/dist/sync-agent-runtime.sh"
-    local pi_runtime_script="$ROOT_DIR/scripts/dist/pi-runtime.sh"
-    local manifest="$ROOT_DIR/dependencies.toml"
-    [[ -f "$script" && -x "$pi_runtime_script" && -f "$manifest" ]] || {
-        warn "  agent-runtime sync: script, Pi runtime installer, or manifest missing"
-        return 1
-    }
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        [[ "$is_local" == "true" ]] || echo -e "${YELLOW}  [dry-run]${NC} scp sync-agent-runtime.sh + pi-runtime.sh + dependencies.toml -> $ssh_target"
-        echo -e "${YELLOW}  [dry-run]${NC} sync-agent-runtime.sh on $name (checksummed standalone Pi + extensions, all users)"
-        return 0
-    fi
-
-    log "[$name] syncing agent runtime (pi + extensions) to pinned versions..."
-    if [[ "$is_local" == "true" ]]; then
-        bash "$script" --manifest "$manifest"
-    else
-        scp "$script" "$ssh_target:/tmp/sync-agent-runtime.sh" >/dev/null
-        scp "$pi_runtime_script" "$ssh_target:/tmp/pi-runtime.sh" >/dev/null
-        scp "$manifest" "$ssh_target:/tmp/oqto-dependencies.toml" >/dev/null
-        ssh "$ssh_target" "chmod 755 /tmp/pi-runtime.sh && PI_RUNTIME_SCRIPT=/tmp/pi-runtime.sh bash /tmp/sync-agent-runtime.sh --manifest /tmp/oqto-dependencies.toml"
-    fi
+    local i="$1"
+    host_exec_sudo "${H_LOCAL[$i]}" "${H_SSH[$i]}" \
+        "for link in current last-good; do printf '%s=%s\n' \"\$link\" \"\$(basename \"\$(readlink -f /var/lib/oqto/releases/\$link 2>/dev/null || echo none)\")\"; done"
 }
 
 deploy_host() {
-    local i="$1"
-    local name="${H_NAME[$i]}"
-    local ssh_target="${H_SSH[$i]}"
-    local mode
-    mode="$(normalize_mode "${H_MODE[$i]}")"
-    local frontend="${H_FRONTEND[$i]}"
-    local web_root="${H_WEB_ROOT[$i]}"
-    local binaries="${H_BINARIES[$i]}"
-    local services="${H_SERVICES[$i]}"
-    local is_local="${H_LOCAL[$i]}"
-
+    local i="$1" name="${H_NAME[$1]}"
     echo ""
     log "=========================================="
-    log "Deploying ${BOLD}$name${NC} release ${BOLD}$RELEASE_ID${NC}"
+    log "${BOLD}$name${NC} ($(profile_for "${H_MODE[$i]}"))"
     log "=========================================="
-
-    if ! preflight_host "$name" "$ssh_target" "$mode" "$is_local" "$binaries"; then
-        return 1
+    prime_sudo "$i" || return 1
+    preflight_host "$i" || return 1
+    if [[ "$STATUS_ONLY" == true ]]; then
+        print_status_host "$i"
+        return
     fi
-
-    if [[ "$STATUS_ONLY" == "true" ]]; then
-        print_status_host "$name" "$ssh_target" "$is_local"
-        return 0
+    if [[ "$BACKFILL_ONLY" != true ]]; then
+        run_transaction "$i" activate || { err "[$name] activation failed; oqto-setup kept the previous release"; return 1; }
+        ok "[$name] activated ${DEPLOY_ARTIFACT##*/}"
+        sync_extensions_host "$i" || { err "[$name] extension sync failed (release stays active)"; return 1; }
     fi
-
-    if [[ -n "$DEPLOY_ARTIFACT" ]]; then
-        log "[$name] deploying via oqto-setup install artifact path"
-        if ! deploy_via_oqto_setup_install "$name" "$ssh_target" "$is_local"; then
-            return 1
-        fi
-        if [[ "$frontend" == "true" ]] && ! verify_web_root "$name" "$ssh_target" "$is_local" "$web_root"; then
-            return 1
-        fi
-        if ! run_oqto_log_deploy_gate "$name" "$ssh_target" "$is_local" "$mode"; then
-            return 1
-        fi
-        run_mmry_jsonl_migration "$is_local" "$ssh_target" "$mode"
-        # Refresh and verify the agent runtime before restarting the runner.
-        # Starting services first can leave the new runner bound to a broken Pi
-        # while the HTTP-only health check still passes.
-        if ! sync_agent_runtime_host "$is_local" "$ssh_target" "$name"; then
-            err "[$name] agent runtime sync or RPC verification failed"
-            return 1
-        fi
-        if [[ "$DRY_RUN" != "true" ]]; then
-            restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
-            if ! health_check_host "$is_local" "$ssh_target" "$mode"; then
-                return 1
-            fi
-        fi
-    else
-        if [[ "$ACTIVATE_ONLY" != "true" ]]; then
-            if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then
-                return 1
-            fi
-        fi
-
-        if [[ "$PREPARE_ONLY" != "true" ]]; then
-            if ! activate_host "$name" "$ssh_target" "$is_local" "$mode" "$binaries" "$services" "$frontend" "$web_root"; then
-                return 1
-            fi
-        fi
+    if [[ "$BACKFILL" == true || "$BACKFILL_ONLY" == true ]]; then
+        run_transaction "$i" backfill || { err "[$name] backfill failed; affected stores were restored from snapshots"; return 1; }
+        ok "[$name] history backfill complete"
     fi
-
-    ok "Deployment finished for $name"
-}
-
-collect_targets() {
-    local include_canary="$1"
-    local include_non_canary="$2"
-    local -n out_ref=$3
-
-    out_ref=()
-    local i
-    for ((i=0; i<HOST_COUNT; i++)); do
-        should_deploy "${H_NAME[$i]}" || continue
-
-        if is_canary_host "$i"; then
-            [[ "$include_canary" == "true" ]] || continue
-        else
-            [[ "$include_non_canary" == "true" ]] || continue
-        fi
-
-        out_ref+=("$i")
-    done
 }
 
 run_targets() {
     local -n target_ref=$1
     local i
     for i in "${target_ref[@]}"; do
-        if ! deploy_host "$i"; then
-            err "Deployment failed for ${H_NAME[$i]}"
-            return 1
-        fi
+        deploy_host "$i" || { err "Deployment stopped at ${H_NAME[$i]}"; return 1; }
     done
 }
 
-prime_sudo_credentials() {
-    local -n target_ref=$1
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        return 0
+# Validated per host right before its transaction, so a long earlier host can
+# never leave a later one running with an expired credential mid-way.
+prime_sudo() {
+    local i="$1"
+    [[ "$DRY_RUN" == true ]] && return 0
+    if [[ "${H_LOCAL[$i]}" == true ]]; then
+        sudo -v || { err "sudo authentication failed on ${H_NAME[$i]}"; return 1; }
+    elif ! ssh "${H_SSH[$i]}" "sudo -n true" >/dev/null 2>&1; then
+        ssh -tt "${H_SSH[$i]}" "sudo -v" </dev/tty || { err "sudo authentication failed on ${H_NAME[$i]}"; return 1; }
     fi
-
-    local i
-    for i in "${target_ref[@]}"; do
-        local name="${H_NAME[$i]}"
-        local ssh_target="${H_SSH[$i]}"
-        local is_local="${H_LOCAL[$i]}"
-
-        log "Requesting sudo authentication up front on $name..."
-
-        if [[ "$is_local" == "true" ]]; then
-            if ! bash -lc "sudo -v"; then
-                err "Sudo authentication failed on $name"
-                return 1
-            fi
-            start_sudo_keepalive "true" ""
-            continue
-        fi
-
-        # Remote hosts can differ:
-        # - some allow non-interactive sudo (cached/NOPASSWD)
-        # - some require a TTY for password entry
-        if ssh "$ssh_target" "sudo -n true" >/dev/null 2>&1; then
-            start_sudo_keepalive "false" "$ssh_target"
-            continue
-        fi
-
-        if ! ssh -tt "$ssh_target" "sudo -v" < /dev/tty; then
-            err "Sudo authentication failed on $name"
-            return 1
-        fi
-        start_sudo_keepalive "false" "$ssh_target"
-    done
 }
 
-if [[ "$CANARY_THEN_FLEET" == "true" ]]; then
-    declare -a sudo_targets
-    collect_targets "true" "true" sudo_targets
-    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
-        err "No hosts matched filters"
-        exit 1
-    fi
-    prime_sudo_credentials sudo_targets
-elif [[ "$CANARY_ONLY" == "true" ]]; then
-    declare -a sudo_targets
-    collect_targets "true" "false" sudo_targets
-    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
-        err "No canary hosts selected"
-        exit 1
-    fi
-    prime_sudo_credentials sudo_targets
+# --- main ----------------------------------------------------------------------
+
+parse_hosts
+load_dependency_requirements
+python3 "$ROOT_DIR/scripts/dist/verify-immutable-migrations.py"
+
+declare -a selected=()
+if [[ "$CANARY_ONLY" == true ]]; then
+    collect_targets true false selected
 else
-    declare -a sudo_targets
-    collect_targets "true" "true" sudo_targets
-    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
-        err "No hosts matched filters"
-        exit 1
-    fi
-    prime_sudo_credentials sudo_targets
+    collect_targets true true selected
+fi
+[[ "${#selected[@]}" -gt 0 ]] || fail "No hosts matched filters"
+
+if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" ]]; then
+    build_artifact
 fi
 
-prepare_default_artifact_if_needed
-build_artifacts
-
-if [[ "$CANARY_THEN_FLEET" == "true" ]]; then
-    declare -a canary_targets fleet_targets
-    collect_targets "true" "false" canary_targets
-    if [[ "${#canary_targets[@]}" -eq 0 ]]; then
-        err "No canary hosts selected"
-        exit 1
-    fi
-
-    log "Starting canary deployment..."
-    run_targets canary_targets
+if [[ "$CANARY_THEN_FLEET" == true ]]; then
+    declare -a canary=() fleet=()
+    collect_targets true false canary
+    collect_targets false true fleet
+    [[ "${#canary[@]}" -gt 0 ]] || fail "No canary hosts selected"
+    run_targets canary
     ok "Canary deployment passed"
-
-    collect_targets "false" "true" fleet_targets
-    if [[ "${#fleet_targets[@]}" -gt 0 ]]; then
-        log "Starting fleet rollout..."
-        run_targets fleet_targets
-    fi
-elif [[ "$CANARY_ONLY" == "true" ]]; then
-    declare -a canary_targets
-    collect_targets "true" "false" canary_targets
-    if [[ "${#canary_targets[@]}" -eq 0 ]]; then
-        err "No canary hosts selected"
-        exit 1
-    fi
-    run_targets canary_targets
+    [[ "${#fleet[@]}" -eq 0 ]] || run_targets fleet
 else
-    declare -a all_targets
-    collect_targets "true" "true" all_targets
-    if [[ "${#all_targets[@]}" -eq 0 ]]; then
-        err "No hosts matched filters"
-        exit 1
-    fi
-    run_targets all_targets
+    run_targets selected
 fi
 
-ok "=========================================="
-ok "Deployment complete (release: $RELEASE_ID)"
-ok "=========================================="
+ok "Done"

@@ -34,6 +34,31 @@ use super::models::{
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::{generate_context_json, generate_users_md};
 
+/// Name of the user the backend runs as (volume owner for keep-id mapping).
+fn current_username() -> Result<String> {
+    let output = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .context("running id -un")?;
+    if !output.status.success() {
+        bail!("id -un failed");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// How a new workspace's principal and storage are provisioned. The
+/// placement decision happens before principal provisioning so container
+/// placements never create host Linux users.
+#[derive(Debug, Clone)]
+pub enum WorkspaceProvisioning {
+    /// Multi-user host placement: dedicated Linux user via usermgr.
+    HostUser,
+    /// Single-user host placement: plain directories, no user management.
+    HostDirectory,
+    /// Container placement: durable state lives in the per-workspace volume.
+    ContainerVolume { state_root: std::path::PathBuf },
+}
+
 /// Service for managing shared workspaces.
 #[derive(Clone)]
 pub struct SharedWorkspaceService {
@@ -46,6 +71,9 @@ pub struct SharedWorkspaceService {
     runner_socket_pattern: Option<String>,
     /// Path to oqto-templates repo root (for AGENTS.md, etc.).
     templates_repo_path: Option<std::path::PathBuf>,
+    /// Placement registry: container-placed workspaces resolve their runner
+    /// here instead of via the per-user socket pattern.
+    placement_store: Option<Arc<dyn oqto_placement::PlacementStore>>,
 }
 
 impl std::fmt::Debug for SharedWorkspaceService {
@@ -67,7 +95,35 @@ impl SharedWorkspaceService {
             linux_users: None,
             runner_socket_pattern: None,
             templates_repo_path: None,
+            placement_store: None,
         }
+    }
+
+    /// Attach the placement registry for container-placed workspace routing.
+    pub fn with_placement_store(mut self, store: Arc<dyn oqto_placement::PlacementStore>) -> Self {
+        self.placement_store = Some(store);
+        self
+    }
+
+    /// Resolve the runner for a workspace: placement registry first (container
+    /// placements), then the host per-user socket pattern.
+    async fn runner_for_workspace(
+        &self,
+        workspace_id: &str,
+        linux_user: &str,
+    ) -> Result<oqto_runner::client::RunnerClient> {
+        if let Some(store) = &self.placement_store
+            && let Some(endpoint) = store.resolve_workspace(workspace_id).await?
+        {
+            return oqto_runner::client::RunnerClient::from_endpoint(&endpoint)
+                .with_context(|| format!("building placement runner for {workspace_id}"));
+        }
+        let pattern = self
+            .runner_socket_pattern
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+        oqto_runner::client::RunnerClient::for_user_with_pattern(linux_user, pattern)
+            .with_context(|| format!("creating runner client for {linux_user}"))
     }
 
     /// Create a new service with a WebSocket hub for real-time updates.
@@ -106,7 +162,7 @@ impl SharedWorkspaceService {
         &self,
         request: &CreateSharedWorkspaceRequest,
         creator_id: &str,
-        multi_user: bool,
+        provisioning: WorkspaceProvisioning,
     ) -> Result<SharedWorkspace> {
         let name = request.name.trim();
         if name.is_empty() {
@@ -124,9 +180,17 @@ impl SharedWorkspaceService {
         }
 
         let linux_user = format!("oqto_shared_{}", slug);
-        let home = format!("/home/{}", linux_user);
-        let path = format!("{}/oqto", home);
         let id = format!("sw_{}", nanoid::nanoid!(12));
+        // Container placement keeps all durable state in the workspace volume;
+        // host placements keep the historical /home/<user> layout.
+        let home = match &provisioning {
+            WorkspaceProvisioning::ContainerVolume { state_root } => {
+                state_root.join(&id).to_string_lossy().into_owned()
+            }
+            _ => format!("/home/{}", linux_user),
+        };
+        let path = format!("{}/oqto", home);
+        let multi_user = matches!(provisioning, WorkspaceProvisioning::HostUser);
 
         // Resolve icon and color (use provided or auto-assign from slug)
         let icon = request
@@ -140,11 +204,11 @@ impl SharedWorkspaceService {
             .filter(|c| c.starts_with('#') && c.len() == 7)
             .unwrap_or_else(|| SharedWorkspaceRepository::auto_color(&slug));
 
-        // Create Linux user via usermgr in multi-user mode
+        // Host multi-user placement provisions a Linux user; container and
+        // single-user placements only need the directory.
         if multi_user {
             self.create_linux_user(&linux_user, &home)?;
         } else {
-            // Single-user mode: just create the directory
             std::fs::create_dir_all(&home)
                 .with_context(|| format!("creating shared workspace dir: {}", home))?;
         }
@@ -273,8 +337,13 @@ impl SharedWorkspaceService {
     }
 
     /// Delete a shared workspace. Requires owner role.
-    pub async fn delete(&self, workspace_id: &str, user_id: &str) -> Result<()> {
-        let (_, role) = self
+    pub async fn delete(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        remove_linux_user: bool,
+    ) -> Result<()> {
+        let (ws, role) = self
             .get(workspace_id, user_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found or access denied"))?;
@@ -290,8 +359,28 @@ impl SharedWorkspaceService {
         // Delete from database (cascades to members)
         self.repo.delete(workspace_id).await?;
 
+        if remove_linux_user {
+            self.remove_linux_user(&ws.linux_user);
+        }
+
         info!(workspace_id = %workspace_id, "deleted shared workspace");
         Ok(())
+    }
+
+    /// Remove the workspace's dedicated Linux user (best-effort; the DB
+    /// record is already gone, so failures are logged, not returned).
+    fn remove_linux_user(&self, linux_user: &str) {
+        match crate::local::linux_users::usermgr_request(
+            "delete-user",
+            serde_json::json!({ "username": linux_user }),
+        ) {
+            Ok(_) => info!(linux_user, "removed shared workspace Linux user"),
+            Err(e) => warn!(
+                linux_user,
+                error = %e,
+                "failed to remove shared workspace Linux user; manual cleanup needed"
+            ),
+        }
     }
 
     // ========================================================================
@@ -551,7 +640,7 @@ impl SharedWorkspaceService {
         let member = self.repo.get_member(&ws.id, user_id).await?;
         match member {
             Some(m) => Ok(Some((ws, m.role))),
-            None => Ok(None), // Not a member
+            None => bail!("shared workspace access denied"),
         }
     }
 
@@ -693,13 +782,7 @@ impl SharedWorkspaceService {
             bail!("can only delete top-level workdirs");
         }
 
-        let pattern = self
-            .runner_socket_pattern
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
-        let runner =
-            oqto_runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
-                .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
+        let runner = self.runner_for_workspace(&ws.id, &ws.linux_user).await?;
 
         let stat = runner
             .stat(target)
@@ -855,21 +938,9 @@ impl SharedWorkspaceService {
     /// All file writes go through the shared workspace's runner so they
     /// execute as the correct Linux user with proper ownership.
     pub async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
-        let pattern = self
-            .runner_socket_pattern
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
-
-        let runner = oqto_runner::client::RunnerClient::for_user_with_pattern(
-            &workspace.linux_user,
-            pattern,
-        )
-        .with_context(|| {
-            format!(
-                "creating runner client for shared workspace user {}",
-                workspace.linux_user
-            )
-        })?;
+        let runner = self
+            .runner_for_workspace(&workspace.id, &workspace.linux_user)
+            .await?;
 
         let members = self.repo.list_members(&workspace.id).await?;
         let users_md = generate_users_md(&workspace.name, &members);
@@ -973,8 +1044,9 @@ impl SharedWorkspaceService {
         &self,
         request: &ConvertToSharedRequest,
         user_id: &str,
-        multi_user: bool,
+        provisioning: WorkspaceProvisioning,
     ) -> Result<SharedWorkspace> {
+        let multi_user = matches!(provisioning, WorkspaceProvisioning::HostUser);
         // First, create the shared workspace
         let create_req = CreateSharedWorkspaceRequest {
             name: request.name.clone(),
@@ -983,7 +1055,7 @@ impl SharedWorkspaceService {
             color: request.color.clone(),
             member_ids: request.member_ids.clone(),
         };
-        let workspace = self.create(&create_req, user_id, multi_user).await?;
+        let workspace = self.create(&create_req, user_id, provisioning).await?;
 
         // Copy the source project into the shared workspace
         let source = &request.source_path;
@@ -1081,8 +1153,113 @@ impl SharedWorkspaceService {
         self.repo.admin_list_all().await
     }
 
+    /// Admin lookup without membership checks.
+    pub async fn admin_get(&self, workspace_id: &str) -> Result<Option<SharedWorkspace>> {
+        self.repo.get_by_id(workspace_id).await
+    }
+
     /// Admin force-delete a shared workspace.
-    pub async fn admin_force_delete(&self, workspace_id: &str) -> Result<()> {
+    /// Copy a host-placed workspace's durable state into a container state
+    /// volume and repoint the workspace path. Fail-closed: the DB path is
+    /// only updated after the copy succeeds; the legacy home is never
+    /// modified or removed.
+    pub async fn migrate_to_container_volume(
+        &self,
+        workspace_id: &str,
+        state_root: &std::path::Path,
+    ) -> Result<SharedWorkspace> {
+        let ws = self
+            .repo
+            .get_by_id(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+
+        let legacy_home = std::path::Path::new(&ws.path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| anyhow::anyhow!("workspace path has no parent: {}", ws.path))?;
+        if !legacy_home.exists() {
+            bail!(
+                "legacy workspace home {} does not exist",
+                legacy_home.display()
+            );
+        }
+        let dest_home = state_root.join(&ws.id);
+        if dest_home.exists() {
+            bail!(
+                "migration destination {} already exists; refusing to overwrite",
+                dest_home.display()
+            );
+        }
+
+        if self.linux_users.is_some() {
+            // Cross-user copy needs root (usermgr): the backend cannot read
+            // the workspace user's home. Volume ownership goes to the
+            // backend service user for keep-id container mapping.
+            let owner = current_username()?;
+            crate::local::linux_users::usermgr_request(
+                "copy-dir",
+                serde_json::json!({
+                    "source": legacy_home.to_string_lossy(),
+                    "dest": dest_home.to_string_lossy(),
+                    "owner": owner,
+                }),
+            )
+            .with_context(|| {
+                format!(
+                    "copying {} into container volume {}",
+                    legacy_home.display(),
+                    dest_home.display()
+                )
+            })?;
+        } else {
+            std::fs::create_dir_all(state_root)
+                .with_context(|| format!("creating state root {}", state_root.display()))?;
+            let status = std::process::Command::new("cp")
+                .arg("-a")
+                .arg(&legacy_home)
+                .arg(&dest_home)
+                .status()
+                .context("running cp -a for placement migration")?;
+            if !status.success() {
+                // Remove any partial copy so a retry starts clean.
+                let _ = std::fs::remove_dir_all(&dest_home);
+                bail!("cp -a failed with {status}");
+            }
+        }
+
+        let new_path = dest_home.join("oqto").to_string_lossy().into_owned();
+        let updated = self.repo.update_path(&ws.id, &new_path).await?;
+        info!(
+            workspace_id = %ws.id,
+            from = %legacy_home.display(),
+            to = %dest_home.display(),
+            "migrated workspace state into container volume"
+        );
+        Ok(updated)
+    }
+
+    /// Revert a migration whose container provisioning failed: restore the
+    /// legacy path and remove the copied volume (the legacy home is intact).
+    pub async fn revert_container_migration(
+        &self,
+        workspace_id: &str,
+        legacy_path: &str,
+        dest_home: &std::path::Path,
+    ) -> Result<()> {
+        self.repo.update_path(workspace_id, legacy_path).await?;
+        if dest_home.exists() {
+            std::fs::remove_dir_all(dest_home)
+                .with_context(|| format!("removing copied volume {}", dest_home.display()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn admin_force_delete(
+        &self,
+        workspace_id: &str,
+        remove_linux_user: bool,
+    ) -> Result<()> {
         let ws = self.repo.get_by_id(workspace_id).await?;
         let ws = ws.ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
 
@@ -1091,6 +1268,11 @@ impl SharedWorkspaceService {
             .await;
 
         self.repo.delete(workspace_id).await?;
+
+        if remove_linux_user {
+            self.remove_linux_user(&ws.linux_user);
+        }
+
         info!(workspace_id = %workspace_id, name = %ws.name, "admin force-deleted shared workspace");
         Ok(())
     }
@@ -1171,7 +1353,10 @@ impl SharedWorkspaceService {
         let uid = linux_users
             .next_available_uid()
             .with_context(|| "allocating UID for shared workspace user")?;
-        let gecos = format!("Oqto platform user shared workspace {}", username);
+        // GECOS is the ownership field parsed by oqto-host on subsequent ensure
+        // calls; it must be exactly "Oqto platform user <user_id>" — a display
+        // label here permanently breaks the ownership check.
+        let gecos = crate::local::linux_users::platform_gecos(username);
 
         let create_user_args = serde_json::json!({
             "username": username,

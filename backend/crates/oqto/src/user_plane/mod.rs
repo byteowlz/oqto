@@ -49,6 +49,14 @@ pub trait UserPlane: Send + Sync {
     /// Create a directory.
     async fn create_directory(&self, path: &Path, create_parents: bool) -> Result<()>;
 
+    /// Execute one App operation through the runner-side Gate.
+    async fn run_app_operation(
+        &self,
+        _request: AppOperationExecution,
+    ) -> Result<AppOperationExecutionResult> {
+        anyhow::bail!("App operations require a runner-backed user plane")
+    }
+
     // ========================================================================
     // Session Operations
     // ========================================================================

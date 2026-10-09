@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -39,10 +37,16 @@ pub struct Runner {
     binaries: SessionBinaries,
     /// User configuration (paths, etc.)
     user_config: RunnerUserConfig,
+    provider_login: Arc<crate::provider_login::ProviderLoginManager>,
     /// Pi session manager (manages Pi agent processes).
     pi_manager: Arc<PiSessionManager>,
     /// Background Pi JSONL -> oqto-log ingest task.
     jsonl_ingest: super::jsonl_ingest::IngestHandle,
+    /// Directory shared with the host for exposed-port sockets (container
+    /// placements). None on host placements: loopback is already shared.
+    expose_dir: Option<PathBuf>,
+    /// Live reverse bridges keyed by exposed port.
+    exposed_ports: Arc<tokio::sync::Mutex<HashMap<u16, crate::reverse_bridge::ReverseBridge>>>,
 }
 
 /// Basic-auth username for the session terminal.
@@ -565,6 +569,7 @@ impl Runner {
         binaries: SessionBinaries,
         user_config: RunnerUserConfig,
         pi_manager: Arc<PiSessionManager>,
+        expose_dir: Option<PathBuf>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
@@ -573,9 +578,55 @@ impl Runner {
             sandbox_config,
             binaries,
             user_config,
+            provider_login: Arc::new(crate::provider_login::ProviderLoginManager::default()),
             pi_manager,
             jsonl_ingest: super::jsonl_ingest::spawn(),
+            expose_dir,
+            exposed_ports: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Expose a loopback port. Idempotent per port. Host placements (no
+    /// expose dir) return the loopback address itself.
+    pub(crate) async fn expose_port(&self, port: u16) -> RunnerResponse {
+        if port == 0 {
+            return error_response(ErrorCode::InvalidRequest, "port must be non-zero");
+        }
+        let Some(dir) = &self.expose_dir else {
+            return RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                endpoint: crate::protocol::ExposedEndpoint::Tcp {
+                    host: "127.0.0.1".to_string(),
+                    port,
+                },
+            });
+        };
+        let mut exposed = self.exposed_ports.lock().await;
+        if let Some(bridge) = exposed.get(&port) {
+            return RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                endpoint: crate::protocol::ExposedEndpoint::Unix {
+                    path: bridge.socket.clone(),
+                },
+            });
+        }
+        match crate::reverse_bridge::spawn(dir, port) {
+            Ok(bridge) => {
+                let path = bridge.socket.clone();
+                exposed.insert(port, bridge);
+                RunnerResponse::PortExposed(crate::protocol::PortExposedResponse {
+                    endpoint: crate::protocol::ExposedEndpoint::Unix { path },
+                })
+            }
+            Err(error) => error_response(
+                ErrorCode::IoError,
+                format!("exposing port {port}: {error:#}"),
+            ),
+        }
+    }
+
+    /// Remove an exposed port. Unknown ports are a no-op.
+    pub(crate) async fn unexpose_port(&self, port: u16) -> RunnerResponse {
+        self.exposed_ports.lock().await.remove(&port);
+        RunnerResponse::PortUnexposed
     }
 
     fn request_kind(req: &RunnerRequest) -> String {
@@ -602,6 +653,7 @@ impl Runner {
             // Scanning and repairing JSONL chat metadata can be expensive for
             // users with large session histories.
             RunnerRequest::RepairWorkspaceChatHistory(_) => std::time::Duration::from_secs(120),
+            RunnerRequest::RunAppOperation(_) => std::time::Duration::from_secs(305),
             _ => std::time::Duration::from_secs(10),
         }
     }
@@ -612,6 +664,9 @@ impl Runner {
     }
 
     /// Get stdout broadcast receiver for a process.
+    // The error is the wire RunnerResponse returned directly to the client;
+    // boxing it here would only add an allocation before serialization.
+    #[allow(clippy::result_large_err)]
     async fn get_stdout_receiver(
         &self,
         process_id: &str,
@@ -684,12 +739,10 @@ impl Runner {
         }
 
         // Build command - either direct or via oqto-sandbox
-        let mut seccomp_file_for_spawn: Option<std::fs::File> = None;
-        let mut set_no_new_privs = false;
-        let mut landlock_cfg_for_spawn: Option<SandboxConfig> = None;
-        let mut landlock_workspace_for_spawn: Option<PathBuf> = None;
+        let mut sandbox_config_for_spawn: Option<SandboxConfig> = None;
 
-        let (program, args, effective_binary) = if use_sandbox {
+        let effective_binary = req.binary.clone();
+        let mut cmd = if use_sandbox {
             let Some(sandbox_config) = self.sandbox_config.as_ref() else {
                 return error_response(
                     ErrorCode::SandboxError,
@@ -697,104 +750,53 @@ impl Runner {
                 );
             };
 
-            // Build bwrap args using the trusted config
-            // Note: We use the current user (runner's user) for path expansion
-            match sandbox_config.build_bwrap_args_for_user(&req.cwd, None) {
-                Some(bwrap_args) => {
-                    // Command: bwrap [bwrap_args] -- binary [args]
-                    let mut full_args = bwrap_args;
-                    full_args.push(req.binary.clone());
-                    full_args.extend(req.args.iter().cloned());
-
-                    match sandbox_config.open_seccomp_bpf_file(None) {
-                        Ok(file) => {
-                            seccomp_file_for_spawn = file;
-                        }
-                        Err(e) => {
-                            return error_response(
-                                ErrorCode::SandboxError,
-                                format!("Failed to prepare seccomp policy: {}", e),
-                            );
-                        }
-                    }
-                    set_no_new_privs = sandbox_config.no_new_privs;
-                    landlock_cfg_for_spawn = Some(sandbox_config.clone());
-                    landlock_workspace_for_spawn = Some(req.cwd.clone());
-
-                    info!(
-                        "Sandboxing process '{}' with {} bwrap args",
-                        req.id,
-                        full_args.len()
-                    );
-                    debug!("bwrap command: bwrap {}", full_args.join(" "));
-
-                    ("bwrap".to_string(), full_args, req.binary.clone())
+            // Generic processes do not own an egress namespace guard. Refuse
+            // proxy mode rather than skip the required namespace entry.
+            let mut effective = sandbox_config.with_workspace_config(&req.cwd);
+            if effective.network_mode() == oqto_sandbox::NetworkMode::Proxy {
+                return error_response(
+                    ErrorCode::SandboxError,
+                    "Proxy egress requires a session-managed launch".to_string(),
+                );
+            }
+            if let Some(upstream) = crate::ssh_agent_proxy::upstream_agent_socket() {
+                effective
+                    .deny_read
+                    .push(upstream.to_string_lossy().into_owned());
+            }
+            match oqto_sandbox::build_sandbox_command(
+                &effective,
+                &req.cwd,
+                Path::new(&req.binary),
+                &req.args,
+                oqto_sandbox::SandboxStdin::Redirected,
+            ) {
+                Ok(command) => {
+                    sandbox_config_for_spawn = Some(effective);
+                    Command::from(command)
                 }
-                None => {
-                    // SECURITY: bwrap not available - refuse to run
-                    error!(
-                        "SECURITY: Sandbox requested for '{}' but bwrap not available. \
-                         Install bubblewrap (bwrap) or disable sandboxing.",
-                        req.id
-                    );
+                Err(error) => {
                     return error_response(
                         ErrorCode::SandboxError,
-                        format!(
-                            "Sandbox requested but bwrap not available. \
-                             Cannot run '{}' without bubblewrap installed.",
-                            req.binary
-                        ),
+                        format!("Failed to build sandbox command: {error:#}"),
                     );
                 }
             }
         } else {
-            (req.binary.clone(), req.args.clone(), req.binary.clone())
+            let mut command = Command::new(&req.binary);
+            command.args(&req.args).current_dir(&req.cwd);
+            command
         };
-
-        // Build the command
-        let mut cmd = Command::new(&program);
-        cmd.args(&args);
-        // Note: For sandboxed processes, cwd is handled by bwrap's workspace bind
-        // For non-sandboxed, we set it directly
-        if !use_sandbox {
-            cmd.current_dir(&req.cwd);
-        }
         cmd.envs(&req.env);
 
-        #[cfg(target_os = "linux")]
+        if let Some(config) = sandbox_config_for_spawn.as_ref()
+            && let Err(error) =
+                oqto_sandbox::configure_bwrap_pre_exec(cmd.as_std_mut(), config, &req.cwd, None)
         {
-            let seccomp_file = seccomp_file_for_spawn;
-            let seccomp_fd = seccomp_file.as_ref().map(AsRawFd::as_raw_fd);
-            let landlock_cfg = landlock_cfg_for_spawn;
-            let landlock_workspace = landlock_workspace_for_spawn;
-            if seccomp_fd.is_some() || set_no_new_privs || landlock_cfg.is_some() {
-                // Keep file alive until spawn by moving into closure.
-                let _keep_alive = seccomp_file;
-                // SAFETY: pre_exec runs in child process after fork and before exec.
-                unsafe {
-                    cmd.pre_exec(move || {
-                        if set_no_new_privs {
-                            let rc = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-                            if rc != 0 {
-                                return Err(std::io::Error::last_os_error());
-                            }
-                        }
-
-                        if let (Some(cfg), Some(workspace)) =
-                            (landlock_cfg.as_ref(), landlock_workspace.as_ref())
-                        {
-                            cfg.apply_landlock(workspace, None)?;
-                        }
-
-                        if let Some(fd) = seccomp_fd
-                            && libc::dup2(fd, 3) == -1
-                        {
-                            return Err(std::io::Error::last_os_error());
-                        }
-                        Ok(())
-                    });
-                }
-            }
+            return error_response(
+                ErrorCode::SandboxError,
+                format!("Failed to configure sandbox process: {error}"),
+            );
         }
 
         if is_rpc {
@@ -1593,6 +1595,13 @@ impl Runner {
             })
             .await;
 
+        // Tear down any reverse bridges exposing this session's services.
+        {
+            let mut exposed = self.exposed_ports.lock().await;
+            exposed.remove(&session_state.fileserver_port);
+            exposed.remove(&session_state.ttyd_port);
+        }
+
         info!("Session {} stopped", req.session_id);
 
         RunnerResponse::SessionStopped(SessionStoppedResponse {
@@ -1767,7 +1776,51 @@ impl Runner {
     ) -> RunnerResponse {
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
 
-        let (messages, source_label, source_mode) = match req.source {
+        let paged = req.before.is_some()
+            && matches!(req.source, WorkspaceChatMessagesSource::Authoritative);
+
+        let (messages, source_label, source_mode, has_more, next_before) = match req.source {
+            WorkspaceChatMessagesSource::Authoritative if paged => {
+                let page = if let Ok(home) = std::env::var("HOME") {
+                    let home_path = std::path::Path::new(&home);
+                    match oqto_history::oqto_log::projector::project_session_messages_page_auto(
+                        home_path,
+                        &req.session_id,
+                        req.limit.unwrap_or(200),
+                        req.before.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(page) => page,
+                        Err(err) => {
+                            debug!(
+                                "get_workspace_chat_session_messages session={} source=oqto-log paged error={}",
+                                req.session_id, err
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                match page {
+                    Some(page) => (
+                        page.messages,
+                        "oqto-log",
+                        WorkspaceChatMessagesSource::Authoritative,
+                        page.has_more,
+                        page.next_before,
+                    ),
+                    None => (
+                        Vec::new(),
+                        "empty",
+                        WorkspaceChatMessagesSource::Authoritative,
+                        false,
+                        None,
+                    ),
+                }
+            }
             WorkspaceChatMessagesSource::Authoritative => {
                 let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
                     let home_path = std::path::Path::new(&home);
@@ -1804,7 +1857,13 @@ impl Runner {
 
                 let (messages, source) =
                     select_authoritative_workspace_chat_messages(authoritative_messages);
-                (messages, source, WorkspaceChatMessagesSource::Authoritative)
+                (
+                    messages,
+                    source,
+                    WorkspaceChatMessagesSource::Authoritative,
+                    false,
+                    None,
+                )
             }
             WorkspaceChatMessagesSource::Live => {
                 let live_messages = if session_is_active {
@@ -1813,7 +1872,13 @@ impl Runner {
                     None
                 };
                 let (messages, source) = select_live_workspace_chat_messages(live_messages);
-                (messages, source, WorkspaceChatMessagesSource::Live)
+                (
+                    messages,
+                    source,
+                    WorkspaceChatMessagesSource::Live,
+                    false,
+                    None,
+                )
             }
         };
 
@@ -1830,6 +1895,8 @@ impl Runner {
             session_id: req.session_id,
             source: source_mode,
             messages,
+            has_more,
+            next_before,
         })
     }
 
@@ -2356,13 +2423,43 @@ impl Runner {
             req.session_id, req.config.cwd
         );
 
+        // Only this host can see its own Pi session files, and a public session
+        // id is not a Pi filename, so resolution belongs here rather than on a
+        // control plane that cannot read either.
+        let continue_session = match req.config.continue_session {
+            Some(explicit) => Some(explicit),
+            None => {
+                let sources = crate::session_resume::SessionFileSources {
+                    pi_sessions_dir: self.user_config.pi_sessions_dir.clone(),
+                    history_home: self
+                        .user_config
+                        .history_read
+                        .as_ref()
+                        .map(|history| history.home.clone()),
+                };
+                let resolved = crate::session_resume::resolve_continue_session(
+                    &sources,
+                    &req.session_id,
+                    &req.config.cwd,
+                )
+                .await;
+                if let Some(found) = &resolved {
+                    info!(
+                        "pi_create_session: continuing {} from {:?}",
+                        req.session_id, found
+                    );
+                }
+                resolved
+            }
+        };
+
         // Convert protocol config to pi_manager config
         let pi_config = crate::pi_manager::PiSessionConfig {
             cwd: req.config.cwd,
             provider: req.config.provider,
             model: req.config.model,
             session_file: req.config.session_file,
-            continue_session: req.config.continue_session,
+            continue_session,
             env: req.config.env,
         };
 
@@ -2753,6 +2850,7 @@ impl Runner {
                 input: vec!["text".to_string()],
                 context_window: 0,
                 max_tokens: 0,
+                thinking_level_map: None,
                 cost: None,
             });
         }
@@ -2777,6 +2875,7 @@ impl Runner {
             input: vec!["text".to_string()],
             context_window: 0,
             max_tokens: 0,
+            thinking_level_map: None,
             cost: None,
         })
     }
@@ -2969,19 +3068,32 @@ impl Runner {
             .set_thinking_level(&req.session_id, &req.level)
             .await
         {
-            Ok(response) => {
-                let level = response
-                    .data
-                    .as_ref()
-                    .and_then(|d| d.get("level"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&req.level)
-                    .to_string();
-                RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
-                    session_id: req.session_id,
-                    level,
-                })
+            Ok(response) if response.success => {
+                // Pi acknowledges this command without response data. The
+                // requested level is not authoritative: Pi may clamp it to
+                // model capabilities (e.g. minimal -> low). Read native state
+                // before telling clients which level actually took effect.
+                match self.pi_manager.get_state(&req.session_id).await {
+                    Ok(state) => {
+                        RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
+                            session_id: req.session_id,
+                            level: state.thinking_level,
+                        })
+                    }
+                    Err(error) => error_response(
+                        ErrorCode::PiSessionNotFound,
+                        format!(
+                            "Thinking level acknowledged but effective state unavailable: {error}"
+                        ),
+                    ),
+                }
             }
+            Ok(response) => error_response(
+                ErrorCode::Internal,
+                response
+                    .error
+                    .unwrap_or_else(|| "Pi rejected thinking level change".to_string()),
+            ),
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to set thinking level: {}", e),
@@ -3939,8 +4051,11 @@ impl Runner {
                                 sandbox_config: self.sandbox_config.clone(),
                                 binaries: self.binaries.clone(),
                                 user_config: self.user_config.clone(),
+                                provider_login: Arc::clone(&self.provider_login),
                                 pi_manager: Arc::clone(&self.pi_manager),
                                 jsonl_ingest: self.jsonl_ingest.clone(),
+                                expose_dir: self.expose_dir.clone(),
+                                exposed_ports: Arc::clone(&self.exposed_ports),
                             };
                             tokio::spawn(async move {
                                 runner.handle_connection(stream).await;
@@ -3966,6 +4081,34 @@ impl Runner {
     {
         info!("Runner listening on {}", listener.endpoint_description());
         sd_notify_ready();
+
+        // Container-entrypoint correctness: SIGTERM/SIGINT trigger the same
+        // graceful shutdown as an explicit request, so `podman stop` cleans
+        // up sessions instead of timing out into SIGKILL.
+        {
+            let shutdown = self.shutdown_tx.clone();
+            match (
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()),
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()),
+            ) {
+                (Ok(mut term), Ok(mut int)) => {
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = term.recv() => info!("Received SIGTERM, shutting down"),
+                            _ = int.recv() => info!("Received SIGINT, shutting down"),
+                        }
+                        let _ = shutdown.send(());
+                    });
+                }
+                (term, int) => {
+                    warn!(
+                        "Failed to install signal handlers (term: {:?}, int: {:?})",
+                        term.err(),
+                        int.err()
+                    );
+                }
+            }
+        }
 
         // One-time index bootstrap: session lookups are O(1) via the oqto-log
         // session index; build it in the background if this home predates it.
@@ -3999,42 +4142,71 @@ impl Runner {
         }
     }
 
+    /// Run the daemon on a Unix listener inherited via LISTEN_FDS
+    /// (systemd/quadlet socket activation). The activation manager owns the
+    /// socket file: no permission changes, no unlink on exit.
+    pub async fn run_inherited(&self, listener: std::os::unix::net::UnixListener) -> Result<()> {
+        listener
+            .set_nonblocking(true)
+            .context("setting inherited listener non-blocking")?;
+        let listener = UnixListener::from_std(listener)
+            .context("adopting inherited listener into the runtime")?;
+        let listener = UnixRunnerListener::new(listener, "<inherited-fd-3>");
+        self.run_transport(&listener).await
+    }
+
     /// Run the daemon, listening on the given socket path.
     pub async fn run(&self, socket_path: &PathBuf) -> Result<()> {
+        crate::runtime_guard::ensure_launch_identity()?;
+        crate::runtime_guard::ensure_socket_identity(socket_path)?;
         // Ensure the socket directory exists.
         // Normally created by oqto-usermgr, but we create it ourselves if missing
         // (e.g. after systemd restart). The parent dir has SGID group oqto, mode 2770,
         // so our new dir inherits group oqto -- which lets the oqto backend traverse it.
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                info!("Socket directory {:?} does not exist, creating", parent);
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating socket directory {:?}", parent))?;
-            }
-            // Ensure correct permissions (SGID + rwxrwx---)
+        // Socket permission policy. Default: SGID group dir + group socket so
+        // the backend (same group) can connect. World mode (auto-userns
+        // container placement): uid/group checks cannot cross the user
+        // namespace, so the socket is world-connectable; authorization is the
+        // backend-private host directory that contains it.
+        let world_mode = std::env::var("OQTO_SOCKET_MODE").as_deref() == Ok("world");
+        let (dir_mode, socket_mode) = if world_mode {
+            (0o711, 0o666)
+        } else {
+            (0o2770, 0o770)
+        };
+        // Existing runtime directories are user/admin-owned. Never change
+        // their modes merely because a daemon (or duplicate) starts here.
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            info!("Socket directory {:?} does not exist, creating", parent);
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating socket directory {:?}", parent))?;
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o2770))
-                .with_context(|| format!("chmod socket dir {:?}", parent))?;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(dir_mode))
+                .with_context(|| format!("chmod new socket dir {:?}", parent))?;
         }
 
-        // Remove existing socket file
-        let _ = tokio::fs::remove_file(socket_path).await;
+        // Hold one persistent lock inode for this endpoint's entire lifetime.
+        let mut socket_lease = crate::socket_lease::SocketLease::acquire(socket_path)?;
+        socket_lease.prepare().await?;
 
         // Bind
         let listener = UnixListener::bind(socket_path)
             .with_context(|| format!("binding to {:?}", socket_path))?;
 
-        // Allow group write so the oqto backend (same group) can connect.
+        socket_lease.record_bound()?;
+
         // Unix sockets require write permission for connect().
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o770))
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(socket_mode))
             .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
 
         let listener = UnixRunnerListener::new(listener, socket_path);
         self.run_transport(&listener).await?;
 
-        // Remove socket file
-        let _ = tokio::fs::remove_file(socket_path).await;
+        // Drop unlinks only this incarnation's inode, never a replacement.
+        drop(socket_lease);
 
         info!("Runner stopped");
         Ok(())

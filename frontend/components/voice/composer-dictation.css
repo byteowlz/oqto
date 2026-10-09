@@ -1,0 +1,238 @@
+.composer-dictation-anchor {
+	position: relative;
+}
+.composer-dictation {
+	position: absolute;
+	bottom: calc(100% + 8px);
+	inset-inline: 0;
+	z-index: 30;
+	box-sizing: border-box;
+	height: 88px;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 6px);
+	background: var(--background);
+	color: var(--foreground);
+	box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+	font-family: inherit;
+	font-size: 12px;
+}
+.composer-dictation__strip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 38px;
+	padding-inline: 10px;
+	border-bottom: 1px solid var(--border);
+}
+.composer-dictation__label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.composer-dictation__badges {
+	flex-shrink: 0;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	white-space: nowrap;
+}
+.composer-dictation__action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 3px;
+	flex-shrink: 0;
+	min-height: 32px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: var(--radius-sm, 4px);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+.composer-dictation__action:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+.composer-dictation__action:hover:not(:disabled) {
+	background: var(--muted);
+}
+.composer-dictation__action svg {
+	width: 14px;
+	height: 14px;
+}
+.composer-dictation__action:focus-visible,
+.composer-dictation-mic:focus-visible,
+.composer-dictation-settings__start:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+.composer-dictation__body {
+	padding: 5px 10px;
+	height: 48px;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+.composer-dictation__preview {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	line-height: 18px;
+	color: var(--muted-foreground);
+}
+.composer-dictation__error {
+	display: block;
+	line-height: 18px;
+	max-height: 36px;
+	overflow: auto;
+	color: var(--destructive);
+}
+.composer-dictation__download-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	color: var(--muted-foreground);
+	font-variant-numeric: tabular-nums;
+}
+.composer-dictation__progress {
+	display: block;
+	width: 100%;
+	height: 4px;
+	margin-top: 6px;
+	appearance: none;
+	border: 0;
+	border-radius: 2px;
+	overflow: hidden;
+	background: var(--muted);
+	accent-color: var(--primary);
+}
+.composer-dictation__progress::-webkit-progress-bar {
+	background: var(--muted);
+}
+.composer-dictation__progress::-webkit-progress-value {
+	background: var(--primary);
+}
+.composer-dictation__progress::-moz-progress-bar {
+	background: var(--primary);
+}
+.composer-dictation__progress:indeterminate {
+	background: linear-gradient(
+		90deg,
+		var(--muted) 25%,
+		var(--primary) 50%,
+		var(--muted) 75%
+	);
+	background-size: 200% 100%;
+	animation: speech-preparing 1.8s linear infinite;
+}
+.composer-dictation__meter {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	width: 22px;
+	height: 18px;
+	flex-shrink: 0;
+	color: var(--primary);
+}
+.composer-dictation__meter i {
+	width: 3px;
+	height: 100%;
+	background: currentColor;
+	border-radius: 1px;
+	transform: scaleY(var(--speech-level, 0.1));
+	transition: transform 80ms linear;
+}
+.composer-dictation__meter i:nth-child(2n) {
+	height: 65%;
+}
+.composer-dictation[data-state="preparing"] .composer-dictation__meter,
+.composer-dictation[data-state="error"] .composer-dictation__meter {
+	opacity: 0.35;
+}
+.composer-dictation-mic {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+.composer-dictation-mic svg {
+	width: 16px;
+	height: 16px;
+}
+.composer-dictation-mic--active {
+	color: var(--primary);
+}
+.composer-dictation-settings {
+	width: 300px;
+	max-width: calc(100vw - 24px);
+}
+.composer-dictation-settings__auto {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	margin-top: 12px;
+}
+.composer-dictation-settings__start {
+	display: block;
+	width: 100%;
+	margin-top: 12px;
+	padding: 8px;
+	background: var(--primary);
+	color: var(--primary-foreground);
+	border: 0;
+	border-radius: var(--radius-sm, 4px);
+	cursor: pointer;
+}
+.composer-dictation-settings__start:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+@keyframes speech-preparing {
+	to {
+		background-position: -200% 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.composer-dictation__progress:indeterminate {
+		animation: none;
+	}
+	.composer-dictation__meter i {
+		transition: none;
+	}
+}
+@media (max-width: 600px) {
+	.composer-dictation {
+		height: 96px;
+	}
+	.composer-dictation__strip {
+		gap: 4px;
+		height: 44px;
+		padding-inline: 6px;
+	}
+	.composer-dictation__action {
+		min-height: 44px;
+		min-width: 44px;
+	}
+	.composer-dictation__action > svg:not(:only-child) {
+		display: none;
+	}
+	.composer-dictation__badges {
+		font-size: 10px;
+	}
+	.composer-dictation-mic {
+		width: 36px;
+		min-height: 36px;
+	}
+}

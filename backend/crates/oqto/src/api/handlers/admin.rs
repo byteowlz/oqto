@@ -67,60 +67,6 @@ pub async fn get_admin_stats(
     }))
 }
 
-/// Get event bus statistics (admin only).
-pub async fn get_bus_stats(
-    State(state): State<AppState>,
-    RequireAdmin(_user): RequireAdmin,
-) -> ApiResult<Json<crate::bus::engine::BusStats>> {
-    Ok(Json(state.bus.stats()))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PublishBusEventRequest {
-    pub scope: crate::bus::BusScope,
-    pub scope_id: String,
-    pub topic: String,
-    pub payload: serde_json::Value,
-    #[serde(default)]
-    pub version: Option<u32>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PublishBusEventResponse {
-    pub event_id: String,
-}
-
-/// Publish a bus event as admin (admin only).
-pub async fn publish_bus_event(
-    State(state): State<AppState>,
-    RequireAdmin(user): RequireAdmin,
-    Json(req): Json<PublishBusEventRequest>,
-) -> ApiResult<Json<PublishBusEventResponse>> {
-    use crate::bus::{BusEvent, EventSource};
-
-    let mut event = BusEvent::new(
-        req.scope,
-        req.scope_id,
-        req.topic,
-        req.payload,
-        EventSource::Admin {
-            user_id: user.id().to_string(),
-        },
-    );
-    if let Some(v) = req.version {
-        event.v = v;
-    }
-
-    let event_id = event.event_id.clone();
-    state
-        .bus
-        .publish_internal(event)
-        .await
-        .map_err(ApiError::internal)?;
-
-    Ok(Json(PublishBusEventResponse { event_id }))
-}
-
 #[derive(Debug, Serialize)]
 pub struct AdminMetricsSnapshot {
     pub timestamp: String,
@@ -327,6 +273,25 @@ pub async fn sync_user_configs(
             error: None,
         };
 
+        // Container-placed personal workspaces have no host Linux user; the
+        // state volume is runner-owned. Sync through the runner and skip all
+        // usermgr/home provisioning.
+        if let Some(store) = &state.placement_store
+            && let Ok(Some(endpoint)) = store.resolve_workspace(&user.id).await
+        {
+            match sync_container_user_configs(&state, &user.id, &endpoint).await {
+                Ok(()) => {
+                    result.runner_configured = true;
+                    result.eavs_configured = true;
+                }
+                Err(err) => {
+                    result.error = Some(format!("container config sync failed: {err:#}"));
+                }
+            }
+            results.push(result);
+            continue;
+        }
+
         let ensure_result = if let (Some(linux_username), Some(linux_uid)) =
             (user.linux_username.as_ref(), user.linux_uid)
         {
@@ -394,13 +359,20 @@ pub async fn sync_user_configs(
 
                 let _ = uid;
 
-                // Sync EAVS: provision virtual key if missing, then regenerate models.json.
+                // Sync EAVS: provision a virtual key only if the user has none,
+                // then regenerate models.json from the current catalog.
+                // The key lives embedded in models.json (legacy eavs.env is only
+                // read for migration), so a missing eavs.env does NOT mean a
+                // missing key -- checking only eavs.env here used to re-provision
+                // a fresh key for every user on every run.
                 if let Some(ref eavs_client) = state.eavs_client {
                     let home = linux_users
                         .get_user_home(&linux_username)
                         .unwrap_or_default();
-                    let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
-                    let has_eavs_key = std::path::Path::new(&eavs_env_path).exists();
+                    let models_path = format!("{}/.pi/agent/models.json", home);
+                    let has_eavs_key = read_eavs_key_from_models_json(&models_path).is_some()
+                        || std::path::Path::new(&format!("{}/.config/oqto/eavs.env", home))
+                            .exists();
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
@@ -465,6 +437,34 @@ pub async fn sync_user_configs(
     }
 
     Ok(Json(SyncUserConfigsResponse { results }))
+}
+
+/// Sync EAVS models.json into a container-placed personal workspace through
+/// its runner.
+async fn sync_container_user_configs(
+    state: &AppState,
+    user_id: &str,
+    endpoint: &oqto_runner::transport::RunnerEndpointConfig,
+) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let eavs_client = state
+        .eavs_client
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("eavs client not configured"))?;
+    let runner = oqto_runner::client::RunnerClient::from_endpoint(endpoint)
+        .with_context(|| format!("building placement runner for user {user_id}"))?;
+    runner
+        .ensure_ready_with_recovery()
+        .await
+        .with_context(|| format!("placement runner not ready for user {user_id}"))?;
+    sync_eavs_models_json_via_runner(
+        eavs_client,
+        &runner,
+        std::path::Path::new(oqto_placement::CONTAINER_HOME),
+        user_id,
+        Some(&state.auto_rename_config),
+    )
+    .await
 }
 
 /// Get a specific user (admin only).
@@ -644,6 +644,14 @@ pub async fn delete_user(
     // Delete from oqto DB first
     state.users.delete_user(&user_id).await?;
 
+    // Remove the personal container placement (compute + registry record).
+    // The durable state volume is retained for operator-controlled cleanup.
+    if let Some(manager) = &state.placement_manager
+        && let Err(e) = manager.remove(&user_id).await
+    {
+        warn!(user_id = %user_id, error = %e, "failed to remove personal placement");
+    }
+
     // In multi-user mode, clean up the Linux user + services
     if let Some(ref linux_user) = linux_username {
         let linux_user = linux_user.clone();
@@ -780,6 +788,118 @@ pub(crate) async fn sync_eavs_models_json(
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
+/// Provision an EAVS virtual key and Pi models.json directly into a home
+/// directory (container placement: the workspace state volume). No usermgr
+/// involvement; the backend owns the volume.
+pub(crate) async fn provision_eavs_into_home(
+    eavs_client: &crate::eavs::EavsClient,
+    home: &std::path::Path,
+    oqto_user_id: &str,
+    auto_rename_config: Option<&serde_json::Value>,
+) -> anyhow::Result<String> {
+    use crate::eavs::{CreateKeyRequest, generate_pi_models_json};
+    use anyhow::Context as _;
+
+    let key_resp = eavs_client
+        .create_key(CreateKeyRequest::new(format!("oqto-user-{}", oqto_user_id)))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create eavs key: {}", e))?;
+
+    let providers = eavs_client
+        .providers_detail()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
+    let models_json =
+        generate_pi_models_json(&providers, eavs_client.base_url(), Some(&key_resp.key));
+
+    let pi_dir = home.join(".pi").join("agent");
+    std::fs::create_dir_all(&pi_dir).with_context(|| format!("creating {}", pi_dir.display()))?;
+    std::fs::write(
+        pi_dir.join("models.json"),
+        serde_json::to_string_pretty(&models_json)?,
+    )
+    .with_context(|| format!("writing models.json into {}", pi_dir.display()))?;
+
+    if let Some(auto_rename) = auto_rename_config
+        && !auto_rename.is_null()
+        && auto_rename.is_object()
+        && let Ok(content) = serde_json::to_string_pretty(auto_rename)
+    {
+        let _ = std::fs::write(pi_dir.join("auto-rename.json"), content);
+    }
+
+    Ok(key_resp.key_id)
+}
+
+/// Regenerate models.json (and auto-rename.json) through a Workspace's
+/// runner. Under auto-userns container placement the backend cannot write the
+/// state volume directly; the runner owns those files.
+pub(crate) async fn sync_eavs_models_json_via_runner(
+    eavs_client: &crate::eavs::EavsClient,
+    runner: &oqto_runner::client::RunnerClient,
+    home: &std::path::Path,
+    oqto_user_id: &str,
+    auto_rename_config: Option<&serde_json::Value>,
+) -> anyhow::Result<()> {
+    use crate::eavs::{CreateKeyRequest, generate_pi_models_json};
+    use base64::Engine;
+
+    let models_path = home.join(".pi").join("agent").join("models.json");
+    let existing_key = match runner.read_file(&models_path, None, None).await {
+        Ok(response) => base64::engine::general_purpose::STANDARD
+            .decode(response.content_base64)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .as_deref()
+            .and_then(eavs_key_from_models_content),
+        Err(_) => None,
+    };
+
+    // A missing key means this volume was never provisioned (or the file was
+    // lost): mint a fresh virtual key rather than writing an unusable config.
+    let api_key = match existing_key {
+        Some(key) => key,
+        None => {
+            let response = eavs_client
+                .create_key(CreateKeyRequest::new(format!("oqto-user-{oqto_user_id}")))
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create eavs key: {}", e))?;
+            response.key
+        }
+    };
+
+    let providers = eavs_client
+        .providers_detail()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
+    let models_json = generate_pi_models_json(&providers, eavs_client.base_url(), Some(&api_key));
+    runner
+        .write_file(
+            &models_path,
+            serde_json::to_string_pretty(&models_json)?.as_bytes(),
+            true,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("writing models.json via runner: {}", e))?;
+
+    if let Some(auto_rename) = auto_rename_config
+        && !auto_rename.is_null()
+        && auto_rename.is_object()
+    {
+        let path = home.join(".pi").join("agent").join("auto-rename.json");
+        runner
+            .write_file(
+                &path,
+                serde_json::to_string_pretty(auto_rename)?.as_bytes(),
+                true,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("writing auto-rename.json via runner: {}", e))?;
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn sync_eavs_models_json_with_key(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
@@ -839,7 +959,11 @@ async fn sync_eavs_models_json_inner(
 /// (not "EAVS_API_KEY" or "env:..." references).
 fn read_eavs_key_from_models_json(path: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
-    let config: serde_json::Value = serde_json::from_str(&content).ok()?;
+    eavs_key_from_models_content(&content)
+}
+
+fn eavs_key_from_models_content(content: &str) -> Option<String> {
+    let config: serde_json::Value = serde_json::from_str(content).ok()?;
     let providers = config.get("providers")?.as_object()?;
     for (_name, provider) in providers {
         if let Some(key) = provider.get("apiKey").and_then(|k| k.as_str()) {
@@ -1328,7 +1452,43 @@ pub async fn sync_all_models(
     let mut synced = 0;
     let mut errors = Vec::new();
 
+    // Container placements (personal and shared) sync through their runner:
+    // under auto-userns the backend cannot write the state volume directly.
+    let mut container_workspaces = std::collections::HashSet::new();
+    if let Some(store) = &state.placement_store {
+        match store.list().await {
+            Ok(records) => {
+                for record in records {
+                    container_workspaces.insert(record.workspace_id.clone());
+                    let result = async {
+                        let runner = oqto_runner::client::RunnerClient::from_endpoint(
+                            &record.runner_endpoint,
+                        )?;
+                        runner.ensure_ready_with_recovery().await?;
+                        sync_eavs_models_json_via_runner(
+                            eavs_client.as_ref(),
+                            &runner,
+                            std::path::Path::new(oqto_placement::CONTAINER_HOME),
+                            &record.workspace_id,
+                            Some(&state.auto_rename_config),
+                        )
+                        .await
+                    }
+                    .await;
+                    match result {
+                        Ok(()) => synced += 1,
+                        Err(e) => errors.push(format!("{}: {:#}", record.workspace_id, e)),
+                    }
+                }
+            }
+            Err(e) => errors.push(format!("placement registry: {e:#}")),
+        }
+    }
+
     for user in &users {
+        if container_workspaces.contains(&user.id) {
+            continue;
+        }
         if let Some(ref linux_username) = user.linux_username {
             // Skip users without a valid oqto_ prefix (e.g. legacy admin/dev entries)
             if !linux_username.starts_with("oqto_") {
@@ -1773,11 +1933,10 @@ type = "openai-compatible"
         let providers = doc["providers"].as_table().unwrap();
         assert!(providers.contains_key("foundry"));
         assert!(providers.contains_key("other"));
-        assert_eq!(
+        assert!(
             providers["fhgenie"]["compat"]["supports_developer_role"]
                 .as_bool()
-                .unwrap(),
-            true
+                .unwrap()
         );
         // Stale models from the previous definition are gone (subtree replaced).
         assert!(providers["fhgenie"].get("models").is_none());

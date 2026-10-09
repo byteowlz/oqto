@@ -8,6 +8,9 @@
 //! - Idle session cleanup
 //! - Persistence to oqto-log on AgentEnd
 
+#[path = "pi_control.rs"]
+mod control;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,11 +35,51 @@ use crate::protocol::{
 };
 use oqto_pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
-use oqto_sandbox::{EgressGuard, SandboxConfig, configure_bwrap_pre_exec};
+use oqto_sandbox::{EgressGuard, SandboxConfig, build_sandbox_command, configure_bwrap_pre_exec};
 
 // ============================================================================
 // Configuration
 // ============================================================================
+
+/// Tells a session its agent is the proxy rather than a real ssh-agent.
+///
+/// The proxy forwards signature requests for granted keys and refuses
+/// ADD_IDENTITY, but nothing on the agent wire distinguishes it, so a loader
+/// inside the session cannot know that adding a key is futile. This variable
+/// is the whole signal: the session learns nothing about socket naming or the
+/// agent protocol, and how a grant is obtained can change without it.
+///
+/// Absence is meaningful — an unsandboxed session talking to the user's own
+/// agent must not see it, or a loader would refuse to add keys it could.
+/// Presence follows the work directory's gate rather than a live proxy, so a
+/// session with nothing granted yet can still ask for a key.
+const OQTO_SSH_AGENT: &str = "OQTO_SSH_AGENT";
+const OQTO_SSH_AGENT_PROXY: &str = "proxy";
+
+/// Optional entry point a session may call to request a key grant.
+const OQTO_SSH_GRANT_CMD: &str = "OQTO_SSH_GRANT_CMD";
+
+/// The grant command, taken from the runner's own environment.
+///
+/// Passed through rather than configured: nothing in this repo provides such
+/// a command yet, and a config field for one would be configuration that does
+/// not match runtime truth. A relative path is refused, since it would resolve
+/// against the session's working directory rather than the operator's.
+fn inherited_ssh_grant_cmd() -> Option<String> {
+    ssh_grant_cmd_from(std::env::var(OQTO_SSH_GRANT_CMD).ok().as_deref())
+}
+
+fn ssh_grant_cmd_from(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !Path::new(trimmed).is_absolute() {
+        warn!("Ignoring {OQTO_SSH_GRANT_CMD}: {trimmed:?} is not an absolute path");
+        return None;
+    }
+    Some(trimmed.to_string())
+}
 
 /// Configuration for the Pi session manager.
 #[derive(Debug, Clone)]
@@ -56,6 +99,140 @@ pub struct PiManagerConfig {
     /// Directory for persisting the model cache across restarts.
     /// Each workdir gets its own JSON file: `<cache_dir>/models/<hash>.json`
     pub model_cache_dir: Option<PathBuf>,
+    /// Host paths that must never be visible inside a sandboxed workspace
+    /// (runner control socket, TLS key material). Unioned into the effective
+    /// sandbox deny_read at spawn time.
+    pub extra_deny_read: Vec<PathBuf>,
+}
+
+pub(crate) fn bundled_pi_runtime(executable: &std::path::Path) -> Option<PathBuf> {
+    let bin = executable.parent()?;
+    let immutable = bin.parent()?;
+    if bin.file_name()? != "bin" || immutable.file_name()? != "immutable" {
+        return None;
+    }
+    // A damaged full release must fail startup, never silently run an older Pi.
+    Some(immutable.join("pi-runtime/pi/pi"))
+}
+
+/// Grant only the bundled runtime closure through the portable path policy.
+/// Never expose the release store/state or override an explicit workspace deny.
+fn grant_bundled_runtime_readonly(
+    sandbox: &mut SandboxConfig,
+    pi_binary: &std::path::Path,
+    runner_executable: &std::path::Path,
+) -> Result<()> {
+    let Some(expected) = bundled_pi_runtime(runner_executable) else {
+        return Ok(());
+    };
+    if pi_binary != expected {
+        return Ok(());
+    }
+    let runtime = expected
+        .parent()
+        .and_then(std::path::Path::parent)
+        .context("Bundled Pi runtime has no closure directory")?;
+    for denied in &sandbox.deny_read {
+        let denied = std::path::Path::new(denied);
+        if denied.is_absolute() && (runtime.starts_with(denied) || denied.starts_with(runtime)) {
+            anyhow::bail!(
+                "Sandbox deny_read conflicts with required bundled Pi runtime: {}",
+                runtime.display()
+            );
+        }
+    }
+    let runtime = runtime.to_string_lossy().into_owned();
+    if !sandbox.allow_read.contains(&runtime) {
+        sandbox.allow_read.push(runtime.clone());
+    }
+    if !sandbox.deny_write.contains(&runtime) {
+        sandbox.deny_write.push(runtime);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod bundled_runtime_tests {
+    #[test]
+    fn bundled_runtime_is_narrow_readonly_and_idempotent() -> anyhow::Result<()> {
+        let runner =
+            std::path::Path::new("/var/lib/oqto/releases/release-a/immutable/bin/oqto-runner");
+        let pi = super::bundled_pi_runtime(runner)
+            .ok_or_else(|| anyhow::anyhow!("missing fixture runtime"))?;
+        let runtime = "/var/lib/oqto/releases/release-a/immutable/pi-runtime";
+        let mut policy = oqto_sandbox::SandboxConfig::default();
+        let original_read = policy.allow_read.clone();
+        let original_write = policy.allow_write.clone();
+        super::grant_bundled_runtime_readonly(&mut policy, &pi, runner)?;
+        super::grant_bundled_runtime_readonly(&mut policy, &pi, runner)?;
+        assert_eq!(
+            policy
+                .allow_read
+                .iter()
+                .filter(|p| p.as_str() == runtime)
+                .count(),
+            1
+        );
+        assert!(policy.deny_write.iter().any(|p| p == runtime));
+        assert_eq!(policy.allow_write, original_write);
+        assert!(original_read.iter().all(|p| policy.allow_read.contains(p)));
+        assert!(
+            !policy
+                .allow_read
+                .iter()
+                .any(|p| p == "/var/lib/oqto/releases")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bundled_runtime_respects_denials_and_custom_executables() -> anyhow::Result<()> {
+        let runner =
+            std::path::Path::new("/var/lib/oqto/releases/release-a/immutable/bin/oqto-runner");
+        let pi = super::bundled_pi_runtime(runner)
+            .ok_or_else(|| anyhow::anyhow!("missing fixture runtime"))?;
+        let runtime = "/var/lib/oqto/releases/release-a/immutable/pi-runtime";
+        for denied in [
+            "/var/lib/oqto",
+            runtime,
+            "/var/lib/oqto/releases/release-a/immutable/pi-runtime/pi/node/bin/node",
+        ] {
+            let mut policy = oqto_sandbox::SandboxConfig::default();
+            policy.deny_read.push(denied.to_string());
+            let before = policy.allow_read.clone();
+            assert!(super::grant_bundled_runtime_readonly(&mut policy, &pi, runner).is_err());
+            assert_eq!(policy.allow_read, before);
+        }
+        let mut custom = oqto_sandbox::SandboxConfig::default();
+        let before = custom.allow_read.clone();
+        super::grant_bundled_runtime_readonly(
+            &mut custom,
+            std::path::Path::new("/usr/local/bin/custom-pi"),
+            runner,
+        )?;
+        assert_eq!(custom.allow_read, before);
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_release_owned_package_even_when_missing_to_fail_closed() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let executable = root.path().join("immutable/bin/oqto-runner");
+        let runtime = root.path().join("immutable/pi-runtime/pi/pi");
+        assert_eq!(
+            super::bundled_pi_runtime(&executable),
+            Some(runtime.clone())
+        );
+        std::fs::create_dir_all(
+            runtime
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("fixture parent missing"))?,
+        )?;
+        std::fs::write(&runtime, b"fixture")?;
+        assert_eq!(super::bundled_pi_runtime(&executable), Some(runtime));
+        assert!(super::bundled_pi_runtime(&root.path().join("outside/bin/runner")).is_none());
+        Ok(())
+    }
 }
 
 impl Default for PiManagerConfig {
@@ -65,16 +242,23 @@ impl Default for PiManagerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
-        // Prefer the user's rootless, checksummed runtime channel; deployments
-        // provide the root-owned baseline as a fallback. This lets local
-        // deterministic updates advance without a later Oqto deploy downgrade.
+        // Immutable releases own their qualified Pi. Outside a release, prefer
+        // the user's checksummed runtime channel and then the system fallback.
         let pi_binary = {
             let data_dir = std::env::var("XDG_DATA_HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from(&home).join(".local/share"));
             let user_runtime = data_dir.join("oqto/pi-runtimes/current/pi");
             let system_runtime = PathBuf::from("/var/lib/oqto/pi-runtimes/current/pi");
-            if user_runtime.exists() {
+            // An immutable release ships its exact qualified Pi next to its bins.
+            // Resolving current_exe keeps rollback and runner/Pi identity coherent
+            // without overwriting the user's separate native Pi installation.
+            let bundled_runtime = std::env::current_exe()
+                .ok()
+                .and_then(|exe| bundled_pi_runtime(&exe));
+            if let Some(binary) = bundled_runtime {
+                binary
+            } else if user_runtime.exists() {
                 user_runtime
             } else if system_runtime.exists() {
                 system_runtime
@@ -91,6 +275,7 @@ impl Default for PiManagerConfig {
             sandbox_config: None,
             runner_id: "local".to_string(),
             model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
+            extra_deny_read: Vec::new(),
         }
     }
 }
@@ -193,6 +378,11 @@ pub struct ForkResult {
 /// and the reader task routes the response back.
 #[derive(Debug)]
 pub enum PiSessionCommand {
+    /// Serialized non-chat transaction, bypassing client prompt bookkeeping.
+    Control {
+        request: crate::protocol::AgentControlRequest,
+        reply: oneshot::Sender<Result<oqto_protocol::control::ControlResult>>,
+    },
     // ========================================================================
     // Prompting
     // ========================================================================
@@ -238,7 +428,7 @@ pub enum PiSessionCommand {
     /// Get session statistics.
     GetSessionStats,
     /// Get available commands.
-    GetCommands,
+    GetCommands { request_id: String },
 
     // ========================================================================
     // Model Configuration
@@ -628,6 +818,9 @@ struct PiSession {
     /// its `Drop` tears the namespace down when the session ends; inert for
     /// open/isolated modes. The runner never touches the namespace directly.
     _egress_guard: EgressGuard,
+    /// SSH agent proxy for this session, when the work directory granted keys.
+    /// Dropping it stops the proxy and removes its socket.
+    _ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy>,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
     /// The Pi external_id for this session.
@@ -743,6 +936,16 @@ impl PiSessionManager {
 
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
+        // RPC sessions are non-interactive: Pi's first-use trust prompt can
+        // never be answered, so the runner (workspace authority) records the
+        // workdir as trusted before spawning.
+        if let Err(err) = ensure_workdir_trusted(&config.cwd) {
+            warn!(
+                "Failed to pre-trust workdir {:?} for session '{}': {err:#}",
+                config.cwd, session_id
+            );
+        }
+
         // Use explicit session file if provided (for resuming).
         // For new sessions, do NOT pass --session: let Pi create its
         // own session file and generate its own ID. The runner will
@@ -836,15 +1039,38 @@ impl PiSessionManager {
             pi_args.push("--session".to_string());
             pi_args.push(session_file.to_string_lossy().to_string());
         }
-        // Build command - either direct or via bwrap sandbox
-        let mut bwrap_pre_exec_config: Option<SandboxConfig> = None;
+        // Platform selection and filesystem policy belong to oqto-sandbox.
+        let mut sandbox_pre_exec_config: Option<SandboxConfig> = None;
         // Egress namespace guard; replaced with a live one for proxy mode below.
         // Held in the session so teardown runs when the session ends.
         let mut egress_guard = EgressGuard::inert();
+        // SSH agent proxy, when the work directory was granted keys. Held in
+        // the session so the socket and process die with it.
+        let mut ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy> = None;
+        // Whether key access here goes through oqto's grant at all, which is
+        // not the same question as whether a proxy is currently running: a
+        // work directory with the proxy enabled but nothing granted yet gets
+        // no proxy, and that is exactly when a session needs to ask for one.
+        let mut ssh_proxy_gated = false;
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
                 let mut effective_config = sandbox_config.with_workspace_config(&config.cwd);
+                grant_bundled_runtime_readonly(
+                    &mut effective_config,
+                    &self.config.pi_binary,
+                    &std::env::current_exe()
+                        .context("Resolve runner executable for runtime policy")?,
+                )?;
+                // Host secrets are never workspace-visible, regardless of
+                // profile grants: the runner control socket and TLS key
+                // material are denied explicitly.
+                for denied in &self.config.extra_deny_read {
+                    let denied_str = denied.to_string_lossy().to_string();
+                    if !effective_config.deny_read.contains(&denied_str) {
+                        effective_config.deny_read.push(denied_str);
+                    }
+                }
                 if !effective_config
                     .extra_rw_bind
                     .contains(&session_socket_dir_str)
@@ -854,60 +1080,38 @@ impl PiSessionManager {
                         .push(session_socket_dir_str.clone());
                 }
 
-                // Build bwrap args for the workspace
-                match effective_config.build_bwrap_args_for_user(&config.cwd, None) {
-                    Some(bwrap_args) => {
-                        // Command: bwrap [bwrap_args] -- pi [pi_args]
-                        let mut cmd = Command::new("bwrap");
-
-                        // Add bwrap args
-                        for arg in &bwrap_args {
-                            cmd.arg(arg);
-                        }
-
-                        // Add Pi binary and args
-                        cmd.arg(&self.config.pi_binary);
-                        for arg in &pi_args {
-                            cmd.arg(arg);
-                        }
-
-                        bwrap_pre_exec_config = Some(effective_config.clone());
-
-                        // Proxy mode: create the egress namespace now (the child
-                        // joins it via setns in the pre-exec hook below). Inert
-                        // for open/isolated. Fail-closed propagates here.
-                        egress_guard = effective_config
-                            .prepare_egress()
-                            .context("Failed to prepare network egress namespace")?;
-
-                        info!(
-                            "Sandboxing Pi session '{}' with profile '{}' ({} bwrap args)",
-                            session_id,
-                            effective_config.profile,
-                            bwrap_args.len()
-                        );
-                        debug!(
-                            "bwrap command: bwrap {} {} {:?}",
-                            bwrap_args.join(" "),
-                            self.config.pi_binary.display(),
-                            pi_args
-                        );
-
-                        cmd
-                    }
-                    None => {
-                        // SECURITY: bwrap not available but sandbox was requested
-                        error!(
-                            "SECURITY: Sandbox requested for Pi session '{}' but bwrap not available. \
-                             Refusing to run unsandboxed.",
-                            session_id
-                        );
-                        anyhow::bail!(
-                            "Sandbox requested but bwrap not available. \
-                             Install bubblewrap (bwrap) or disable sandboxing."
-                        );
-                    }
+                // The real SSH agent must remain unreachable even when the
+                // session receives a filtered proxy and network access.
+                if let Some(upstream) = crate::ssh_agent_proxy::upstream_agent_socket() {
+                    effective_config
+                        .deny_read
+                        .push(upstream.to_string_lossy().into_owned());
                 }
+                let cmd = build_sandbox_command(
+                    &effective_config,
+                    &config.cwd,
+                    &self.config.pi_binary,
+                    &pi_args,
+                    oqto_sandbox::SandboxStdin::Redirected,
+                )
+                .context("Failed to build Pi sandbox command")?;
+                egress_guard = effective_config
+                    .prepare_egress()
+                    .context("Failed to prepare network egress")?;
+                if let Some(ref ssh_config) = effective_config.ssh {
+                    ssh_proxy_gated = ssh_config.enabled;
+                    ssh_agent_proxy =
+                        crate::ssh_agent_proxy::spawn(ssh_config, &session_socket_dir)
+                            .context("Failed to start SSH agent proxy")?;
+                }
+                info!(
+                    "Sandboxing Pi session '{}' with profile '{}' on {}",
+                    session_id,
+                    effective_config.profile,
+                    std::env::consts::OS
+                );
+                sandbox_pre_exec_config = Some(effective_config);
+                Command::from(cmd)
             } else {
                 // Sandbox config exists but is disabled
                 let mut cmd = Command::new(&self.config.pi_binary);
@@ -939,20 +1143,50 @@ impl PiSessionManager {
         if !config.env.contains_key("OQTO_SESSION_ID") {
             cmd.env("OQTO_SESSION_ID", &session_id);
         }
+        // Point SSH at the proxy socket; the real agent stays outside.
+        if let Some(ref proxy) = ssh_agent_proxy {
+            cmd.env("SSH_AUTH_SOCK", proxy.socket_path());
+            if !config.env.contains_key("GIT_SSH_COMMAND")
+                && let Some(git_ssh_command) = proxy.git_ssh_command()
+            {
+                cmd.env("GIT_SSH_COMMAND", git_ssh_command);
+            }
+        }
+        // Declare the gate, not the socket.
+        //
+        // Nothing on the agent wire distinguishes the proxy from a real agent,
+        // so a key loader in the session would try to ssh-add and be refused
+        // without knowing why. It is told here instead.
+        //
+        // This is deliberately keyed to the work directory being gated rather
+        // than to a running proxy. With nothing granted yet no proxy starts at
+        // all, and that is precisely the case where a session needs to ask for
+        // a key: keying on the socket would leave the request path dark in the
+        // one situation it exists for.
+        if ssh_proxy_gated {
+            if !config.env.contains_key(OQTO_SSH_AGENT) {
+                cmd.env(OQTO_SSH_AGENT, OQTO_SSH_AGENT_PROXY);
+            }
+            if !config.env.contains_key(OQTO_SSH_GRANT_CMD)
+                && let Some(grant_cmd) = inherited_ssh_grant_cmd()
+            {
+                cmd.env(OQTO_SSH_GRANT_CMD, grant_cmd);
+            }
+        }
 
         // Configure pipes
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        if let Some(pre_exec_cfg) = bwrap_pre_exec_config.as_ref() {
+        if let Some(pre_exec_cfg) = sandbox_pre_exec_config.as_ref() {
             configure_bwrap_pre_exec(
                 cmd.as_std_mut(),
                 pre_exec_cfg,
                 &config.cwd,
                 egress_guard.plan(),
             )
-            .context("Failed to configure bwrap pre-exec hooks")?;
+            .context("Failed to configure sandbox pre-exec hooks")?;
         }
 
         // Spawn the process
@@ -1056,6 +1290,10 @@ impl PiSessionManager {
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
             let pending_client_id = Arc::clone(&pending_client_id);
+            let control_runtime = control::Runtime {
+                pending: Arc::clone(&pending_responses),
+                external_id: Arc::clone(&session_external_id),
+            };
 
             tokio::spawn(async move {
                 Self::command_processor_task(
@@ -1065,6 +1303,7 @@ impl PiSessionManager {
                     state,
                     last_activity,
                     pending_client_id,
+                    control_runtime,
                 )
                 .await;
             })
@@ -1080,6 +1319,7 @@ impl PiSessionManager {
             config,
             process: child,
             _egress_guard: egress_guard,
+            _ssh_agent_proxy: ssh_agent_proxy,
             state: Arc::clone(&state),
             session_external_id,
             active_provider,
@@ -2477,13 +2717,48 @@ impl PiSessionManager {
             );
         }
 
-        // Parse the text from response data
-        Ok(response.data.and_then(|d| d.as_str().map(String::from)))
+        // Official Pi RPC returns an object containing text, not a bare string.
+        let data = response
+            .data
+            .context("GetLastAssistantText response missing data")?;
+        anyhow::ensure!(
+            data.is_object(),
+            "GetLastAssistantText response data must be an object"
+        );
+        match data.get("text") {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
+            Some(_) => anyhow::bail!("GetLastAssistantText text must be a string or null"),
+        }
+    }
+
+    /// Enqueue a bounded control; active process identity is resolved only inside the runner.
+    pub async fn control(
+        &self,
+        request: crate::protocol::AgentControlRequest,
+    ) -> Result<oqto_protocol::control::ControlResult> {
+        let sender = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .get(&request.session_id)
+                .context("Control Session not found")?
+                .cmd_tx
+                .clone()
+        };
+        let (reply, result) = oneshot::channel();
+        sender
+            .send(PiSessionCommand::Control { request, reply })
+            .await
+            .context("Queue control")?;
+        tokio::time::timeout(Duration::from_secs(15), result)
+            .await
+            .context("Control queue deadline exceeded")?
+            .context("Control queue closed")?
     }
 
     /// Get available commands.
     pub async fn get_commands(&self, session_id: &str) -> Result<serde_json::Value> {
-        let request_id = "get_commands".to_string();
+        let request_id = format!("get-commands-{}", uuid::Uuid::new_v4());
 
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
@@ -2502,28 +2777,24 @@ impl PiSessionManager {
             pending.insert(request_id.clone(), tx);
         }
 
-        cmd_tx
-            .send(PiSessionCommand::GetCommands)
-            .await
-            .context("Failed to send GetCommands command")?;
-
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
-            .await
-            .context("Timeout waiting for GetCommands response")?
-            .context("Response channel closed")?;
-
-        if !response.success {
-            anyhow::bail!(
-                "GetCommands failed: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            );
+        let result = async {
+            cmd_tx
+                .send(PiSessionCommand::GetCommands {
+                    request_id: request_id.clone(),
+                })
+                .await
+                .context("Failed to send GetCommands command")?;
+            let response = tokio::time::timeout(Duration::from_secs(10), rx)
+                .await
+                .context("Timeout waiting for GetCommands response")?
+                .context("Response channel closed")?;
+            anyhow::ensure!(response.success, "GetCommands failed");
+            let data = response.data.context("GetCommands response missing data")?;
+            Ok(serde_json::Value::Array(control::catalog(&data)?.to_vec()))
         }
-
-        response
-            .data
-            .ok_or_else(|| anyhow::anyhow!("GetCommands response missing data"))
+        .await;
+        pending_responses.write().await.remove(&request_id);
+        result
     }
 
     /// Cycle to the next model.
@@ -3695,6 +3966,7 @@ impl PiSessionManager {
                     }
                 };
 
+                control::route_status(&pi_event, &pending_responses).await;
                 Self::write_stream_trace(
                     stream_trace_file.as_mut(),
                     serde_json::json!({
@@ -4325,9 +4597,50 @@ impl PiSessionManager {
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
         pending_client_id: PendingClientId,
+        control_runtime: control::Runtime,
     ) {
+        // Registry/session replacement invalidates discovery safety for this process.
+        // Reattach through a newly mapped process rather than dispatching against an ambiguous runtime.
+        let mut control_ready = true;
         while let Some(cmd) = cmd_rx.recv().await {
+            if matches!(
+                &cmd,
+                PiSessionCommand::NewSession(_)
+                    | PiSessionCommand::SwitchSession(_)
+                    | PiSessionCommand::Fork { .. }
+            ) || matches!(&cmd, PiSessionCommand::Prompt { message, .. } | PiSessionCommand::Steer { message, .. } | PiSessionCommand::FollowUp { message, .. } if message.trim_start().starts_with('/'))
+            {
+                control_ready = false;
+            }
             let result = match cmd {
+                PiSessionCommand::Control { request, reply } => {
+                    if reply.is_closed() {
+                        continue;
+                    }
+                    let result = if control_ready
+                        && matches!(
+                            *state.read().await,
+                            PiSessionState::Idle | PiSessionState::Streaming
+                        ) {
+                        let native_id = control_runtime.external_id.read().await.clone();
+                        control::execute(
+                            &mut stdin,
+                            &control_runtime.pending,
+                            &native_id,
+                            request,
+                            &mut control_ready,
+                        )
+                        .await
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "Control unavailable during work or after runtime replacement"
+                        ))
+                    };
+                    // The transaction invalidates safety only after dispatch, and restores it
+                    // only after both authoritative acknowledgements have been verified.
+                    let _ = reply.send(result);
+                    continue;
+                }
                 PiSessionCommand::Prompt { message, client_id } => {
                     if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
                         pending_client_id.lock().await.push_back(cid);
@@ -4506,9 +4819,9 @@ impl PiSessionManager {
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::GetCommands => {
+                PiSessionCommand::GetCommands { request_id } => {
                     let pi_cmd = PiCommand::GetCommands {
-                        id: Some("get_commands".to_string()),
+                        id: Some(request_id),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -5018,6 +5331,43 @@ fn is_direct_pi_provider(provider: &str) -> bool {
     matches!(provider, "openai-codex" | "claude-bridge")
 }
 
+/// Record `cwd` in Pi's trust store (`~/.pi/agent/trust.json`), preserving
+/// all existing entries. Pi's trust file is a flat map of absolute workdir
+/// paths to booleans.
+fn ensure_workdir_trusted(cwd: &std::path::Path) -> Result<()> {
+    use anyhow::Context as _;
+
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let trust_path = std::path::Path::new(&home).join(".pi/agent/trust.json");
+
+    let mut entries: serde_json::Map<String, serde_json::Value> =
+        match std::fs::read_to_string(&trust_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .with_context(|| format!("parsing {}", trust_path.display()))?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", trust_path.display()));
+            }
+        };
+
+    let key = cwd.to_string_lossy().to_string();
+    if entries.get(&key).and_then(|value| value.as_bool()) == Some(true) {
+        return Ok(());
+    }
+    entries.insert(key, serde_json::Value::Bool(true));
+
+    if let Some(parent) = trust_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(
+        &trust_path,
+        serde_json::to_string_pretty(&serde_json::Value::Object(entries))?,
+    )
+    .with_context(|| format!("writing {}", trust_path.display()))?;
+    Ok(())
+}
+
 fn model_available_for_provider(
     models: &serde_json::Value,
     provider: &str,
@@ -5040,6 +5390,32 @@ fn model_available_for_provider(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn grant_command_is_ignored_unless_absolute() {
+        // A relative path would resolve against the session's working
+        // directory, not the operator's, so it is refused rather than guessed.
+        assert_eq!(
+            ssh_grant_cmd_from(Some("/usr/local/bin/oqto-ssh-grant")).as_deref(),
+            Some("/usr/local/bin/oqto-ssh-grant")
+        );
+        assert_eq!(
+            ssh_grant_cmd_from(Some("  /opt/oqto-ssh-grant  ")).as_deref(),
+            Some("/opt/oqto-ssh-grant")
+        );
+        assert_eq!(ssh_grant_cmd_from(Some("oqto-ssh-grant")), None);
+        assert_eq!(ssh_grant_cmd_from(Some("./oqto-ssh-grant")), None);
+        assert_eq!(ssh_grant_cmd_from(Some("   ")), None);
+        assert_eq!(ssh_grant_cmd_from(None), None);
+    }
+
+    #[test]
+    fn the_proxy_signal_names_the_proxy() {
+        // The loader keys off this exact pair; a rename is a contract change.
+        assert_eq!(OQTO_SSH_AGENT, "OQTO_SSH_AGENT");
+        assert_eq!(OQTO_SSH_AGENT_PROXY, "proxy");
+        assert_eq!(OQTO_SSH_GRANT_CMD, "OQTO_SSH_GRANT_CMD");
+    }
+
     use super::*;
 
     #[derive(Debug, Clone, Copy)]

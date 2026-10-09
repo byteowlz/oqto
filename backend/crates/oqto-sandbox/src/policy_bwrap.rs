@@ -8,6 +8,17 @@
 use crate::path_policy::{Access, ResolvedPolicy, ResolvedRule};
 use std::path::Path;
 
+/// How a subtree reaches the namespace; decides symlink reconstruction.
+#[derive(Clone, Copy, PartialEq)]
+enum Subtree {
+    /// The namespace root is the live host root (no root-level remount).
+    Live,
+    /// A bind brought the host subtree into the namespace.
+    HostBound,
+    /// A tmpfs replaced the subtree; host contents are absent.
+    Masked,
+}
+
 /// Whether a bind source exists on this host.
 ///
 /// Injected so the mapping can be tested without touching the filesystem.
@@ -38,6 +49,7 @@ impl PathPresence for HostPaths {
 pub fn compile_filesystem_args(
     policy: &ResolvedPolicy,
     presence: &dyn PathPresence,
+    reconstructions: &[(std::path::PathBuf, std::path::PathBuf)],
 ) -> Vec<String> {
     let mut rules: Vec<&ResolvedRule> = policy.rules().iter().collect();
     // Parent-first: bwrap resolves overlapping mounts by order, so a deeper
@@ -46,6 +58,9 @@ pub fn compile_filesystem_args(
     rules.sort_by_key(|rule| rule.path().components().count());
 
     let mut args = Vec::new();
+    // How each mounted subtree reaches the namespace: needed to decide
+    // whether canonicalized paths still require a leaf symlink.
+    let mut mount_stack: Vec<(std::path::PathBuf, Subtree)> = Vec::new();
     for rule in rules {
         let path = rule.path();
         let path_str = path.to_string_lossy().to_string();
@@ -59,11 +74,13 @@ pub fn compile_filesystem_args(
             Access::None if presence.is_file(path) => {
                 args.push("--bind".to_string());
                 args.push("/dev/null".to_string());
-                args.push(path_str);
+                args.push(path_str.clone());
+                mount_stack.push((path.to_path_buf(), Subtree::Masked));
             }
             Access::None => {
                 args.push("--tmpfs".to_string());
-                args.push(path_str);
+                args.push(path_str.clone());
+                mount_stack.push((path.to_path_buf(), Subtree::Masked));
             }
             // bwrap does not create bind sources, and binding an absent path
             // aborts the whole spawn. Optional tool directories must therefore
@@ -72,13 +89,47 @@ pub fn compile_filesystem_args(
             Access::Read => {
                 args.push("--ro-bind".to_string());
                 args.push(path_str.clone());
-                args.push(path_str);
+                args.push(path_str.clone());
+                mount_stack.push((path.to_path_buf(), Subtree::HostBound));
             }
             Access::Write => {
                 args.push("--bind".to_string());
                 args.push(path_str.clone());
-                args.push(path_str);
+                args.push(path_str.clone());
+                mount_stack.push((path.to_path_buf(), Subtree::HostBound));
             }
+        }
+    }
+    // Policy paths that were canonicalized away from a host symlink get their
+    // original location re-created as a leaf symlink — but only where that
+    // original path is not already visible in the namespace: under a host
+    // bind (or the live root) the host symlink itself is carried there and
+    // resolves through to the canonical mount, while under a tmpfs mask the
+    // path would not exist at all. Nothing is ever mounted *through* these
+    // links: bwrap cannot mkdir intermediate paths through a symlink.
+    let nearest = |path: &std::path::Path| -> Subtree {
+        let mut best: Option<(&std::path::PathBuf, Subtree)> = None;
+        for (root, kind) in &mount_stack {
+            if path.starts_with(root)
+                && !best.is_some_and(|(best_root, _)| {
+                    root.components().count() > best_root.components().count()
+                })
+            {
+                best = Some((root, *kind));
+            }
+        }
+        best.map(|(_, kind)| kind).unwrap_or(Subtree::Live)
+    };
+    let mut seen_links: Vec<std::path::PathBuf> = Vec::new();
+    for (canonical, original) in reconstructions {
+        if seen_links.iter().any(|link| original.starts_with(link)) {
+            continue;
+        }
+        if nearest(original) == Subtree::Masked {
+            args.push("--symlink".to_string());
+            args.push(canonical.to_string_lossy().to_string());
+            args.push(original.to_string_lossy().to_string());
+            seen_links.push(original.to_path_buf());
         }
     }
     args
@@ -156,6 +207,7 @@ mod tests {
                 ("/writable", Access::Write),
             ]),
             &AllPresent,
+            &[],
         );
         assert_eq!(
             args,
@@ -183,6 +235,7 @@ mod tests {
                 ("/home/agent", Access::Read),
             ]),
             &AllPresent,
+            &[],
         );
         assert!(index_of(&args, "/home/agent") < index_of(&args, "/home/agent/.config"));
         assert!(
@@ -199,6 +252,7 @@ mod tests {
                 ("/home/agent/.ssh", Access::None),
             ]),
             &Files(vec![PathBuf::from("/home/agent/.config/oqto/config.toml")]),
+            &[],
         );
         assert_eq!(
             args,
@@ -223,8 +277,53 @@ mod tests {
                 PathBuf::from("/opt/missing-tool"),
                 PathBuf::from("/home/agent/.ssh"),
             ]),
+            &[],
         );
         assert_eq!(args, vec!["--tmpfs", "/home/agent/.ssh"]);
+    }
+
+    #[test]
+    fn reconstructions_emit_symlinks_only_under_masked_parents() {
+        // Under a tmpfs-masked parent the original path would not exist, so
+        // the reconstruction is emitted; under a host-bound parent the host
+        // symlink is already visible and resolves through — no extra link.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let real = temp.path().join("stow").join(".pi");
+        std::fs::create_dir_all(&real).expect("create real dir");
+        let link = temp.path().join(".pi");
+        std::os::unix::fs::symlink(&real, &link).expect("create symlink");
+
+        // Masked home: tmpfs at the temp root, then a Read rule through the
+        // canonical path (as the policy layer would produce).
+        let masked_root = temp.path().to_path_buf();
+        let mut policy = ResolvedPolicy::new(Access::None, origin());
+        policy
+            .add_rule(ResolvedRule::new(&masked_root, Access::None, origin()).expect("valid rule"));
+        policy.add_rule(ResolvedRule::new(&real, Access::Read, origin()).expect("valid rule"));
+        let args = compile_filesystem_args(&policy, &AllPresent, &[(real.clone(), link.clone())]);
+        assert!(
+            args.windows(2).any(|w| w == ["--symlink", "--ro-bind"])
+                || args.contains(&"--symlink".to_string())
+        );
+        assert!(args.contains(&masked_root.to_string_lossy().to_string()));
+        // no duplicate mount of the literal link path
+        assert!(
+            !args
+                .windows(2)
+                .any(|w| w == ["--bind", link.to_str().expect("utf8")])
+        );
+
+        // Host-bound parent: a bind covering the original path means the
+        // symlink is visible already; reconstruction must be skipped.
+        let bound_root = temp.path().join("stow");
+        let mut policy = ResolvedPolicy::new(Access::None, origin());
+        policy
+            .add_rule(ResolvedRule::new(&bound_root, Access::Read, origin()).expect("valid rule"));
+        let args = compile_filesystem_args(&policy, &AllPresent, &[(real.clone(), link)]);
+        assert!(
+            !args.contains(&"--symlink".to_string()),
+            "reconstruction must be skipped under a host-bound parent: {args:?}"
+        );
     }
 
     #[test]
@@ -241,7 +340,7 @@ mod tests {
             .expect("roots resolve")
             .policy;
 
-        let args = compile_filesystem_args(&resolved, &AllPresent);
+        let args = compile_filesystem_args(&resolved, &AllPresent, &[]);
         assert!(
             index_of(&args, "/home/agent/.config")
                 < index_of(&args, "/home/agent/.config/oqto/sandbox.toml"),

@@ -171,3 +171,6 @@ bun.lockb
 
 # Tauri generated build artifacts
 src-tauri/gen/
+
+# Pinned Moonshine runtime assets are staged from the locked dependency.
+/public/speech/

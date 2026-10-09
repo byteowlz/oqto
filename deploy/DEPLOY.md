@@ -1,212 +1,122 @@
 # Oqto Deployment
 
-Transactional release deployment with strict preflight gates, canary support, and automatic rollback.
+One complete, verified release per host, activated by `oqto-setup install` inside a
+single root transaction with an in-transaction service check and automatic rollback.
+Design: [ADR-0018](../docs/adr/0018-single-install-update-deploy-engine.md),
+[ADR-0056](../docs/adr/0056-deploy-is-one-root-transaction-and-history-backfill-is-separate.md).
 
 ## Quick Start
 
 ```bash
-just deploy                                 # Build (local cargo) + prepare + activate on all hosts
-just deploy --remote-build                  # Use remote-build for backend binaries
-just deploy --host archvm --mode dev        # Preserve target-installed external tools
-just deploy --canary                        # Deploy only hosts with canary=true
-just deploy --canary-then-fleet             # Canary first, then remaining hosts
-just deploy --prepare-only                  # Stage release, no activation
-just deploy --activate-only --release-id X  # Activate a prepared release
-just deploy --resume --release-id X         # Resume interrupted deployment
-just deploy --status --release-id X         # Show per-host state
-just deploy-dry-run                         # Preview commands
+just deploy                                  # Build a clean release, deploy to all hosts
+just deploy-host archvm                      # One host
+just deploy --artifact oqto-0.5.9-x86_64-unknown-linux-gnu.tar.gz \
+            --checksum oqto-0.5.9-x86_64-unknown-linux-gnu.tar.gz.sha256
+just deploy --canary-then-fleet              # Canary hosts first, then the rest
+just deploy --status                         # current / last-good per host
+just deploy-dry-run                          # Print the plan, change nothing
+just deploy-backfill octo-azure              # Protected oqto-log backfill only
 ```
 
-## Dependency modes
+## What a deploy refuses
 
-The default `release` mode enforces the versions pinned in `dependencies.toml`
-and acquires missing or outdated managed tools:
+| Refusal | Where | Override |
+|---|---|---|
+| Building from a worktree with uncommitted or untracked changes | `deploy.sh`, `package.sh` | commit/stash, or deploy a prebuilt `--artifact` |
+| Cargo, dependency pin and frontend versions disagree | `deploy.sh` (`check-tag-version.py`) | `just bump` |
+| Artifact name/manifest version mismatch, missing provenance | `oqto-setup install` | none |
+| Release recorded as built from a dirty tree | `oqto-setup install` | `--allow-dirty-source` |
+| Release not strictly newer than the active one (or active version unknowable) | `oqto-setup install`, before extraction | `--allow-downgrade` |
+| Agent sessions currently streaming/compacting/starting/aborting | transaction inventory | `--allow-busy-sessions` |
+| Managed tools older than their `dependencies.toml` pin (release mode) | preflight | acquire them, or `--mode dev` |
+| `sandbox.toml` not `root:root` ≤0644; seccomp enforced without an installed BPF (team) | preflight | fix the host |
+
+Removed for safety: `--skip-build`, `--skip-frontend`, `--skip-backend`, `--skip-services`,
+`--prepare-only`, `--activate-only`, `--resume`, `--allow-legacy-path`, `--remote-build`,
+`--trace-streams`, `scripts/deploy-binaries.sh`. Partial deploys are how mismatched
+binaries, frontends and runtimes reached `current`.
+
+## Release build
+
+Without `--artifact`, deploy requires a clean checkout and runs
+`dist-sync → dist-stage-binaries --build → dist-stage-frontend --build →
+lint-dist-manifest-strict → dist-package <Cargo version> <host triple>`, then re-checks
+that the build did not dirty the tree. `package.sh` records `release.version`,
+`source_commit` and `source_dirty` in the bundled `manifest.toml`; `oqto-setup
+check-release` prints them.
+
+## Per-host transaction
+
+1. **Preflight** (driver): SSH, free disk under `/var/lib`, team sandbox policy,
+   dependency policy (`--mode release` enforces `installed >= pin` and never downgrades
+   newer tools; `--mode dev` only requires presence).
+2. **Private staging**: artifact, checksum, `deploy-transaction.py` and the verified
+   bootstrap are copied into a per-host `mktemp` 0700 directory.
+3. **Verified bootstrap**: `verified-setup-bootstrap.py` checks the archive against the
+   independent checksum and extracts only `oqto-setup`; nothing from `PATH` is trusted.
+4. **`deploy-transaction.py activate`** (root, receipts under `/root/oqto-deploy-*`):
+   - inventories principals with a live managed runner socket (team: every
+     `/run/oqto/runner-sockets/<user>/oqto-runner.sock` whose owner matches; personal:
+     the host's `user`), refuses busy sessions, records `before.json`;
+   - stops services, takes byte snapshots of platform SQLite (`~/.local/share/oqto`),
+     `~/.config/oqto` and Pi `models/settings/auth.json` without opening any database;
+   - runs `oqto-setup install --post-activate-check <check>`. The check restarts
+     usermgr → runners → control plane and requires backend health **at the new
+     version**, every runner's `MainPID` executing the new release's `oqto-runner`,
+     the bundled Pi reporting the manifest `pi_version`, and (personal) a strict
+     doctor. Only then does `last-good` advance;
+   - on failure `oqto-setup` restores `current`, binaries and frontend, and the
+     transaction restarts the previous services and writes `failure.json`;
+   - points a managed `/usr/local/bin/pi` at `releases/current/immutable/pi-runtime`;
+     unmanaged entrypoints are preserved and reported.
+5. **Extensions** (unless `--skip-extensions`): the pinned extension set is synced
+   preserve-first; changed or retired managed extensions move to
+   `~/.pi/agent/extension-backups/<stamp>/`. The Pi runtime itself is never touched here.
+
+The frontend ships inside the artifact; `oqto-setup` links `/var/www/oqto` to
+`releases/current/immutable/frontend`, so rollback serves the matching bundle. Hosts
+must use that web root.
+
+## History backfill (never part of activation)
 
 ```bash
-just deploy --host archvm
-# equivalent to: just deploy --host archvm --mode release
+just deploy-backfill <host>                                  # sync-identities,bootstrap,validate
+just deploy --host <host> --backfill-only --backfill-modes sync-identities,validate-changed
+just deploy --host <host> --backfill-only --backfill-principal oqto_usr_alice
+just deploy --host <host> --backfill                         # after a successful activation
 ```
 
-Development mode is intended for tools installed directly on the target from a
-local checkout with commands such as `just install`:
+`deploy-transaction.py backfill` processes one principal at a time: refuse
+foreign-owned or symlinked oqto-log entries → stop that principal's runner (personal:
+also the backend, which reads the store) → refuse if writers linger → snapshot the
+store → run the modes **as the owner** → fail if any Pi JSONL changed → on failure
+retain the failed store under the receipt and restore the exact snapshot → restart.
+Only `sync-identities`, `bootstrap`, `validate` and `validate-changed` are allowed.
+Receipts: `/root/oqto-backfill-*/backfill.json`.
 
-```bash
-just deploy --host archvm --mode dev
-```
-
-In development mode Oqto itself still builds and deploys normally, but managed
-external tools (`eavs`, `mmry`, `trx`, `agntz`, `sx`, and `skdlr`) are never
-downloaded, replaced, or downgraded. Deploy verifies that each required binary
-exists and prints its installed version, but does not enforce the manifest pin.
-A missing binary fails preflight with instructions to install it. The mode does
-not build sibling repositories implicitly.
-
-Use release mode again to restore deterministic pinned dependencies.
-
-## Host Configuration
-
-`deploy/hosts.toml` controls rollout targets.
+## Host configuration
 
 ```toml
 [[host]]
 name = "octo-azure"
 ssh = "octo-azure"
-mode = "multi-user"         # "single-user" (or legacy "local") | "multi-user"
-canary = true                # optional; used by canary rollout
-user = "tommy"
+mode = "multi-user"      # personal: "single-user" (or "local"); team: "multi-user"
+canary = true
+user = "tommy"           # personal hosts: the owning, non-root principal
 frontend = true
 web_root = "/var/www/oqto"
-binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
-services = ["oqto"]
 ```
 
-## Frontend
+`binaries`/`services` are accepted for compatibility but ignored: the release decides
+what is installed, and the transaction decides what restarts.
 
-The frontend bundle ships **inside the release artifact** at
-`immutable/frontend/`, staged by `scripts/dist/stage-frontend.sh` (`just
-dist-stage-frontend --build`). `oqto-setup install` points `web_root` at
-`releases/current/immutable/frontend`, so the web root is a symlink that follows
-the active release: a rollback serves the matching bundle, and superseded chunks
-disappear with the release they came from.
+## Emergency rollback
 
-This is fail-closed on both ends: an artifact without a bundle is rejected before
-`current` is switched, and deploy verifies after install that `web_root/index.html`
-hashes equal to the bundle it shipped. `--skip-frontend` skips *rebuilding* the
-bundle, not shipping it.
-
-A pre-existing real directory at `web_root` (from the older rsync-into-web-root
-deploys) is moved aside to `<web_root>.pre-release-<epoch>` on first artifact
-install rather than deleted.
-
-## Update Lifecycle
-
-Before build/prepare/activate, deploy pre-authenticates sudo on all selected
-hosts so password prompts happen up front instead of mid-rollout.
-
-- Local host: `sudo -v`
-- Remote host: tries `sudo -n true` first (cached/NOPASSWD), then falls back to
-  interactive `ssh -tt <host> sudo -v` for hosts that require a TTY password prompt.
-
-For each host, deploy executes these phases:
-
-1. `preflight.start` / `preflight.pass|fail`
-   - Mode validation (`single-user` or `multi-user`)
-   - Disk space gate (`--min-free-mb`, default 1024 MB)
-   - Required tooling gate (`systemctl`, `install`)
-   - Dependency compatibility gates (from `dependencies.toml`):
-     - `eavs`, `mmry`, `trx`, `agntz`, `sx`, `skdlr`
-     - Release mode: host versions must satisfy `installed >= required` and are remediated when necessary.
-     - Development mode: binaries must exist; installed versions are preserved and reported without reconciliation.
-     - `hstry adapters --help` must succeed (adapter CLI compatibility guard).
-     - If hstry DB exists, `conversations.parent_conversation_id` and `conversations.fork_type` must exist (session-tree schema guard).
-   - Multi-user security gates:
-     - `/etc/oqto/sandbox.toml` must exist, be readable, owner `root:root`, perms `<= 0644`
-     - If seccomp enforce is configured in sandbox config, a source BPF artifact for the host's architecture (`backend/crates/oqto/examples/seccomp/default-<arch>.bpf`) must exist to install. Regenerate with `scripts/sandbox/generate-seccomp-artifacts.sh`. The artifact no longer needs to pre-exist on the host -- activation installs it.
-
-2. `deploy.prepare.start` / `deploy.prepare.pass|fail`
-   - Stage binaries and frontend under: `/var/lib/oqto/releases/<release-id>/`
-   - Stage seccomp BPF artifacts (both arches) under `<release-id>/seccomp/`
-   - Write `.prepared` marker (idempotent)
-
-3. `deploy.activate.start` / `deploy.activate.pass|fail`
-   - Atomic symlink switch: `/var/lib/oqto/releases/current -> <release-id>`
-   - Install host-arch seccomp BPF: `/usr/local/share/oqto/seccomp/default.bpf` (+ legacy symlink `/etc/oqto/seccomp/default.bpf`); restored to the previous release's policy on rollback
-   - `/usr/local/bin/*` relinked to `current/bin/*`
-   - Ordered restarts: runner → control plane (`oqto`) → dependent services
-   - In single-user hosts without `systemd --user`, deploy now auto-restarts `oqto-runner`
-     as a background fallback (`~/.local/state/oqto/deploy/oqto-runner.log`) so
-     post-migration health checks can recover after runner quiesce.
-   - Bounded health checks (`--health-timeout`, default 90s)
-
-4. `rollback.start` / `rollback.pass|fail` (only on activation failure)
-   - Restore previous `current` release
-   - Relink binaries + restart services
-
-5. `deploy.prune.pass|fail` (after successful activation or rollback)
-   - Remove old release directories under `/var/lib/oqto/releases/`
-   - Always preserves `current` and `last-good` symlink targets
-   - Keeps the `--keep-releases` (default 3) newest directories on top of those
-   - Failure is non-fatal (logged as warn)
-   - Re-run health checks
-
-## Audit Trail
-
-Structured events are appended to:
-
-- `/var/log/oqto/update-events.jsonl`
-
-Each event contains:
-- `timestamp`
-- `release_id`
-- `host`
-- `actor`
-- `phase`
-- `result`
-- `reason_code`
-
-## Idempotency and Resume
-
-- Re-running with same `--release-id` converges safely:
-  - Prepared releases are skipped when `.prepared` exists
-  - Already-active releases are skipped in `--resume` mode if health passes
-- Use `--resume --release-id <id>` after interruption
-- Use `--status --release-id <id>` to inspect `prepared/current/last-good`
-
-## Canary + Fleet Rollout
-
-### Canary only
-```bash
-just deploy --canary
-```
-
-### Canary then full rollout
-```bash
-just deploy --canary-then-fleet
-```
-
-Set `canary = true` on one or more hosts in `deploy/hosts.toml`.
-
-## Operator Runbook
-
-### Safe release flow
-
-```bash
-# 1) Build + stage + activate canary
-just deploy --canary-then-fleet
-
-# 2) Verify audit events and health
-ssh <host> 'tail -n 50 /var/log/oqto/update-events.jsonl'
-ssh <host> 'curl -sf http://127.0.0.1:8080/api/health && echo ok'
-
-# 3) If interrupted, resume exactly same release
-just deploy --resume --release-id <release-id>
-```
-
-### Manual rollback to last-good (emergency)
+Releases are retained (`--keep-releases`, default 3, plus `current`/`last-good`).
+Reinstall the previous artifact with `--allow-downgrade`, which keeps provenance,
+service checks and receipts. Manual pointer edits bypass all of that; only use them
+when the transaction itself cannot run:
 
 ```bash
 sudo ln -sfn "$(readlink -f /var/lib/oqto/releases/last-good)" /var/lib/oqto/releases/current
-sudo systemctl restart oqto
-```
-
-## Options
-
-```text
---host NAME
---release-id ID
---skip-build
---skip-frontend
---skip-backend
---skip-services
---prepare-only
---activate-only
---resume
---status
---canary
---canary-then-fleet
---health-timeout SEC
---min-free-mb MB
---keep-releases N     # default 3; also OQTO_KEEP_RELEASES env var
---dry-run
---config FILE
 ```

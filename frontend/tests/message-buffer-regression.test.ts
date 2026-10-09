@@ -140,9 +140,25 @@ describe("disappearing message regression", () => {
 			hstryComplete,
 			"authoritative",
 		);
-		expect(result).toHaveLength(6);
-		expect(result[0].id).toBe("h-1");
-		expect(result[5].id).toBe("h-6");
+		// All persisted rows survive, in server order. The compacted local
+		// user echo is preserved too: authoritative snapshots never silently
+		// erase a rendered user prompt -- deletes need an explicit durable
+		// tombstone path. Duplicate-free convergence for echoes is handled by
+		// clientId/fingerprint supersession when content actually matches.
+		expect(result.map((m) => m.id)).toEqual(
+			expect.arrayContaining([
+				"h-1",
+				"h-2",
+				"h-3",
+				"h-4",
+				"h-5",
+				"h-6",
+				"pi_msg_0",
+			]),
+		);
+		for (let i = 0; i < 6; i++) {
+			expect(result[i].id).toBe(`h-${i + 1}`);
+		}
 	});
 
 	it("multiple tabs see same buffer data without conflicts", () => {

@@ -2,6 +2,7 @@
  * File content viewer components for various file types.
  */
 export * from "./file-preview";
+export * from "./resource-preview-host";
 export * from "./code-viewer";
 export * from "./csv-viewer";
 export * from "./image-viewer";

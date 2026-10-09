@@ -295,11 +295,15 @@ pub enum PiEvent {
         #[serde(rename = "toolResults", default)]
         tool_results: Vec<ToolResultMessage>,
     },
+    /// Agent has finished and is idle again.
+    AgentSettled,
     /// Message begins.
     MessageStart { message: AgentMessage },
     /// Streaming update.
     MessageUpdate {
-        message: AgentMessage,
+        /// Pi 0.85.1 streams deltas without restating the message.
+        #[serde(default)]
+        message: Option<AgentMessage>,
         #[serde(rename = "assistantMessageEvent")]
         assistant_message_event: Box<AssistantMessageEvent>,
     },
@@ -378,34 +382,58 @@ pub enum PiEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageEvent {
     Start {
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     TextEnd {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         content: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ThinkingEnd {
@@ -414,17 +442,29 @@ pub enum AssistantMessageEvent {
         /// The thinking content (Pi sends this as "content" not "thinking")
         #[serde(alias = "thinking")]
         content: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallStart {
         #[serde(rename = "contentIndex")]
         content_index: usize,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallDelta {
         #[serde(rename = "contentIndex")]
         content_index: usize,
         delta: String,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     ToolcallEnd {
@@ -432,6 +472,10 @@ pub enum AssistantMessageEvent {
         content_index: usize,
         #[serde(rename = "toolCall")]
         tool_call: ToolCall,
+        /// Pi declares a live partial message on these events but does not
+        /// always emit one, and nothing here reads it. Requiring it would drop
+        /// the whole stream over a field we ignore.
+        #[serde(default)]
         partial: Value,
     },
     Done {
@@ -602,6 +646,13 @@ pub struct PiModel {
     pub context_window: u64,
     #[serde(rename = "maxTokens")]
     pub max_tokens: u64,
+    /// Native model capability metadata; null means that a level is unsupported.
+    #[serde(
+        rename = "thinkingLevelMap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thinking_level_map: Option<std::collections::HashMap<String, Option<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost: Option<ModelCost>,
 }
@@ -778,6 +829,33 @@ impl PiMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_thinking_capabilities_preserve_null_and_absence() -> Result<(), serde_json::Error> {
+        let mut data = serde_json::json!({
+            "id": "fixture-reasoner", "name": "Fixture", "api": "openai-completions",
+            "provider": "fixture", "reasoning": true, "input": ["text"],
+            "contextWindow": 8192, "maxTokens": 512,
+            "thinkingLevelMap": {"off": "none", "minimal": null, "low": "low"}
+        });
+        let model: PiModel = serde_json::from_value(data.clone())?;
+        assert_eq!(
+            serde_json::to_value(model)?["thinkingLevelMap"],
+            data["thinkingLevelMap"]
+        );
+        let removed = data
+            .as_object_mut()
+            .and_then(|object| object.remove("thinkingLevelMap"));
+        assert!(removed.is_some());
+        let legacy: PiModel = serde_json::from_value(data)?;
+        assert!(legacy.thinking_level_map.is_none());
+        assert!(
+            serde_json::to_value(legacy)?
+                .get("thinkingLevelMap")
+                .is_none()
+        );
+        Ok(())
+    }
 
     // A minimal valid MessageStart event (simplest PiEvent variant)
     fn make_event() -> String {

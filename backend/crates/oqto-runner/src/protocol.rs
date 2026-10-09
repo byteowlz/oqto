@@ -65,6 +65,8 @@ pub enum RunnerRequest {
 
     /// Get runner capabilities (harnesses + supported feature surface).
     GetCapabilities,
+    ProviderLogin(crate::provider_login::ProviderLoginRequest),
+    HistoryRead(crate::history_read::HistoryReadRequest),
 
     /// Shutdown the runner gracefully.
     Shutdown,
@@ -90,6 +92,9 @@ pub enum RunnerRequest {
     /// Create a directory (with parents if needed).
     CreateDirectory(CreateDirectoryRequest),
 
+    /// Execute one immutable, schema-validated App operation.
+    RunAppOperation(RunAppOperationRequest),
+
     // ========================================================================
     // Session Operations (user-plane)
     // ========================================================================
@@ -107,6 +112,16 @@ pub enum RunnerRequest {
 
     /// Fetch the terminal credential for a session.
     GetTerminalCredential(GetTerminalCredentialRequest),
+
+    /// Expose a workspace-local loopback port to the backend.
+    ///
+    /// Placement-neutral: host placements return the loopback address
+    /// unchanged; container placements return a bind-mounted Unix socket
+    /// path (container-side; the backend translates it to the host path).
+    ExposePort(ExposePortRequest),
+
+    /// Tear down a previously exposed port.
+    UnexposePort(UnexposePortRequest),
 
     // ========================================================================
     // Main Chat Operations (user-plane)
@@ -292,6 +307,8 @@ pub enum RunnerRequest {
     // ========================================================================
     /// Get available commands (extensions, templates, skills).
     AgentGetCommands(AgentGetCommandsRequest),
+    /// Non-chat extension control with gateway-owned connection identity.
+    AgentControl(AgentControlRequest),
 
     // ========================================================================
     // Pi Bash
@@ -348,6 +365,8 @@ pub enum RunnerResponse {
 
     /// Runner capabilities.
     RunnerCapabilities(RunnerCapabilitiesResponse),
+    ProviderLogin(crate::provider_login::ProviderLoginResponse),
+    HistoryRead(crate::history_read::HistoryReadResponse),
 
     /// Shutdown acknowledged.
     ShuttingDown,
@@ -373,6 +392,9 @@ pub enum RunnerResponse {
     /// Directory created successfully.
     DirectoryCreated(DirectoryCreatedResponse),
 
+    /// Bounded result from an immutable App operation.
+    AppOperationResult(AppOperationResultResponse),
+
     // ========================================================================
     // Session Responses
     // ========================================================================
@@ -385,6 +407,12 @@ pub enum RunnerResponse {
     /// Session started (with service ports/PIDs).
     SessionStarted(SessionStartedResponse),
     TerminalCredential(TerminalCredentialResponse),
+
+    /// Port exposed (response to ExposePort).
+    PortExposed(PortExposedResponse),
+
+    /// Port exposure removed (response to UnexposePort).
+    PortUnexposed,
 
     /// Session stopped.
     SessionStopped(SessionStoppedResponse),
@@ -510,6 +538,7 @@ pub enum RunnerResponse {
 
     /// Agent commands response.
     AgentCommands(AgentCommandsResponse),
+    AgentControl(oqto_protocol::control::ControlResult),
 
     /// Pi bash result response.
     PiBashResult(PiBashResultResponse),
@@ -682,6 +711,23 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunAppOperationRequest {
+    pub content_digest: String,
+    pub app_id: String,
+    pub operation_id: String,
+    pub work_directory: PathBuf,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppOperationResultResponse {
+    pub success: bool,
+    pub code: String,
+    pub message: String,
+    pub output: Value,
+}
+
 // ============================================================================
 // Session Request Types
 // ============================================================================
@@ -790,6 +836,10 @@ pub struct GetWorkspaceChatSessionMessagesRequest {
     /// Optional limit on number of messages.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Opaque pagination cursor: return only messages strictly older than
+    /// this position. Obtained from `next_before` of a previous response.
+    #[serde(default)]
+    pub before: Option<String>,
     /// Source selector. Authoritative is the default for backwards compatibility.
     #[serde(default)]
     pub source: WorkspaceChatMessagesSource,
@@ -1295,6 +1345,16 @@ pub struct AgentGetCommandsRequest {
     pub session_id: String,
 }
 
+/// Gateway-authenticated control. Connection identity is not a permission grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentControlRequest {
+    pub session_id: String,
+    pub request_id: String,
+    pub binding_id: String,
+    pub operation: oqto_protocol::control::ControlOperation,
+    pub arguments: serde_json::Value,
+}
+
 /// Request to execute a bash command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiBashRequest {
@@ -1621,6 +1681,35 @@ pub struct TerminalCredentialResponse {
     pub password: Option<String>,
 }
 
+/// Request to expose a workspace-local loopback port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExposePortRequest {
+    pub port: u16,
+}
+
+/// Request to tear down an exposed port.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnexposePortRequest {
+    pub port: u16,
+}
+
+/// Typed endpoint returned by ExposePort. The transport is the placement's
+/// concern; callers get one resolvable address, no placement branches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExposedEndpoint {
+    /// Directly reachable TCP address (shared-loopback host placements).
+    Tcp { host: String, port: u16 },
+    /// Unix socket path as seen inside the placement (`/run/oqto/...`).
+    Unix { path: PathBuf },
+}
+
+/// Response to ExposePort.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortExposedResponse {
+    pub endpoint: ExposedEndpoint,
+}
+
 /// Response when session is stopped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStoppedResponse {
@@ -1730,6 +1819,12 @@ pub struct WorkspaceChatSessionMessagesResponse {
     pub source: WorkspaceChatMessagesSource,
     /// Messages in chronological order.
     pub messages: Vec<ChatMessageProto>,
+    /// True when older messages exist before this window (paged requests only).
+    #[serde(default)]
+    pub has_more: bool,
+    /// Cursor for fetching the next-older page (paged requests only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<String>,
 }
 
 /// Response when a workspace chat session is updated.

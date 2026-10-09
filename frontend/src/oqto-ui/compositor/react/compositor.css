@@ -1,0 +1,425 @@
+/* CSS Grid projection of the semantic compositor grid. Track templates and
+   the scroll offset are computed custom properties; visual styling stays on
+   design tokens. Flush lanes sit outside the horizontally scrolled body. */
+
+.oqto-compositor {
+	display: flex;
+	flex-direction: column;
+	inline-size: 100%;
+	block-size: 100%;
+	min-block-size: 0;
+	background: var(--background);
+}
+
+.oqto-compositor-lane {
+	flex: none;
+	display: grid;
+	block-size: var(--oqto-lane-size);
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.oqto-compositor-body {
+	flex: 1;
+	min-block-size: 0;
+	overflow: hidden;
+}
+
+.oqto-compositor-grid {
+	display: grid;
+	grid-template-columns: var(--oqto-compositor-columns);
+	grid-template-rows: var(--oqto-compositor-rows);
+	block-size: 100%;
+	column-gap: var(--oqto-compositor-column-gap, 0px);
+	row-gap: var(--oqto-compositor-row-gap, 0px);
+	transform: translateX(calc(-1 * var(--oqto-compositor-scroll)));
+	transition: transform 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.oqto-compositor-grid {
+		transition: none;
+	}
+}
+
+.oqto-compositor-cell {
+	grid-row: var(--oqto-cell-row);
+	grid-column: var(--oqto-cell-column);
+	min-inline-size: 0;
+	min-block-size: 0;
+	display: flex;
+}
+
+.oqto-compositor-lane .oqto-compositor-cell {
+	grid-row: auto;
+	grid-column: 1;
+}
+
+.oqto-compositor-container {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-inline-size: 0;
+	min-block-size: 0;
+	overflow: hidden;
+	background: var(--background);
+	color: var(--foreground);
+}
+
+/* Only rendered once a Container holds more than one Content. */
+.oqto-compositor-tabs {
+	display: flex;
+	flex: none;
+	align-items: center;
+	overflow-x: auto;
+	border-block-end: 1px solid var(--border);
+	background: var(--card);
+}
+
+/*
+ * The Container's controls. With a tab bar they sit at its end; without one
+ * they are handed to the presentation, which places them in its own header,
+ * or anchored in a corner when it has none.
+ */
+.oqto-compositor-chrome {
+	display: flex;
+	flex: none;
+	align-items: center;
+	margin-inline-start: auto;
+}
+
+.oqto-compositor-corner {
+	position: absolute;
+	z-index: 3;
+	inset-block-start: 4px;
+	inset-inline-end: 6px;
+	display: flex;
+	align-items: center;
+}
+
+.oqto-compositor-tab {
+	display: inline-flex;
+	align-items: center;
+}
+
+.oqto-compositor-tab[data-active] {
+	background: var(--background);
+	color: var(--primary);
+}
+
+.oqto-compositor-tab-close {
+	color: var(--muted-foreground);
+}
+
+.oqto-compositor-content {
+	position: relative;
+	flex: 1;
+	min-block-size: 0;
+	overflow: auto;
+}
+
+.oqto-compositor-empty {
+	block-size: 100%;
+	background: var(--muted);
+}
+
+.oqto-compositor {
+	position: relative;
+}
+
+.oqto-compositor-gutter {
+	z-index: 1;
+	background: transparent;
+}
+
+.oqto-compositor-gutter[data-axis="inline"] {
+	grid-row: var(--oqto-gutter-from) / var(--oqto-gutter-to);
+	grid-column: var(--oqto-gutter-line);
+	justify-self: start;
+	inline-size: 7px;
+	margin-inline-start: -4px;
+	cursor: col-resize;
+}
+
+.oqto-compositor-gutter[data-axis="block"] {
+	grid-column: var(--oqto-gutter-from) / var(--oqto-gutter-to);
+	grid-row: var(--oqto-gutter-line);
+	align-self: start;
+	block-size: 7px;
+	margin-block-start: -4px;
+	cursor: row-resize;
+}
+
+.oqto-compositor-gutter:hover {
+	background: var(--primary);
+}
+
+.oqto-compositor-container[data-drop] {
+	outline: 2px solid var(--primary);
+	outline-offset: -2px;
+}
+
+.oqto-compositor-container[data-drop="inline-start"] {
+	box-shadow: inset 6px 0 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="inline-end"] {
+	box-shadow: inset -6px 0 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="block-start"] {
+	box-shadow: inset 0 6px 0 var(--primary);
+}
+
+.oqto-compositor-container[data-drop="block-end"] {
+	box-shadow: inset 0 -6px 0 var(--primary);
+}
+
+.oqto-compositor-edge {
+	position: absolute;
+	z-index: 2;
+	display: none;
+	background: var(--primary);
+	opacity: 0.35;
+}
+
+.oqto-compositor[data-dragging] .oqto-compositor-edge {
+	display: block;
+}
+
+.oqto-compositor-edge[data-edge="block-start"] {
+	inset-inline: 0;
+	inset-block-start: 0;
+	block-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="block-end"] {
+	inset-inline: 0;
+	inset-block-end: 0;
+	block-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="inline-start"] {
+	inset-block: 0;
+	inset-inline-start: 0;
+	inline-size: 24px;
+}
+
+.oqto-compositor-edge[data-edge="inline-end"] {
+	inset-block: 0;
+	inset-inline-end: 0;
+	inline-size: 24px;
+}
+
+.oqto-compositor[data-previewing] .oqto-compositor-grid {
+	transition: none;
+}
+
+.oqto-compositor-palette-backdrop {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding-block-start: 10vh;
+	background: var(--background);
+	opacity: 0.98;
+}
+
+.oqto-compositor-palette {
+	inline-size: min(40rem, 90%);
+	max-block-size: 70vh;
+	display: flex;
+	flex-direction: column;
+	background: var(--popover);
+	color: var(--foreground);
+	border: 1px solid var(--border);
+}
+
+.oqto-compositor-palette-search {
+	flex: none;
+	padding: 0.75rem 1rem;
+	border: 0;
+	border-block-end: 1px solid var(--border);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.oqto-compositor-palette-list {
+	flex: 1;
+	min-block-size: 0;
+	overflow: auto;
+	margin: 0;
+	padding: 0.25rem 0;
+	list-style: none;
+}
+
+.oqto-compositor-palette-item button {
+	display: flex;
+	inline-size: 100%;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.5rem 1rem;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: start;
+}
+
+.oqto-compositor-palette-item[data-active] button {
+	background: var(--muted);
+	color: var(--primary);
+}
+
+.oqto-compositor-palette-item kbd {
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+}
+
+.oqto-compositor-palette-empty {
+	padding: 0.5rem 1rem;
+	color: var(--muted-foreground);
+}
+
+/*
+ * The collapsed edge Container's only way back. A bare strip reads as part of
+ * the frame, so the rail carries a visible control.
+ */
+.oqto-compositor-expand {
+	position: absolute;
+	z-index: 2;
+	inset-block: 0;
+	inset-inline-start: 0;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding-block-start: 12px;
+	inline-size: 28px;
+	border: 0;
+	border-inline-end: 1px solid var(--border);
+	background: var(--sidebar, var(--card));
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.oqto-compositor-expand svg {
+	inline-size: 16px;
+	block-size: 16px;
+}
+
+.oqto-compositor-expand:hover {
+	background: var(--muted);
+	color: var(--foreground);
+}
+
+/* ---------------------------------------------------------- add control */
+
+/*
+ * One control per Container, docked at the end of its tab strip. Persistent
+ * rather than hover-revealed: the Arrangement stays quiet and the way to add
+ * Content is always in the same place.
+ */
+.oqto-compositor-close {
+	inline-size: 22px;
+	block-size: 22px;
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.oqto-compositor-close:hover {
+	color: var(--destructive, var(--primary));
+}
+
+.oqto-compositor-add {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.oqto-compositor-add-open {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	inline-size: 22px;
+	block-size: 22px;
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-open:hover,
+.oqto-compositor-add-open[aria-expanded="true"] {
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-menu {
+	position: absolute;
+	inset-block-start: 24px;
+	inset-inline-end: 0;
+	z-index: 4;
+	inline-size: 220px;
+	border: 1px solid var(--border);
+	background: color-mix(
+		in srgb,
+		var(--popover, var(--card)) 88%,
+		var(--foreground)
+	);
+}
+
+.oqto-compositor-add-where {
+	display: flex;
+	gap: 2px;
+	padding: 4px;
+	border-block-end: 1px solid var(--border);
+}
+
+.oqto-compositor-add-where button {
+	flex: 1 1 auto;
+	padding: 4px 0;
+	border: 1px solid transparent;
+	background: none;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-where button:hover {
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-where button[aria-pressed="true"] {
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.oqto-compositor-add-menu ul {
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+}
+
+.oqto-compositor-add-menu ul button {
+	inline-size: 100%;
+	padding: 6px 8px;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	text-align: start;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.oqto-compositor-add-menu ul button:hover {
+	background: var(--muted);
+}

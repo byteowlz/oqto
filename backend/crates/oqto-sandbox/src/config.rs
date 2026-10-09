@@ -213,7 +213,7 @@ fn default_workspace_cache_root() -> String {
 /// `RUSTUP_HOME` is deliberately absent: rustup shims resolve the active
 /// toolchain through it, so pointing it at an empty directory breaks `cargo`
 /// and `rustc` entirely. It only needs to be readable, which it already is.
-const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
+pub(crate) const WORKSPACE_CACHE_ENV: &[(&str, &str)] = &[
     ("CARGO_HOME", "cargo"),
     ("NPM_CONFIG_CACHE", "npm"),
     ("BUN_INSTALL_CACHE_DIR", "bun"),
@@ -343,6 +343,48 @@ fn network_restrictiveness(mode: &NetworkMode) -> u8 {
 /// Merge two network policies so a workspace override can only tighten, never
 /// loosen, the global policy. On equal restrictiveness the workspace wins (it
 /// may, e.g., point proxy mode at its own ports).
+/// Merge SSH agent proxy config: the workspace opts in per work directory,
+/// while a global grant list acts as a ceiling on which keys it may use.
+///
+/// Both files belong to the same user, so this is scoping rather than a
+/// privilege boundary: the point is that a work directory reaches only the
+/// keys it was granted, not every key in the user's agent.
+fn merge_ssh(
+    global: &Option<SshProxyConfig>,
+    workspace: &Option<SshProxyConfig>,
+) -> Option<SshProxyConfig> {
+    match (global, workspace) {
+        (None, None) => None,
+        (Some(g), None) => Some(g.clone()),
+        (None, Some(w)) => Some(w.clone()),
+        (Some(g), Some(w)) => {
+            let allowed_keys = if g.allowed_keys.is_empty() {
+                w.allowed_keys.clone()
+            } else if w.allowed_keys.is_empty() {
+                g.allowed_keys.clone()
+            } else {
+                w.allowed_keys
+                    .iter()
+                    .filter(|k| g.allowed_keys.contains(k))
+                    .cloned()
+                    .collect()
+            };
+
+            Some(SshProxyConfig {
+                enabled: g.enabled || w.enabled,
+                allowed_keys,
+                allowed_hosts: if w.allowed_hosts.is_empty() {
+                    g.allowed_hosts.clone()
+                } else {
+                    w.allowed_hosts.clone()
+                },
+                prompt_unknown: g.prompt_unknown || w.prompt_unknown,
+                log_connections: g.log_connections || w.log_connections,
+            })
+        }
+    }
+}
+
 fn merge_network(
     global: &Option<NetworkConfig>,
     workspace: &Option<NetworkConfig>,
@@ -683,10 +725,26 @@ pub enum ReadPolicy {
     Allowlist,
 }
 
+/// The profile a sandbox should use when nothing has selected one.
+///
+/// Linux and other platforms default to `development`, whose namespace and
+/// kernel isolations bubblewrap can enforce. macOS defaults to
+/// `development-macos`, because the Seatbelt backend cannot enforce the
+/// pid/user-namespace and no-new-privs guarantees the shared `development` and
+/// `strict` profiles ask for; refusing them would leave macOS with no usable
+/// shipped profile and push users to disable the sandbox entirely.
+pub fn default_profile_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "development-macos"
+    } else {
+        "development"
+    }
+}
+
 /// A sandbox profile definition.
 ///
 /// Profiles define the security settings for sandboxed processes.
-/// Built-in profiles: "minimal", "development", "strict"
+/// Built-in profiles: "minimal", "development", "strict", "development-macos"
 /// Custom profiles can be defined in `[profiles.<name>]` sections.
 ///
 /// ## Security Layers
@@ -820,14 +878,23 @@ impl SandboxProfile {
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 // The platform's own config holds the backend signing secret and the
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -868,14 +935,23 @@ impl SandboxProfile {
             resource_limits: ResourceLimits::default(),
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 // The platform's own config holds the backend signing secret and the
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -935,6 +1011,7 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
             ],
             scoped_paths: vec![],
+
             // Session history is deliberately NOT scoped here. development is
             // the permissive profile; cross-workspace session visibility is
             // intended. strict scopes it (see session_shard_rules).
@@ -1000,6 +1077,10 @@ impl SandboxProfile {
             },
             deny_read: vec![
                 "~/.ssh".to_string(),
+                // Masked, not denied for secrecy: these root-owned includes
+                // appear as `nobody` inside the user namespace, and SSH treats
+                // that as fatal before it reaches the agent proxy.
+                "/etc/ssh/ssh_config.d".to_string(),
                 "~/.gnupg".to_string(),
                 "~/.aws".to_string(),
                 "~/.config".to_string(),
@@ -1007,8 +1088,13 @@ impl SandboxProfile {
                 // EAVS master key. An agent never needs it; the user-scoped
                 // ~/.config/oqto is separate.
                 "/etc/oqto".to_string(),
+                "/run/oqto".to_string(),
                 "~/.config/oqto/config.toml".to_string(),
                 "~/.local/share/oqto/credentials".to_string(),
+                // Immutable history authority (ADR-0005/0025): agents never get a path
+                // to the transcript stores. Single-user deployments share the uid with
+                // the backend, so path exclusion is the only immutability control.
+                "~/.local/share/oqto/oqto-log".to_string(),
                 "/usr/bin/systemctl".to_string(),
                 "/bin/systemctl".to_string(),
                 "/usr/bin/systemd-run".to_string(),
@@ -1068,11 +1154,55 @@ impl SandboxProfile {
         }
     }
 
+    /// Create a macOS-compatible development profile.
+    ///
+    /// This is `development` adapted for the macOS Seatbelt backend, which
+    /// enforces per-path access but cannot isolate a process namespace, cannot
+    /// deny user-namespace creation, and cannot assert `no_new_privs`. Refusing
+    /// those guarantees (as the shared `development`/`strict` profiles request)
+    /// would leave macOS with no shipped profile that can start.
+    ///
+    /// It keeps the path policy `development` already ships — the deny_read
+    /// list for secrets, the allow_write agents, the deny_write for
+    /// `sandbox.toml`, and the denylist home read with workspace scoping — all
+    /// of which Seatbelt does enforce. It only drops the guarantees Seatbelt
+    /// cannot provide and disables the advisory Linux audit modes it has no
+    /// equivalent for.
+    pub fn development_macos() -> Self {
+        let mut profile = Self::development();
+        // Seatbelt cannot isolate the process namespace or create one:
+        // these must be off or validate_config refuses to start.
+        profile.isolate_pid = false;
+        profile.disable_userns = false;
+        profile.no_new_privs = false;
+        // Seccomp/Landlock do not exist on macOS; keeping the Linux 'audit'
+        // mode would only emit a warning for a ruleset never applied.
+        profile.seccomp_mode = SeccompMode::Off;
+        profile.landlock_mode = LandlockMode::Off;
+        // Overlays need a mount namespace Seatbelt does not provide.
+        profile.overlay_paths = vec![];
+        // Destination grants are not supported on macOS and are rejected:
+        // clear them so every SSH sign request prompts instead.
+        if let Some(ssh) = &mut profile.ssh {
+            ssh.allowed_hosts.clear();
+        }
+        profile
+    }
+
+    /// The profile this host should use when none is selected.
+    ///
+    /// See [`default_profile_name`]; this must exist as a built-in profile on
+    /// the host it returns.
+    pub fn for_platform() -> Self {
+        Self::builtin(default_profile_name()).expect("default profile is built-in")
+    }
+
     /// Get a built-in profile by name.
     pub fn builtin(name: &str) -> Option<Self> {
         match name {
             "minimal" => Some(Self::minimal()),
             "development" => Some(Self::development()),
+            "development-macos" => Some(Self::development_macos()),
             "strict" => Some(Self::strict()),
             _ => None,
         }
@@ -1106,7 +1236,7 @@ pub struct SandboxConfigFile {
     /// Enable sandboxing.
     pub enabled: bool,
 
-    /// Which profile to use: "minimal", "development", "strict", or a custom name.
+    /// Which profile to use: "minimal", "development", "strict", "development-macos", or a custom name.
     pub profile: String,
 
     /// Custom profile definitions.
@@ -1147,6 +1277,13 @@ pub struct SandboxConfigFile {
 
     // Scalars override the profile. Global config is admin-owned, so it may
     // legitimately loosen as well as tighten.
+    /// Grant this work directory the use of specific SSH keys.
+    ///
+    /// Without this the file fails to parse (unknown field), which silently
+    /// discards every override in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshProxyConfig>,
+
     /// Override the profile's network isolation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub isolate_network: Option<bool>,
@@ -1281,6 +1418,11 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub network: Option<NetworkConfig>,
 
+    /// SSH agent proxy grants. Carried from the profile so the runner can start
+    /// a per-session agent proxy instead of exposing key material.
+    #[serde(default)]
+    pub ssh: Option<SshProxyConfig>,
+
     /// Per-process resource limits applied before exec.
     #[serde(default)]
     pub resource_limits: ResourceLimits,
@@ -1305,13 +1447,13 @@ pub const USER_SANDBOX_CONFIG: &str = "~/.config/oqto/sandbox.toml";
 
 impl Default for SandboxConfig {
     fn default() -> Self {
-        let profile = SandboxProfile::development();
+        let profile = SandboxProfile::for_platform();
         Self {
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
             enabled: false,
-            profile: "development".to_string(),
+            profile: default_profile_name().to_string(),
             read_policy: profile.read_policy,
             home_access: profile.home_access,
             allow_read: profile.allow_read,
@@ -1334,6 +1476,7 @@ impl Default for SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1352,8 +1495,9 @@ impl SandboxConfigFile {
 
 impl From<SandboxConfigFile> for SandboxConfig {
     fn from(file: SandboxConfigFile) -> Self {
+        let default_name = default_profile_name();
         let profile_name = if file.profile.is_empty() {
-            "development"
+            default_name
         } else {
             &file.profile
         };
@@ -1366,10 +1510,10 @@ impl From<SandboxConfigFile> for SandboxConfig {
             .or_else(|| SandboxProfile::builtin(profile_name))
             .unwrap_or_else(|| {
                 warn!(
-                    "Unknown profile '{}', falling back to 'development'",
+                    "Unknown profile '{}', falling back to '{default_name}'",
                     profile_name
                 );
-                SandboxProfile::development()
+                SandboxProfile::for_platform()
             });
 
         let mut config = Self {
@@ -1400,6 +1544,7 @@ impl From<SandboxConfigFile> for SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: file.ssh.or(profile.ssh),
             profiles: file.profiles,
         };
 
@@ -1498,6 +1643,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1533,6 +1679,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: HashMap::new(),
         }
     }
@@ -1555,10 +1702,11 @@ impl SandboxConfig {
             .or_else(|| SandboxProfile::builtin(profile_name))
             .unwrap_or_else(|| {
                 warn!(
-                    "Unknown profile '{}', falling back to 'development'",
-                    profile_name
+                    "Unknown profile '{}', falling back to '{}'",
+                    profile_name,
+                    default_profile_name()
                 );
-                SandboxProfile::development()
+                SandboxProfile::for_platform()
             });
 
         let mut config = Self {
@@ -1589,6 +1737,7 @@ impl SandboxConfig {
             overlay_paths: profile.overlay_paths,
             scoped_paths: profile.scoped_paths,
             network: profile.network,
+            ssh: profile.ssh,
             profiles: custom_profiles.clone(),
         };
 
@@ -1663,7 +1812,7 @@ impl SandboxConfig {
                     merged_profiles.extend(file.profiles.clone());
 
                     let profile_name = if file.profile.is_empty() {
-                        "development"
+                        default_profile_name()
                     } else {
                         &file.profile
                     };
@@ -1675,10 +1824,11 @@ impl SandboxConfig {
                         .or_else(|| SandboxProfile::builtin(profile_name))
                         .unwrap_or_else(|| {
                             warn!(
-                                "Workspace references unknown profile '{}', using development",
-                                profile_name
+                                "Workspace references unknown profile '{}', using '{}'",
+                                profile_name,
+                                default_profile_name()
                             );
-                            SandboxProfile::development()
+                            SandboxProfile::for_platform()
                         });
 
                     let config = Self {
@@ -1709,6 +1859,9 @@ impl SandboxConfig {
                         overlay_paths: profile.overlay_paths,
                         scoped_paths: profile.scoped_paths,
                         network: profile.network,
+                        // The work directory's own grants, not the profile's default of
+                        // "enabled for everything and nothing granted".
+                        ssh: file.ssh.clone().or(profile.ssh),
                         profiles: merged_profiles,
                     };
 
@@ -1876,6 +2029,8 @@ impl SandboxConfig {
             scoped_paths,
             // Network policy: workspace may only tighten (Open < Proxy < Isolated).
             network: merge_network(&self.network, &workspace_config.network),
+            // SSH agent proxy: per-workdir opt-in, global grants are a ceiling.
+            ssh: merge_ssh(&self.ssh, &workspace_config.ssh),
             profiles,
         }
     }
@@ -1944,7 +2099,39 @@ impl SandboxConfig {
             .target_template
             .replace("{base_path}", &base.to_string_lossy())
             .replace("{value}", &value);
-        Some(Self::expand_home_for_user(&target_expr, username))
+        Some(Self::canonicalize_namespace_path(
+            Self::expand_home_for_user(&target_expr, username),
+        ))
+    }
+
+    /// Host symlinks under the user's home are canonicalized so the sandbox
+    /// never mounts onto, or creates directories through, a symlink path:
+    /// bubblewrap 0.12 refuses symlink-destination mounts outright, and no
+    /// version can mkdir intermediate paths through one for the deeper
+    /// materialized mounts (session shards, caches). The policy layer
+    /// re-creates the original path as a leaf `--symlink` instead. Paths
+    /// without a symlinked ancestor (including FHS paths) pass through
+    /// unchanged.
+    fn canonicalize_namespace_path(path: PathBuf) -> PathBuf {
+        let mut ancestor = PathBuf::from("/");
+        for component in path.components().skip(1) {
+            ancestor.push(component);
+            let is_symlink = std::fs::symlink_metadata(&ancestor)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if !is_symlink {
+                continue;
+            }
+            let canonical_ancestor = match std::fs::canonicalize(&ancestor) {
+                Ok(canonical) => canonical,
+                Err(_) => return path,
+            };
+            let rest = path
+                .strip_prefix(&ancestor)
+                .unwrap_or_else(|_| Path::new(""));
+            return canonical_ancestor.join(rest);
+        }
+        path
     }
 
     fn apply_scoped_path_rules(
@@ -1958,7 +2145,10 @@ impl SandboxConfig {
                 continue;
             }
 
-            let base = Self::expand_home_for_user(&rule.base_path, username);
+            let base = Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                &rule.base_path,
+                username,
+            ));
             if base.as_os_str().is_empty() {
                 continue;
             }
@@ -2001,7 +2191,10 @@ impl SandboxConfig {
                 .target_template
                 .replace("{base_path}", &base_str)
                 .replace("{value}", &value);
-            let target = Self::expand_home_for_user(&target_expr, username);
+            let target = Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                &target_expr,
+                username,
+            ));
             let target_str = target.to_string_lossy().to_string();
 
             let target_exists = target.exists();
@@ -2142,19 +2335,34 @@ impl SandboxConfig {
     /// inside it, and a deny inside that work directory only order correctly
     /// when all three are decided by one mechanism.
     fn permission_args(&self, workspace: &Path, username: Option<&str>) -> Option<Vec<String>> {
+        let build = match self.permission_policy(workspace, username) {
+            Ok(build) => build,
+            Err(error) => {
+                error!("Sandbox policy could not be resolved: {error:#}");
+                return None;
+            }
+        };
+        Some(crate::policy_bwrap::compile_filesystem_args(
+            &build.policy,
+            &crate::policy_bwrap::HostPaths,
+            &build.reconstructions,
+        ))
+    }
+
+    /// Resolve permission fields once for every enforcement backend (ADR-0028).
+    pub(crate) fn permission_policy(
+        &self,
+        workspace: &Path,
+        username: Option<&str>,
+    ) -> anyhow::Result<crate::path_policy::ResolvedPolicyBuild> {
         let home = if let Some(user) = username {
             Self::get_user_home(user)
         } else {
             dirs::home_dir()
         };
-        let Some(home) = home else {
-            warn!(
-                "Could not determine home directory for user {:?}; refusing to build a sandbox \
-                 whose home policy cannot be resolved",
-                username
-            );
-            return None;
-        };
+        let home = home.ok_or_else(|| anyhow::anyhow!(
+            "Could not determine home directory for user {username:?}; refusing unresolved home policy"
+        ))?;
 
         let fields = crate::policy_translate::PermissionFields {
             profile_name: &self.profile,
@@ -2167,36 +2375,20 @@ impl SandboxConfig {
             extra_ro_bind: &self.extra_ro_bind,
             extra_rw_bind: &self.extra_rw_bind,
         };
-        let translated = match crate::policy_translate::translate_permissions(&fields) {
-            Ok(translated) => translated,
-            Err(error) => {
-                error!("Sandbox policy is invalid: {error}");
-                return None;
-            }
-        };
-
+        let translated = crate::policy_translate::translate_permissions(&fields)?;
         let registry = crate::path_policy::ResourceRegistry::default();
-        let build = match translated
+        let build = translated
             .policy
             .resolve_roots(&crate::path_policy::ResolutionContext {
                 workdir: workspace,
                 home: &home,
                 resources: &registry,
-            }) {
-            Ok(build) => build,
-            Err(error) => {
-                error!("Sandbox policy could not be resolved: {error}");
-                return None;
-            }
-        };
+            })?;
         for id in &build.unavailable_resources {
             warn!("Sandbox policy resource unavailable on this target: {id}");
         }
 
-        Some(crate::policy_bwrap::compile_filesystem_args(
-            &build.policy,
-            &crate::policy_bwrap::HostPaths,
-        ))
+        Ok(build)
     }
 
     pub fn build_bwrap_args_for_user(
@@ -2538,9 +2730,11 @@ impl SandboxConfig {
                     let allow_write_joined = effective_allow_write
                         .iter()
                         .map(|p| {
-                            Self::expand_home_for_user(p, username)
-                                .to_string_lossy()
-                                .to_string()
+                            Self::canonicalize_namespace_path(Self::expand_home_for_user(
+                                p, username,
+                            ))
+                            .to_string_lossy()
+                            .to_string()
                         })
                         .chain(scoped_writable)
                         .collect::<Vec<_>>()
@@ -2605,12 +2799,14 @@ impl SandboxConfig {
                 ModelMode::Restrict => {
                     // Bind workspace models.json directly over global
                     let ws_models_str = ws_models_path.to_string_lossy().to_string();
-                    let global_models_str = target_home
-                        .as_ref()
-                        .map(|h| h.join(".pi/agent/models.json"))
-                        .unwrap_or_else(|| PathBuf::from("/nonexistent"))
-                        .to_string_lossy()
-                        .to_string();
+                    let global_models_str = Self::canonicalize_namespace_path(
+                        target_home
+                            .as_ref()
+                            .map(|h| h.join(".pi/agent/models.json"))
+                            .unwrap_or_else(|| PathBuf::from("/nonexistent")),
+                    )
+                    .to_string_lossy()
+                    .to_string();
                     args.push("--ro-bind".to_string());
                     args.push(ws_models_str.clone());
                     args.push(global_models_str.clone());
@@ -2621,10 +2817,12 @@ impl SandboxConfig {
                 }
                 ModelMode::Merge => {
                     // Merge global + workspace into a temp file, bind that
-                    let global_models_path = target_home
-                        .as_ref()
-                        .map(|h| h.join(".pi/agent/models.json"))
-                        .unwrap_or_else(|| PathBuf::from("/nonexistent"));
+                    let global_models_path = Self::canonicalize_namespace_path(
+                        target_home
+                            .as_ref()
+                            .map(|h| h.join(".pi/agent/models.json"))
+                            .unwrap_or_else(|| PathBuf::from("/nonexistent")),
+                    );
                     match WorkspaceConfig::merge_models_json(&global_models_path, &ws_models_path) {
                         Ok(merged) => {
                             // Write merged JSON to a temp file that lives for this session
@@ -3460,8 +3658,19 @@ max_cpu_seconds = 32
     fn test_default_config() {
         let config = SandboxConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.profile, "development");
+        assert_eq!(config.profile, default_profile_name());
         assert!(config.deny_read.contains(&"~/.ssh".to_string()));
+    }
+
+    #[test]
+    fn builtin_profiles_hide_the_team_runner_control_socket_tree() {
+        for name in ["minimal", "development", "strict"] {
+            let profile = SandboxProfile::builtin(name).expect("built-in profile exists");
+            assert!(
+                profile.deny_read.contains(&"/run/oqto".to_string()),
+                "{name} must hide the team runner control socket tree"
+            );
+        }
     }
 
     #[test]
@@ -3473,6 +3682,48 @@ max_cpu_seconds = 32
         let strict = SandboxConfig::strict();
         assert!(strict.isolate_network);
         assert!(strict.isolate_pid);
+    }
+
+    #[test]
+    fn test_history_store_denied_and_development_sessions_sharded() {
+        let log_store = "~/.local/share/oqto/oqto-log".to_string();
+
+        // The transcript stores are the immutable authority (ADR-0005/0025);
+        // path exclusion is the only immutability control for same-user
+        // sandboxes, so every shipped profile denies them.
+        let minimal = SandboxConfig::minimal();
+        let development = SandboxConfig::from_profile("development");
+        let strict = SandboxConfig::strict();
+        for (name, config) in [
+            ("minimal", &minimal),
+            ("development", &development),
+            ("strict", &strict),
+        ] {
+            assert!(
+                config.deny_read.contains(&log_store),
+                "{name} profile must deny agent access to the oqto-log history store"
+            );
+        }
+
+        // Strict additionally shards harness session history to the current
+        // workspace (current shard writable, other workspaces hidden).
+        // Development deliberately does NOT: cross-workspace session
+        // visibility is a pinned permissive-profile decision
+        // (development_does_not_scope_session_history).
+        assert!(
+            SandboxProfile::strict()
+                .scoped_paths
+                .iter()
+                .any(|rule| rule.name.starts_with("session-shard:")),
+            "strict profile must keep harness session sharding"
+        );
+        assert!(
+            !SandboxProfile::development()
+                .scoped_paths
+                .iter()
+                .any(|rule| rule.base_path.contains("agent/sessions")),
+            "development cross-workspace session visibility is pinned; change deliberately, not accidentally"
+        );
     }
 
     #[test]
@@ -3493,12 +3744,14 @@ max_cpu_seconds = 32
         let strict = SandboxConfig::from_profile("strict");
         assert_eq!(strict.profile, "strict");
 
-        // Unknown profiles keep their name but use development settings
+        // Unknown profiles keep their name but fall back to the platform default
+        // profile's settings (development on non-macOS, development-macos on
+        // macOS, where the namespace isolations are unenforceable).
+        let fallback = SandboxProfile::for_platform();
         let unknown = SandboxConfig::from_profile("unknown");
         assert_eq!(unknown.profile, "unknown");
-        // But should have development's settings
-        assert!(unknown.isolate_pid); // development has isolate_pid=true
-        assert!(!unknown.isolate_network); // development has isolate_network=false
+        assert_eq!(unknown.isolate_pid, fallback.isolate_pid);
+        assert_eq!(unknown.isolate_network, fallback.isolate_network);
     }
 
     #[test]
@@ -3608,11 +3861,13 @@ profile = "nonexistent"
         let file: SandboxConfigFile = toml::from_str(toml_content).unwrap();
         let config: SandboxConfig = file.into();
 
-        // Unknown profile keeps its name but uses development settings
+        // Unknown profile keeps its name but falls back to the platform default
+        // profile's settings (development on non-macOS, development-macos on
+        // macOS, where the namespace isolations are unenforceable).
+        let fallback = SandboxProfile::for_platform();
         assert_eq!(config.profile, "nonexistent");
-        // Verify it got development's settings
-        assert!(config.isolate_pid); // development has isolate_pid=true
-        assert!(!config.isolate_network); // development has isolate_network=false
+        assert_eq!(config.isolate_pid, fallback.isolate_pid);
+        assert_eq!(config.isolate_network, fallback.isolate_network);
     }
 
     #[test]
@@ -3655,7 +3910,89 @@ timeout_secs = 120
         assert_eq!(guard.policy.get("~/.docker/*"), Some(&GuardPolicy::Auto));
     }
 
+    /// A workspace file naming [ssh] must parse. The struct denies unknown
+    /// fields, so a missing `ssh` field silently discarded every override in
+    /// the file and the work directory's key grants were never applied.
     #[test]
+    fn workspace_config_accepts_ssh_grants() {
+        let toml = r#"
+[ssh]
+enabled = true
+allowed_keys = ["~/.ssh/forgejo"]
+prompt_unknown = false
+"#;
+
+        let file: SandboxConfigFile = toml::from_str(toml).expect("workspace config parses");
+        let config = SandboxConfig::from(file);
+
+        let ssh = config.ssh.expect("ssh config survives conversion");
+        assert!(ssh.enabled);
+        assert_eq!(ssh.allowed_keys, vec!["~/.ssh/forgejo".to_string()]);
+    }
+
+    /// Exercises the path the runner actually takes. The struct is built by
+    /// hand there, so a field added to the file type does not automatically
+    /// reach it -- which is how workdir grants were dropped twice.
+    #[test]
+    fn workspace_loader_honours_ssh_grants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".oqto")).expect("mkdir");
+        std::fs::write(
+            dir.path().join(".oqto").join("sandbox.toml"),
+            "[ssh]\nenabled = true\nallowed_keys = [\"~/.ssh/forgejo\"]\n",
+        )
+        .expect("write");
+
+        let loaded = SandboxConfig::load_from_workspace(dir.path(), &HashMap::new())
+            .expect("workspace config loads");
+
+        assert_eq!(
+            loaded.ssh.expect("ssh present").allowed_keys,
+            vec!["~/.ssh/forgejo".to_string()],
+            "the profile default must not replace the work directory's grants"
+        );
+    }
+
+    /// The work directory's grants must win over a profile default, which
+    /// enables the proxy with no keys at all.
+    #[test]
+    fn workspace_ssh_grants_override_the_profile_default() {
+        let toml = r#"
+profile = "development"
+
+[ssh]
+enabled = true
+allowed_keys = ["~/.ssh/forgejo"]
+"#;
+
+        let file: SandboxConfigFile = toml::from_str(toml).expect("parses");
+        let config = SandboxConfig::from(file);
+
+        assert_eq!(
+            config.ssh.expect("ssh present").allowed_keys,
+            vec!["~/.ssh/forgejo".to_string()]
+        );
+    }
+
+    #[test]
+    fn profiles_mask_system_ssh_includes() {
+        // Root-owned files under /etc/ssh appear as `nobody` in the user
+        // namespace, and SSH refuses to start rather than ignore them, which
+        // breaks git over SSH before the agent proxy is ever consulted.
+        for profile in [
+            SandboxProfile::minimal(),
+            SandboxProfile::development(),
+            SandboxProfile::strict(),
+        ] {
+            assert!(
+                profile
+                    .deny_read
+                    .contains(&"/etc/ssh/ssh_config.d".to_string()),
+                "profile must mask system ssh includes"
+            );
+        }
+    }
+
     fn test_profile_with_ssh_config() {
         let toml_content = r#"
 enabled = true
@@ -4057,6 +4394,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_does_not_bind_the_whole_home() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4090,6 +4428,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_binds_existing_allow_read_entries() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4128,6 +4467,7 @@ log_requests = true
     /// deny applies and the allowed child is rebound after it: strictly
     /// narrower, and the ordering is what proves it.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_deny_does_not_hide_a_more_specific_grant() {
         let _env = env_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -4211,6 +4551,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn writable_scoped_targets_are_authorised_not_just_mounted() {
         // A read-write bind that Landlock does not also authorise fails at the
         // first write with EACCES while the mount itself looks correct. The
@@ -4394,6 +4735,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn only_the_current_workspace_shard_is_bound() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
@@ -4598,6 +4940,7 @@ log_requests = true
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn allowlist_still_applies_denies_inside_the_workspace() {
         let _env = env_guard();
         let temp = tempdir().unwrap();
@@ -4630,6 +4973,7 @@ log_requests = true
 
     /// The narrower half of the same rule, with the grant present on disk.
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_denied_parent_still_yields_to_its_allowed_child() {
         let _env = env_guard();
         let temp = tempdir().unwrap();

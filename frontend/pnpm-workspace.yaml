@@ -1,0 +1,6 @@
+# The frontend is pnpm-managed. Allow build scripts needed for tooling and for
+# the git-pinned App SDK dependency to ship its dist/ output.
+allowBuilds:
+  "@byteowlz/oqto-app-sdk": true
+  esbuild: true
+  "@biomejs/biome": true

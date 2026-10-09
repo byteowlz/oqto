@@ -19,6 +19,8 @@ Default: report whether a newer Pi release exists and compatibility-test it.
 --update-lock updates Pi version and Linux checksums only after the test passes.
 --verify-current tests the currently pinned release even when no update exists.
 --install-user atomically promotes latest into the rootless local runtime channel.
+Automatic major-version promotions are refused. Qualify the runner, durable
+history, managed extensions and authorization before reviewing a major pin change.
 EOF
 }
 
@@ -41,30 +43,31 @@ read_pin() {
 CURRENT="$(read_pin pi)"
 [[ -n "$CURRENT" ]] || { echo "agent-check: missing Pi pin in $MANIFEST" >&2; exit 1; }
 
+# Pinned release verification is independent of the moving latest-release API.
+# Mixing it with update/install would ambiguously select two different versions.
+if [[ "$VERIFY_CURRENT" == "true" ]]; then
+  [[ "$UPDATE_LOCK" != "true" && "$INSTALL_USER" != "true" ]] || {
+    echo 'agent-check: --verify-current cannot be combined with update/install' >&2
+    exit 2
+  }
+  case "$(uname -m)" in
+    x86_64) pinned_sha="$(read_pin pi-linux-x64-sha256)" ;;
+    aarch64|arm64) pinned_sha="$(read_pin pi-linux-arm64-sha256)" ;;
+    *) echo "agent-check: unsupported local architecture: $(uname -m)" >&2; exit 2 ;;
+  esac
+  [[ "$pinned_sha" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "agent-check: missing or invalid pinned Pi SHA-256 in $MANIFEST" >&2
+    exit 1
+  }
+  "$SCRIPT_DIR/pi-runtime.sh" --version "$CURRENT" --sha256 "$pinned_sha"
+  echo "agent-check: pinned candidate $CURRENT passed deterministic runtime compatibility gate"
+  exit 0
+fi
+
 headers=(-H 'Accept: application/vnd.github+json')
 [[ -n "${GITHUB_TOKEN:-}" ]] && headers+=(-H "Authorization: Bearer $GITHUB_TOKEN")
-release_json="$(mktemp)"; sums="$(mktemp)"; check_home="$(mktemp -d)"
-trap 'rm -f "$release_json" "$sums"; rm -rf "$check_home"' EXIT
-mkdir -p "$check_home/.pi/agent"
-cat >"$check_home/.pi/agent/models.json" <<'JSON'
-{
-  "providers": {
-    "oqto-runtime-smoke": {
-      "baseUrl": "http://127.0.0.1:9/v1",
-      "api": "openai-completions",
-      "apiKey": "deterministic-offline-smoke",
-      "models": [{
-        "id": "runtime-smoke",
-        "name": "Runtime Smoke",
-        "contextWindow": 4096,
-        "maxTokens": 256,
-        "input": ["text"],
-        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-      }]
-    }
-  }
-}
-JSON
+release_json="$(mktemp)"; sums="$(mktemp)"
+trap 'rm -f "$release_json" "$sums"' EXIT
 curl --fail --silent --show-error --location --retry 3 "${headers[@]}" "$API_URL" -o "$release_json"
 LATEST="$(python3 - "$release_json" <<'PY'
 import json, sys
@@ -98,6 +101,16 @@ raise SystemExit(0 if key(sys.argv[2]) > key(sys.argv[1]) else 1)
 PY
 then
   echo "agent-check: refusing non-forward Pi promotion $CURRENT -> $LATEST" >&2
+  exit 1
+fi
+
+# The binary/model-discovery smoke is not an integration acceptance gate.
+# A major release can pass it while changing history, event and permission
+# semantics. Neither automated pin updates nor user-channel installs may turn
+# that narrow success into an unreviewed major upgrade.
+if [[ "${LATEST%%.*}" != "${CURRENT%%.*}" ]] && \
+  { [[ "$UPDATE_LOCK" == "true" ]] || [[ "$INSTALL_USER" == "true" ]]; }; then
+  echo "agent-check: major-version promotion requires reviewed integration qualification ($CURRENT -> $LATEST); pin and runtime links unchanged" >&2
   exit 1
 fi
 
@@ -151,7 +164,7 @@ PY
   fi
   "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA" --install-user
 else
-  HOME="$check_home" "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA"
+  "$SCRIPT_DIR/pi-runtime.sh" --version "$LATEST" --sha256 "$LOCAL_SHA"
 fi
 echo "agent-check: candidate $LATEST passed deterministic runtime compatibility gate"
 

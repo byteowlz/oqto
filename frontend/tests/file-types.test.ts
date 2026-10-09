@@ -203,5 +203,34 @@ describe("file-types", () => {
 				},
 			]);
 		});
+
+		it("does not mistake issue ids or unresolved bare names for files", () => {
+			expect(
+				extractFileReferenceDetails(
+					"Tracked as `oqto-a9j4.6`; see `transport-contract.ts`.",
+				),
+			).toEqual([]);
+		});
+
+		it("extracts backticked workspace paths with line ranges", () => {
+			expect(
+				extractFileReferenceDetails(
+					"Updated `src/auth.rs:142-173` and `README.md`.",
+				),
+			).toEqual([
+				{
+					filePath: "src/auth.rs",
+					label: "auth.rs:142-173",
+					raw: "src/auth.rs:142-173",
+					startLine: 142,
+					endLine: 173,
+				},
+				{
+					filePath: "README.md",
+					label: "README.md",
+					raw: "README.md",
+				},
+			]);
+		});
 	});
 });

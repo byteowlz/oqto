@@ -3,12 +3,16 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+#[cfg(test)]
+use std::{fs::File, io};
 
 mod acquire;
+mod archive;
 mod deps;
+mod provenance;
 
 #[derive(Parser)]
 #[command(
@@ -22,6 +26,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate an extracted full release without activation or user-state writes.
+    CheckRelease {
+        #[arg(long)]
+        release_dir: PathBuf,
+    },
     /// Print the expected provisioning contract for an install profile.
     Plan {
         /// Install profile to plan: personal or team.
@@ -44,9 +53,9 @@ enum Command {
         /// Path to release tarball (e.g. oqto-<version>-<target>.tar.gz)
         #[arg(long)]
         artifact: PathBuf,
-        /// Optional path to sha256 file for the artifact.
+        /// SHA-256 file independently obtained for the exact artifact.
         #[arg(long)]
-        checksum: Option<PathBuf>,
+        checksum: PathBuf,
         /// Releases root directory.
         #[arg(long, default_value = "/var/lib/oqto/releases")]
         releases_root: PathBuf,
@@ -61,10 +70,20 @@ enum Command {
         /// (the strict gate requires services already active).
         #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
         doctor_strict: bool,
+        /// Absolute installer-owned executable: restart/check services inside the rollback transaction.
+        #[arg(long)]
+        post_activate_check: Option<PathBuf>,
         /// Number of superseded releases to retain when pruning. `current` and
         /// `last-good` are always preserved on top of this. 0 disables pruning.
         #[arg(long, default_value_t = 3)]
         keep_releases: usize,
+        /// Install a release that is not strictly newer than the active one, or
+        /// whose active predecessor has no verifiable version.
+        #[arg(long)]
+        allow_downgrade: bool,
+        /// Install a release whose manifest records a dirty build worktree.
+        #[arg(long)]
+        allow_dirty_source: bool,
     },
     /// Resolve the binary-acquisition set from a dependency manifest and print
     /// each component's release artifact URL (ADR-0018 / vemr.9).
@@ -95,9 +114,10 @@ enum Command {
         /// Base GitHub org URL the artifacts are published under.
         #[arg(long, default_value = "https://github.com/byteowlz")]
         base_url: String,
-        /// Directory to stage downloaded artifacts into.
-        #[arg(long, default_value = "dist/out")]
-        dest: PathBuf,
+        /// Directory for artifact-only staging (without --install-bin).
+        /// A local tool install always uses a private installer-owned stage.
+        #[arg(long)]
+        dest: Option<PathBuf>,
         /// If set, extract the staged bundle and install binaries into this dir
         /// (e.g. /usr/local/bin) — completes the acquire -> install path.
         #[arg(long)]
@@ -173,6 +193,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::CheckRelease { release_dir } => {
+            validate_staged_release(&release_dir)?;
+            let provenance = provenance::read_release_provenance(&release_dir)?;
+            println!(
+                "Release {} from {}{}",
+                provenance.version,
+                provenance.source_commit,
+                if provenance.source_dirty {
+                    " (dirty worktree)"
+                } else {
+                    ""
+                }
+            );
+            println!("Validated full release contract: {}", release_dir.display());
+            Ok(())
+        }
         Command::Plan { profile, json } => print_plan(profile, json),
         Command::Hydrate {
             install_config,
@@ -185,15 +221,25 @@ fn main() -> Result<()> {
             bin_dir,
             web_root,
             doctor_strict,
+            post_activate_check,
             keep_releases,
+            allow_downgrade,
+            allow_dirty_source,
         } => install_release(
             &artifact,
-            checksum.as_deref(),
+            &checksum,
             &releases_root,
             &bin_dir,
             &web_root,
-            doctor_strict,
-            keep_releases,
+            ActivationPolicy {
+                doctor_strict,
+                keep_releases,
+                post_activate_check: post_activate_check.as_deref(),
+            },
+            provenance::InstallGuards {
+                allow_downgrade,
+                allow_dirty_source,
+            },
         ),
         Command::Deps {
             manifest,
@@ -212,7 +258,7 @@ fn main() -> Result<()> {
             &manifest,
             arch,
             &base_url,
-            &dest,
+            dest.as_deref(),
             install_bin.as_deref(),
             tools_only,
         ),
@@ -225,13 +271,33 @@ fn acquire_bundle(
     manifest: &Path,
     arch: ArchArg,
     base_url: &str,
-    dest: &Path,
+    dest: Option<&Path>,
     install_bin: Option<&Path>,
     tools_only: bool,
 ) -> Result<()> {
+    if install_bin.is_some() {
+        let host = supported_host_target()?;
+        let requested = deps::Arch::from(arch).target();
+        if requested != host {
+            anyhow::bail!(
+                "unsupported release target: expected {host} for local tool install, requested {requested}"
+            );
+        }
+        if dest.is_some() {
+            anyhow::bail!(
+                "--dest cannot be used with --install-bin; tool installation requires private installer-owned staging"
+            );
+        }
+    }
     let contents = fs::read_to_string(manifest)
         .with_context(|| format!("Failed to read dependency manifest: {}", manifest.display()))?;
     let mut components = deps::parse_dependency_manifest(&contents)?;
+    // Fail closed on incomplete/overlapping tool ownership before fetching a
+    // single byte. Artifact-only staging and `deps` planning stay available
+    // for cross-host packaging without local entrypoint mutation.
+    let owners = install_bin
+        .map(|_| deps::parse_binary_owners(&contents))
+        .transpose()?;
     if tools_only {
         // Drop the oqto platform bundle entirely: dependency remediation only
         // needs the byteowlz tools, and must not fail (or re-download the large
@@ -242,25 +308,53 @@ fn acquire_bundle(
     let target = deps::Arch::from(arch).target();
     let plan = deps::plan_downloads(&components, base_url, target);
 
-    let staged = acquire::acquire_artifacts(&plan, dest, &acquire::CurlFetcher)?;
-    for path in &staged {
-        println!("staged {}", path.display());
+    // Keep this guard alive until install_staged returns: archive extraction
+    // must consume the bytes verified inside this installer-owned directory,
+    // not reopen a caller-controlled --dest pathname after verification.
+    let private_stage = install_bin
+        .map(|_| acquire::private_tool_stage())
+        .transpose()?;
+    let staged_dir = private_stage
+        .as_ref()
+        .map(tempfile::TempDir::path)
+        .or(dest)
+        .unwrap_or_else(|| Path::new("dist/out"));
+    let staged = acquire::acquire_artifacts(&plan, staged_dir, &acquire::CurlFetcher)?;
+    if private_stage.is_some() {
+        println!(
+            "Verified {} artifact(s) in private installer staging",
+            staged.len()
+        );
+    } else {
+        for path in &staged {
+            println!("staged {}", path.display());
+        }
+        println!(
+            "Acquired {} artifact(s) into {}",
+            staged.len(),
+            staged_dir.display()
+        );
     }
-    println!(
-        "Acquired {} artifact(s) into {}",
-        staged.len(),
-        dest.display()
-    );
 
     if let Some(bin) = install_bin {
         // The oqto platform bundle is a structured release installed via
         // `oqto-setup install` (transactional); flat-install only the tools.
-        let tool_tarballs: Vec<PathBuf> = components
+        let owners = owners.context("missing tool binary ownership for local install")?;
+        let tool_tarballs: Vec<_> = components
             .iter()
             .zip(&staged)
             .filter(|(c, _)| c.name != "oqto")
-            .map(|(_, p)| p.clone())
-            .collect();
+            .map(|(c, p)| {
+                let binaries = owners
+                    .get(&c.name)
+                    .context("tool has no binary owner declaration")?;
+                Ok(acquire::StagedTool {
+                    name: &c.name,
+                    archive: p,
+                    binaries,
+                })
+            })
+            .collect::<Result<_>>()?;
         let installed = acquire::install_staged(&tool_tarballs, bin)?;
         for b in &installed {
             println!("installed {} -> {}", b, bin.join(b).display());
@@ -513,23 +607,35 @@ fn merge_tables(target: &mut toml::value::Table, updates: toml::value::Table) {
 /// Stage and transactionally activate a release artifact: verify -> extract ->
 /// activate. Acquisition (checksum + tarball extraction) is separated from
 /// activation so the transaction itself stays subprocess-free and testable.
-#[allow(clippy::too_many_arguments)]
+struct ActivationPolicy<'a> {
+    doctor_strict: bool,
+    keep_releases: usize,
+    post_activate_check: Option<&'a Path>,
+}
+
 fn install_release(
     artifact: &Path,
-    checksum: Option<&Path>,
+    checksum: &Path,
     releases_root: &Path,
     bin_dir: &Path,
     web_root: &Path,
-    doctor_strict: bool,
-    keep_releases: usize,
+    policy: ActivationPolicy<'_>,
+    guards: provenance::InstallGuards,
 ) -> Result<()> {
     if !artifact.exists() {
         anyhow::bail!("Artifact not found: {}", artifact.display());
     }
+    let target = ensure_supported_release_target(artifact)?;
+    let artifact_name = artifact
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("invalid artifact filename")?;
+    let named_version = provenance::version_from_artifact_name(artifact_name, target)?;
+    // Refuse non-upgrades from the name alone, before any byte is extracted.
+    let active = read_link_target(&releases_root.join("current"));
+    provenance::check_order(&named_version, active.as_deref(), guards)?;
 
-    if let Some(checksum_path) = checksum {
-        verify_checksum(artifact, checksum_path)?;
-    }
+    verify_checksum(artifact, checksum)?;
 
     fs::create_dir_all(releases_root)
         .with_context(|| format!("Failed creating releases root {}", releases_root.display()))?;
@@ -537,6 +643,14 @@ fn install_release(
     let release_id = release_id_from_artifact(artifact)?;
     let release_dir = releases_root.join(&release_id);
 
+    if ["current", "last-good"].iter().any(|link| {
+        read_link_target(&releases_root.join(link)).as_deref() == Some(release_dir.as_path())
+    }) {
+        anyhow::bail!(
+            "refusing to overwrite an active or last-good release: {}",
+            release_dir.display()
+        );
+    }
     if release_dir.exists() {
         fs::remove_dir_all(&release_dir).with_context(|| {
             format!(
@@ -548,19 +662,83 @@ fn install_release(
     fs::create_dir_all(&release_dir)
         .with_context(|| format!("Failed creating release dir {}", release_dir.display()))?;
 
-    extract_tarball(artifact, &release_dir)?;
+    if let Err(extraction_error) = extract_tarball(artifact, &release_dir) {
+        let referenced = ["current", "last-good"].iter().any(|link| {
+            read_link_target(&releases_root.join(link)).as_deref() == Some(release_dir.as_path())
+        });
+        if referenced {
+            anyhow::bail!(
+                "Extraction failed ({extraction_error}); staged release unexpectedly referenced; \
+                 preserved for diagnosis"
+            );
+        }
+        if let Err(cleanup_error) = fs::remove_dir_all(&release_dir) {
+            anyhow::bail!(
+                "Extraction failed ({extraction_error}); also failed removing stage {}: {cleanup_error}",
+                release_dir.display()
+            );
+        }
+        return Err(extraction_error);
+    }
 
-    activate_release(
-        &release_dir,
-        releases_root,
-        bin_dir,
-        web_root,
-        doctor_strict,
-        keep_releases,
-    )?;
+    let staged_identity = provenance::read_release_provenance(&release_dir).and_then(|staged| {
+        provenance::check_installable(&named_version, &staged, active.as_deref(), guards)
+    });
+    if let Err(identity_error) = staged_identity {
+        // Nothing references the stage yet; it is disposable.
+        if let Err(cleanup_error) = fs::remove_dir_all(&release_dir) {
+            anyhow::bail!(
+                "{identity_error}; also failed removing stage {}: {cleanup_error}",
+                release_dir.display()
+            );
+        }
+        return Err(identity_error);
+    }
+
+    if let Err(activation_error) =
+        activate_release_checked(&release_dir, releases_root, bin_dir, web_root, policy)
+    {
+        // A failed staged release is disposable only after current/last-good
+        // have been restored. Preserve it for diagnosis if rollback failed.
+        let referenced = ["current", "last-good"].iter().any(|link| {
+            read_link_target(&releases_root.join(link)).as_deref() == Some(release_dir.as_path())
+        });
+        if !referenced && let Err(cleanup_error) = fs::remove_dir_all(&release_dir) {
+            anyhow::bail!(
+                "{activation_error}; also failed removing unreferenced stage {}: {cleanup_error}",
+                release_dir.display()
+            );
+        }
+        return Err(activation_error);
+    }
 
     println!("Installed release {}", release_id);
     Ok(())
+}
+
+/// A release target is a host capability, not an arbitrary filename chosen by
+/// a caller. macOS needs a separately declared launchd/installer contract;
+/// accepting a Linux tar there would strand unusable binaries as `current`.
+fn supported_host_target() -> Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
+        _ => {
+            anyhow::bail!("unsupported release target: no native installer contract for this host")
+        }
+    }
+}
+
+fn ensure_supported_release_target(artifact: &Path) -> Result<&'static str> {
+    let target = supported_host_target()?;
+    let name = artifact
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if !name.starts_with("oqto-") || !name.ends_with(&format!("-{target}.tar.gz")) {
+        anyhow::bail!("unsupported release target: expected {target} archive");
+    }
+    Ok(target)
 }
 
 /// Transactionally activate an already-staged release directory.
@@ -570,6 +748,7 @@ fn install_release(
 /// `current` -> relink bins -> strict-doctor gate. On a failed gate the previous
 /// release is restored (rollback); on success `last-good` is advanced and
 /// superseded releases pruned (`current`/`last-good` always preserved).
+#[cfg(test)]
 fn activate_release(
     release_dir: &Path,
     releases_root: &Path,
@@ -578,50 +757,126 @@ fn activate_release(
     doctor_strict: bool,
     keep_releases: usize,
 ) -> Result<()> {
+    activate_release_checked(
+        release_dir,
+        releases_root,
+        bin_dir,
+        web_root,
+        ActivationPolicy {
+            doctor_strict,
+            keep_releases,
+            post_activate_check: None,
+        },
+    )
+}
+
+fn validate_activation_check(program: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if !program.is_absolute() {
+        anyhow::bail!("activation check must be absolute");
+    }
+    let metadata = fs::symlink_metadata(program)?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o022 != 0
+        || metadata.mode() & 0o100 == 0
+    {
+        anyhow::bail!(
+            "activation check must be an installer-owned, non-writable regular executable"
+        );
+    }
+    let mut ancestor = program.parent();
+    while let Some(directory) = ancestor {
+        let metadata = fs::symlink_metadata(directory)?;
+        // A sticky system temporary directory cannot replace another UID's private child.
+        let sticky_root = metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+        if !metadata.is_dir()
+            || (!sticky_root
+                && (metadata.mode() & 0o022 != 0
+                    || (metadata.uid() != 0 && metadata.uid() != unsafe { libc::geteuid() })))
+        {
+            anyhow::bail!("unsafe activation check ancestor: {}", directory.display());
+        }
+        ancestor = directory.parent();
+    }
+    Ok(())
+}
+
+fn activate_release_checked(
+    release_dir: &Path,
+    releases_root: &Path,
+    bin_dir: &Path,
+    web_root: &Path,
+    policy: ActivationPolicy<'_>,
+) -> Result<()> {
     validate_staged_release(release_dir)?;
+    if let Some(program) = policy.post_activate_check {
+        validate_activation_check(program)?;
+    }
 
     // Record what `current` points at *before* the switch so a failed activation
     // can be rolled back to it (mirrors deploy.sh rollback_host).
     let current_link = releases_root.join("current");
     let previous = read_link_target(&current_link);
+    validate_bin_destinations(
+        &release_dir.join("immutable/bin"),
+        bin_dir,
+        &current_link,
+        previous.as_deref(),
+    )?;
 
     atomic_symlink(&current_link, release_dir)?;
-    relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
-    link_web_root(&current_link.join("immutable/frontend"), web_root)?;
-
-    if doctor_strict && let Err(doctor_err) = run_doctor_strict() {
+    let activation = (|| {
+        relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
+        link_web_root(&current_link.join("immutable/frontend"), web_root)?;
+        if let Some(program) = policy.post_activate_check {
+            let status = std::process::Command::new(program)
+                .status()
+                .context("running post-activation service check")?;
+            if !status.success() {
+                anyhow::bail!("post-activation service check failed: {status}");
+            }
+        }
+        if policy.doctor_strict {
+            run_doctor_strict(release_dir)?;
+        }
+        Ok::<(), anyhow::Error>(())
+    })();
+    if let Err(cause) = activation {
         match previous.as_ref() {
             Some(prev) => {
-                // Best-effort rollback. A rollback error (e.g. the previous
-                // release predates the immutable/bin layout) must NOT mask the
-                // real cause — the doctor failure — so surface both.
+                // Report both the original activation error and any rollback failure.
                 let rollback = atomic_symlink(&current_link, prev).and_then(|_| {
-                    // Relink through `current` (now pointing at prev) so the
-                    // stable entrypoints stay consistent with the activation path.
                     relink_bins(&current_link.join("immutable/bin"), bin_dir)?;
                     link_web_root(&current_link.join("immutable/frontend"), web_root)
                 });
                 match rollback {
                     Ok(()) => anyhow::bail!(
-                        "Activation failed ({doctor_err}); rolled back to {}",
+                        "Activation failed ({cause}); rolled back to {}",
                         prev.display()
                     ),
                     Err(rb_err) => anyhow::bail!(
-                        "Activation failed ({doctor_err}); rollback to {} ALSO failed \
+                        "Activation failed ({cause}); rollback to {} ALSO failed \
                          ({rb_err}) — bins may be inconsistent, manual intervention needed",
                         prev.display()
                     ),
                 }
             }
-            None => anyhow::bail!(
-                "Activation failed ({doctor_err}); no previous release to roll back to"
-            ),
+            None => match rollback_fresh_activation(&current_link, release_dir, bin_dir) {
+                Ok(()) => anyhow::bail!(
+                    "Activation failed ({cause}); removed fresh release pointer and entrypoints"
+                ),
+                Err(rollback_err) => anyhow::bail!(
+                    "Activation failed ({cause}); fresh rollback ALSO failed ({rollback_err}) \
+                     — release pointers or entrypoints may be inconsistent"
+                ),
+            },
         }
     }
 
     // Activation confirmed good: advance last-good and prune superseded releases.
     atomic_symlink(&releases_root.join("last-good"), release_dir)?;
-    let pruned = prune_old_releases(releases_root, keep_releases)?;
+    let pruned = prune_old_releases(releases_root, policy.keep_releases)?;
     if !pruned.is_empty() {
         println!(
             "Pruned {} old release(s): {}",
@@ -633,33 +888,148 @@ fn activate_release(
     Ok(())
 }
 
-/// Reject an extracted release whose layout cannot be activated (no shipped
-/// binaries to relink). Cheap fail-closed gate before we touch `current`.
-fn validate_staged_release(release_dir: &Path) -> Result<()> {
-    let bin_src = release_dir.join("immutable/bin");
-    if !bin_src.is_dir() {
-        anyhow::bail!("Invalid artifact layout: missing {}", bin_src.display());
+/// A release can only take over entrypoints belonging to the active release.
+/// Refuse arbitrary files, directories and unrelated symlinks before changing
+/// either `current` or a destination in /usr/local/bin.
+fn validate_bin_destinations(
+    bin_src: &Path,
+    bin_dir: &Path,
+    current: &Path,
+    previous: Option<&Path>,
+) -> Result<()> {
+    for entry in fs::read_dir(bin_src)? {
+        let entry = entry?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let dst = bin_dir.join(entry.file_name());
+        match fs::symlink_metadata(&dst) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(meta) if previous.is_some() && meta.file_type().is_symlink() => {
+                let expected = current.join("immutable/bin").join(entry.file_name());
+                if fs::read_link(&dst)? != expected {
+                    anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display());
+                }
+            }
+            Ok(_) => anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display()),
+            Err(error) => return Err(error.into()),
+        }
     }
-    let has_binary = fs::read_dir(&bin_src)
-        .with_context(|| format!("Failed reading {}", bin_src.display()))?
-        .filter_map(|entry| entry.ok())
-        .any(|entry| entry.path().is_file());
-    if !has_binary {
+    Ok(())
+}
+
+/// Undo only entrypoints created by this fresh activation. Never unlink an
+/// unrelated file or symlink if the directory changed during activation.
+fn rollback_fresh_activation(current: &Path, release: &Path, bin_dir: &Path) -> Result<()> {
+    if read_link_target(current).as_deref() != Some(release) {
+        anyhow::bail!("current no longer points at the failed release");
+    }
+    for entry in fs::read_dir(release.join("immutable/bin"))? {
+        let entry = entry?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let dst = bin_dir.join(entry.file_name());
+        match fs::symlink_metadata(&dst) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let expected = current.join("immutable/bin").join(entry.file_name());
+                if fs::read_link(&dst)? != expected {
+                    anyhow::bail!(
+                        "managed entrypoint changed during rollback: {}",
+                        dst.display()
+                    );
+                }
+                fs::remove_file(&dst)?;
+            }
+            Ok(_) => anyhow::bail!("unexpected entrypoint during rollback: {}", dst.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    fs::remove_file(current)?;
+    Ok(())
+}
+
+/// Only the explicit full release is activatable until the runner-only
+/// installer/doctor contract exists. This gate runs before switching `current`
+/// even when doctor is deferred by an orchestrator.
+fn validate_staged_release(release_dir: &Path) -> Result<()> {
+    const REQUIRED_BINS: [&str; 9] = [
+        "oqto",
+        "oqtoctl",
+        "oqto-setup",
+        "oqto-runner",
+        "oqto-files",
+        "oqto-sandbox",
+        "oqto-ssh-proxy",
+        "oqto-usermgr",
+        "pi-bridge",
+    ];
+    let manifest_path = release_dir.join("manifest.toml");
+    let manifest_meta = fs::symlink_metadata(&manifest_path)
+        .with_context(|| format!("Invalid artifact: missing {}", manifest_path.display()))?;
+    if !manifest_meta.file_type().is_file() {
+        anyhow::bail!("Invalid artifact: manifest must be a regular file");
+    }
+    let contents = fs::read_to_string(&manifest_path)?;
+    let manifest: toml::Value = contents.parse().context("Invalid release manifest TOML")?;
+    if manifest
+        .get("manifest_version")
+        .and_then(toml::Value::as_integer)
+        != Some(1)
+        || manifest.get("id").and_then(toml::Value::as_str) != Some("oqto-dist")
+        || manifest
+            .get("release")
+            .and_then(|value| value.get("target"))
+            .and_then(toml::Value::as_str)
+            != Some("full")
+    {
+        anyhow::bail!("Invalid artifact: only the declared full release can be activated");
+    }
+
+    let bin_src = release_dir.join("immutable/bin");
+    if !fs::symlink_metadata(&bin_src).is_ok_and(|meta| meta.file_type().is_dir()) {
         anyhow::bail!(
-            "Invalid artifact: no binaries staged in {}",
+            "Invalid artifact layout: missing regular directory {}",
             bin_src.display()
         );
     }
-
-    // Fail closed: an artifact without a bundle would otherwise activate
-    // silently and leave the web root pinned to the previous release.
-    let index = release_dir.join("immutable/frontend/index.html");
-    if !index.is_file() {
-        anyhow::bail!(
-            "Invalid artifact: no frontend bundle staged at {}",
-            index.display()
-        );
+    let mut seen = std::collections::HashSet::new();
+    for entry in
+        fs::read_dir(&bin_src).with_context(|| format!("Failed reading {}", bin_src.display()))?
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !REQUIRED_BINS.contains(&name.as_ref()) {
+            anyhow::bail!(
+                "Invalid artifact: unexpected bin entry {}",
+                entry.path().display()
+            );
+        }
+        let meta = fs::symlink_metadata(entry.path())?;
+        if !meta.file_type().is_file() || meta.permissions().mode() & 0o111 == 0 {
+            anyhow::bail!("Invalid artifact: binary must be a regular executable file: {name}");
+        }
+        seen.insert(name.into_owned());
     }
+    for name in REQUIRED_BINS {
+        if !seen.contains(name) {
+            anyhow::bail!("Invalid full release: missing required binary {name}");
+        }
+    }
+    let frontend = release_dir.join("immutable/frontend/index.html");
+    let frontend_meta = fs::symlink_metadata(&frontend).with_context(|| {
+        format!(
+            "Invalid full release: missing frontend index {}",
+            frontend.display()
+        )
+    })?;
+    if !frontend_meta.file_type().is_file() || frontend_meta.len() == 0 {
+        anyhow::bail!("Invalid full release: frontend index must be a nonempty regular file");
+    }
+    oqto_provisioning::bundled_runtime::validate(release_dir)
+        .context("Invalid full release Node/Pi runtime")?;
     Ok(())
 }
 
@@ -741,36 +1111,7 @@ fn release_id_from_artifact(artifact: &Path) -> Result<String> {
 }
 
 fn extract_tarball(artifact: &Path, dst: &Path) -> Result<()> {
-    let output = ProcessCommand::new("tar")
-        .arg("-xzf")
-        .arg(artifact)
-        .arg("-C")
-        .arg(dst)
-        .output()
-        .context("failed to run tar")?;
-    if !output.status.success() {
-        anyhow::bail!("failed to extract artifact {}", artifact.display());
-    }
-
-    let mut entries = fs::read_dir(dst)
-        .with_context(|| format!("Failed to read extracted dir {}", dst.display()))?;
-    let first = entries
-        .next()
-        .transpose()?
-        .map(|e| e.path())
-        .context("artifact extracted empty directory")?;
-
-    if first.is_dir() {
-        for child in fs::read_dir(&first)? {
-            let child = child?;
-            let name = child.file_name();
-            let target = dst.join(name);
-            fs::rename(child.path(), target)?;
-        }
-        fs::remove_dir_all(first)?;
-    }
-
-    Ok(())
+    archive::extract_release(artifact, dst, &release_id_from_artifact(artifact)?)
 }
 
 /// Atomically point `link` at `target` (write a sibling temp symlink, then
@@ -890,12 +1231,13 @@ fn relink_bins(bin_src: &Path, bin_dir: &Path) -> Result<()> {
         }
         let name = entry.file_name();
         let dst = bin_dir.join(name);
-        if let Ok(meta) = fs::symlink_metadata(&dst) {
-            if meta.file_type().is_dir() {
-                fs::remove_dir_all(&dst)?;
-            } else {
+        match fs::symlink_metadata(&dst) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(meta) if meta.file_type().is_symlink() && fs::read_link(&dst)? == path => {
                 fs::remove_file(&dst)?;
             }
+            Ok(_) => anyhow::bail!("refusing to replace unmanaged entrypoint {}", dst.display()),
+            Err(error) => return Err(error.into()),
         }
         symlink(&path, &dst)
             .with_context(|| format!("Failed linking {} -> {}", dst.display(), path.display()))?;
@@ -903,26 +1245,37 @@ fn relink_bins(bin_src: &Path, bin_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_doctor_strict() -> Result<()> {
-    let output = ProcessCommand::new("oqtoctl")
+fn run_doctor_strict(release_dir: &Path) -> Result<()> {
+    // Do not trust PATH (or a stale host binary) for the activation gate. The
+    // staged executable is the one being promoted; a missing interpreter or
+    // failed spawn must roll the transaction back, never turn strict into a
+    // best-effort warning. Doctor output may contain host details or secrets.
+    let staged = release_dir.join("immutable/bin/oqtoctl");
+    let output = ProcessCommand::new(&staged)
         .args(["doctor", "--contract", "--profile", "auto", "--strict"])
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            println!("Post-activation doctor strict passed");
-            Ok(())
-        }
-        Ok(_) => anyhow::bail!("Post-activation doctor strict failed"),
-        Err(_) => {
-            println!("Warning: oqtoctl not available; skipping post-activation doctor");
-            Ok(())
-        }
+        .output()
+        .with_context(|| {
+            format!(
+                "Post-activation doctor could not start {}",
+                staged.display()
+            )
+        })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "Post-activation doctor strict failed (status: {})",
+            output.status
+        );
     }
+    println!("Post-activation doctor strict passed");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod runtime_fixture {
+        include!("../tests/support/node-runtime-fixture.rs");
+    }
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn at(secs: u64) -> SystemTime {
@@ -930,10 +1283,42 @@ mod tests {
     }
 
     fn mk_release_dir(root: &Path, name: &str, binary: Option<&str>) {
-        let bin = root.join(name).join("immutable/bin");
+        let release = root.join(name);
+        let bin = release.join("immutable/bin");
         fs::create_dir_all(&bin).unwrap();
         if let Some(b) = binary {
-            fs::write(bin.join(b), b"#!/bin/true\n").unwrap();
+            let binary = bin.join(b);
+            fs::write(&binary, b"#!/bin/true\n").unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+            if b == "oqto" {
+                fs::write(
+                    release.join("manifest.toml"),
+                    "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+                )
+                .unwrap();
+                let frontend = release.join("immutable/frontend");
+                fs::create_dir_all(&frontend).unwrap();
+                fs::write(
+                    frontend.join("index.html"),
+                    b"<!doctype html><main>Oqto</main>",
+                )
+                .unwrap();
+                runtime_fixture::create(&release).expect("synthetic runtime fixture");
+                for name in [
+                    "oqtoctl",
+                    "oqto-setup",
+                    "oqto-runner",
+                    "oqto-files",
+                    "oqto-sandbox",
+                    "oqto-ssh-proxy",
+                    "oqto-usermgr",
+                    "pi-bridge",
+                ] {
+                    let binary = bin.join(name);
+                    fs::write(&binary, b"#!/bin/true\n").unwrap();
+                    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+                }
+            }
         }
         mk_frontend(root, name);
     }
@@ -942,6 +1327,32 @@ mod tests {
         let frontend = root.join(name).join("immutable/frontend");
         fs::create_dir_all(&frontend).unwrap();
         fs::write(frontend.join("index.html"), b"<html></html>").unwrap();
+    }
+
+    #[test]
+    fn release_extractor_denies_excessive_entry_count_without_large_fixture() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let artifact = root.path().join("oqto-count-test.tar.gz");
+        let encoded =
+            flate2::write::GzEncoder::new(File::create(&artifact)?, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoded);
+        for name in ["first", "second", "third"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, format!("oqto-count-test/{name}"), io::empty())?;
+        }
+        builder.into_inner()?.finish()?;
+        let stage = root.path().join("stage");
+        fs::create_dir(&stage)?;
+        let error =
+            archive::extract_with_limits(&artifact, &stage, Some("oqto-count-test"), 2, u64::MAX)
+                .expect_err("third entry must exceed the configured count");
+        assert!(error.to_string().contains("excessive members"));
+        assert!(!stage.join("third").exists());
+        Ok(())
     }
 
     #[test]
@@ -1060,6 +1471,93 @@ mod tests {
     }
 
     #[test]
+    fn validate_staged_release_rejects_deferred_doctor_runner_target_and_missing_assets() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        fs::write(
+            candidate.join("manifest.toml"),
+            "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"runner_only\"\n",
+        )
+        .unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+        fs::write(
+            candidate.join("manifest.toml"),
+            "manifest_version = 1\nid = \"oqto-dist\"\n[release]\ntarget = \"full\"\n",
+        )
+        .unwrap();
+        fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn staged_runtime_denies_partial_mismatched_and_unknown_modes() -> Result<()> {
+        for damage in [
+            "missing-node",
+            "wrong-sdk",
+            "bad-lock",
+            "missing-receipt",
+            "unknown-mode",
+        ] {
+            let root = tempfile::tempdir()?;
+            mk_release_dir(root.path(), "candidate", Some("oqto"));
+            let release = root.path().join("candidate");
+            let runtime = release.join("immutable/pi-runtime/pi");
+            match damage {
+                "missing-node" => fs::remove_file(runtime.join("node/bin/node"))?,
+                "wrong-sdk" => fs::write(
+                    runtime.join("node_modules/@earendil-works/pi-coding-agent/package.json"),
+                    "{\"version\":\"1.0.0\"}",
+                )?,
+                "bad-lock" => fs::write(runtime.join("package-lock.json"), "{}")?,
+                "missing-receipt" => fs::remove_file(runtime.join("oqto-runtime.json"))?,
+                "unknown-mode" => {
+                    let path = release.join("manifest.toml");
+                    fs::write(
+                        &path,
+                        fs::read_to_string(&path)?
+                            .replace("bundled-official-node-npm", "unsupported"),
+                    )?;
+                }
+                _ => unreachable!("closed fixture cases"),
+            }
+            assert!(
+                validate_staged_release(&release).is_err(),
+                "damage accepted: {damage}"
+            );
+            assert!(!root.path().join("current").exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_binary_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        fs::remove_file(candidate.join("immutable/bin/pi-bridge")).unwrap();
+        symlink("/usr/bin/true", candidate.join("immutable/bin/pi-bridge")).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_non_executable_binary() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "candidate", Some("oqto"));
+        let candidate = root.path().join("candidate");
+        let binary = candidate.join("immutable/bin/pi-bridge");
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(validate_staged_release(&candidate).is_err());
+    }
+
+    #[test]
+    fn validate_staged_release_rejects_hidden_bin_placeholders() {
+        let root = tempfile::tempdir().unwrap();
+        mk_release_dir(root.path(), "placeholder", Some(".gitkeep"));
+        assert!(validate_staged_release(&root.path().join("placeholder")).is_err());
+    }
+
+    #[test]
     fn relink_bins_symlinks_each_binary() {
         let root = tempfile::tempdir().unwrap();
         let bin_src = root.path().join("rel/immutable/bin");
@@ -1078,6 +1576,21 @@ mod tests {
                 Some(bin_src.join(b).as_path())
             );
         }
+    }
+
+    #[test]
+    fn relink_bins_never_removes_an_unmanaged_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let bin_src = root.path().join("rel/immutable/bin");
+        fs::create_dir_all(&bin_src).unwrap();
+        fs::write(bin_src.join("oqto"), b"release executable").unwrap();
+        let bin_dir = root.path().join("bin");
+        let unmanaged = bin_dir.join("oqto");
+        fs::create_dir_all(&unmanaged).unwrap();
+        fs::write(unmanaged.join("user-data"), b"preserve").unwrap();
+
+        assert!(relink_bins(&bin_src, &bin_dir).is_err());
+        assert_eq!(fs::read(unmanaged.join("user-data")).unwrap(), b"preserve");
     }
 
     #[test]
@@ -1115,6 +1628,65 @@ mod tests {
             Some(releases_root.join("current/immutable/bin/oqto").as_path()),
             "oqto should be relinked through current"
         );
+    }
+
+    #[test]
+    fn service_check_failure_restores_previous_release_before_marking_good() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let releases = root.path().join("releases");
+        let bins = root.path().join("bin");
+        let web = root.path().join("web");
+        mk_release_dir(&releases, "old", Some("oqto"));
+        mk_release_dir(&releases, "new", Some("oqto"));
+        activate_release(&releases.join("old"), &releases, &bins, &web, false, 0).unwrap();
+        let check = root.path().join("check");
+        fs::write(&check, "#!/bin/sh\nexit 7\n").unwrap();
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o700)).unwrap();
+        let result = activate_release_checked(
+            &releases.join("new"),
+            &releases,
+            &bins,
+            &web,
+            ActivationPolicy {
+                doctor_strict: false,
+                keep_releases: 0,
+                post_activate_check: Some(&check),
+            },
+        );
+        assert!(result.unwrap_err().to_string().contains("rolled back"));
+        assert_eq!(
+            read_link_target(&releases.join("current")),
+            Some(releases.join("old"))
+        );
+        assert_eq!(
+            read_link_target(&releases.join("last-good")),
+            Some(releases.join("old"))
+        );
+        assert_eq!(
+            bins.join("oqto").canonicalize().unwrap(),
+            releases.join("old/immutable/bin/oqto")
+        );
+        assert_eq!(
+            web.canonicalize().unwrap(),
+            releases.join("old/immutable/frontend")
+        );
+    }
+
+    #[test]
+    fn activation_check_rejects_relative_symlink_and_writable_programs() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let check = root.path().join("check");
+        fs::write(&check, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o700)).unwrap();
+        validate_activation_check(&check).unwrap();
+        assert!(validate_activation_check(Path::new("check")).is_err());
+        let alias = root.path().join("alias");
+        symlink(&check, &alias).unwrap();
+        assert!(validate_activation_check(&alias).is_err());
+        fs::set_permissions(&check, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(validate_activation_check(&check).is_err());
     }
 
     /// A second activation supersedes the first: `current`/`last-good`/bins all
@@ -1191,9 +1763,8 @@ mod tests {
     #[test]
     fn validate_staged_release_requires_a_frontend_bundle() {
         let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("nofrontend/immutable/bin");
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("oqto"), b"#!/bin/true\n").unwrap();
+        mk_release_dir(root.path(), "nofrontend", Some("oqto"));
+        fs::remove_file(root.path().join("nofrontend/immutable/frontend/index.html")).unwrap();
 
         assert!(validate_staged_release(&root.path().join("nofrontend")).is_err());
 

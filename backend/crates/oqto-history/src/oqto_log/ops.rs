@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
+use crate::oqto_log::bindings::{
+    SessionBindingError, append_pi_session_binding, resolve_pi_session_identity_for_write,
+};
+
 static OQTO_LOG_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations_oqto_log");
 
 #[derive(Debug, Clone)]
@@ -204,6 +208,17 @@ pub async fn upsert_session_identity(
     })?;
 
     let mut tx = pool.begin().await.context("begin oqto-log identity tx")?;
+    let resolved = match external_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(external_id) => resolve_pi_session_identity_for_write(&mut tx, external_id)
+            .await
+            .context("resolve identity during session upsert")?,
+        None => None,
+    };
+    let (session_id, platform_id) = resolved
+        .map(|identity| (identity.session_id, Some(identity.platform_id)))
+        .unwrap_or_else(|| (session_id.to_string(), platform_id.map(str::to_string)));
+    let platform_id = platform_id.as_deref();
+
     sqlx::query(
         r#"
         INSERT INTO oqto_log_sessions (
@@ -217,7 +232,7 @@ pub async fn upsert_session_identity(
           title = COALESCE(excluded.title, oqto_log_sessions.title)
         "#,
     )
-    .bind(session_id)
+    .bind(&session_id)
     .bind(platform_id)
     .bind(external_id)
     .bind(user_id)
@@ -227,10 +242,25 @@ pub async fn upsert_session_identity(
     .await
     .with_context(|| format!("upsert oqto_log session identity: {}", session_id))?;
 
+    let stored_platform_id: String =
+        sqlx::query_scalar("SELECT platform_id FROM oqto_log_sessions WHERE session_id = ?")
+            .bind(&session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .context("read stored platform id for session binding")?;
+    append_pi_session_binding(
+        &mut tx,
+        &stored_platform_id,
+        external_id,
+        "pi-identity-upsert",
+    )
+    .await
+    .context("append pi binding during identity upsert")?;
+
     let branch_id = format!("branch:{session_id}:main");
     sqlx::query("INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)")
         .bind(branch_id)
-        .bind(session_id)
+        .bind(&session_id)
         .execute(&mut *tx)
         .await
         .context("upsert oqto_log main branch identity")?;
@@ -240,8 +270,8 @@ pub async fn upsert_session_identity(
     if let Err(err) = crate::oqto_log::index::upsert_for_workspace_id(
         user_home,
         workspace_id,
-        session_id,
-        platform_id,
+        &session_id,
+        Some(&stored_platform_id),
         external_id,
     )
     .await
@@ -307,14 +337,30 @@ pub async fn update_session_title_and_readable_id(
     Ok(false)
 }
 
+/// One external id whose identity could not be upserted because multiple
+/// pre-binding legacy rows claim it. The caller owns the authority-backed
+/// repair (exact JSONL replace); silently picking a winner here would violate
+/// fail-closed identity resolution.
+#[derive(Debug, Clone)]
+pub struct SessionIdentityConflict {
+    pub external_id: String,
+    pub session_ids: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct SessionIdentityBatchOutcome {
+    pub upserted: usize,
+    pub conflicts: Vec<SessionIdentityConflict>,
+}
+
 pub async fn batch_upsert_session_identities(
     user_home: &Path,
     user_id: &str,
     workspace_id: &str,
     identities: &[SessionIdentityInput],
-) -> Result<usize> {
+) -> Result<SessionIdentityBatchOutcome> {
     if identities.is_empty() {
-        return Ok(0);
+        return Ok(SessionIdentityBatchOutcome::default());
     }
 
     let db_path =
@@ -350,27 +396,36 @@ pub async fn batch_upsert_session_identities(
         )
     })?;
 
-    let existing_rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT external_id, session_id, platform_id FROM oqto_log_sessions WHERE external_id IS NOT NULL AND trim(external_id) != ''",
-    )
-    .fetch_all(&pool)
-    .await
-    .context("query existing oqto-log identity map")?;
-    let existing_by_external: std::collections::HashMap<String, (String, String)> = existing_rows
-        .into_iter()
-        .map(|(external, session, platform)| (external, (session, platform)))
-        .collect();
-
     let mut tx = pool
         .begin()
         .await
         .context("begin oqto-log identity batch tx")?;
-    let mut upserted = 0usize;
+    let mut outcome = SessionIdentityBatchOutcome::default();
     let mut index_entries: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     for identity in identities {
-        let (session_id, platform_id) = existing_by_external
-            .get(&identity.external_id)
-            .cloned()
+        // A legacy identity conflict is a data fact about one session, not an
+        // infrastructure failure: skip that identity and keep the batch alive
+        // so one historical split cannot block every other session in the
+        // workspace. All other errors still fail (and roll back) the batch.
+        let existing =
+            match resolve_pi_session_identity_for_write(&mut tx, &identity.external_id).await {
+                Ok(existing) => existing,
+                Err(SessionBindingError::LegacyConflict {
+                    external_id,
+                    session_ids,
+                }) => {
+                    outcome.conflicts.push(SessionIdentityConflict {
+                        external_id,
+                        session_ids,
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).context("resolve existing identity during batch upsert");
+                }
+            };
+        let (session_id, platform_id) = existing
+            .map(|resolved| (resolved.session_id, resolved.platform_id))
             .unwrap_or_else(|| (identity.platform_id.clone(), identity.platform_id.clone()));
 
         sqlx::query(
@@ -406,6 +461,15 @@ pub async fn batch_upsert_session_identities(
         .await
         .with_context(|| format!("batch upsert oqto_log session identity: {}", session_id))?;
 
+        append_pi_session_binding(
+            &mut tx,
+            &platform_id,
+            Some(&identity.external_id),
+            "pi-identity-batch",
+        )
+        .await
+        .context("append pi binding during identity batch upsert")?;
+
         let branch_id = format!("branch:{session_id}:main");
         sqlx::query(
             "INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id) VALUES (?, ?)",
@@ -420,7 +484,7 @@ pub async fn batch_upsert_session_identities(
             Some(platform_id),
             Some(identity.external_id.clone()),
         ));
-        upserted += 1;
+        outcome.upserted += 1;
     }
 
     tx.commit()
@@ -436,7 +500,7 @@ pub async fn batch_upsert_session_identities(
     {
         tracing::debug!("oqto-log index batch upsert failed: {err:#}");
     }
-    Ok(upserted)
+    Ok(outcome)
 }
 
 fn path_is_inside_root(path: &str, root: &Path) -> bool {
@@ -540,8 +604,35 @@ pub async fn list_sessions(
     user_home: &Path,
     workspace: Option<&str>,
 ) -> Result<Vec<OqtoLogSessionRow>> {
+    list_sessions_from(list_db_paths(user_home), workspace).await
+}
+
+/// List sessions for an explicit set of workspaces.
+///
+/// Scanning every store on the machine is both slow and wrong for a scoped
+/// reader: Pi writes history wherever it is run, so a machine accumulates
+/// stores for directories the operator never designated as workspaces. Callers
+/// that own a workspace allowlist resolve stores directly instead.
+pub async fn list_sessions_for_workspaces(
+    user_home: &Path,
+    workspaces: &[String],
+) -> Result<Vec<OqtoLogSessionRow>> {
+    let dbs = workspaces
+        .iter()
+        .map(|workspace| {
+            crate::oqto_log::paths::existing_user_home_workspace_db_path(user_home, workspace)
+        })
+        .filter(|db| db.exists())
+        .collect();
+    list_sessions_from(dbs, None).await
+}
+
+async fn list_sessions_from(
+    dbs: Vec<PathBuf>,
+    workspace: Option<&str>,
+) -> Result<Vec<OqtoLogSessionRow>> {
     let mut sessions = Vec::new();
-    for db in list_db_paths(user_home) {
+    for db in dbs {
         crate::oqto_log::store::migrate_db_path(&db).await?;
         let options = SqliteConnectOptions::new().filename(&db).read_only(true);
         let pool = match SqlitePoolOptions::new()

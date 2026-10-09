@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use oqto_runner::daemon::bootstrap::{
-    get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
+    ensure_control_socket_isolated, inherited_unix_listener, load_env_file, load_sandbox_config,
+    log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
 use oqto_runner::daemon::server::{Runner, SessionBinaries};
@@ -23,6 +24,8 @@ use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
     about = "Process runner daemon for multi-user isolation"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<MaintenanceCommand>,
     #[arg(short, long)]
     config: Option<PathBuf>,
     #[arg(short, long, conflicts_with = "listen_tls")]
@@ -46,16 +49,64 @@ struct Args {
     fileserver_binary: Option<String>,
     #[arg(long)]
     ttyd_binary: Option<String>,
+    /// Endpoint bridges (NAME=PORT): listen on 127.0.0.1:PORT and forward to
+    /// the bind-mounted Unix socket /run/oqto/endpoints/NAME.sock.
+    #[arg(long = "endpoint", value_name = "NAME=PORT")]
+    endpoints: Vec<String>,
+    /// Directory shared with the host for exposed-port sockets. Set in
+    /// container placements; when unset, ExposePort returns the loopback
+    /// address directly (host placements share loopback with the backend).
+    #[arg(long, value_name = "DIR")]
+    expose_dir: Option<PathBuf>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum MaintenanceCommand {
+    /// Preview native Pi history import; --apply updates only canonical oqto-log state.
+    /// JSON is emitted on stdout; failures exit nonzero. Back up canonical stores first.
+    HistoryImport {
+        #[arg(long)]
+        apply: bool,
+        /// Bound projection attempts for diagnosis or gradual import.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_imports: Option<u32>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    oqto_runner::runtime_guard::ensure_launch_identity()?;
+    if let Some(MaintenanceCommand::HistoryImport { apply, max_imports }) = args.command {
+        use std::io::Write;
+        let config = args
+            .config
+            .clone()
+            .map(RunnerUserConfig::load_from_path)
+            .unwrap_or_else(RunnerUserConfig::load);
+        oqto_runner::runtime_guard::ensure_config_state_owner(&config)?;
+        let report = oqto_runner::history_import::run(&config, apply, max_imports.map(|n| n as usize)).await.unwrap_or_else(|_| serde_json::json!({"schema":1,"ok":false,"error":"History import unavailable; check explicit history configuration and source access"}));
+        let output = format!("{report}\n");
+        if let Err(error) = std::io::stdout().write_all(output.as_bytes()) {
+            if error.kind() == std::io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(error.into());
+        }
+        anyhow::ensure!(
+            report["ok"] == true,
+            "History import failed; see the JSON summary"
+        );
+        return Ok(());
+    }
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
-    let socket_path = args.socket.clone().unwrap_or_else(get_default_socket_path);
+    let socket_path = args
+        .socket
+        .clone()
+        .unwrap_or_else(oqto_runner::runtime_guard::default_socket_path);
 
     info!(
         "Starting oqto-runner (user={}, endpoint={})",
@@ -66,12 +117,31 @@ async fn main() -> Result<()> {
         )
     );
 
+    oqto_runner::runtime_guard::ensure_socket_identity(&socket_path)?;
     load_env_file();
+    oqto_runner::runtime_guard::ensure_launch_identity()?;
 
     let user_config = args
         .config
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
+    oqto_runner::runtime_guard::ensure_config_state_owner(&user_config)?;
+
+    // Validate ownership before any worker can touch configured private state.
+    // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
+    // aborts startup rather than starting a workspace missing its services.
+    let endpoint_socket_dir = PathBuf::from("/run/oqto/endpoints");
+    for endpoint in &args.endpoints {
+        let spec = oqto_runner::endpoint_bridge::EndpointBridgeSpec::parse(
+            endpoint,
+            &endpoint_socket_dir,
+        )?;
+        tokio::spawn(async move {
+            if let Err(error) = oqto_runner::endpoint_bridge::serve(spec).await {
+                log::error!("endpoint bridge failed: {error:#}");
+            }
+        });
+    }
 
     let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
 
@@ -83,12 +153,33 @@ async fn main() -> Result<()> {
         );
     }
 
-    let sandbox_config = load_sandbox_config(
+    let mut sandbox_config = load_sandbox_config(
         args.no_sandbox,
         args.sandbox_config.as_ref(),
         allow_user_sandbox_fallback,
     )?;
+    // Every sandboxed child, including provider-auth workers, must be unable
+    // to read or mutate runner transport capabilities.
+    if let Some(policy) = sandbox_config.as_mut() {
+        for path in std::iter::once(&socket_path)
+            .chain(args.tls_key.iter())
+            .chain(args.tls_client_ca.iter())
+        {
+            let path = path.to_string_lossy().into_owned();
+            if !policy.deny_read.contains(&path) {
+                policy.deny_read.push(path.clone());
+            }
+            if !policy.deny_write.contains(&path) {
+                policy.deny_write.push(path);
+            }
+        }
+    }
     log_sandbox_state(&sandbox_config);
+
+    // The control socket is an unauthenticated-capability boundary into the
+    // runner. If the loaded sandbox policy leaves it visible to workspaces,
+    // refuse to start rather than shipping a reachable control plane.
+    ensure_control_socket_isolated(&socket_path, sandbox_config.as_ref())?;
 
     #[cfg(not(target_os = "linux"))]
     if sandbox_config.is_some() {
@@ -128,6 +219,16 @@ async fn main() -> Result<()> {
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
+        extra_deny_read: {
+            let mut denied = vec![socket_path.clone()];
+            if let Some(key) = args.tls_key.as_ref() {
+                denied.push(key.clone());
+            }
+            if let Some(ca) = args.tls_client_ca.as_ref() {
+                denied.push(ca.clone());
+            }
+            denied
+        },
     };
     let pi_manager = PiSessionManager::new(pi_config);
 
@@ -137,6 +238,8 @@ async fn main() -> Result<()> {
     });
 
     let legacy_user_config = oqto_runner::daemon::config::RunnerUserConfig {
+        provider_login: user_config.provider_login.clone(),
+        history_read: user_config.history_read.clone(),
         fileserver_binary: user_config.fileserver_binary.clone(),
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),
@@ -148,7 +251,20 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
     };
-    let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
+    let runner = Runner::new(
+        sandbox_config,
+        binaries,
+        legacy_user_config,
+        pi_manager,
+        args.expose_dir.clone(),
+    );
+    if let Some(inherited) = inherited_unix_listener()? {
+        if args.listen_tls.is_some() {
+            anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
+        }
+        info!("Using socket-activated listener (LISTEN_FDS)");
+        return runner.run_inherited(inherited).await;
+    }
     if let Some(address) = args.listen_tls {
         let certificate = args
             .tls_cert

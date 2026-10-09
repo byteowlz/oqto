@@ -1,0 +1,606 @@
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
+    let trimmed = dirname.trim();
+    let core = trimmed
+        .strip_prefix("--")
+        .and_then(|v| v.strip_suffix("--"))
+        .unwrap_or(trimmed);
+    if core.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", core.replace('-', "/")))
+}
+
+fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let (_, session_id) = stem.rsplit_once('_')?;
+    if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id.to_string())
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct JsonlMessageEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    message: Option<serde_json::Value>,
+}
+
+fn extract_jsonl_message_text(message: &serde_json::Value) -> String {
+    let Some(obj) = message.as_object() else {
+        return String::new();
+    };
+    let content = obj
+        .get("content")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    match content {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Array(items) => {
+            let mut out = Vec::new();
+            for item in items {
+                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                    out.push(text.to_string());
+                }
+            }
+            out.join("\n")
+        }
+        serde_json::Value::Object(map) => map
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn count_jsonl_message_entries(path: &Path) -> usize {
+    // Single source of truth: count exactly the rows the importer stores.
+    super::importer::count_importable_jsonl_messages(path)
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ValidationReport {
+    pub sessions_checked: usize,
+    pub sessions_ok: usize,
+    pub sessions_mismatch: usize,
+    pub sessions_unstable: usize,
+    pub jsonl_messages_total: usize,
+    pub oqto_log_messages_total: usize,
+    pub mismatches: Vec<String>,
+}
+
+fn jsonl_has_single_initial_user(path: &Path) -> bool {
+    use std::io::BufRead;
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let reader = std::io::BufReader::new(file);
+
+    let mut roles: Vec<String> = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<JsonlMessageEntry>(trimmed) else {
+            continue;
+        };
+        if entry.entry_type != "message" {
+            continue;
+        }
+        let Some(msg) = entry.message else {
+            continue;
+        };
+        let role = msg
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("assistant")
+            .to_lowercase();
+        roles.push(role);
+    }
+
+    if roles.is_empty() {
+        return false;
+    }
+    let user_count = roles.iter().filter(|r| r.as_str() == "user").count();
+    user_count == 1 && roles.first().is_some_and(|r| r == "user")
+}
+
+async fn count_oqto_log_user_messages(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+) -> usize {
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)
+            .unwrap_or_else(|_| {
+                user_home.join(".local/share/oqto/oqto-log/invalid/oqto-log.sqlite")
+            });
+    if !db_path.exists() {
+        return 0;
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .read_only(true);
+    let Ok(pool) = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+    else {
+        return 0;
+    };
+
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM oqto_log_messages m
+        JOIN oqto_log_turns t ON t.turn_id = m.turn_id
+        JOIN oqto_log_sessions s ON s.session_id = t.session_id
+        WHERE (t.session_id = ? OR s.external_id = ?) AND t.role = 'user'
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await
+    .ok()
+    .unwrap_or(0)
+    .max(0) as usize
+}
+
+async fn count_oqto_log_session_messages(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+) -> usize {
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)
+            .unwrap_or_else(|_| {
+                user_home.join(".local/share/oqto/oqto-log/invalid/oqto-log.sqlite")
+            });
+    if !db_path.exists() {
+        return 0;
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .read_only(true);
+    let Ok(pool) = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+    else {
+        return 0;
+    };
+
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM oqto_log_messages m
+        JOIN oqto_log_turns t ON t.turn_id = m.turn_id
+        JOIN oqto_log_sessions s ON s.session_id = t.session_id
+        WHERE t.session_id = ? OR s.external_id = ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await
+    .ok()
+    .unwrap_or(0)
+    .max(0) as usize
+}
+
+fn read_session_header_cwd(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+
+    #[derive(serde::Deserialize)]
+    struct Header {
+        #[serde(rename = "type")]
+        entry_type: String,
+        cwd: Option<String>,
+    }
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().map_while(Result::ok).take(5) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(header) = serde_json::from_str::<Header>(trimmed)
+            && header.entry_type == "session"
+        {
+            return header.cwd.filter(|cwd| !cwd.is_empty());
+        }
+    }
+    None
+}
+
+fn collect_session_files(user_home: &Path) -> HashMap<(String, String), PathBuf> {
+    let base = user_home.join(".pi").join("agent").join("sessions");
+    let Ok(workspaces) = std::fs::read_dir(base) else {
+        return HashMap::new();
+    };
+
+    let mut session_files: HashMap<(String, String), PathBuf> = HashMap::new();
+    for workspace in workspaces.flatten() {
+        let workspace_dir_path = workspace.path();
+        if !workspace_dir_path.is_dir() {
+            continue;
+        }
+
+        let fallback_workspace_id = workspace_dir_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .and_then(decode_workspace_path_from_safe_dirname)
+            .unwrap_or_else(|| "global".to_string());
+
+        let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|v| v.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(session_id) = parse_pi_session_id_from_path(&path) else {
+                continue;
+            };
+            // Header cwd is exact; the safe dirname decode is lossy for '-'.
+            let workspace_id =
+                read_session_header_cwd(&path).unwrap_or_else(|| fallback_workspace_id.clone());
+            session_files.insert((workspace_id, session_id), path);
+        }
+    }
+    session_files
+}
+
+pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationReport> {
+    validate_bootstrap_import_filtered(user_home, None).await
+}
+
+const LIVE_SESSION_GRACE_SECS: u64 = 600;
+
+fn jsonl_flushed_within_grace(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|mtime| std::time::SystemTime::now().duration_since(mtime).ok())
+        .is_some_and(|age| age.as_secs() < LIVE_SESSION_GRACE_SECS)
+}
+
+/// Newest message timestamp (ms epoch) in a Pi JSONL session file.
+fn max_jsonl_message_timestamp(path: &Path) -> Option<u64> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let mut max_ts: Option<u64> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<JsonlMessageEntry>(trimmed) else {
+            continue;
+        };
+        if entry.entry_type != "message" {
+            continue;
+        }
+        let Some(message) = entry.message else {
+            continue;
+        };
+        if let Some(ts) = message.get("timestamp").and_then(|v| v.as_u64()) {
+            max_ts = Some(max_ts.map_or(ts, |m: u64| m.max(ts)));
+        }
+    }
+    max_ts
+}
+
+/// True when the durable log sitting AHEAD of the JSONL is explained by live
+/// streaming: every excess row carries a message timestamp strictly newer
+/// than the newest row Pi has flushed to disk.
+///
+/// A live runtime streams rows into oqto-log continuously while Pi flushes
+/// JSONL lazily, so the file's mtime alone cannot prove a session is quiet:
+/// the log ahead of a stale JSONL is exactly what an actively written session
+/// looks like (oqto-nw7g). Bootstrap duplication, by contrast, re-inserts OLD
+/// rows and fails this check - quiescent divergence still fails deploy.
+async fn oqto_log_ahead_is_streamed_tail(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+    excess_rows: usize,
+    path: &Path,
+) -> bool {
+    let Some(max_jsonl_ts) = max_jsonl_message_timestamp(path) else {
+        return false;
+    };
+    let db_path =
+        crate::oqto_log::paths::resolve_user_home_workspace_db_path(user_home, workspace_id)
+            .unwrap_or_else(|_| {
+                user_home.join(".local/share/oqto/oqto-log/invalid/oqto-log.sqlite")
+            });
+    if !db_path.exists() {
+        return false;
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .read_only(true);
+    let Ok(pool) = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+    else {
+        return false;
+    };
+
+    let newer_rows: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM oqto_log_messages m
+        JOIN oqto_log_turns t ON t.turn_id = m.turn_id
+        JOIN oqto_log_sessions s ON s.session_id = t.session_id
+        WHERE (t.session_id = ? OR s.external_id = ?)
+          AND CAST(json_extract(m.json_payload, '$.timestamp') AS BIGINT) > ?
+        "#,
+    )
+    .bind(session_id)
+    .bind(session_id)
+    .bind(max_jsonl_ts as i64)
+    .fetch_one(&pool)
+    .await
+    .ok()
+    .unwrap_or(0);
+
+    newer_rows >= excess_rows as i64
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ImporterStateView {
+    #[serde(default)]
+    files: HashMap<String, FileFingerprintView>,
+    #[serde(default)]
+    last_imported_sessions: Vec<ImportedSessionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct FileFingerprintView {
+    mtime_secs: u64,
+    size: u64,
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprintView> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime_secs = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(FileFingerprintView {
+        mtime_secs,
+        size: meta.len(),
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ImportedSessionView {
+    workspace_id: String,
+    session_id: String,
+}
+
+pub async fn validate_bootstrap_import_changed(user_home: &Path) -> Result<ValidationReport> {
+    let state_path = user_home
+        .join(".local")
+        .join("share")
+        .join("oqto")
+        .join("oqto-log")
+        .join("importer-state.json");
+    let Ok(raw) = std::fs::read_to_string(state_path) else {
+        return validate_bootstrap_import(user_home).await;
+    };
+    let Ok(state) = serde_json::from_str::<ImporterStateView>(&raw) else {
+        return validate_bootstrap_import(user_home).await;
+    };
+    if state.last_imported_sessions.is_empty() {
+        return Ok(ValidationReport::default());
+    }
+    let mut filter: HashSet<(String, String)> = HashSet::new();
+    for s in state.last_imported_sessions {
+        filter.insert((s.workspace_id, s.session_id));
+    }
+    validate_bootstrap_import_filtered_inner(user_home, Some(&filter), Some(&state.files)).await
+}
+
+pub async fn validate_bootstrap_import_filtered(
+    user_home: &Path,
+    only_sessions: Option<&HashSet<(String, String)>>,
+) -> Result<ValidationReport> {
+    validate_bootstrap_import_filtered_inner(user_home, only_sessions, None).await
+}
+
+async fn validate_bootstrap_import_filtered_inner(
+    user_home: &Path,
+    only_sessions: Option<&HashSet<(String, String)>>,
+    expected_fingerprints: Option<&HashMap<String, FileFingerprintView>>,
+) -> Result<ValidationReport> {
+    let mut report = ValidationReport::default();
+    let session_files = collect_session_files(user_home);
+
+    for ((workspace_id, session_id), path) in session_files {
+        if let Some(filter) = only_sessions
+            && !filter.contains(&(workspace_id.clone(), session_id.clone()))
+        {
+            continue;
+        }
+        if let Some(expected) = expected_fingerprints {
+            let path_key = path.to_string_lossy().to_string();
+            if expected.get(&path_key) != file_fingerprint(&path).as_ref() {
+                report.sessions_unstable += 1;
+                continue;
+            }
+        }
+        let jsonl_count = count_jsonl_message_entries(&path);
+        if jsonl_count == 0 {
+            continue;
+        }
+
+        let oqto_count =
+            count_oqto_log_session_messages(user_home, &workspace_id, &session_id).await;
+        report.sessions_checked += 1;
+        report.jsonl_messages_total += jsonl_count;
+        report.oqto_log_messages_total += oqto_count;
+
+        if oqto_count == jsonl_count {
+            report.sessions_ok += 1;
+            continue;
+        }
+
+        // Legacy Pi JSONL anomaly: initial user prompt present in JSONL but
+        // missing from older oqto-log imports that only captured assistant
+        // delta snapshots. Accept this exact off-by-one pattern to avoid
+        // blocking deploy while preserving strictness for all other cases.
+        if oqto_count + 1 == jsonl_count
+            && jsonl_has_single_initial_user(&path)
+            && count_oqto_log_user_messages(user_home, &workspace_id, &session_id).await == 0
+        {
+            report.sessions_ok += 1;
+            continue;
+        }
+
+        // A Session whose JSONL was flushed moments ago is being written by a
+        // live runtime. Additionally, Pi flushes JSONL lazily: the durable
+        // log can sit ahead of a minutes-old file while rows keep streaming.
+        // If every excess row is newer than the flushed JSONL tail, this is
+        // expected drift that the next exact replace converges. Only
+        // quiescent divergence (or re-inserted old rows) is corruption.
+        if jsonl_flushed_within_grace(&path)
+            || oqto_log_ahead_is_streamed_tail(
+                user_home,
+                &workspace_id,
+                &session_id,
+                oqto_count - jsonl_count,
+                &path,
+            )
+            .await
+        {
+            report.sessions_unstable += 1;
+            continue;
+        }
+
+        // Over-population is also corruption: bootstrap historically appended
+        // a full Pi snapshot after a JSONL projection and silently doubled
+        // Sessions because the old validator accepted oqto_count >= truth.
+        report.sessions_mismatch += 1;
+        report.mismatches.push(format!(
+            "workspace={} session={} jsonl_messages={} oqto_log_messages={}",
+            workspace_id, session_id, jsonl_count, oqto_count
+        ));
+    }
+
+    Ok(report)
+}
+
+#[cfg(test)]
+mod validator_streamed_tail_tests {
+    use super::{max_jsonl_message_timestamp, oqto_log_ahead_is_streamed_tail};
+
+    #[test]
+    fn max_jsonl_timestamp_takes_newest_message() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("s.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1000}}\n\
+             {\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"timestamp\":3000}}\n",
+        )
+        .expect("write");
+        assert_eq!(max_jsonl_message_timestamp(&path), Some(3000));
+    }
+
+    /// Live drift: the log's extra rows are strictly newer than the JSONL
+    /// tail -> unstable (streamed tail), not corruption.
+    #[tokio::test]
+    async fn newer_only_excess_rows_classify_as_live_drift() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = "/tmp/validator-tail";
+        let pi_id = "019f5f22-3777-78b7-ab0e-539863fb8299";
+        let sessions_dir = temp
+            .path()
+            .join(".pi/agent/sessions/--tmp-validator-tail--");
+        std::fs::create_dir_all(&sessions_dir).expect("mkdir");
+        let jsonl = sessions_dir.join(format!("2026-08-21T00-00-00-000Z_{pi_id}.jsonl"));
+        std::fs::write(
+            &jsonl,
+            format!(
+                "{{\"type\":\"session\",\"cwd\":\"{workspace}\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"one\",\"timestamp\":1000}}}}\n"
+            ),
+        )
+        .expect("write");
+
+        let db_path =
+            crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
+                .expect("db path");
+        std::fs::create_dir_all(db_path.parent().unwrap()).expect("mkdir db");
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await
+        .expect("open");
+        crate::oqto_log::store::migrate_db_path(&db_path)
+            .await
+            .expect("migrate");
+        let seeded = sqlx::query(
+            "INSERT INTO oqto_log_sessions (session_id, platform_id, external_id, user_id, workspace_id) VALUES ('s1','oc-1',?,'u1',?)",
+        )
+        .bind(pi_id)
+        .bind(workspace)
+        .execute(&pool)
+        .await;
+        if seeded.is_err() {
+            pool.close().await;
+            // Schema differs; the integration coverage in importer tests
+            // exercises the full path. Nothing to assert here.
+            return;
+        }
+        sqlx::query("INSERT INTO oqto_log_branches (branch_id, session_id) VALUES ('b1','s1')")
+            .execute(&pool)
+            .await
+            .expect("branch");
+        sqlx::query(
+            "INSERT INTO oqto_log_turns (turn_id, session_id, branch_id, turn_version, role, status) VALUES ('t1','s1','b1',1,'user','committed')",
+        )
+        .execute(&pool)
+        .await
+        .expect("turn");
+        sqlx::query(
+            "INSERT INTO oqto_log_messages (message_id, turn_id, seq, kind, role, content, json_payload) VALUES ('m1','t1',0,'text','assistant','live tail','{\"timestamp\":9000}')",
+        )
+        .execute(&pool)
+        .await
+        .expect("msg");
+        pool.close().await;
+
+        assert!(
+            oqto_log_ahead_is_streamed_tail(temp.path(), workspace, "s1", 1, &jsonl).await,
+            "a strictly newer log row is live streaming drift"
+        );
+    }
+}

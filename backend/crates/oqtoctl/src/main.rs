@@ -21,6 +21,22 @@ use hyperlocal::{UnixConnector, Uri as UnixUri};
 const DEFAULT_SERVER_URL: &str = "http://localhost:8080/api";
 const DEFAULT_ADMIN_SOCKET: &str = "/run/oqto/oqtoctl.sock";
 
+/// Where the admin socket lives when nothing overrides it.
+///
+/// The default config places it under `$XDG_RUNTIME_DIR`, so preferring that
+/// keeps the CLI aligned with a default server install. Without this, oqtoctl
+/// silently falls back to unauthenticated HTTP and every admin command fails.
+fn admin_socket_for_runtime_dir(runtime_dir: Option<&str>) -> PathBuf {
+    match runtime_dir {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir).join("oqtoctl.sock"),
+        _ => PathBuf::from(DEFAULT_ADMIN_SOCKET),
+    }
+}
+
+fn default_admin_socket() -> PathBuf {
+    admin_socket_for_runtime_dir(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+}
+
 fn main() -> ExitCode {
     if let Err(err) = try_main() {
         let _ = writeln!(io::stderr(), "Error: {err:?}");
@@ -47,6 +63,7 @@ async fn try_main() -> Result<()> {
         }
         Command::Session { command } => handle_session(&client, command, cli.json).await,
         Command::Container { command } => handle_container(&client, command, cli.json).await,
+        Command::Ws { command } => handle_workspace(command, cli.json).await,
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
         Command::Ui { command } => handle_ui(&client, command, cli.json).await,
@@ -159,6 +176,12 @@ enum Command {
         command: ContainerCommand,
     },
 
+    /// Inspect and debug Workspaces across placement backends
+    Ws {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+
     /// Manage container images
     Image {
         #[command(subcommand)]
@@ -193,7 +216,7 @@ enum Command {
         /// Print the provisioning contract instead of probing the host.
         #[arg(long, default_value_t = false)]
         contract: bool,
-        /// Install profile for --contract: auto, personal, or team.
+        /// Install profile for --contract: auto, personal, team, or container.
         #[arg(long, default_value = "auto")]
         profile: String,
         /// Exit non-zero when contract evaluation finds error-severity drift.
@@ -290,12 +313,63 @@ enum ContainerCommand {
         #[arg(long)]
         outdated_only: bool,
     },
-    /// Clean up orphan containers (containers without sessions)
+    /// Clean up orphan local-mode session processes.
+    /// Workspace placements are managed with `oqtoctl ws`.
     Cleanup,
-    /// List all managed containers
+    /// List sessions and the containers backing them
     List,
-    /// Stop all running containers
+    /// Stop all running sessions. This does not remove Workspace placements;
+    /// use `oqtoctl ws rm` for that.
     StopAll,
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommand {
+    /// List registered Workspaces and their placement status
+    #[command(name = "ls")]
+    List,
+    /// Show one placement by Workspace or placement ID
+    Show { target: String },
+    /// List live Podman processes carrying Oqto placement labels
+    Ps,
+    /// Stream or print logs from a Workspace placement
+    Logs {
+        target: String,
+        #[arg(long, default_value = "200")]
+        tail: String,
+    },
+    /// Show Podman's complete runtime inspection
+    Inspect { target: String },
+    /// Execute a command inside a Workspace placement
+    Exec {
+        target: String,
+        #[arg(required = true, trailing_var_arg = true)]
+        command: Vec<String>,
+    },
+    /// List a directory inside a Workspace placement
+    Fs {
+        target: String,
+        #[arg(default_value = "/workspace")]
+        path: String,
+    },
+    /// Stop a Workspace placement, leaving it registered so it is reconciled
+    /// back on the next backend start
+    Stop {
+        /// Workspace or placement ID
+        target: Option<String>,
+        /// Stop every registered placement
+        #[arg(long)]
+        all: bool,
+    },
+    /// Stop a Workspace placement and unregister it, so it is not reconciled
+    /// back. This is the teardown path; workspace data on disk is untouched.
+    Rm {
+        /// Workspace or placement ID
+        target: Option<String>,
+        /// Remove every registered placement
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -851,6 +925,13 @@ impl OqtoResponse {
     }
 
     async fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        // Error bodies are JSON objects, so deserializing them into the
+        // expected type reports a shape mismatch instead of the actual
+        // failure (a 401 surfaced as "invalid type: map, expected a sequence").
+        if !self.status.is_success() {
+            let body = String::from_utf8_lossy(&self.body);
+            anyhow::bail!("server returned {}: {}", self.status, body.trim());
+        }
         serde_json::from_slice(&self.body).context("decoding JSON response")
     }
 }
@@ -888,7 +969,7 @@ impl OqtoClient {
             let socket_path = admin_socket
                 .map(PathBuf::from)
                 .or_else(|| admin_socket_env.map(PathBuf::from))
-                .or_else(|| Some(PathBuf::from(DEFAULT_ADMIN_SOCKET)));
+                .or_else(|| Some(default_admin_socket()));
 
             let use_admin_socket = admin_socket_requested || base_url == DEFAULT_SERVER_URL;
             let can_use_admin_socket = auth_token.is_none()
@@ -1521,7 +1602,7 @@ async fn handle_container(
             }
         }
         ContainerCommand::Cleanup => {
-            let response = client.post("/admin/cleanup").await?;
+            let response = client.post("/admin/local/cleanup").await?;
             if response.status().is_success() {
                 let body = response.text().await?;
                 if json {
@@ -1599,6 +1680,247 @@ async fn handle_container(
         }
     }
     Ok(())
+}
+
+fn placement_store_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("OQTO_PLACEMENT_STORE").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::state_dir)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .ok_or_else(|| anyhow!("unable to determine state directory"))?;
+    Ok(state.join("oqto").join("placements.json"))
+}
+
+async fn resolve_placement(target: &str) -> Result<oqto_placement::PlacementRecord> {
+    use oqto_placement::PlacementStore;
+    let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+    store
+        .list()
+        .await?
+        .into_iter()
+        .find(|record| record.workspace_id == target || record.id.0 == target)
+        .ok_or_else(|| anyhow!("no placement registered for {target}"))
+}
+
+async fn handle_workspace(command: WorkspaceCommand, json: bool) -> Result<()> {
+    use oqto_placement::PlacementStore;
+    match command {
+        WorkspaceCommand::List => {
+            let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+            let records = store.list().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&records)?);
+            } else if records.is_empty() {
+                println!("No registered Workspaces");
+            } else {
+                println!(
+                    "{:<24} {:<24} {:<18} RUNTIME",
+                    "WORKSPACE", "PLACEMENT", "KIND"
+                );
+                for record in records {
+                    println!(
+                        "{:<24} {:<24} {:<18} {}",
+                        record.workspace_id,
+                        record.id.0,
+                        format!("{:?}", record.kind),
+                        record.runtime_name
+                    );
+                }
+            }
+        }
+        WorkspaceCommand::Show { target } => {
+            let record = resolve_placement(&target).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            } else {
+                println!("Workspace: {}", record.workspace_id);
+                println!("Placement: {}", record.id.0);
+                println!("Account:   {}", record.account_id);
+                println!("Kind:      {:?}", record.kind);
+                println!("Runtime:   {}", record.runtime_name);
+                println!("Endpoint:  {:?}", record.runner_endpoint);
+            }
+        }
+        WorkspaceCommand::Ps => {
+            let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+            let mut statuses = Vec::new();
+            for record in store.list().await? {
+                let status = oqto_placement::operator_for(&record)
+                    .status(&record)
+                    .await?;
+                statuses.push(serde_json::json!({
+                    "workspace_id": record.workspace_id,
+                    "placement_id": record.id.0,
+                    "kind": record.kind,
+                    "status": status,
+                }));
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&statuses)?);
+            } else {
+                println!(
+                    "{:<24} {:<18} {:<8} DETAIL",
+                    "WORKSPACE", "BACKEND", "READY"
+                );
+                for item in statuses {
+                    println!(
+                        "{:<24} {:<18} {:<8} {}",
+                        item["workspace_id"].as_str().unwrap_or("?"),
+                        item["status"]["backend"].as_str().unwrap_or("?"),
+                        item["status"]["ready"].as_bool().unwrap_or(false),
+                        item["status"]["detail"].as_str().unwrap_or("?")
+                    );
+                }
+            }
+        }
+        WorkspaceCommand::Logs { target, tail } => {
+            let record = resolve_placement(&target).await?;
+            let logs = oqto_placement::operator_for(&record)
+                .logs(&record, &tail)
+                .await?;
+            if json {
+                println!("{}", serde_json::json!({ "logs": logs }));
+            } else {
+                print!("{logs}");
+            }
+        }
+        WorkspaceCommand::Inspect { target } => {
+            let record = resolve_placement(&target).await?;
+            let inspection = oqto_placement::operator_for(&record)
+                .inspect(&record)
+                .await?;
+            println!("{}", serde_json::to_string_pretty(&inspection)?);
+        }
+        WorkspaceCommand::Exec { target, command } => {
+            let record = resolve_placement(&target).await?;
+            let result = oqto_placement::workspace_exec(&record, &command).await?;
+            if json {
+                println!("{}", serde_json::to_string(&result)?);
+            } else {
+                print!("{}", result.output);
+            }
+            anyhow::ensure!(result.exit_code == 0, "command exited {}", result.exit_code);
+        }
+        WorkspaceCommand::Fs { target, path } => {
+            let record = resolve_placement(&target).await?;
+            let listing = oqto_placement::workspace_list_directory(&record, path).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&listing)?);
+            } else {
+                for entry in listing.entries {
+                    println!(
+                        "{} {:>10} {}",
+                        if entry.is_dir {
+                            "d"
+                        } else if entry.is_symlink {
+                            "l"
+                        } else {
+                            "-"
+                        },
+                        entry.size,
+                        entry.name
+                    );
+                }
+            }
+        }
+        WorkspaceCommand::Stop { target, all } => {
+            teardown_placements(target, all, false, json).await?;
+        }
+        WorkspaceCommand::Rm { target, all } => {
+            teardown_placements(target, all, true, json).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Stop placements, optionally unregistering them.
+///
+/// Runs against the placement store and the placement backend directly, so
+/// teardown works with the backend stopped. Unregistering matters: a stopped
+/// placement whose record survives is reconciled back on the next start.
+async fn teardown_placements(
+    target: Option<String>,
+    all: bool,
+    unregister: bool,
+    json: bool,
+) -> Result<()> {
+    use oqto_placement::PlacementStore;
+
+    let store = oqto_placement::JsonPlacementStore::open(placement_store_path()?).await?;
+    let records = match (target, all) {
+        (Some(target), false) => vec![resolve_placement(&target).await?],
+        (None, true) => store.list().await?,
+        (Some(_), true) => anyhow::bail!("pass either a target or --all, not both"),
+        (None, false) => anyhow::bail!("pass a Workspace/placement ID or --all"),
+    };
+
+    if records.is_empty() {
+        if json {
+            println!(r#"{{"stopped":[],"failed":[]}}"#);
+        } else {
+            println!("No registered Workspaces");
+        }
+        return Ok(());
+    }
+
+    let mut stopped = Vec::new();
+    let mut failed = Vec::new();
+
+    for record in records {
+        match stop_placement(&record).await {
+            Ok(()) => {
+                if unregister {
+                    store.remove(&record.id).await?;
+                }
+                stopped.push(record.workspace_id.clone());
+                if !json {
+                    let verb = if unregister { "removed" } else { "stopped" };
+                    println!("{} {}", verb, record.workspace_id);
+                }
+            }
+            Err(error) => {
+                failed.push(serde_json::json!({
+                    "workspace": record.workspace_id,
+                    "error": error.to_string(),
+                }));
+                if !json {
+                    eprintln!("failed {}: {}", record.workspace_id, error);
+                }
+            }
+        }
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "stopped": stopped, "failed": failed })
+        );
+    }
+
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("{} placement(s) could not be stopped", failed.len())
+    }
+}
+
+/// Stop one placement through its backend.
+async fn stop_placement(record: &oqto_placement::PlacementRecord) -> Result<()> {
+    use oqto_placement::{PlacementKind, PlacementSupervisor};
+
+    match record.kind {
+        PlacementKind::RootlessPodman => oqto_placement::PodmanSupervisor::new().stop(record).await,
+        // The local supervisor only tracks children it spawned in its own
+        // process, so it cannot stop anything from here.
+        PlacementKind::LocalProcess => anyhow::bail!(
+            "local-process placements are owned by the running backend; \
+             use `oqtoctl local cleanup` instead"
+        ),
+    }
 }
 
 async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) -> Result<()> {
@@ -3397,6 +3719,35 @@ fn validate_sudoers_file(path: &str) -> Option<bool> {
     Some(sudo_output.status.success())
 }
 
+fn append_release_runtime_findings(findings: &mut Vec<oqto_provisioning::ContractFinding>) {
+    use oqto_provisioning::{CheckSeverity, ContractFinding};
+    let audit = || -> Result<()> {
+        oqto_runner::runtime_guard::ensure_launch_identity()
+            .context("doctor process private-state ownership")?;
+        let executable = std::env::current_exe()?;
+        if let Some(bin) = executable.parent()
+            && bin.file_name() == Some(std::ffi::OsStr::new("bin"))
+            && let Some(immutable) = bin.parent()
+            && immutable.file_name() == Some(std::ffi::OsStr::new("immutable"))
+        {
+            let release = immutable
+                .parent()
+                .context("missing immutable release root")?;
+            oqto_provisioning::bundled_runtime::validate(release)?;
+        }
+        Ok(())
+    };
+    if let Err(error) = audit() {
+        findings.push(ContractFinding {
+            id: "release.runtime-or-private-state".to_string(),
+            severity: CheckSeverity::Error,
+            expected: "matching immutable Node/Pi receipt and correctly owned process-private state".to_string(),
+            observed: format!("{error:#}"),
+            remediation: "use the owning OS identity and a complete verified release; ownership repair needs scoped backup/review, never recursive chown".to_string(),
+        });
+    }
+}
+
 async fn append_team_user_runner_findings(
     manifest: &oqto_provisioning::ProvisioningManifest,
     target_user: Option<&str>,
@@ -3475,6 +3826,20 @@ async fn append_team_user_runner_findings_inner(
         let actual_uid = linux_uid_for_user(&linux_username);
         match actual_uid {
             Some(uid) => {
+                let audit = get_user_home(&linux_username).and_then(|home| {
+                    let expected_uid = u32::try_from(uid).context("invalid resolved Linux UID")?;
+                    oqto_runner::runtime_guard::audit_history_state_owner(
+                        std::path::Path::new(&home),
+                        expected_uid,
+                    )
+                });
+                if let Err(error) = audit {
+                    findings.push(team_user_finding(
+                        &user_id, &username, "history.owner", oqto_provisioning::CheckSeverity::Error,
+                        "home/shard/DB/WAL/SHM owned by the resolved user; metadata-only audit",
+                        &format!("{error:#}"), "stop wrong-identity writers; repair only with reviewed scoped backups, never recursive chown",
+                    ));
+                }
                 if linux_uid != Some(uid) {
                     findings.push(team_user_finding(
                         &user_id,
@@ -3735,6 +4100,35 @@ fn suggested_contract_commands(findings: &[oqto_provisioning::ContractFinding]) 
 }
 
 #[cfg(test)]
+mod admin_socket_tests {
+    use super::*;
+
+    /// The server's default config puts the admin socket under
+    /// `$XDG_RUNTIME_DIR`. When the CLI looked somewhere else it fell back to
+    /// unauthenticated HTTP, and every admin command failed with a decoding
+    /// error instead of an auth error.
+    #[test]
+    fn default_socket_follows_the_runtime_dir() {
+        assert_eq!(
+            admin_socket_for_runtime_dir(Some("/run/user/4242")),
+            PathBuf::from("/run/user/4242/oqtoctl.sock")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_system_socket_without_a_runtime_dir() {
+        assert_eq!(
+            admin_socket_for_runtime_dir(None),
+            PathBuf::from("/run/oqto/oqtoctl.sock")
+        );
+        assert_eq!(
+            admin_socket_for_runtime_dir(Some("")),
+            PathBuf::from("/run/oqto/oqtoctl.sock")
+        );
+    }
+}
+
+#[cfg(test)]
 mod setup_doctor_tests {
     use super::*;
 
@@ -3930,6 +4324,9 @@ async fn handle_doctor(
     config_path: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if profile == "container" {
+        return handle_container_doctor(target_user, apply, strict, config_path, json).await;
+    }
     if contract {
         if (apply_services || apply_runners) && !apply {
             anyhow::bail!("--apply-services/--apply-runners require --apply");
@@ -3940,6 +4337,7 @@ async fn handle_doctor(
         let mut facts = collect_contract_host_facts(&manifest, config_path);
         let mut findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
         append_sudoers_findings(&manifest, &mut findings);
+        append_release_runtime_findings(&mut findings);
         append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
         let mut applied_fixes = Vec::new();
         if apply {
@@ -3948,6 +4346,7 @@ async fn handle_doctor(
                 facts = collect_contract_host_facts(&manifest, config_path);
                 findings = oqto_provisioning::evaluate_manifest(&manifest, &facts);
                 append_sudoers_findings(&manifest, &mut findings);
+                append_release_runtime_findings(&mut findings);
                 append_team_user_runner_findings(&manifest, target_user, &mut findings).await;
             }
         }
@@ -4148,6 +4547,208 @@ fn group_gid(group: &str) -> Result<Option<u32>> {
         .split(':')
         .nth(2)
         .and_then(|gid| gid.trim().parse().ok()))
+}
+
+/// Resolve the Oqto server config path (explicit override or default).
+fn resolve_config_path(config_path: Option<&str>) -> std::path::PathBuf {
+    config_path
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("OQTO_CONFIG")
+                .ok()
+                .map(std::path::PathBuf::from)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("/etc/oqto/config.toml"))
+}
+
+/// Best-effort extraction of placement settings from the server config TOML.
+/// The container doctor does not require these (image/root checks skip when
+/// absent), but reading the real configured image makes attestation useful.
+fn placement_options_from_config(
+    opts: &mut oqto_placement::ContainerDoctorOptions,
+    config_path: &std::path::Path,
+) {
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(toml) = content.parse::<toml::Value>() else {
+        return;
+    };
+    let Some(placement) = toml.get("placement") else {
+        return;
+    };
+    if let Some(image) = placement.get("image").and_then(|v| v.as_str()) {
+        opts.image = Some(image.to_string());
+    }
+    if let Some(digest) = placement.get("image_digest").and_then(|v| v.as_str()) {
+        opts.image_digest = Some(digest.to_string());
+    }
+    if let Some(root) = placement.get("state_root").and_then(|v| v.as_str()) {
+        opts.state_root = Some(std::path::PathBuf::from(root));
+    }
+    if let Some(root) = placement.get("runtime_root").and_then(|v| v.as_str()) {
+        opts.runtime_root = Some(std::path::PathBuf::from(root));
+    }
+}
+
+async fn handle_container_doctor(
+    target_user: Option<&str>,
+    apply: bool,
+    strict: bool,
+    config_path: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use oqto_placement::{CheckStatus, ContainerCheck, TokioCommandRunner, run_container_doctor};
+
+    let user = target_user
+        .map(str::to_string)
+        .or_else(|| std::env::var("USER").ok())
+        .or_else(|| std::env::var("LOGNAME").ok());
+
+    let mut opts = oqto_placement::ContainerDoctorOptions {
+        user: user.clone(),
+        ..Default::default()
+    };
+    let cfg_path = resolve_config_path(config_path);
+    placement_options_from_config(&mut opts, &cfg_path);
+
+    let runner = TokioCommandRunner;
+    let mut checks = run_container_doctor(&opts, &runner).await;
+
+    let mut applied = Vec::<String>::new();
+    if apply {
+        applied = apply_container_safe_fixes(&checks, &opts).await;
+        if !applied.is_empty() {
+            checks = run_container_doctor(&opts, &runner).await;
+        }
+    }
+
+    let blockers: Vec<&ContainerCheck> = checks.iter().filter(|c| c.is_blocker()).collect();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "profile": "container",
+                "checks": checks,
+                "applied_fixes": applied,
+                "blockers": blockers.len(),
+            }))?
+        );
+    } else {
+        println!("Container-placement doctor (profile=container)");
+        if let Some(u) = &user {
+            println!("Backend user: {u}");
+        }
+        if let Some(img) = &opts.image {
+            println!("Image: {img}");
+        }
+        println!();
+        for check in &checks {
+            let tag = match check.status {
+                CheckStatus::Pass => "PASS",
+                CheckStatus::Fail => "FAIL",
+                CheckStatus::Skip => "SKIP",
+            };
+            println!(
+                "[{tag}] {:>8} {}",
+                format!("{:?}", check.severity).to_lowercase(),
+                check.id
+            );
+            println!("        {}", check.description);
+            if !check.evidence.is_empty() {
+                println!("        evidence: {}", check.evidence);
+            }
+            if check.status == CheckStatus::Fail && !check.remediation.is_empty() {
+                println!("        remediation: {}", check.remediation);
+            }
+        }
+        if !applied.is_empty() {
+            println!("\nApplied safe remediation(s):");
+            for fix in &applied {
+                println!("- {fix}");
+            }
+        }
+        let (pass, fail, skip) = tally(&checks);
+        println!(
+            "\nSummary: {pass} pass, {fail} fail, {skip} skip, {} blocker(s)",
+            blockers.len()
+        );
+    }
+
+    if strict && !blockers.is_empty() {
+        anyhow::bail!(
+            "container-placement prerequisites not met: {} blocker(s)",
+            blockers.len()
+        );
+    }
+    Ok(())
+}
+
+fn tally(checks: &[oqto_placement::ContainerCheck]) -> (usize, usize, usize) {
+    let mut pass = 0;
+    let mut fail = 0;
+    let mut skip = 0;
+    for c in checks {
+        match c.status {
+            oqto_placement::CheckStatus::Pass => pass += 1,
+            oqto_placement::CheckStatus::Fail => fail += 1,
+            oqto_placement::CheckStatus::Skip => skip += 1,
+        }
+    }
+    (pass, fail, skip)
+}
+
+/// `--apply` performs only declared safe/idempotent changes: enable linger and
+/// create missing placement roots. Privileged/ambiguous operations stop with
+/// instructions instead of mutating blindly.
+async fn apply_container_safe_fixes(
+    checks: &[oqto_placement::ContainerCheck],
+    opts: &oqto_placement::ContainerDoctorOptions,
+) -> Vec<String> {
+    let mut applied = Vec::new();
+    let linger_failed: Vec<_> = checks
+        .iter()
+        .filter(|c| c.id == "linger.enabled" && c.status == oqto_placement::CheckStatus::Fail)
+        .collect();
+    if let (Some(user), Some(_)) = (opts.user.as_deref(), linger_failed.first()) {
+        match tokio::process::Command::new("loginctl")
+            .args(["enable-linger", user])
+            .output()
+            .await
+        {
+            Ok(o) if o.status.success() => applied.push(format!("enabled linger for {user}")),
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                applied.push(format!(
+                    "could not enable linger for {user} (needs sudo/polkit): {}",
+                    err.trim()
+                ));
+            }
+            Err(e) => applied.push(format!("could not run loginctl: {e}")),
+        }
+    }
+    for (root, id) in [
+        (opts.state_root.as_deref(), "roots.state"),
+        (opts.runtime_root.as_deref(), "roots.runtime"),
+    ] {
+        let needs = checks
+            .iter()
+            .any(|c| c.id == id && c.status == oqto_placement::CheckStatus::Fail);
+        if let Some(root) = needs.then_some(root).flatten() {
+            match std::fs::create_dir_all(root) {
+                Ok(()) => {
+                    let _ = std::fs::set_permissions(
+                        root,
+                        std::os::unix::fs::PermissionsExt::from_mode(0o750),
+                    );
+                    applied.push(format!("created root {} (0750)", root.display()));
+                }
+                Err(e) => applied.push(format!("could not create {}: {e}", root.display())),
+            }
+        }
+    }
+    applied
 }
 
 async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {
@@ -4530,70 +5131,6 @@ fn get_user_home(username: &str) -> Result<String> {
 
 /// Setup oqto-runner for a user
 fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
-    // Get home directory
-    let home = std::process::Command::new("bash")
-        .args(["-c", &format!("echo ~{}", username)])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .context("Failed to get home directory")?;
-
-    if home.is_empty() {
-        anyhow::bail!("Could not determine home directory for '{}'", username);
-    }
-
-    // Create systemd user directory
-    let systemd_dir = format!("{}/.config/systemd/user", home);
-    if !json {
-        println!("Creating systemd user directory...");
-    }
-
-    let status = std::process::Command::new("sudo")
-        .args(["-u", username, "mkdir", "-p", &systemd_dir])
-        .status()
-        .context("Failed to create systemd directory")?;
-
-    if !status.success() {
-        anyhow::bail!("Failed to create systemd directory");
-    }
-
-    // Copy service file
-    let service_src = "/usr/local/share/oqto/systemd/oqto-runner.service";
-    let service_dst = format!("{}/oqto-runner.service", systemd_dir);
-
-    // If source doesn't exist, try local path
-    let service_content = if std::path::Path::new(service_src).exists() {
-        std::fs::read_to_string(service_src).context("Failed to read service file")?
-    } else {
-        // Fallback to embedded service file
-        include_str!("../../oqto/resources/systemd/oqto-runner.service").to_string()
-    };
-
-    if !json {
-        println!("Installing oqto-runner.service...");
-    }
-
-    // Write service file as user
-    let mut child = std::process::Command::new("sudo")
-        .args(["-u", username, "tee", &service_dst])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .context("Failed to write service file")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(service_content.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("Failed to write service file");
-    }
-
-    // User systemd managers are reached through /run/user/<uid>/bus. Do not
-    // rely on the invoking root shell to carry the target user's runtime dir:
-    // that made daemon-reload fail silently while restart reused a stale loaded
-    // unit (including removed environment variables such as PI_PACKAGE_DIR).
     let uid_output = std::process::Command::new("id")
         .args(["-u", username])
         .output()
@@ -4603,80 +5140,21 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
     }
     let uid = String::from_utf8_lossy(&uid_output.stdout)
         .trim()
-        .to_string();
-    let xdg_runtime_dir = format!("XDG_RUNTIME_DIR=/run/user/{uid}");
-
-    // Reload systemd and fail closed: restarting with an outdated loaded unit
-    // is not a successful runner update.
-    if !json {
-        println!("Reloading systemd...");
-    }
-    let reload_status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "daemon-reload",
-        ])
-        .status()
-        .context("Failed to reload user systemd manager")?;
-    if !reload_status.success() {
-        anyhow::bail!("Failed to reload systemd user manager for '{}'", username);
-    }
-
-    // Enable and start the service
-    if !json {
-        println!("Enabling oqto-runner service...");
-    }
-
-    let status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "enable",
-            "oqto-runner",
-        ])
-        .status()
-        .context("Failed to enable service")?;
-
-    if !status.success() {
-        eprintln!("Warning: Failed to enable oqto-runner service");
-    }
+        .parse::<u32>()
+        .with_context(|| format!("Invalid UID for '{username}'"))?;
 
     if !json {
-        println!("Starting oqto-runner service...");
+        println!("Reconciling oqto-runner through oqto-usermgr...");
     }
-
-    // `restart` (not `start`) so that reinstalling over an already-running
-    // runner actually swaps the binary. `start` is a no-op on an active
-    // service, which would silently leave the old binary in place after a
-    // runner-protocol change. On a fresh install this is equivalent to start.
-    let status = std::process::Command::new("sudo")
-        .args([
-            "-u",
-            username,
-            "env",
-            &xdg_runtime_dir,
-            "systemctl",
-            "--user",
-            "restart",
-            "oqto-runner",
-        ])
-        .status()
-        .context("Failed to start service")?;
-
-    if !status.success() {
-        eprintln!("Warning: Failed to start oqto-runner service. It may start on user login.");
-    }
-
-    Ok(())
+    oqto_host::linux_users::usermgr_request(
+        "setup-user-runner",
+        serde_json::json!({
+            "username": username,
+            "uid": uid,
+            "force": true,
+        }),
+    )
+    .with_context(|| format!("oqto-usermgr failed to reconcile runner for '{username}'"))
 }
 
 async fn handle_a2ui(client: &OqtoClient, command: A2uiCommand, json: bool) -> Result<()> {
@@ -5843,4 +6321,44 @@ async fn send_a2ui_surface(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod workspace_cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn workspace_debug_commands_parse_without_shell_ambiguity() {
+        let cases = [
+            vec!["oqtoctl", "ws", "ls"],
+            vec!["oqtoctl", "ws", "show", "workspace-1"],
+            vec!["oqtoctl", "ws", "ps"],
+            vec!["oqtoctl", "ws", "logs", "workspace-1"],
+            vec!["oqtoctl", "ws", "inspect", "workspace-1"],
+            vec![
+                "oqtoctl",
+                "ws",
+                "exec",
+                "workspace-1",
+                "printf",
+                "%s",
+                "hello world",
+            ],
+            vec!["oqtoctl", "ws", "fs", "workspace-1", "/workspace/a b"],
+        ];
+        for args in cases {
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+    }
+
+    #[test]
+    fn workspace_exec_requires_a_command() {
+        assert!(Cli::try_parse_from(["oqtoctl", "ws", "exec", "workspace-1"]).is_err());
+    }
+
+    #[test]
+    fn unreleased_placement_spelling_is_not_retained_as_an_alias() {
+        assert!(Cli::try_parse_from(["oqtoctl", "placement", "list"]).is_err());
+    }
 }

@@ -176,6 +176,15 @@ impl LinuxUsersConfig {
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating project user '{}'", username))?;
 
+        // Disable password aging: an expired shadow password later makes PAM
+        // refuse user@{uid}.service (224/PAM) and breaks the user runtime.
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/bin/chage",
+            &["-M", "-1", "-E", "-1", username.as_str()],
+        )
+        .with_context(|| format!("disabling password aging for '{username}'"))?;
+
         if self.create_home {
             self.claim_home_for_service_group(&username)?;
         }
@@ -492,13 +501,22 @@ impl LinuxUsersConfig {
         // Add comment with platform user ID for reference (sanitize for useradd compat)
         // This GECOS field is used to verify ownership on subsequent calls
         args.push("-c".to_string());
-        args.push(sanitize_gecos(&format!("Oqto platform user {}", user_id)));
+        args.push(platform_gecos(user_id));
 
         args.push(username.to_string());
 
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         run_privileged_command(self.use_sudo, "/usr/sbin/useradd", &args_refs)
             .with_context(|| format!("creating user '{}'", username))?;
+
+        // Disable password aging: an expired shadow password later makes PAM
+        // refuse user@{uid}.service (224/PAM) and breaks the user runtime.
+        run_privileged_command(
+            self.use_sudo,
+            "/usr/bin/chage",
+            &["-M", "-1", "-E", "-1", username],
+        )
+        .with_context(|| format!("disabling password aging for '{username}'"))?;
 
         if self.create_home {
             self.claim_home_for_service_group(username)?;
@@ -986,6 +1004,15 @@ fn get_user_gecos(username: &str) -> Result<Option<String>> {
     }
 }
 
+/// Build the GECOS ownership field for a platform user.
+/// GECOS format: "Oqto platform user <user_id>" (colon removed by sanitize).
+/// This is the single source of truth for the format: `create_user` writes it and
+/// `extract_user_id_from_gecos` parses it to verify Linux-user ownership, so every
+/// provisioning path (personal and shared-workspace) must go through here.
+pub fn platform_gecos(user_id: &str) -> String {
+    sanitize_gecos(&format!("Oqto platform user {}", user_id))
+}
+
 /// Extract the platform user_id from a GECOS field.
 /// GECOS format: "Oqto platform user <user_id>" (colon removed by sanitize).
 fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
@@ -1059,6 +1086,13 @@ pub fn usermgr_request_with_data(
 fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
     match cmd {
         "/usr/sbin/groupadd" => {
+            // Own-group form (`groupadd -g <gid> <username>`): the usermgr
+            // `create-user` command creates the user's own primary group
+            // itself, and its `create-group` contract only admits the service
+            // group. The pre-step is satisfied there, so acknowledge it.
+            if args.first() == Some(&"-g") {
+                return Some(Ok(()));
+            }
             let group = args.first()?;
             Some(usermgr_request(
                 "create-group",
@@ -1106,12 +1140,18 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
                     }
                 }
             }
+            // `-g` on the useradd command line is the user's *primary* group
+            // (their own, equal to the username since the service-group
+            // migration). The usermgr `group` parameter is the *service*
+            // group used for home/workspace group ownership, and its contract
+            // admits only "oqto"; usermgr sets the primary group itself.
+            let _primary_group = group?;
             Some(usermgr_request(
                 "create-user",
                 serde_json::json!({
                     "username": username?,
                     "uid": uid?,
-                    "group": group?,
+                    "group": "oqto",
                     "shell": shell?,
                     "gecos": gecos?,
                     "create_home": create_home,
@@ -1123,6 +1163,18 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
             Some(usermgr_request(
                 "delete-user",
                 serde_json::json!({ "username": username }),
+            ))
+        }
+        "/usr/bin/chage"
+            if args.first() == Some(&"-M")
+                && args.get(1) == Some(&"-1")
+                && args.get(2) == Some(&"-E")
+                && args.get(3) == Some(&"-1")
+                && args.len() == 5 =>
+        {
+            Some(usermgr_request(
+                "disable-password-aging",
+                serde_json::json!({ "username": args[4] }),
             ))
         }
         "mkdir" | "/bin/mkdir" if args.first() == Some(&"-p") => {
@@ -1376,6 +1428,31 @@ fn run_as_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn platform_gecos_round_trips_through_the_ownership_parser() {
+        for user_id in [
+            "usr_wismut",
+            "oqto_shared_buch-projekt",
+            "oqto_shared_it-i-group",
+        ] {
+            let gecos = platform_gecos(user_id);
+            assert_eq!(
+                extract_user_id_from_gecos(&gecos),
+                Some(user_id),
+                "ownership check must accept the GECOS we write for {user_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn own_group_groupadd_form_is_acknowledged_without_usermgr_call() {
+        // `groupadd -g <gid> <username>` (own primary group) must not be
+        // translated into a `create-group` request: usermgr's create-group
+        // only admits the service group and would reject `-g` as the name.
+        let result = try_usermgr("/usr/sbin/groupadd", &["-g", "2001", "alice-x1"]);
+        assert!(matches!(result, Some(Ok(()))));
+    }
 
     #[test]
     fn test_sanitize_username_simple() {

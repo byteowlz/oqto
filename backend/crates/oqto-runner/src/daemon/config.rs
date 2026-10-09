@@ -9,6 +9,8 @@ use std::{
 
 #[derive(Debug, Clone, Default)]
 pub struct RunnerUserConfig {
+    pub provider_login: Option<crate::provider_login::ProviderLoginConfig>,
+    pub history_read: Option<crate::history_read::HistoryReadConfig>,
     pub fileserver_binary: String,
     pub ttyd_binary: String,
     pub pi_binary: String,
@@ -76,6 +78,8 @@ struct LinuxUsersSection {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerSection {
+    provider_login: Option<crate::provider_login::ProviderLoginConfig>,
+    history_read: Option<crate::history_read::HistoryReadConfig>,
     runner_id: Option<String>,
     pi_sessions_dir: Option<String>,
     memories_dir: Option<String>,
@@ -138,6 +142,8 @@ impl RunnerUserConfig {
         info!("Runner ID: {}", runner_id);
 
         Self {
+            provider_login: config_file.runner.provider_login,
+            history_read: config_file.runner.history_read,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             terminal_enabled: config_file.local.terminal_enabled,
@@ -215,6 +221,15 @@ fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> (String, 
 }
 
 fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<String> {
+    if configured == "pi"
+        && let Some(runtime) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| crate::pi_manager::bundled_pi_runtime(&exe))
+    {
+        // One release-owned candidate: even a broken package must not cause a
+        // silent downgrade to an unrelated user or global Pi installation.
+        return vec![runtime.to_string_lossy().into_owned()];
+    }
     let mut candidates = Vec::new();
     if configured.contains('/') {
         push_candidate(&mut candidates, Some(configured.to_string()));

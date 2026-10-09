@@ -1,0 +1,236 @@
+/* Compositor shell parity chrome on top of shell.css. The classic Screen
+   Mode reproduces the OG frame — inset workarea, gaps, every region drawn
+   as a card — while the grid decides placement. Panes own their scrolling;
+   the compositor never adds a scroller around Content. */
+
+/* The workarea is inset on the top, end, and bottom; the inline-start edge
+   is left for a full-height edge Container (the sidebar) to fill. */
+.wb-shell[data-compositor="classic"] .oqto-compositor {
+	flex: 1;
+	min-block-size: 0;
+	padding: 0 24px 0 0;
+	overflow: hidden;
+	background: var(--background);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-body {
+	overflow: visible;
+}
+
+/* A bottom-edge row that is not a full-height column sticks to the shell's
+   bottom and uses the full available width: it swallows the gutter to the
+   edge Container beside it and the end inset. The status bar always
+   spans from the sidebar to the screen edge. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="block-end"][data-edges~="inline-end"]:not(
+		[data-full-height]
+	) {
+	margin-inline-end: -24px;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="block-end"]:not(
+		[data-edges~="inline-start"]
+	):not([data-full-height]) {
+	margin-inline-start: -16px;
+}
+
+/* The workarea keeps the OG 24px distance from the sidebar while panes sit
+   16px apart: every pane in the first column after the edge Container adds
+   the difference, so a Container added below one stays aligned with it. The
+   status Lane is flush chrome and keeps the frame's own edge. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-column="1"]:not([data-full-height]):not(
+		:has([data-role="status"])
+	) {
+	margin-inline-start: 8px;
+}
+
+/* Panes beside an inline-start edge Container start below its top, as the
+   OG workarea does; the edge Container itself is flush to the frame. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="block-start"]:not(
+		[data-edges~="inline-start"]
+	) {
+	margin-block-start: 24px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-lane {
+	margin-block-start: 16px;
+	gap: 16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-container {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg, 0);
+	box-shadow: var(--shadow-sm, none);
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="navigation"] {
+	background: var(--sidebar);
+	border-color: var(--sidebar-border, var(--border));
+}
+
+/* The status row is chrome-like Content: no card, no tabs, just the bar. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="status"] {
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-container[data-role="status"]
+	.oqto-compositor-content {
+	overflow: visible;
+}
+
+/* Content stretches to its Container: a pane shorter than its row would
+   otherwise leave dead space below it. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > * {
+	flex: 1 1 auto;
+	min-block-size: 0;
+}
+
+/* Content fills its Container; scrolling belongs to the pane itself. The
+   wrapper is the positioned ancestor so pane-internal popovers and
+   tooltips anchor inside their own card, never to the compositor root. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-content {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-sidebar {
+	flex: 1 1 auto;
+	inline-size: auto;
+	min-inline-size: 0;
+	max-inline-size: none;
+	background: transparent;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-panel {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-content > .wb-main {
+	flex: 1 1 auto;
+	min-block-size: 0;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tabs {
+	border-start-start-radius: var(--radius-lg, 0);
+	border-start-end-radius: var(--radius-lg, 0);
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-gutter[data-axis="inline"] {
+	inline-size: 16px;
+	margin-inline-start: -16px;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-gutter[data-axis="block"] {
+	block-size: 16px;
+	margin-block-start: -16px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-gutter:hover {
+	background: transparent;
+	box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+@media (max-width: 1023px) {
+	.wb-shell[data-compositor="mobile"] .wb-sidebar {
+		inline-size: 100vw;
+		inset-inline-end: 0;
+	}
+
+	.wb-shell[data-compositor="mobile"][data-sessions-open="true"]
+		.wb-sessions-backdrop {
+		display: none;
+	}
+}
+
+/* An inline-start edge Container is a surface, not a card: no border, no
+   radius — the OG sidebar look. */
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-cell[data-edges~="inline-start"][data-edges~="block-start"]
+	> .oqto-compositor-container {
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+/* Compositor tab strip styled like the OG work-area tabs. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-tabs {
+	align-items: center;
+	gap: 6px;
+	min-block-size: 46px;
+	padding: 8px 12px;
+	background: color-mix(in srgb, var(--muted) 30%, transparent);
+	scrollbar-width: none;
+}
+
+/* In a pane's own header the controls read as part of that header. */
+.wb-shell[data-compositor="classic"] .oqto-compositor-chrome {
+	gap: 2px;
+	margin-inline-start: 4px;
+}
+
+.wb-shell[data-compositor="classic"]
+	.oqto-compositor-tabs
+	.oqto-compositor-chrome {
+	margin-inline-start: auto;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab {
+	gap: 4px;
+	min-inline-size: 0;
+	max-inline-size: 260px;
+	border: 1px solid transparent;
+	color: var(--muted-foreground);
+	font-size: 12px;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab > [role="tab"] {
+	min-inline-size: 0;
+	padding: 7px 4px 7px 12px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab[data-active] {
+	background: color-mix(in srgb, var(--primary) 15%, transparent);
+	border-color: var(--primary);
+	color: var(--foreground);
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px 8px 4px 2px;
+	border: 0;
+	background: transparent;
+	color: var(--muted-foreground);
+	font: inherit;
+}
+
+.wb-shell[data-compositor="classic"] .oqto-compositor-tab-close:hover {
+	color: var(--foreground);
+}

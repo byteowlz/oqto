@@ -1,6 +1,7 @@
 import { AppProvider, useOnboarding } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { useChatContext } from "@/components/contexts";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 
 import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import {
 	deleteSharedWorkspace,
 	updateSharedWorkspace,
 } from "@/lib/api/shared-workspaces";
+import { getWsManager } from "@/lib/ws-manager";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -57,6 +59,7 @@ import {
 	useShellLoadingState,
 	useSidebarState,
 } from "./app-shell";
+import type { HistorySession } from "./app-shell/MachineHistory";
 import {
 	ConvertToSharedDialog,
 	SharedWorkspaceDialog,
@@ -115,7 +118,14 @@ const AppShell = memo(function AppShell() {
 	);
 	const [sharedWorkspacesSectionExpanded, setSharedWorkspacesSectionExpanded] =
 		useState(true);
-	const [sessionsSectionExpanded, setSessionsSectionExpanded] = useState(true);
+	const [sessionsSectionExpanded, setSessionsSectionExpanded] =
+		useLocalStorage<boolean>(
+			// One key for the desktop sidebar and the mobile menu, so collapsing
+			// Hub in one is still collapsed in the other and after a reload.
+			"oqto:sidebar:hubExpanded",
+			true,
+			{ deserialize: (raw) => JSON.parse(raw) !== false },
+		);
 	const [branchGraphOpen, setBranchGraphOpen] = useState(false);
 
 	const { mutate: handleLogout } = useLogout();
@@ -464,6 +474,9 @@ const AppShell = memo(function AppShell() {
 		(hit: SearchHit) => {
 			try {
 				setSessionSearch("");
+				// Return the sidebar to the session list; leaving messages mode
+				// active with a cleared query desyncs the search controls.
+				setSearchMode("sessions");
 				const targetMessageId =
 					typeof hit.message_id === "string"
 						? hit.message_id
@@ -477,8 +490,13 @@ const AppShell = memo(function AppShell() {
 						typeof hit.session_id === "string" ? hit.session_id : "";
 					if (sessionId) {
 						const existingSession = chatHistory.find((s) => s.id === sessionId);
+						// Only trust hit.workspace when it is an actual filesystem
+						// path. oqto-log hits carry opaque store ids in older
+						// payloads; using one as a path corrupts project grouping.
 						const hitWorkspace =
-							typeof hit.workspace === "string" ? hit.workspace : null;
+							typeof hit.workspace === "string" && hit.workspace.startsWith("/")
+								? hit.workspace
+								: null;
 						const workspacePath =
 							hitWorkspace ?? existingSession?.workspace_path ?? null;
 						const normalizedWorkspacePath =
@@ -545,6 +563,7 @@ const AppShell = memo(function AppShell() {
 			createOptimisticChatSession,
 			sharedWs.sharedWorkspaces,
 			setActiveAppId,
+			setSearchMode,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
 			setSelectedProjectKey,
@@ -592,6 +611,68 @@ const AppShell = memo(function AppShell() {
 			createNewChat,
 			setActiveAppId,
 			setSelectedWorkspaceOverviewPath,
+			sidebarState,
+		],
+	);
+
+	/**
+	 * Continue a chat stored on another machine in the main chat view.
+	 *
+	 * The session is not in this host's list, so it is added optimistically
+	 * with the machine's workspace path — the same route a search hit takes.
+	 * That path is what the control plane routes by: it resolves the owning
+	 * machine from it, and that machine's runner finds its own session file
+	 * through its binding. Nothing here needs to know which machine it is.
+	 */
+	const handleResumeMachineSession = useCallback(
+		(session: HistorySession) => {
+			const existing = chatHistory.find((chat) => chat.id === session.id);
+			if (!existing) {
+				const workspacePath = session.workspace?.replace(/\/$/, "") ?? null;
+				const updated = Date.parse(session.updated_at);
+				const when = Number.isNaN(updated) ? Date.now() : updated;
+				const optimistic: ChatSession = {
+					id: session.id,
+					readable_id: null,
+					title: session.title,
+					parent_id: null,
+					workspace_path: workspacePath,
+					project_name: workspacePath?.split("/").filter(Boolean).pop() ?? null,
+					created_at: when,
+					updated_at: when,
+					version: null,
+					is_child: false,
+					source_path: null,
+					shared_workspace_id: null,
+				};
+				createOptimisticChatSession(
+					session.id,
+					workspacePath ?? undefined,
+					undefined,
+					optimistic,
+				);
+			}
+			// The read probes need to know where this session lives before the
+			// chat view asks for its history: this host has no record of it.
+			getWsManager().setSessionWorkspaceHint(
+				session.id,
+				session.workspace?.replace(/\/$/, "") ?? null,
+			);
+			setSelectedChatSessionId(session.id);
+			setSelectedWorkspaceOverviewPath(null);
+			setSelectedProjectKey(null);
+			setActiveAppId("sessions");
+			if (sessionsRoute) navigate(sessionsRoute);
+			sidebarState.setMobileMenuOpen(false);
+		},
+		[
+			chatHistory,
+			createOptimisticChatSession,
+			setSelectedChatSessionId,
+			setSelectedWorkspaceOverviewPath,
+			setActiveAppId,
+			sessionsRoute,
+			navigate,
 			sidebarState,
 		],
 	);
@@ -725,6 +806,7 @@ const AppShell = memo(function AppShell() {
 						onProjectOverview={handleProjectOverview}
 						onSessionClick={handleSessionClick}
 						onNewChatInProject={handleNewChatInProject}
+						onResumeMachineSession={handleResumeMachineSession}
 						onPinSession={sidebarState.togglePinSession}
 						onRenameSession={(id) =>
 							sessionDialogs.handleRenameSession(id, chatHistory)
@@ -907,6 +989,7 @@ const AppShell = memo(function AppShell() {
 										onProjectOverview={handleProjectOverview}
 										onSessionClick={handleSessionClick}
 										onNewChatInProject={handleNewChatInProject}
+										onResumeMachineSession={handleResumeMachineSession}
 										onPinSession={sidebarState.togglePinSession}
 										onRenameSession={(id) =>
 											sessionDialogs.handleRenameSession(id, chatHistory)

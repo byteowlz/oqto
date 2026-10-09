@@ -8,7 +8,7 @@ vi.mock("@/lib/ws-manager", () => ({
 	}),
 }));
 
-import { clearTreeCache, fetchFileTreeMux } from "@/lib/mux-files";
+import { clearTreeCache, fetchFileTreeMux, readFileMux } from "@/lib/mux-files";
 
 describe("mux-files traversal budget handling", () => {
 	beforeEach(() => {
@@ -44,6 +44,38 @@ describe("mux-files traversal budget handling", () => {
 		await fetchFileTreeMux("/tmp/ws", ".", 2, false);
 
 		expect(sendAndWaitMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("deduplicates concurrent reads of the same workspace file", async () => {
+		let resolveResponse: (value: object) => void = () => {};
+		sendAndWaitMock.mockReturnValue(
+			new Promise((resolve) => {
+				resolveResponse = resolve;
+			}),
+		);
+		const first = readFileMux("/tmp/ws", "src/main.ts");
+		const second = readFileMux("/tmp/ws", "src/main.ts");
+		expect(sendAndWaitMock).toHaveBeenCalledTimes(1);
+		resolveResponse({
+			channel: "files",
+			type: "read_result",
+			path: "src/main.ts",
+			content: "aGk=",
+		});
+		const [left, right] = await Promise.all([first, second]);
+		expect(new TextDecoder().decode(left.data)).toBe("hi");
+		expect(new TextDecoder().decode(right.data)).toBe("hi");
+	});
+
+	it("surfaces file read errors instead of hiding the response", async () => {
+		sendAndWaitMock.mockResolvedValue({
+			channel: "files",
+			type: "error",
+			error: "file not found",
+		});
+		await expect(readFileMux("/tmp/ws", "missing.ts")).rejects.toThrow(
+			"file not found",
+		);
 	});
 
 	it("merges paged tree_result responses using next_offset", async () => {

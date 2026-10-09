@@ -18,7 +18,7 @@ Schema: `https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto
 ### Full Example
 
 ```toml
-#:schema https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.backend.config.schema.json
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.backend.config.schema.json"
 
 profile = "default"
 

@@ -127,8 +127,71 @@ pub(super) async fn handle_files_command(
         }
     }
 
+    // Container-placed workspaces must use their placement runner. Their
+    // auto-userns volumes are intentionally inaccessible to both the backend
+    // process and the connection-level host runner.
+    // A machine owns its own files: never serve them from this host, whether or
+    // not container placements are configured here.
+    let workspace_root_str = workspace_root.to_string_lossy().to_string();
+    let remote_machine_plane: Option<Arc<dyn UserPlane>> =
+        match resolve_target_for_workspace_path(state, user_id, &workspace_root_str).await {
+            Ok(target @ ExecutionTarget::RemoteMachine { .. }) => {
+                match resolve_runner_for_target(state, user_id, &target).await {
+                    Ok(Some(client)) => {
+                        let base: Arc<dyn UserPlane> = Arc::new(RunnerUserPlane::new(client));
+                        Some(Arc::new(MeteredUserPlane::new(
+                            base,
+                            UserPlanePath::Runner,
+                            state.user_plane_metrics.clone(),
+                        )))
+                    }
+                    _ => {
+                        return Some(WsEvent::Files(FilesWsEvent::Error {
+                            id,
+                            error: "File access unavailable: machine is not reachable".to_string(),
+                        }));
+                    }
+                }
+            }
+            _ => None,
+        };
+
+    let placement_plane: Option<Arc<dyn UserPlane>> = if state.placement_manager.is_some() {
+        match resolve_target_for_workspace_path(state, user_id, &workspace_root_str).await {
+            Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
+                Ok(Some(client)) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(RunnerUserPlane::new(client));
+                    Some(Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    )))
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: format!("File access unavailable: placement runner error ({err:#})"),
+                    }));
+                }
+            },
+            Err(err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!("File access unavailable: placement target error ({err:#})"),
+                }));
+            }
+        }
+    } else {
+        None
+    };
+
     let is_multi_user = state.user_isolation_enabled();
-    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
+    let user_plane: Arc<dyn UserPlane> = if let Some(plane) = remote_machine_plane {
+        plane
+    } else if let Some(plane) = placement_plane {
+        plane
+    } else if is_multi_user {
         let Some(pattern) = state.runner_socket_pattern.as_deref() else {
             error!("Multi-user mode without runner_socket_pattern configured");
             return Some(WsEvent::Files(FilesWsEvent::Error {
@@ -444,20 +507,11 @@ pub(super) async fn handle_files_command(
                 .write_file(&resolved, &decoded, create_parents)
                 .await
             {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "written",
-                        serde_json::json!({ "path": &path }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::WriteResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::WriteResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -520,20 +574,11 @@ pub(super) async fn handle_files_command(
                 }
             };
             match user_plane.delete_path(&resolved, recursive).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "deleted",
-                        serde_json::json!({ "path": &path }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::DeleteResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::DeleteResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -553,20 +598,11 @@ pub(super) async fn handle_files_command(
                 }
             };
             match user_plane.create_directory(&resolved, create_parents).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "created",
-                        serde_json::json!({ "path": &path, "is_dir": true }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
-                        id,
-                        path,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
+                    id,
+                    path,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -595,21 +631,12 @@ pub(super) async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "renamed",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::RenameResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::RenameResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -633,21 +660,12 @@ pub(super) async fn handle_files_command(
                 }
             };
             match copy_recursive(&user_plane, &from_resolved, &to_resolved, overwrite).await {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "copied",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::CopyResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CopyResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -680,21 +698,12 @@ pub(super) async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => {
-                    emit_file_bus_event(
-                        &state.bus,
-                        user_id,
-                        workspace_path,
-                        "moved",
-                        serde_json::json!({ "from": &from, "to": &to }),
-                    );
-                    Some(WsEvent::Files(FilesWsEvent::MoveResult {
-                        id,
-                        from,
-                        to,
-                        success: true,
-                    }))
-                }
+                Ok(()) => Some(WsEvent::Files(FilesWsEvent::MoveResult {
+                    id,
+                    from,
+                    to,
+                    success: true,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -712,6 +721,11 @@ async fn resolve_terminal_session_owner_for_target(
 ) -> Result<String, String> {
     match target {
         ExecutionTarget::Personal => Ok(user_id.to_string()),
+        ExecutionTarget::RemoteMachine { machine_id, .. } => state
+            .runner_targets
+            .execution_grant(user_id, machine_id)
+            .map(|grant| grant.principal)
+            .map_err(|_| "Remote execution denied".to_string()),
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             let sw = state
                 .shared_workspaces
@@ -778,6 +792,32 @@ pub(super) async fn resolve_terminal_session(
                                 );
                             }
                             user_id.to_string()
+                        }
+                        SessionTargetScope::RemoteMachine => {
+                            if let Some(ref owner_user_id) = record.owner_user_id
+                                && owner_user_id != user_id
+                            {
+                                return Err(
+                                    "Access denied: session does not belong to this user".into()
+                                );
+                            }
+                            let machine_id = record.workspace_id.clone().ok_or_else(|| {
+                                "Invalid session target metadata: missing machine id".to_string()
+                            })?;
+                            let workspace_path =
+                                record.workspace_path.clone().ok_or_else(|| {
+                                    "Invalid session target metadata: missing workspace path"
+                                        .to_string()
+                                })?;
+                            resolve_terminal_session_owner_for_target(
+                                state,
+                                user_id,
+                                &ExecutionTarget::RemoteMachine {
+                                    machine_id,
+                                    workspace_path,
+                                },
+                            )
+                            .await?
                         }
                         SessionTargetScope::SharedWorkspace => {
                             let workspace_id = record.workspace_id.ok_or_else(|| {
@@ -895,6 +935,9 @@ impl TtydConnection {
 }
 
 impl TtydConnectionWrite {
+    // Mirrors tungstenite's own send signature; boxing the error would force
+    // conversions at every `?` passthrough call site.
+    #[allow(clippy::result_large_err)]
     async fn send(
         &mut self,
         msg: tokio_tungstenite::tungstenite::Message,
@@ -955,7 +998,7 @@ pub(super) async fn terminal_credential_for_session(
 
 async fn connect_ttyd_socket(
     session_id: &str,
-    ttyd_port: u16,
+    target: &crate::runner::router::ServiceTarget,
     password: &str,
 ) -> anyhow::Result<TtydConnection> {
     use tokio_tungstenite::connect_async;
@@ -983,27 +1026,49 @@ async fn connect_ttyd_socket(
         return Ok(TtydConnection::Unix(socket));
     }
 
-    let url = format!("ws://localhost:{}/ws", ttyd_port);
-    let mut request = url.into_client_request()?;
-    request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        axum::http::HeaderValue::from_static("tty"),
-    );
-    request.headers_mut().insert("Authorization", auth);
-    // ttyd runs with --check-origin and rejects an upgrade whose Origin does
-    // not match the request host, including a missing one.
-    request.headers_mut().insert(
-        "Origin",
-        axum::http::HeaderValue::from_str(&format!("http://localhost:{}", ttyd_port))?,
-    );
-    let (socket, _response) = connect_async(request).await?;
-    Ok(TtydConnection::Tcp(socket))
+    match target {
+        crate::runner::router::ServiceTarget::Unix { path } => {
+            use tokio::net::UnixStream;
+            use tokio_tungstenite::client_async;
+
+            let stream = UnixStream::connect(path).await?;
+            let mut request = "ws://localhost/ws".into_client_request()?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                axum::http::HeaderValue::from_static("tty"),
+            );
+            request.headers_mut().insert("Authorization", auth);
+            request.headers_mut().insert(
+                "Origin",
+                axum::http::HeaderValue::from_static("http://localhost"),
+            );
+            let (socket, _response) = client_async(request, stream).await?;
+            Ok(TtydConnection::Unix(socket))
+        }
+        crate::runner::router::ServiceTarget::Tcp { host, port } => {
+            let url = format!("ws://{host}:{port}/ws");
+            let mut request = url.into_client_request()?;
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                axum::http::HeaderValue::from_static("tty"),
+            );
+            request.headers_mut().insert("Authorization", auth);
+            // ttyd runs with --check-origin and rejects an upgrade whose Origin does
+            // not match the request host, including a missing one.
+            request.headers_mut().insert(
+                "Origin",
+                axum::http::HeaderValue::from_str(&format!("http://{host}:{port}"))?,
+            );
+            let (socket, _response) = connect_async(request).await?;
+            Ok(TtydConnection::Tcp(socket))
+        }
+    }
 }
 
 pub(super) async fn start_terminal_task(
     terminal_id: String,
     session_id: String,
-    ttyd_port: u16,
+    ttyd_target: crate::runner::router::ServiceTarget,
     ttyd_password: String,
     cols: u16,
     rows: u16,
@@ -1023,7 +1088,7 @@ pub(super) async fn start_terminal_task(
         let mut attempts: u32 = 0;
         let socket = loop {
             attempts += 1;
-            match connect_ttyd_socket(&session_id, ttyd_port, &ttyd_password).await {
+            match connect_ttyd_socket(&session_id, &ttyd_target, &ttyd_password).await {
                 Ok(socket) => break socket,
                 Err(err) => {
                     if start.elapsed() >= timeout {

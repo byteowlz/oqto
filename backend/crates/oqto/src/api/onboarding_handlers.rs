@@ -299,6 +299,56 @@ pub async fn bootstrap_onboarding(
                 }),
             )
             .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+        } else if state.placement_manager.is_some() {
+            // Container-placed personal workspace: the volume belongs to the
+            // container's user namespace, so all writes go through the
+            // placement runner (provisioned lazily on first use).
+            let runner = crate::runner::router::resolve_runner_for_target(
+                &state,
+                user.id(),
+                &crate::runner::router::ExecutionTarget::Personal,
+            )
+            .await
+            .map_err(|e| ApiError::Internal(format!("resolving personal runner: {e:#}")))?
+            .ok_or_else(|| ApiError::Internal("personal runner not available".into()))?;
+
+            let template_src = templates_service
+                .templates_dir()
+                .join(templates_service.subdirectory());
+            if template_src.is_dir() {
+                crate::api::handlers::projects::copy_template_dir_via_runner(
+                    &runner,
+                    &template_src,
+                    &workspace_path,
+                )
+                .await?;
+            } else {
+                runner
+                    .create_directory(&workspace_path, true)
+                    .await
+                    .map_err(|e| {
+                        ApiError::Internal(format!("Failed to create workspace: {e:#}"))
+                    })?;
+            }
+
+            let meta_dir = workspace_path.join(".oqto");
+            runner
+                .create_directory(&meta_dir, true)
+                .await
+                .map_err(|e| ApiError::Internal(format!("create .oqto dir: {e:#}")))?;
+            let overlays: [(&str, &str); 5] = [
+                (".oqto/workspace.toml", meta_toml.as_str()),
+                ("BOOTSTRAP.md", templates.onboard.as_str()),
+                ("PERSONALITY.md", templates.personality.as_str()),
+                ("USER.md", templates.user.as_str()),
+                ("AGENTS.md", templates.agents.as_str()),
+            ];
+            for (rel, content) in overlays {
+                runner
+                    .write_file(&workspace_path.join(rel), content.as_bytes(), true)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("write {rel}: {e:#}")))?;
+            }
         } else {
             // Single-user: copy template dir then overlay files
             let template_src = templates_service

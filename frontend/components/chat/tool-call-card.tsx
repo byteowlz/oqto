@@ -4,7 +4,7 @@ import {
 	CopyButton,
 	MarkdownRenderer,
 } from "@/components/data-display/markdown-renderer";
-import type { MessagePart } from "@/lib/agent-client";
+import type { MessagePart } from "@/lib/message-part";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 import {

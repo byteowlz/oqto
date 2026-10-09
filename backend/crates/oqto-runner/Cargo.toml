@@ -38,6 +38,7 @@ uuid.workspace = true
 iroh = { version = "1.0.2", default-features = false, features = ["tls-ring"], optional = true }
 
 oqto-history = { path = "../oqto-history" }
+oqto-apps = { path = "../oqto-apps" }
 serde_json.workspace = true
 sqlx.workspace = true
 oqto-protocol = { path = "../oqto-protocol" }

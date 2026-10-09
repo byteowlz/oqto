@@ -13,6 +13,10 @@ import { cn } from "@/lib/utils";
 import { Mic, Send, X } from "lucide-react";
 import type * as React from "react";
 import { useEffect, useRef } from "react";
+import {
+	RecognitionControls,
+	type RecognitionControlsProps,
+} from "./RecognitionControls";
 import { VadProgressBar } from "./VadProgressBar";
 
 export interface DictationOverlayProps
@@ -21,6 +25,10 @@ export interface DictationOverlayProps
 		"onKeyDown" | "onPaste" | "onFocus" | "onBlur"
 	> {
 	open: boolean;
+	preparation?: string | null;
+	recognitionControls?: RecognitionControlsProps;
+	/** Finish the engine and insert its final result without auto-send. */
+	onFinish?: () => void;
 	value: string;
 	liveTranscript: string;
 	placeholder?: string;
@@ -37,6 +45,9 @@ export interface DictationOverlayProps
 
 export function DictationOverlay({
 	open,
+	preparation,
+	recognitionControls,
+	onFinish,
 	value,
 	liveTranscript,
 	placeholder,
@@ -57,7 +68,7 @@ export function DictationOverlay({
 	useEffect(() => {
 		if (!open) return;
 		const el =
-			(typeof textareaRef === "object" ? textareaRef.current : null) ??
+			(typeof textareaRef === "object" ? textareaRef?.current : null) ??
 			fallbackRef.current;
 		if (!el) return;
 
@@ -102,14 +113,35 @@ export function DictationOverlay({
 						<Send className="size-3" />
 						<span>Auto</span>
 					</button>
-					<Button type="button" variant="ghost" size="icon-sm" onClick={onStop}>
+					{onFinish && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							disabled={Boolean(preparation)}
+							onClick={onFinish}
+						>
+							Finish
+						</Button>
+					)}
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-sm"
+						aria-label="Cancel dictation"
+						onClick={onStop}
+					>
 						<X className="size-4" />
 					</Button>
 				</div>
 			</div>
 
 			<div className="p-3 space-y-2">
+				{recognitionControls && (
+					<RecognitionControls {...recognitionControls} disabled />
+				)}
 				<textarea
+					aria-label="Message"
 					ref={textareaRef ?? fallbackRef}
 					autoComplete="off"
 					autoCorrect="off"
@@ -118,11 +150,7 @@ export function DictationOverlay({
 					enterKeyHint="send"
 					data-form-type="other"
 					placeholder={placeholder}
-					value={
-						liveTranscript
-							? `${value}${value && liveTranscript ? " " : ""}${liveTranscript}`
-							: value
-					}
+					value={value}
 					onChange={onChange}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -130,15 +158,26 @@ export function DictationOverlay({
 					onBlur={onBlur}
 					className={cn(
 						"w-full rounded-md border bg-transparent",
-						"px-3 py-2 text-sm leading-5",
+						"px-3 py-2 text-base sm:text-sm leading-5",
 						"outline-none focus-visible:ring-1 focus-visible:ring-ring",
 						"h-40 resize-none overflow-y-auto",
 					)}
 				/>
 
-				<div className="min-h-[1.25rem] text-xs text-muted-foreground">
-					{liveTranscript ? "Listening..." : "Waiting for speech..."}
-				</div>
+				{liveTranscript && (
+					<div
+						className="break-words text-sm text-muted-foreground"
+						aria-label="Provisional transcript"
+					>
+						{liveTranscript}
+					</div>
+				)}
+				<output className="block min-h-[1.25rem] text-xs text-muted-foreground">
+					{preparation ??
+						(liveTranscript
+							? "Preview only · waiting for completion"
+							: "Waiting for speech…")}
+				</output>
 
 				<div className="h-1">
 					<VadProgressBar progress={vadProgress} />

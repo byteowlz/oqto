@@ -20,7 +20,7 @@ describe("FileMentionPopup reliability", () => {
 			<FileMentionPopup
 				query=""
 				isOpen
-				workspacePath="/tmp/ws"
+				workspaceDirectory="/tmp/ws"
 				onSelect={vi.fn()}
 				onClose={vi.fn()}
 			/>,

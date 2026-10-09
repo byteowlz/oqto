@@ -1,0 +1,125 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const shellCss = readFileSync(
+	resolve(process.cwd(), "src/oqto-ui/app/shell.css"),
+	"utf8",
+);
+const lightSchemes = ["oqto-light.json", "nord-light.json"].map((fileName) =>
+	JSON.parse(
+		readFileSync(
+			resolve(process.cwd(), "vendor/design-system/src/schemes", fileName),
+			"utf8",
+		),
+	),
+);
+
+describe("OqtoUI visual stability", () => {
+	it("has no ambient animation or transition declarations", () => {
+		expect(shellCss).not.toMatch(/@keyframes|\banimation\s*:|\btransition\s*:/);
+	});
+
+	it("keeps the button reset beneath component spacing", () => {
+		// Specificity is not enough on its own: an unlayered reset outranks
+		// every rule in @layer utilities regardless of how specific that rule
+		// is, which is how shared chat components lost their padding in this
+		// shell but not in the legacy one. The reset has to be layered.
+		expect(shellCss).toMatch(
+			/@layer base \{[\s\S]*:where\(\.wb-shell\) :where\(button\)/,
+		);
+		expect(shellCss).not.toMatch(/\.wb-shell button\s*\{/);
+		expect(shellCss).not.toMatch(/^\.wb-shell :where\(button\)/m);
+	});
+
+	it("collapses mobile chrome to one bar and hides duplicated headers", () => {
+		const mobileBlock = shellCss.slice(
+			shellCss.indexOf("@media (max-width: 1023px)"),
+		);
+		expect(mobileBlock).toMatch(/\.wb-wa-tabs\s*\{\s*display:\s*none;/);
+		// Parity (oqto-a9j4.6): the desktop chat column carries a meta +
+		// context-gauge header row like the legacy UI; on mobile it collapses
+		// away because the top bar already carries session meta.
+		expect(shellCss).toMatch(/\.wb-chat-header\s*\{/);
+		expect(mobileBlock).toMatch(/\.wb-chat-header\s*\{[^}]*display:\s*none;/);
+		expect(mobileBlock).toMatch(/\.wb-mobile-chrome\s*\{[^}]*display:\s*grid;/);
+		expect(mobileBlock).toMatch(/\.wb-sidebar\s*\{[^}]*position:\s*fixed;/);
+	});
+
+	it("counters the app-wide flatten reset inside the lab shell", () => {
+		expect(shellCss).toMatch(/border-radius: 50% !important/);
+		expect(shellCss).toMatch(/border-radius: var\(--radius-lg, 0\) !important/);
+		expect(shellCss).toMatch(/border-radius: var\(--radius-sm, 0\) !important/);
+	});
+
+	it("consumes the radius and effect tokens instead of hardcoding depth", () => {
+		expect(shellCss).toMatch(/border-radius: var\(--radius-lg, 0\)/);
+		expect(shellCss).toMatch(/border-radius: var\(--radius-sm, 0\)/);
+		expect(shellCss).toMatch(/box-shadow: var\(--shadow-lg, none\)/);
+		expect(shellCss).toMatch(
+			/backdrop-filter: blur\(var\(--backdrop-blur, 0px\)\)/,
+		);
+		expect(shellCss).not.toMatch(/border-radius:\s*\d+px/);
+		expect(shellCss).not.toMatch(/box-shadow:\s*0 /);
+	});
+
+	it("keeps light-theme semantic overrides within their Base24 palettes", () => {
+		for (const scheme of lightSchemes) {
+			for (const value of Object.values(scheme.overrides)) {
+				expect(value).toMatch(/^var\(--base[0-1][0-9A-F]\)$/);
+			}
+		}
+	});
+
+	it("maps the same light-theme roles to the same Base24 slots", () => {
+		const [oqtoLight, nordLight] = lightSchemes;
+		expect(nordLight.overrides).toEqual(oqtoLight.overrides);
+		expect(nordLight.overrides["--code-accent"]).toBe("var(--base0B)");
+	});
+
+	it("leaves the light surfaces to the role layer", () => {
+		// These used to be pinned here: --background at base02 with --card at
+		// base01, which puts the page ground a step DARKER than the cards
+		// sitting on it, and --border at base03, heavy enough that the UI
+		// reads as a line drawing. The role layer already places them —
+		// background at base00, the lightest slot, and border at base01 — so
+		// the overrides were not adding a decision, they were inverting one.
+		for (const scheme of lightSchemes) {
+			for (const role of [
+				"--background",
+				"--card",
+				"--popover",
+				"--border",
+				"--input",
+				"--sidebar",
+				"--sidebar-accent",
+				"--sidebar-border",
+			]) {
+				expect(scheme.overrides).not.toHaveProperty(role);
+			}
+		}
+	});
+
+	it("keeps the canonical Tinted Theming Nord Light Base16 slots unchanged", () => {
+		const nordLight = lightSchemes.find((scheme) => scheme.id === "nord-light");
+		expect(nordLight.system).toBe("base16");
+		expect(nordLight.slots).toEqual({
+			base00: "#e5e9f0",
+			base01: "#c2d0e7",
+			base02: "#b8c5db",
+			base03: "#aebacf",
+			base04: "#60728c",
+			base05: "#2e3440",
+			base06: "#3b4252",
+			base07: "#29838d",
+			base08: "#99324b",
+			base09: "#ac4426",
+			base0A: "#9a7500",
+			base0B: "#4f894c",
+			base0C: "#398eac",
+			base0D: "#3b6ea8",
+			base0E: "#97365b",
+			base0F: "#5272af",
+		});
+	});
+});

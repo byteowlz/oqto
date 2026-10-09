@@ -46,10 +46,8 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
          (subpath \"/Library/Developer\"))\n",
     );
 
-    // The per-user temporary directory, macOS's equivalent of /tmp. Tools use
-    // $TMPDIR rather than /tmp, and xcrun writes its cache there before it will
-    // run anything.
-    out.push_str("(allow file-read* file-write* (subpath \"/private/var/folders\"))\n");
+    // Temporary storage is an explicit policy grant, not all users' Darwin
+    // temporary trees. Callers set TMPDIR to a granted session directory.
 
     // Standard devices. git opens /dev/null read-write and fails outright when
     // it cannot, so a read-only /dev is not enough.
@@ -94,6 +92,36 @@ pub fn compile_profile(policy: &ResolvedPolicy) -> String {
             }
         };
         out.push_str(&line);
+    }
+    out
+}
+
+/// Unix-socket connection grants must follow the same resolved path policy.
+/// File read/write denial alone does not constrain connect(2), and open TCP
+/// must not implicitly grant access to every host control socket.
+#[must_use]
+pub fn compile_socket_rules(policy: &ResolvedPolicy) -> String {
+    let default = if policy.default == Access::None {
+        "deny"
+    } else {
+        "allow"
+    };
+    let mut out =
+        format!("({default} network-outbound (remote unix-socket (path-regex #\"^/\")))\n");
+    let mut rules: Vec<&ResolvedRule> = policy.rules().iter().collect();
+    rules.sort_by_key(|rule| rule.path().components().count());
+    for rule in rules {
+        let resolved =
+            std::fs::canonicalize(rule.path()).unwrap_or_else(|_| rule.path().to_path_buf());
+        let path = escape(&resolved.to_string_lossy());
+        let verb = if rule.access == Access::None {
+            "deny"
+        } else {
+            "allow"
+        };
+        out.push_str(&format!(
+            "({verb} network-outbound (remote unix-socket (subpath \"{path}\")))\n"
+        ));
     }
     out
 }
@@ -155,8 +183,6 @@ mod tests {
             // xcrun shims: /usr/bin/git, python3, cc
             "/Applications/Xcode.app",
             "/Library/Developer",
-            // $TMPDIR, where xcrun writes its cache before running anything
-            "/private/var/folders",
             // git opens /dev/null read-write
             "/dev/null",
             // TLS trust store and resolver configuration
@@ -167,6 +193,12 @@ mod tests {
                 "baseline is missing {required}:\n{profile}"
             );
         }
+    }
+
+    #[test]
+    fn temporary_storage_is_not_a_blanket_host_grant() {
+        let profile = compile_profile(&policy(Access::None, &[]));
+        assert!(!profile.contains("/private/var/folders"));
     }
 
     #[test]

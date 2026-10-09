@@ -13,6 +13,7 @@
  */
 
 import { normalizeScheme } from "./derive-base16.js";
+import { EFFECT_VARS, effectVars } from "./effects.js";
 import {
 	DEFAULT_IDENTITY,
 	type IdentityTokens,
@@ -52,7 +53,13 @@ export function applyScheme(scheme: Scheme, options?: ApplyOptions): void {
 
 	const normalized = normalizeScheme(scheme);
 
-	// Color tokens.
+	// Effects first (flat defaults) so scheme/user overrides win below.
+	for (const [name, value] of Object.entries(effectVars())) {
+		el.style.setProperty(name, value);
+	}
+
+	// Color tokens (per-scheme overrides already merged; they may include
+	// effect vars, which then overwrite the flat defaults).
 	const tokens: SemanticTokenMap = mapSchemeToTokens(normalized);
 	for (const [name, value] of Object.entries(tokens)) {
 		el.style.setProperty(name, value);
@@ -88,4 +95,5 @@ export function clearScheme(root?: HTMLElement): void {
 const MANAGED_FOR_CLEAR: readonly string[] = [
 	...MANAGED_SEMANTIC_VARS,
 	...RADIUS_VARS,
+	...EFFECT_VARS,
 ];

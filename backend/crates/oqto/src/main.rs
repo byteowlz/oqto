@@ -32,10 +32,10 @@ use std::os::unix::io::AsRawFd;
 use tokio::net::{UnixListener, UnixStream};
 
 mod agent_browser;
-mod bus;
 
 mod api;
 mod api_keys;
+mod apps;
 mod audit;
 mod auth;
 mod container;
@@ -314,8 +314,8 @@ enum RunnerCommand {
 
 #[derive(Debug, Clone, Args)]
 struct RunnerMigrateOqtoLogCommand {
-    /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
-    /// | unsplit | unsplit-dry-run
+    /// Migration mode: bootstrap | rebuild-from-jsonl | validate | diagnostics
+    /// | reindex | sync-identities | unsplit | unsplit-dry-run
     #[arg(long, default_value = "bootstrap")]
     mode: String,
     /// Restrict Pi JSONL import/validation to this workspace root.
@@ -548,12 +548,16 @@ struct AppConfig {
     agent_browser: agent_browser::AgentBrowserConfig,
     /// Server configuration.
     server: ServerConfig,
+    /// Runtime-discovered Oqto App origin configuration.
+    apps: AppsConfig,
     /// Onboarding templates configuration.
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
     sldr: SldrConfig,
     /// Feedback collection configuration.
     feedback: feedback::FeedbackConfig,
+    /// Workspace placement configuration (local host runners vs containers).
+    placement: runner::placement::PlacementConfig,
 }
 
 /// Server configuration.
@@ -564,6 +568,18 @@ struct ServerConfig {
     max_upload_size_mb: usize,
     /// Optional admin Unix socket path for local CLI access.
     admin_socket_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AppsConfig {
+    enabled: bool,
+}
+
+impl Default for AppsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 impl Default for ServerConfig {
@@ -630,6 +646,8 @@ struct RunnerConfig {
     /// Socket directory pattern for per-user runner sockets.
     /// Default: /run/user/{uid}/oqto-runner.sock
     socket_pattern: Option<String>,
+    /// Additional Account-authorized remote runner inventory. Does not rebind Workspaces.
+    targets: Vec<runner::targets::RunnerTargetConfig>,
 }
 
 impl AppConfig {
@@ -661,8 +679,10 @@ impl Default for AppConfig {
             pi: PiConfig::default(),
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
+            apps: AppsConfig::default(),
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
             feedback: feedback::FeedbackConfig::default(),
+            placement: runner::placement::PlacementConfig::default(),
         }
     }
 }
@@ -1573,6 +1593,30 @@ WantedBy=default.target
                     }
                     Ok(())
                 }
+                "rebuild-from-jsonl" => {
+                    let stats = rt.block_on(async {
+                        crate::oqto_log::importer::rebuild_from_pi_jsonl(Path::new(&home), &user)
+                            .await
+                    })?;
+
+                    println!(
+                        "oqto-log authoritative rebuild complete: scanned_files={}, rebuilt_sessions={}, rebuilt_messages={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.imported_messages,
+                        stats.skipped_files,
+                        stats.failed_files
+                    );
+                    for sample in stats.failure_samples.iter().take(25) {
+                        println!("rebuild-failure: {}", sample);
+                    }
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!(
+                            "oqto-log authoritative rebuild had failures (see rebuild-failure lines)"
+                        ));
+                    }
+                    Ok(())
+                }
                 "validate" => {
                     let report = rt.block_on(async {
                         crate::oqto_log::validator::validate_bootstrap_import(Path::new(&home))
@@ -1749,7 +1793,7 @@ WantedBy=default.target
                     Ok(())
                 }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|index-rebuild|sync-identities|unsplit|unsplit-dry-run",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|rebuild-from-jsonl|validate|validate-changed|diagnostics|reindex|index-rebuild|sync-identities|unsplit|unsplit-dry-run",
                     other
                 )),
             }
@@ -2305,6 +2349,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
+    let placement_store: Arc<dyn oqto_placement::PlacementStore> = Arc::new(
+        oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
+            .await
+            .context("initializing placement registry")?,
+    );
+
     // Create session service based on runtime mode
     let session_service = if local_mode {
         let Some(local_rt) = local_runtime else {
@@ -2342,6 +2392,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             session::SessionService::new(session_repo, container_rt, session_config.clone())
         }
     };
+    let runner_targets = Arc::new(
+        runner::targets::RunnerTargets::new(ctx.config.backend.runner.targets.clone())
+            .context("validating remote runner target configuration")?,
+    );
+    let session_service = session_service
+        .with_placement_store(placement_store.clone())
+        .with_remote_execution(runner_targets.clone());
 
     let mut sldr_users: Option<local::UserSldrManager> = None;
 
@@ -2495,12 +2552,30 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         max_proxy_body_bytes,
     );
     state = state.with_single_user(single_user);
+    state.runner_targets = runner_targets.clone();
     state = state.with_feedback_config(ctx.config.feedback.clone());
-    let placement_store =
-        oqto_placement::JsonPlacementStore::open(default_state_dir()?.join("placements.json"))
-            .await
-            .context("initializing placement registry")?;
-    state = state.with_placement_store(Arc::new(placement_store));
+    if ctx.config.apps.enabled {
+        state = state.with_apps(apps::AppRuntimeService::new(
+            apps::AppRepository::new(database.pool().clone()),
+            apps::AppArtifactStore::new(ctx.paths.data_dir.join("app-artifacts")),
+        ));
+    }
+    state = state.with_placement_store(placement_store.clone());
+    if ctx.config.placement.mode == runner::placement::PlacementMode::Container {
+        let manager = Arc::new(runner::placement::PlacementManager::new(
+            Arc::new(oqto_placement::PodmanSupervisor::new()),
+            placement_store,
+            ctx.config.placement.clone(),
+            default_data_dir()?.join("placements"),
+            default_state_dir()?.join("placements"),
+        ));
+        state = state.with_placement_manager(manager.clone());
+        tokio::spawn(async move {
+            if let Err(error) = manager.reconcile().await {
+                warn!("placement reconcile failed: {error:#}");
+            }
+        });
+    }
 
     if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
         warn!("Failed to initialize feedback directories: {}", err);
@@ -2545,6 +2620,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         shared_workspace::SharedWorkspaceService::new(sw_repo).with_ws_hub(state.ws_hub.clone());
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
+    }
+    if let Some(ref store) = state.placement_store {
+        sw_service = sw_service.with_placement_store(store.clone());
     }
     if let Some(ref pattern) = state.runner_socket_pattern {
         sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
@@ -2658,8 +2736,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             eavs_config.oauth.redirect_uri.clone(),
         );
 
-        if let Some(ref master_key) = eavs_config.master_key {
-            match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+        // The configured value may be a literal, `env:VAR` or `file:PATH`.
+        let resolved_master_key = match eavs_config.master_key.as_deref() {
+            Some(value) => match crate::auth::resolve_secret_value(value) {
+                Ok(resolved) => Some(resolved),
+                Err(err) => {
+                    warn!("Failed to resolve eavs.master_key: {err}");
+                    None
+                }
+            },
+            None => None,
+        };
+        if let Some(master_key) = resolved_master_key {
+            match eavs::EavsClient::new(&eavs_config.base_url, &master_key) {
                 Ok(client) => {
                     info!("EAVS client initialized at {}", eavs_config.base_url);
                     state = state.with_eavs_client(client);
@@ -2674,6 +2763,65 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         } else {
             debug!("EAVS master_key not configured, user provisioning disabled");
         }
+    }
+
+    // Personal placements provisioned before an EAVS config change (or before
+    // EAVS was enabled) may lack models.json; the sync is idempotent and
+    // preserves existing virtual keys. Must run after EAVS client init and
+    // gives reconcile a head start so restarted containers are dialable.
+    if state.placement_manager.is_some()
+        && let (Some(eavs), Some(store)) =
+            (state.eavs_client.clone(), state.placement_store.clone())
+    {
+        let auto_rename = state.auto_rename_config.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let records = match store.list().await {
+                Ok(records) => records,
+                Err(error) => {
+                    warn!("placement list failed for models sync: {error:#}");
+                    return;
+                }
+            };
+            for record in records {
+                if record.workspace_id != record.account_id {
+                    continue;
+                }
+                let client =
+                    match oqto_runner::client::RunnerClient::from_endpoint(&record.runner_endpoint)
+                    {
+                        Ok(client) => client,
+                        Err(error) => {
+                            warn!(
+                                "building runner client for models sync failed for {}: {error:#}",
+                                record.workspace_id
+                            );
+                            continue;
+                        }
+                    };
+                if client.ensure_ready_with_recovery().await.is_err() {
+                    continue;
+                }
+                match api::handlers::admin::sync_eavs_models_json_via_runner(
+                    &eavs,
+                    &client,
+                    std::path::Path::new(oqto_placement::CONTAINER_HOME),
+                    &record.workspace_id,
+                    Some(&auto_rename),
+                )
+                .await
+                {
+                    Ok(()) => info!(
+                        "EAVS models.json synced for personal placement {}",
+                        record.workspace_id
+                    ),
+                    Err(error) => warn!(
+                        "EAVS models.json sync failed for {}: {error:#}",
+                        record.workspace_id
+                    ),
+                }
+            }
+        });
     }
 
     // Pi default provider/model from config. Used during registration to write
@@ -2806,7 +2954,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             _ = terminate => {},
         }
 
-        info!("Shutdown signal received, stopping containers...");
+        // Workspace placements deliberately outlive the backend: startup
+        // reconciles them from their specs, and tearing them down here would
+        // kill agent work on every restart. `oqtoctl container stop-all`
+        // removes them.
+        info!("Shutdown signal received; leaving workspace placements running");
 
         // Kill browser daemon processes
         {
@@ -2876,6 +3028,13 @@ async fn backfill_sessions_for_target(
                 owner_user_id: None,
                 scope: SessionTargetScope::SharedWorkspace,
                 workspace_id: Some(workspace_id.clone()),
+                workspace_path: Some(session.workspace_path),
+            },
+            ExecutionTarget::RemoteMachine { machine_id, .. } => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: owner_user_id.map(ToOwned::to_owned),
+                scope: SessionTargetScope::RemoteMachine,
+                workspace_id: Some(machine_id.clone()),
                 workspace_path: Some(session.workspace_path),
             },
         };

@@ -1,15 +1,19 @@
 {
 	"name": "workspace-frontend",
-	"version": "0.5.0",
+	"version": "0.5.9",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"sync:visual-runtime-assets": "node scripts/sync-visual-runtime-assets.mjs",
-		"dev": "bun run sync:visual-runtime-assets && vite",
-		"build": "bun run sync:visual-runtime-assets && vite build",
+		"sync:ears-browser-sdk": "bun scripts/sync-ears-browser-sdk.mjs",
+		"sync:speech-runtime-assets": "bun scripts/sync-speech-runtime-assets.mjs",
+		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite",
+		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite build",
 		"preview": "vite preview",
-		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail",
+		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail && bun run typecheck:oqto-ui && bun run lint:oqto-ui-guardrails",
 		"lint:useeffect-guardrail": "bun scripts/check-useeffect-guardrail.mjs",
+		"lint:oqto-ui-guardrails": "node scripts/check-oqto-ui-guardrails.mjs",
+		"typecheck:oqto-ui": "tsc -p tsconfig.oqto-ui.json --noEmit",
 		"lint:useeffect-guardrail:update": "bun scripts/check-useeffect-guardrail.mjs --update-baseline",
 		"tauri:dev": "bunx tauri dev",
 		"tauri:build": "bunx tauri build",
@@ -18,9 +22,12 @@
 		"format:generated-types": "bunx biome format --write src/generated"
 	},
 	"dependencies": {
+		"@byteowlz/ears-browser": "file:vendor/ears-browser",
+		"@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#v0.3.1",
 		"@hookform/resolvers": "^5.2.2",
 		"@mdxeditor/editor": "^4.0.2",
 		"@mermaid-js/layout-elk": "^0.1.4",
+		"@pierre/diffs": "1.4.1",
 		"@radix-ui/react-accordion": "^1.2.12",
 		"@radix-ui/react-alert-dialog": "^1.1.15",
 		"@radix-ui/react-aspect-ratio": "^1.1.8",
@@ -54,6 +61,8 @@
 		"@tauri-apps/plugin-websocket": "^2.4.2",
 		"@types/react-syntax-highlighter": "^15.5.13",
 		"@uiw/react-textarea-code-editor": "^3.1.1",
+		"@wterm/dom": "0.5.0",
+		"@wterm/ghostty": "0.5.0",
 		"chart.js": "^4.5.1",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
@@ -106,6 +115,7 @@
 		"typescript": "^5",
 		"unified": "^11.0.5",
 		"vite": "^5.4.10",
-		"vitest": "^4.0.15"
-	}
+		"vitest": "^3.2.4"
+	},
+	"trustedDependencies": ["@byteowlz/oqto-app-sdk"]
 }

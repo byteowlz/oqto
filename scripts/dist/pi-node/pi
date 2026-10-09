@@ -1,0 +1,5 @@
+#!/bin/sh
+# Resolve managed symlinks; never pick an unrelated Node from the user's PATH.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+exec "$root/node/bin/node" "$root/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" "$@"

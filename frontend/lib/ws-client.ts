@@ -76,12 +76,14 @@ export type WsEvent =
 			session_id: string;
 			message_id: string;
 			delta: string;
+			content_index?: number;
 	  }
 	| {
 			type: "thinking_delta";
 			session_id: string;
 			message_id: string;
 			delta: string;
+			content_index?: number;
 	  }
 	| { type: "message_end"; session_id: string; message_id: string }
 	| { type: "message_updated"; session_id: string; message: unknown }

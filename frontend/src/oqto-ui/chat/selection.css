@@ -1,0 +1,80 @@
+.oqto-selection {
+	color: var(--foreground);
+	background: var(--card);
+	border: 1px solid var(--border);
+	padding: 1rem;
+	font-variant-numeric: tabular-nums;
+}
+.oqto-selection h2 {
+	font-size: 1.125rem;
+	font-weight: 600;
+}
+.oqto-selection p,
+.oqto-selection small {
+	color: var(--muted-foreground);
+}
+.oqto-selection small {
+	display: block;
+}
+.oqto-selection-items {
+	max-height: 28rem;
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+.oqto-selection fieldset {
+	border: 1px solid var(--border);
+	padding: 1rem;
+	margin-block: 1rem;
+}
+.oqto-selection label {
+	display: block;
+	margin-block: 0.5rem;
+}
+.oqto-selection input:not([type="radio"]):not([type="checkbox"]),
+.oqto-selection textarea,
+.oqto-selection select {
+	display: block;
+	width: 100%;
+	min-height: 44px;
+	background: var(--background);
+	color: var(--foreground);
+	border: 1px solid var(--border);
+	padding: 0.5rem;
+	font-size: 1rem;
+}
+.oqto-selection-choice {
+	display: flex !important;
+	align-items: center;
+	gap: 0.5rem;
+	min-height: 44px;
+	cursor: pointer;
+}
+.oqto-selection-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+.oqto-selection button {
+	min-height: 44px;
+	padding: 0.5rem 0.75rem;
+	border: 1px solid var(--border);
+	background: var(--secondary);
+	color: var(--secondary-foreground);
+	touch-action: manipulation;
+}
+.oqto-selection button:hover {
+	background: var(--accent);
+	color: var(--accent-foreground);
+}
+.oqto-selection button:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+.oqto-selection :focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+.oqto-selection-confirm {
+	border: 1px solid var(--border);
+	padding: 1rem;
+}

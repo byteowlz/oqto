@@ -11,6 +11,8 @@ pub trait PlacementStore: Send + Sync {
     async fn put(&self, placement: PlacementRecord) -> Result<()>;
     async fn get(&self, id: &PlacementId) -> Result<Option<PlacementRecord>>;
     async fn resolve_workspace(&self, workspace_id: &str) -> Result<Option<RunnerEndpointConfig>>;
+    async fn find_workspace(&self, workspace_id: &str) -> Result<Option<PlacementRecord>>;
+    async fn list(&self) -> Result<Vec<PlacementRecord>>;
     async fn remove(&self, id: &PlacementId) -> Result<()>;
 }
 
@@ -80,6 +82,20 @@ impl PlacementStore for JsonPlacementStore {
             .map(|record| record.runner_endpoint.clone()))
     }
 
+    async fn find_workspace(&self, workspace_id: &str) -> Result<Option<PlacementRecord>> {
+        Ok(self
+            .records
+            .read()
+            .await
+            .values()
+            .find(|record| record.workspace_id == workspace_id)
+            .cloned())
+    }
+
+    async fn list(&self) -> Result<Vec<PlacementRecord>> {
+        Ok(self.records.read().await.values().cloned().collect())
+    }
+
     async fn remove(&self, id: &PlacementId) -> Result<()> {
         let mut records = self.records.write().await;
         records.remove(&id.0);
@@ -108,6 +124,7 @@ mod tests {
                 kind: PlacementKind::LocalProcess,
                 runner_endpoint: endpoint.clone(),
                 runtime_name: "local".to_string(),
+                spec: None,
             })
             .await?;
         assert_eq!(
@@ -125,6 +142,7 @@ mod tests {
                 kind: PlacementKind::LocalProcess,
                 runner_endpoint: replacement_endpoint.clone(),
                 runtime_name: "replacement".to_string(),
+                spec: None,
             })
             .await?;
         assert!(

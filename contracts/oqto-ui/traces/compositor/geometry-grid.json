@@ -1,0 +1,2137 @@
+{
+	"format": "oqto-compositor-geometry",
+	"formatVersion": 2,
+	"schemaVersion": 2,
+	"name": "geometry-grid",
+	"description": "Solved logical geometry (IEEE-754 doubles, solver operation order fixed by the corpus) for representative topologies and viewports: safe areas, spans, flush lanes, scroll offsets, overflow and fit policies.",
+	"scenarios": [
+		{
+			"name": "classic-preset",
+			"snapshot": {
+				"schemaVersion": 2,
+				"revision": 0,
+				"idSeed": 8,
+				"strategy": "grid",
+				"activeArrangementId": "arrangement-0",
+				"activeWorkspace": {
+					"kind": "all"
+				},
+				"arrangements": [
+					{
+						"id": "arrangement-0",
+						"grid": {
+							"rows": [
+								{
+									"id": "track-1",
+									"size": {
+										"unit": "fraction",
+										"value": 1
+									}
+								}
+							],
+							"columns": [
+								{
+									"id": "track-2",
+									"size": {
+										"unit": "fixed",
+										"value": 320,
+										"min": 240
+									}
+								},
+								{
+									"id": "track-3",
+									"size": {
+										"unit": "fraction",
+										"value": 2,
+										"min": 360
+									}
+								},
+								{
+									"id": "track-4",
+									"size": {
+										"unit": "fraction",
+										"value": 1,
+										"min": 280
+									}
+								}
+							],
+							"placements": [
+								{
+									"containerId": "container-5",
+									"row": 0,
+									"column": 0,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-6",
+									"row": 0,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-7",
+									"row": 0,
+									"column": 2,
+									"rowSpan": 1,
+									"colSpan": 1
+								}
+							]
+						},
+						"scrollAnchorColumnId": null,
+						"lastFocusedContentId": "chat:session-1"
+					}
+				],
+				"containers": [
+					{
+						"id": "container-5",
+						"role": "navigation",
+						"emptyBehavior": "collapse",
+						"stack": [
+							{
+								"id": "sessions:catalog",
+								"kind": "sessions"
+							}
+						],
+						"activeContentId": "sessions:catalog",
+						"collapsed": false
+					},
+					{
+						"id": "container-6",
+						"role": "primary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "chat:session-1",
+								"kind": "chat"
+							}
+						],
+						"activeContentId": "chat:session-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-7",
+						"role": "auxiliary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "files:workdir-1",
+								"kind": "files"
+							}
+						],
+						"activeContentId": "files:workdir-1",
+						"collapsed": false
+					}
+				],
+				"focusedContentId": "chat:session-1"
+			},
+			"cases": [
+				{
+					"name": "desktop",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 853.3333333333333,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1173.3333333333333,
+								"y": 0,
+								"inlineSize": 426.66666666666674,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1600,
+						"columnSizes": [
+							320,
+							853.3333333333333,
+							426.66666666666663
+						],
+						"rowSizes": [
+							900
+						]
+					}
+				},
+				{
+					"name": "desktop-safe-area",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900,
+						"safeArea": {
+							"top": 24,
+							"right": 8,
+							"bottom": 16,
+							"left": 8
+						}
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 8,
+								"y": 24,
+								"inlineSize": 320,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 328,
+								"y": 24,
+								"inlineSize": 842.6666666666665,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1170.6666666666665,
+								"y": 24,
+								"inlineSize": 421.33333333333326,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1583.9999999999998,
+						"columnSizes": [
+							320,
+							842.6666666666666,
+							421.3333333333333
+						],
+						"rowSizes": [
+							860
+						]
+					}
+				},
+				{
+					"name": "narrow-scroll",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "narrow-fit",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400,
+						"overflow": "fit"
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 166.66666666666669,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 166.66666666666669,
+								"y": 0,
+								"inlineSize": 187.5,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 354.1666666666667,
+								"y": 0,
+								"inlineSize": 145.83333333333331,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "minima-unsatisfiable",
+								"axis": "inline",
+								"deficit": 460
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 500,
+						"columnSizes": [
+							166.66666666666669,
+							187.5,
+							145.83333333333334
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "tall",
+					"viewport": {
+						"inlineSize": 900,
+						"blockSize": 1400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							1400
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "collapsed-navigation",
+			"snapshot": {
+				"schemaVersion": 2,
+				"revision": 1,
+				"idSeed": 8,
+				"strategy": "grid",
+				"activeArrangementId": "arrangement-0",
+				"activeWorkspace": {
+					"kind": "all"
+				},
+				"arrangements": [
+					{
+						"id": "arrangement-0",
+						"grid": {
+							"rows": [
+								{
+									"id": "track-1",
+									"size": {
+										"unit": "fraction",
+										"value": 1
+									}
+								}
+							],
+							"columns": [
+								{
+									"id": "track-2",
+									"size": {
+										"unit": "fixed",
+										"value": 320,
+										"min": 240
+									}
+								},
+								{
+									"id": "track-3",
+									"size": {
+										"unit": "fraction",
+										"value": 2,
+										"min": 360
+									}
+								},
+								{
+									"id": "track-4",
+									"size": {
+										"unit": "fraction",
+										"value": 1,
+										"min": 280
+									}
+								}
+							],
+							"placements": [
+								{
+									"containerId": "container-5",
+									"row": 0,
+									"column": 0,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-6",
+									"row": 0,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-7",
+									"row": 0,
+									"column": 2,
+									"rowSpan": 1,
+									"colSpan": 1
+								}
+							]
+						},
+						"scrollAnchorColumnId": null,
+						"lastFocusedContentId": "chat:session-1"
+					}
+				],
+				"containers": [
+					{
+						"id": "container-5",
+						"role": "navigation",
+						"emptyBehavior": "collapse",
+						"stack": [
+							{
+								"id": "sessions:catalog",
+								"kind": "sessions"
+							}
+						],
+						"activeContentId": "sessions:catalog",
+						"collapsed": true
+					},
+					{
+						"id": "container-6",
+						"role": "primary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "chat:session-1",
+								"kind": "chat"
+							}
+						],
+						"activeContentId": "chat:session-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-7",
+						"role": "auxiliary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "files:workdir-1",
+								"kind": "files"
+							}
+						],
+						"activeContentId": "files:workdir-1",
+						"collapsed": false
+					}
+				],
+				"focusedContentId": "chat:session-1"
+			},
+			"cases": [
+				{
+					"name": "desktop",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 0,
+								"blockSize": 0,
+								"collapsed": true,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 1066.6666666666665,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1066.6666666666665,
+								"y": 0,
+								"inlineSize": 533.3333333333333,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1599.9999999999998,
+						"columnSizes": [
+							0,
+							1066.6666666666665,
+							533.3333333333333
+						],
+						"rowSizes": [
+							900
+						]
+					}
+				},
+				{
+					"name": "desktop-safe-area",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900,
+						"safeArea": {
+							"top": 24,
+							"right": 8,
+							"bottom": 16,
+							"left": 8
+						}
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 8,
+								"y": 24,
+								"inlineSize": 0,
+								"blockSize": 0,
+								"collapsed": true,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 8,
+								"y": 24,
+								"inlineSize": 1056,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1064,
+								"y": 24,
+								"inlineSize": 528,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1584,
+						"columnSizes": [
+							0,
+							1056,
+							528
+						],
+						"rowSizes": [
+							860
+						]
+					}
+				},
+				{
+					"name": "narrow-scroll",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 0,
+								"blockSize": 0,
+								"collapsed": true,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 360,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 640
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 640,
+						"columnSizes": [
+							0,
+							360,
+							280
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "narrow-fit",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400,
+						"overflow": "fit"
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 0,
+								"blockSize": 0,
+								"collapsed": true,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 281.25,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 281.25,
+								"y": 0,
+								"inlineSize": 218.75,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "minima-unsatisfiable",
+								"axis": "inline",
+								"deficit": 140
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 500,
+						"columnSizes": [
+							0,
+							281.25,
+							218.75
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "tall",
+					"viewport": {
+						"inlineSize": 900,
+						"blockSize": 1400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 0,
+								"blockSize": 0,
+								"collapsed": true,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 600,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 600,
+								"y": 0,
+								"inlineSize": 300,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 900,
+						"columnSizes": [
+							0,
+							600,
+							300
+						],
+						"rowSizes": [
+							1400
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "block-split-primary",
+			"snapshot": {
+				"schemaVersion": 2,
+				"revision": 1,
+				"idSeed": 10,
+				"strategy": "grid",
+				"activeArrangementId": "arrangement-0",
+				"activeWorkspace": {
+					"kind": "all"
+				},
+				"arrangements": [
+					{
+						"id": "arrangement-0",
+						"grid": {
+							"rows": [
+								{
+									"id": "track-1",
+									"size": {
+										"unit": "fraction",
+										"value": 0.5
+									}
+								},
+								{
+									"id": "track-9",
+									"size": {
+										"unit": "fraction",
+										"value": 0.5
+									}
+								}
+							],
+							"columns": [
+								{
+									"id": "track-2",
+									"size": {
+										"unit": "fixed",
+										"value": 320,
+										"min": 240
+									}
+								},
+								{
+									"id": "track-3",
+									"size": {
+										"unit": "fraction",
+										"value": 2,
+										"min": 360
+									}
+								},
+								{
+									"id": "track-4",
+									"size": {
+										"unit": "fraction",
+										"value": 1,
+										"min": 280
+									}
+								}
+							],
+							"placements": [
+								{
+									"containerId": "container-5",
+									"row": 0,
+									"column": 0,
+									"rowSpan": 2,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-6",
+									"row": 0,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-7",
+									"row": 0,
+									"column": 2,
+									"rowSpan": 2,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-8",
+									"row": 1,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								}
+							]
+						},
+						"scrollAnchorColumnId": null,
+						"lastFocusedContentId": "chat:session-1"
+					}
+				],
+				"containers": [
+					{
+						"id": "container-5",
+						"role": "navigation",
+						"emptyBehavior": "collapse",
+						"stack": [
+							{
+								"id": "sessions:catalog",
+								"kind": "sessions"
+							}
+						],
+						"activeContentId": "sessions:catalog",
+						"collapsed": false
+					},
+					{
+						"id": "container-6",
+						"role": "primary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "chat:session-1",
+								"kind": "chat"
+							}
+						],
+						"activeContentId": "chat:session-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-7",
+						"role": "auxiliary",
+						"emptyBehavior": "retain",
+						"stack": [],
+						"activeContentId": null,
+						"collapsed": false
+					},
+					{
+						"id": "container-8",
+						"emptyBehavior": "remove",
+						"stack": [
+							{
+								"id": "files:workdir-1",
+								"kind": "files"
+							}
+						],
+						"activeContentId": "files:workdir-1",
+						"collapsed": false
+					}
+				],
+				"focusedContentId": "chat:session-1"
+			},
+			"cases": [
+				{
+					"name": "desktop",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 853.3333333333333,
+								"blockSize": 450,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1173.3333333333333,
+								"y": 0,
+								"inlineSize": 426.66666666666674,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 320,
+								"y": 450,
+								"inlineSize": 853.3333333333333,
+								"blockSize": 450,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1600,
+						"columnSizes": [
+							320,
+							853.3333333333333,
+							426.66666666666663
+						],
+						"rowSizes": [
+							450,
+							450
+						]
+					}
+				},
+				{
+					"name": "desktop-safe-area",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900,
+						"safeArea": {
+							"top": 24,
+							"right": 8,
+							"bottom": 16,
+							"left": 8
+						}
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 8,
+								"y": 24,
+								"inlineSize": 320,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 328,
+								"y": 24,
+								"inlineSize": 842.6666666666665,
+								"blockSize": 430,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1170.6666666666665,
+								"y": 24,
+								"inlineSize": 421.33333333333326,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 328,
+								"y": 454,
+								"inlineSize": 842.6666666666665,
+								"blockSize": 430,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1583.9999999999998,
+						"columnSizes": [
+							320,
+							842.6666666666666,
+							421.3333333333333
+						],
+						"rowSizes": [
+							430,
+							430
+						]
+					}
+				},
+				{
+					"name": "narrow-scroll",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 200,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 320,
+								"y": 200,
+								"inlineSize": 360,
+								"blockSize": 200,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							200,
+							200
+						]
+					}
+				},
+				{
+					"name": "narrow-fit",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400,
+						"overflow": "fit"
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 166.66666666666669,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 166.66666666666669,
+								"y": 0,
+								"inlineSize": 187.5,
+								"blockSize": 200,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 354.1666666666667,
+								"y": 0,
+								"inlineSize": 145.83333333333331,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 166.66666666666669,
+								"y": 200,
+								"inlineSize": 187.5,
+								"blockSize": 200,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "minima-unsatisfiable",
+								"axis": "inline",
+								"deficit": 460
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 500,
+						"columnSizes": [
+							166.66666666666669,
+							187.5,
+							145.83333333333334
+						],
+						"rowSizes": [
+							200,
+							200
+						]
+					}
+				},
+				{
+					"name": "tall",
+					"viewport": {
+						"inlineSize": 900,
+						"blockSize": 1400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 700,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 320,
+								"y": 700,
+								"inlineSize": 360,
+								"blockSize": 700,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							700,
+							700
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "flush-lane-scrolled",
+			"snapshot": {
+				"schemaVersion": 2,
+				"revision": 4,
+				"idSeed": 10,
+				"strategy": "grid",
+				"activeArrangementId": "arrangement-0",
+				"activeWorkspace": {
+					"kind": "all"
+				},
+				"arrangements": [
+					{
+						"id": "arrangement-0",
+						"grid": {
+							"rows": [
+								{
+									"id": "track-1",
+									"size": {
+										"unit": "fraction",
+										"value": 1
+									}
+								},
+								{
+									"id": "track-9",
+									"size": {
+										"unit": "fixed",
+										"value": 240,
+										"min": 120
+									},
+									"flush": true
+								}
+							],
+							"columns": [
+								{
+									"id": "track-2",
+									"size": {
+										"unit": "fixed",
+										"value": 320,
+										"min": 240
+									}
+								},
+								{
+									"id": "track-3",
+									"size": {
+										"unit": "fixed",
+										"value": 1400
+									}
+								},
+								{
+									"id": "track-4",
+									"size": {
+										"unit": "fraction",
+										"value": 1,
+										"min": 280
+									}
+								}
+							],
+							"placements": [
+								{
+									"containerId": "container-5",
+									"row": 0,
+									"column": 0,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-6",
+									"row": 0,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-7",
+									"row": 0,
+									"column": 2,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-8",
+									"row": 1,
+									"column": 0,
+									"rowSpan": 1,
+									"colSpan": 3
+								}
+							]
+						},
+						"scrollAnchorColumnId": "track-4",
+						"lastFocusedContentId": "chat:session-1"
+					}
+				],
+				"containers": [
+					{
+						"id": "container-5",
+						"role": "navigation",
+						"emptyBehavior": "collapse",
+						"stack": [
+							{
+								"id": "sessions:catalog",
+								"kind": "sessions"
+							}
+						],
+						"activeContentId": "sessions:catalog",
+						"collapsed": false
+					},
+					{
+						"id": "container-6",
+						"role": "primary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "chat:session-1",
+								"kind": "chat"
+							}
+						],
+						"activeContentId": "chat:session-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-7",
+						"role": "auxiliary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "files:workdir-1",
+								"kind": "files"
+							}
+						],
+						"activeContentId": "files:workdir-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-8",
+						"emptyBehavior": "remove",
+						"stack": [
+							{
+								"id": "terminal:workdir-1",
+								"kind": "terminal"
+							}
+						],
+						"activeContentId": "terminal:workdir-1",
+						"collapsed": false
+					}
+				],
+				"focusedContentId": "chat:session-1"
+			},
+			"cases": [
+				{
+					"name": "desktop",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": -400,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 660,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": -80,
+								"y": 0,
+								"inlineSize": 1400,
+								"blockSize": 660,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1320,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 660,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 0,
+								"y": 660,
+								"inlineSize": 1600,
+								"blockSize": 240,
+								"collapsed": false,
+								"flush": true
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 2000
+							}
+						],
+						"scrollOffset": 400,
+						"inlineExtent": 2000,
+						"columnSizes": [
+							320,
+							1400,
+							280
+						],
+						"rowSizes": [
+							660,
+							240
+						]
+					}
+				},
+				{
+					"name": "desktop-safe-area",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900,
+						"safeArea": {
+							"top": 24,
+							"right": 8,
+							"bottom": 16,
+							"left": 8
+						}
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": -408,
+								"y": 24,
+								"inlineSize": 320,
+								"blockSize": 620,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": -88,
+								"y": 24,
+								"inlineSize": 1400,
+								"blockSize": 620,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1312,
+								"y": 24,
+								"inlineSize": 280,
+								"blockSize": 620,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 8,
+								"y": 644,
+								"inlineSize": 1584,
+								"blockSize": 240,
+								"collapsed": false,
+								"flush": true
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 2000
+							}
+						],
+						"scrollOffset": 416,
+						"inlineExtent": 2000,
+						"columnSizes": [
+							320,
+							1400,
+							280
+						],
+						"rowSizes": [
+							620,
+							240
+						]
+					}
+				},
+				{
+					"name": "narrow-scroll",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": -1500,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": -1180,
+								"y": 0,
+								"inlineSize": 1400,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 220,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 0,
+								"y": 160,
+								"inlineSize": 500,
+								"blockSize": 240,
+								"collapsed": false,
+								"flush": true
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 2000
+							}
+						],
+						"scrollOffset": 1500,
+						"inlineExtent": 2000,
+						"columnSizes": [
+							320,
+							1400,
+							280
+						],
+						"rowSizes": [
+							160,
+							240
+						]
+					}
+				},
+				{
+					"name": "narrow-fit",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400,
+						"overflow": "fit"
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 80,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 80,
+								"y": 0,
+								"inlineSize": 350,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 430,
+								"y": 0,
+								"inlineSize": 70,
+								"blockSize": 160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 0,
+								"y": 160,
+								"inlineSize": 500,
+								"blockSize": 240,
+								"collapsed": false,
+								"flush": true
+							}
+						],
+						"degradations": [
+							{
+								"kind": "minima-unsatisfiable",
+								"axis": "inline",
+								"deficit": 1500
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 500,
+						"columnSizes": [
+							80,
+							350,
+							70
+						],
+						"rowSizes": [
+							160,
+							240
+						]
+					}
+				},
+				{
+					"name": "tall",
+					"viewport": {
+						"inlineSize": 900,
+						"blockSize": 1400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": -1100,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 1160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": -780,
+								"y": 0,
+								"inlineSize": 1400,
+								"blockSize": 1160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 620,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 1160,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-8",
+								"x": 0,
+								"y": 1160,
+								"inlineSize": 900,
+								"blockSize": 240,
+								"collapsed": false,
+								"flush": true
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 2000
+							}
+						],
+						"scrollOffset": 1100,
+						"inlineExtent": 2000,
+						"columnSizes": [
+							320,
+							1400,
+							280
+						],
+						"rowSizes": [
+							1160,
+							240
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "auxiliary-tabs-focused",
+			"snapshot": {
+				"schemaVersion": 2,
+				"revision": 1,
+				"idSeed": 8,
+				"strategy": "grid",
+				"activeArrangementId": "arrangement-0",
+				"activeWorkspace": {
+					"kind": "all"
+				},
+				"arrangements": [
+					{
+						"id": "arrangement-0",
+						"grid": {
+							"rows": [
+								{
+									"id": "track-1",
+									"size": {
+										"unit": "fraction",
+										"value": 1
+									}
+								}
+							],
+							"columns": [
+								{
+									"id": "track-2",
+									"size": {
+										"unit": "fixed",
+										"value": 320,
+										"min": 240
+									}
+								},
+								{
+									"id": "track-3",
+									"size": {
+										"unit": "fraction",
+										"value": 2,
+										"min": 360
+									}
+								},
+								{
+									"id": "track-4",
+									"size": {
+										"unit": "fraction",
+										"value": 1,
+										"min": 280
+									}
+								}
+							],
+							"placements": [
+								{
+									"containerId": "container-5",
+									"row": 0,
+									"column": 0,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-6",
+									"row": 0,
+									"column": 1,
+									"rowSpan": 1,
+									"colSpan": 1
+								},
+								{
+									"containerId": "container-7",
+									"row": 0,
+									"column": 2,
+									"rowSpan": 1,
+									"colSpan": 1
+								}
+							]
+						},
+						"scrollAnchorColumnId": null,
+						"lastFocusedContentId": "files:workdir-1"
+					}
+				],
+				"containers": [
+					{
+						"id": "container-5",
+						"role": "navigation",
+						"emptyBehavior": "collapse",
+						"stack": [
+							{
+								"id": "sessions:catalog",
+								"kind": "sessions"
+							}
+						],
+						"activeContentId": "sessions:catalog",
+						"collapsed": false
+					},
+					{
+						"id": "container-6",
+						"role": "primary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "chat:session-1",
+								"kind": "chat"
+							}
+						],
+						"activeContentId": "chat:session-1",
+						"collapsed": false
+					},
+					{
+						"id": "container-7",
+						"role": "auxiliary",
+						"emptyBehavior": "retain",
+						"stack": [
+							{
+								"id": "files:workdir-1",
+								"kind": "files"
+							},
+							{
+								"id": "git:workdir-1",
+								"kind": "git"
+							}
+						],
+						"activeContentId": "git:workdir-1",
+						"collapsed": false
+					}
+				],
+				"focusedContentId": "files:workdir-1"
+			},
+			"cases": [
+				{
+					"name": "desktop",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 853.3333333333333,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1173.3333333333333,
+								"y": 0,
+								"inlineSize": 426.66666666666674,
+								"blockSize": 900,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1600,
+						"columnSizes": [
+							320,
+							853.3333333333333,
+							426.66666666666663
+						],
+						"rowSizes": [
+							900
+						]
+					}
+				},
+				{
+					"name": "desktop-safe-area",
+					"viewport": {
+						"inlineSize": 1600,
+						"blockSize": 900,
+						"safeArea": {
+							"top": 24,
+							"right": 8,
+							"bottom": 16,
+							"left": 8
+						}
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 8,
+								"y": 24,
+								"inlineSize": 320,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 328,
+								"y": 24,
+								"inlineSize": 842.6666666666665,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 1170.6666666666665,
+								"y": 24,
+								"inlineSize": 421.33333333333326,
+								"blockSize": 860,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [],
+						"scrollOffset": 0,
+						"inlineExtent": 1583.9999999999998,
+						"columnSizes": [
+							320,
+							842.6666666666666,
+							421.3333333333333
+						],
+						"rowSizes": [
+							860
+						]
+					}
+				},
+				{
+					"name": "narrow-scroll",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "narrow-fit",
+					"viewport": {
+						"inlineSize": 500,
+						"blockSize": 400,
+						"overflow": "fit"
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 166.66666666666669,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 166.66666666666669,
+								"y": 0,
+								"inlineSize": 187.5,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 354.1666666666667,
+								"y": 0,
+								"inlineSize": 145.83333333333331,
+								"blockSize": 400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "minima-unsatisfiable",
+								"axis": "inline",
+								"deficit": 460
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 500,
+						"columnSizes": [
+							166.66666666666669,
+							187.5,
+							145.83333333333334
+						],
+						"rowSizes": [
+							400
+						]
+					}
+				},
+				{
+					"name": "tall",
+					"viewport": {
+						"inlineSize": 900,
+						"blockSize": 1400
+					},
+					"expected": {
+						"rects": [
+							{
+								"containerId": "container-5",
+								"x": 0,
+								"y": 0,
+								"inlineSize": 320,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-6",
+								"x": 320,
+								"y": 0,
+								"inlineSize": 360,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							},
+							{
+								"containerId": "container-7",
+								"x": 680,
+								"y": 0,
+								"inlineSize": 280,
+								"blockSize": 1400,
+								"collapsed": false,
+								"flush": false
+							}
+						],
+						"degradations": [
+							{
+								"kind": "overflow",
+								"axis": "inline",
+								"extent": 960
+							}
+						],
+						"scrollOffset": 0,
+						"inlineExtent": 960,
+						"columnSizes": [
+							320,
+							360,
+							280
+						],
+						"rowSizes": [
+							1400
+						]
+					}
+				}
+			]
+		}
+	]
+}

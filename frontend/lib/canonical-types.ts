@@ -1,3 +1,5 @@
+import type { ControlRequest } from "@/src/generated/ControlRequest";
+
 /**
  * Canonical protocol types for Oqto agent communication.
  *
@@ -31,8 +33,19 @@ export type FileRange = {
 /** A content part within a message. Tagged union on `type` field. */
 export type Part =
 	// --- Core ---
-	| { type: "text"; id: string; text: string; format?: "markdown" | "plain" }
-	| { type: "thinking"; id: string; text: string }
+	| {
+			type: "text";
+			id: string;
+			text: string;
+			format?: "markdown" | "plain";
+			/**
+			 * Which content block of the assistant message this is, as the
+			 * harness numbered it. Present on parts assembled from a live
+			 * stream; absent on parts loaded from history, which arrive whole.
+			 */
+			contentIndex?: number;
+	  }
+	| { type: "thinking"; id: string; text: string; contentIndex?: number }
 	| {
 			type: "tool_call";
 			id: string;
@@ -430,6 +443,7 @@ export type CommandPayload =
 	| { cmd: "get_stats" }
 	| { cmd: "get_models"; workdir?: string }
 	| { cmd: "get_commands" }
+	| ({ cmd: "extension_control" } & ControlRequest)
 	| { cmd: "get_fork_points" }
 	| { cmd: "list_sessions" }
 	// Configuration commands
