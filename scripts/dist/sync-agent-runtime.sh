@@ -64,6 +64,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 log() { printf '[agent-sync] %s\n' "$*"; }
+# One timestamp per run names every preserved backup.
+SYNC_STAMP="${SYNC_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 err() { printf '[agent-sync] error: %s\n' "$*" >&2; }
 
 # Read a value from dependencies.toml [external]: read_pin <key>
@@ -112,7 +114,12 @@ ext_cache() {
     git -C "$cache" remote set-url origin "$EXT_REPO" >/dev/null 2>&1 || true
     git -C "$cache" fetch --quiet --tags origin >/dev/null 2>&1 || true
   else
-    rm -rf "$cache"; mkdir -p "$(dirname "$cache")"
+    # Never discard an unknown cache directory; keep it beside the fresh clone.
+    if [[ -e "$cache" || -L "$cache" ]]; then
+      mv -- "$cache" "$cache.pre-oqto-$SYNC_STAMP" || { err "cannot preserve $cache"; return 1; }
+      log "preserved non-git extension cache at $cache.pre-oqto-$SYNC_STAMP"
+    fi
+    mkdir -p "$(dirname "$cache")"
     git clone --quiet "$EXT_REPO" "$cache" >/dev/null 2>&1 || { err "clone failed: $EXT_REPO"; return 1; }
   fi
   git -C "$cache" checkout --quiet --force "$EXT_REF" >/dev/null 2>&1 \
@@ -149,26 +156,44 @@ install_ext_for_home() {
   fi
   as_owner mkdir -p "$dir" || return 1
 
-  # Only deployment-owned names may be repaired/pruned; custom extensions and
-  # every other file under ~/.pi remain untouched.
+  # Only deployment-owned names are touched, and never destroyed: a changed or
+  # retired managed extension moves to a timestamped backup owned by the user,
+  # the replacement is assembled beside it first, and identical content is left
+  # alone so repeated syncs are no-ops. Custom extensions are never read.
+  local backups="$home/.pi/agent/extension-backups/$SYNC_STAMP"
+  preserve() {
+    local path="$1"
+    if [[ "$owner" != root && ! -L "$path" ]]; then
+      sudo chown -hR "$owner:$group" "$path" || return 1
+    fi
+    local dest="$backups/${path##*/}"
+    [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$$.$RANDOM"
+    as_owner mkdir -p "$backups" || return 1
+    as_owner mv -T -- "$path" "$dest" || return 1
+    log "  preserved $path -> $dest"
+  }
   for legacy in "${PI_LEGACY_EXTENSIONS[@]}"; do
     [[ -e "$dir/$legacy" || -L "$dir/$legacy" ]] || continue
-    if [[ "$owner" != root && ! -L "$dir/$legacy" ]]; then
-      sudo chown -hR "$owner:$group" "$dir/$legacy" || return 1
-    fi
-    as_owner rm -rf -- "$dir/$legacy" || return 1
-    log "  pruned legacy extension: $dir/$legacy"
+    preserve "$dir/$legacy" || return 1
   done
   for ext in "${PI_DEFAULT_EXTENSIONS[@]}"; do
     [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; return 1; }
-    if [[ -e "$dir/$ext" || -L "$dir/$ext" ]]; then
-      if [[ "$owner" != root && ! -L "$dir/$ext" ]]; then
-        sudo chown -hR "$owner:$group" "$dir/$ext" || return 1
-      fi
-      as_owner rm -rf -- "$dir/$ext" || return 1
+    if [[ -d "$dir/$ext" && ! -L "$dir/$ext" ]] \
+      && diff -rq --exclude=install.sh -- "$src/$ext" "$dir/$ext" >/dev/null 2>&1; then
+      continue
     fi
-    as_owner cp -r -- "$src/$ext" "$dir/$ext" || return 1
-    as_owner rm -f -- "$dir/$ext/install.sh" || return 1
+    local staged="$dir/.oqto-staging-$ext"
+    as_owner rm -rf -- "$staged" || return 1
+    if ! as_owner cp -r -- "$src/$ext" "$staged"; then
+      as_owner rm -rf -- "$staged"
+      err "copy failed for $ext in $home; existing extension left in place"
+      return 1
+    fi
+    as_owner rm -f -- "$staged/install.sh" || return 1
+    if [[ -e "$dir/$ext" || -L "$dir/$ext" ]]; then
+      preserve "$dir/$ext" || return 1
+    fi
+    as_owner mv -- "$staged" "$dir/$ext" || return 1
     [[ "$(stat -c '%U' "$dir/$ext")" == "$owner" ]] || {
       err "extension not owned by $owner after install: $dir/$ext"
       return 1
