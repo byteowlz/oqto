@@ -66,7 +66,7 @@ lint-no-legacy-history-authority:
 
 # Validate dist/manifest.toml structure and asset references
 lint-dist-manifest:
-    ./scripts/lint/verify-dist-manifest.py --allow-missing-binaries --allow-missing-extensions --allow-missing-frontend
+    ./scripts/lint/verify-dist-manifest.py --allow-missing-binaries --allow-missing-extensions --allow-missing-frontend --allow-missing-runtime
 
 # Strict dist manifest validation (all referenced sources must exist)
 lint-dist-manifest-strict:
