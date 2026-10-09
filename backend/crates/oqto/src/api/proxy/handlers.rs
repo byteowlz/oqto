@@ -213,8 +213,9 @@ pub async fn proxy_browser_stream_ws(
         stream_port, session_id
     );
 
+    let engine = state.sessions.agent_browser_engine();
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_browser_stream_proxy(socket, stream_port).await {
+        if let Err(e) = handle_browser_stream_proxy(socket, stream_port, engine).await {
             error!("Browser stream proxy error: {:?}", e);
         }
     }))

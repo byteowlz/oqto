@@ -14,6 +14,17 @@ use tokio::time::timeout;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+/// Which daemon engine backs agent-browser sessions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowserEngine {
+    /// Upstream vercel-labs/agent-browser daemon (migration target, oqto-5ey4).
+    #[default]
+    Upstream,
+    /// Legacy oqto-browserd daemon (rollback path).
+    Legacy,
+}
+
 /// Configuration for agent-browser integration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -22,6 +33,8 @@ pub struct AgentBrowserConfig {
     pub enabled: bool,
     /// Path to the agent-browser CLI binary.
     pub binary: String,
+    /// Which daemon engine the binary speaks.
+    pub engine: BrowserEngine,
     /// Launch browser in headed mode (default: headless).
     pub headed: bool,
     /// Base port for the screencast WebSocket stream server.
@@ -32,18 +45,26 @@ pub struct AgentBrowserConfig {
     pub executable_path: Option<String>,
     /// Extensions to load (paths).
     pub extensions: Vec<String>,
+    /// Optional proxy URL (e.g. the placement's egress enforcer). Upstream
+    /// maps this to AGENT_BROWSER_PROXY; legacy ignores it.
+    pub proxy_url: Option<String>,
+    /// Optional proxy bypass list (upstream AGENT_BROWSER_PROXY_BYPASS).
+    pub proxy_bypass: Option<String>,
 }
 
 impl Default for AgentBrowserConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            binary: "oqto-browserd".to_string(),
+            binary: "agent-browser".to_string(),
+            engine: BrowserEngine::Upstream,
             headed: false,
             stream_port_base: 30000,
             stream_port_range: 10000,
             executable_path: None,
             extensions: Vec::new(),
+            proxy_url: None,
+            proxy_bypass: None,
         }
     }
 }
@@ -71,6 +92,14 @@ impl AgentBrowserManager {
     /// to each daemon, then cleans up the socket directories.
     pub fn cleanup_all_sessions(&self) {
         if !self.config.enabled {
+            return;
+        }
+
+        if self.config.engine == BrowserEngine::Upstream {
+            // Upstream daemons are HOME-scoped and governed by their own idle
+            // timeout (AGENT_BROWSER_IDLE_TIMEOUT_MS); backend-side PID-file
+            // cleanup is a legacy-engine concept.
+            debug!("agent-browser upstream engine: skipping stale daemon cleanup");
             return;
         }
 
@@ -218,6 +247,17 @@ impl AgentBrowserManager {
     }
 
     async fn run_command(&self, session_id: &str, args: &[&str]) -> Result<()> {
+        // The upstream engine speaks a slightly different command vocabulary;
+        // map the few verbs that differ instead of leaking the legacy names.
+        let mapped: Vec<String> = match self.config.engine {
+            BrowserEngine::Upstream if args.first().is_some_and(|s| *s == "emulatemedia") => {
+                let mut mapped = vec!["set".to_string(), "media".to_string()];
+                mapped.extend(args.iter().skip(1).map(|s| s.to_string()));
+                mapped
+            }
+            _ => args.iter().map(|s| s.to_string()).collect(),
+        };
+
         let mut cmd = Command::new(&self.config.binary);
         cmd.arg("--session").arg(session_id);
 
@@ -228,36 +268,48 @@ impl AgentBrowserManager {
         let stream_port = self.compute_stream_port(session_id)?;
         cmd.env("AGENT_BROWSER_STREAM_PORT", stream_port.to_string());
 
-        let socket_dir = agent_browser_session_dir(session_id, None);
-        if let Err(err) = std::fs::create_dir_all(&socket_dir) {
-            log::warn!(
-                "Failed to create agent-browser socket dir {}: {}",
-                socket_dir.display(),
-                err
-            );
+        if let Some(ref proxy) = self.config.proxy_url {
+            cmd.env("AGENT_BROWSER_PROXY", proxy);
         }
-        #[cfg(unix)]
-        // 0o750: owner rwx, group rx (so oqto group members can access the socket)
-        if let Err(err) =
-            std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o750))
-        {
-            log::warn!(
-                "Failed to set permissions for agent-browser socket dir {}: {}",
-                socket_dir.display(),
-                err
-            );
+        if let Some(ref bypass) = self.config.proxy_bypass {
+            cmd.env("AGENT_BROWSER_PROXY_BYPASS", bypass);
         }
-        cmd.env("AGENT_BROWSER_SOCKET_DIR", &socket_dir);
+
+        if self.config.engine == BrowserEngine::Legacy {
+            let socket_dir = agent_browser_session_dir(session_id, None);
+            if let Err(err) = std::fs::create_dir_all(&socket_dir) {
+                log::warn!(
+                    "Failed to create agent-browser socket dir {}: {}",
+                    socket_dir.display(),
+                    err
+                );
+            }
+            #[cfg(unix)]
+            // 0o750: owner rwx, group rx (so oqto group members can access the socket)
+            if let Err(err) =
+                std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o750))
+            {
+                log::warn!(
+                    "Failed to set permissions for agent-browser socket dir {}: {}",
+                    socket_dir.display(),
+                    err
+                );
+            }
+            cmd.env("AGENT_BROWSER_SOCKET_DIR", &socket_dir);
+
+            for extension in &self.config.extensions {
+                cmd.arg("--extension").arg(extension);
+            }
+        } else if !self.config.extensions.is_empty() {
+            // Upstream loads extensions via env, not per-invocation flags.
+            cmd.env("AGENT_BROWSER_EXTENSIONS", self.config.extensions.join(","));
+        }
 
         if let Some(ref executable_path) = self.config.executable_path {
             cmd.arg("--executable-path").arg(executable_path);
         }
 
-        for extension in &self.config.extensions {
-            cmd.arg("--extension").arg(extension);
-        }
-
-        cmd.args(args);
+        cmd.args(&mapped);
 
         debug!(
             "agent-browser command: {} {:?} (session={})",
