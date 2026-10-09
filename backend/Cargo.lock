@@ -4395,6 +4395,7 @@ dependencies = [
  "flate2",
  "libc",
  "oqto-provisioning",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",

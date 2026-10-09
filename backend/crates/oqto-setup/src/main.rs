@@ -12,6 +12,7 @@ use std::{fs::File, io};
 mod acquire;
 mod archive;
 mod deps;
+mod provenance;
 
 #[derive(Parser)]
 #[command(
@@ -76,6 +77,13 @@ enum Command {
         /// `last-good` are always preserved on top of this. 0 disables pruning.
         #[arg(long, default_value_t = 3)]
         keep_releases: usize,
+        /// Install a release that is not strictly newer than the active one, or
+        /// whose active predecessor has no verifiable version.
+        #[arg(long)]
+        allow_downgrade: bool,
+        /// Install a release whose manifest records a dirty build worktree.
+        #[arg(long)]
+        allow_dirty_source: bool,
     },
     /// Resolve the binary-acquisition set from a dependency manifest and print
     /// each component's release artifact URL (ADR-0018 / vemr.9).
@@ -187,6 +195,17 @@ fn main() -> Result<()> {
     match cli.command {
         Command::CheckRelease { release_dir } => {
             validate_staged_release(&release_dir)?;
+            let provenance = provenance::read_release_provenance(&release_dir)?;
+            println!(
+                "Release {} from {}{}",
+                provenance.version,
+                provenance.source_commit,
+                if provenance.source_dirty {
+                    " (dirty worktree)"
+                } else {
+                    ""
+                }
+            );
             println!("Validated full release contract: {}", release_dir.display());
             Ok(())
         }
@@ -204,6 +223,8 @@ fn main() -> Result<()> {
             doctor_strict,
             post_activate_check,
             keep_releases,
+            allow_downgrade,
+            allow_dirty_source,
         } => install_release(
             &artifact,
             &checksum,
@@ -214,6 +235,10 @@ fn main() -> Result<()> {
                 doctor_strict,
                 keep_releases,
                 post_activate_check: post_activate_check.as_deref(),
+            },
+            provenance::InstallGuards {
+                allow_downgrade,
+                allow_dirty_source,
             },
         ),
         Command::Deps {
@@ -595,11 +620,20 @@ fn install_release(
     bin_dir: &Path,
     web_root: &Path,
     policy: ActivationPolicy<'_>,
+    guards: provenance::InstallGuards,
 ) -> Result<()> {
     if !artifact.exists() {
         anyhow::bail!("Artifact not found: {}", artifact.display());
     }
-    ensure_supported_release_target(artifact)?;
+    let target = ensure_supported_release_target(artifact)?;
+    let artifact_name = artifact
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("invalid artifact filename")?;
+    let named_version = provenance::version_from_artifact_name(artifact_name, target)?;
+    // Refuse non-upgrades from the name alone, before any byte is extracted.
+    let active = read_link_target(&releases_root.join("current"));
+    provenance::check_order(&named_version, active.as_deref(), guards)?;
 
     verify_checksum(artifact, checksum)?;
 
@@ -647,6 +681,20 @@ fn install_release(
         return Err(extraction_error);
     }
 
+    let staged_identity = provenance::read_release_provenance(&release_dir).and_then(|staged| {
+        provenance::check_installable(&named_version, &staged, active.as_deref(), guards)
+    });
+    if let Err(identity_error) = staged_identity {
+        // Nothing references the stage yet; it is disposable.
+        if let Err(cleanup_error) = fs::remove_dir_all(&release_dir) {
+            anyhow::bail!(
+                "{identity_error}; also failed removing stage {}: {cleanup_error}",
+                release_dir.display()
+            );
+        }
+        return Err(identity_error);
+    }
+
     if let Err(activation_error) =
         activate_release_checked(&release_dir, releases_root, bin_dir, web_root, policy)
     {
@@ -681,7 +729,7 @@ fn supported_host_target() -> Result<&'static str> {
     }
 }
 
-fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
+fn ensure_supported_release_target(artifact: &Path) -> Result<&'static str> {
     let target = supported_host_target()?;
     let name = artifact
         .file_name()
@@ -690,7 +738,7 @@ fn ensure_supported_release_target(artifact: &Path) -> Result<()> {
     if !name.starts_with("oqto-") || !name.ends_with(&format!("-{target}.tar.gz")) {
         anyhow::bail!("unsupported release target: expected {target} archive");
     }
-    Ok(())
+    Ok(target)
 }
 
 /// Transactionally activate an already-staged release directory.
