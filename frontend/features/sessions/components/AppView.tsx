@@ -276,7 +276,7 @@ function RuntimeAppCatalog({
 	workspacePath: string;
 	onOpen: (
 		instance: AppInstanceSummary,
-		presentation: AppPresentationDocument,
+		presentation: AppPresentationDocument | null,
 	) => void;
 }) {
 	const { t } = useTranslation();

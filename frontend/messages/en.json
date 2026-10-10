@@ -1133,7 +1133,8 @@
 				"files": "Use workspace files",
 				"operations": "Use App actions",
 				"theme": "Appearance",
-				"kv": "App settings"
+				"kv": "App settings",
+				"agent_context": "Share App context with your agent"
 			},
 			"filesReadOnly": "View the listed files in this work directory.",
 			"filesReadWrite": "View its outputs and job history, and create generation requests in the listed locations.",
@@ -1149,7 +1150,9 @@
 			"watchChanges": "see changes as they happen",
 			"allow": "Open with access",
 			"notNow": "Not now",
-			"saving": "Saving…"
+			"saving": "Saving…",
+			"agentContextSummary": "Let your agent read this App's context ({{topics}} topics) and ask to use its actions ({{actions}}).",
+			"requiresActivation": "only after you confirm"
 		}
 	}
 }

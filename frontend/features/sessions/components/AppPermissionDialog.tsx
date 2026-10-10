@@ -11,6 +11,7 @@ import {
 import type { AppCapabilityRequest } from "@/src/generated/AppCapabilityRequest";
 import type { AppPermissionRequest } from "@/src/generated/AppPermissionRequest";
 import {
+	Bot,
 	ChevronDown,
 	Database,
 	FileImage,
@@ -43,6 +44,8 @@ function capabilityIcon(capability: AppCapabilityRequest) {
 			return null;
 		case "kv":
 			return <Database className="size-4" aria-hidden="true" />;
+		case "agent_context":
+			return <Bot className="size-4" aria-hidden="true" />;
 	}
 }
 
@@ -72,6 +75,11 @@ function capabilitySummary(
 			return t("apps.permissions.themeSummary");
 		case "kv":
 			return t("apps.permissions.kvSummary");
+		case "agent_context":
+			return t("apps.permissions.agentContextSummary", {
+				topics: capability.topics.length,
+				actions: capability.actions.length,
+			});
 	}
 }
 
@@ -100,6 +108,26 @@ function CapabilityDetails({
 								: t("apps.permissions.readOnly")}
 							{resource.watch ? ` · ${t("apps.permissions.watchChanges")}` : ""}
 						</span>
+					</li>
+				))}
+			</ul>
+		);
+	}
+	if (capability.capability === "agent_context") {
+		return (
+			<ul className="mt-2 space-y-1.5 border-t border-border pt-2 text-[11px] text-muted-foreground">
+				{capability.topics.map((topic) => (
+					<li key={`topic:${topic.id}`}>
+						<span className="text-foreground">{topic.title}</span>
+						{` — ${topic.disclosure}`}
+					</li>
+				))}
+				{capability.actions.map((action) => (
+					<li key={`action:${action.id}`}>
+						<span className="text-foreground">{action.title}</span>
+						{action.requires_user_activation
+							? ` · ${t("apps.permissions.requiresActivation")}`
+							: ""}
 					</li>
 				))}
 			</ul>

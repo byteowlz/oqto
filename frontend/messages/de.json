@@ -1133,7 +1133,8 @@
 				"files": "Dateien im Arbeitsbereich verwenden",
 				"operations": "App-Aktionen verwenden",
 				"theme": "Darstellung",
-				"kv": "App-Einstellungen"
+				"kv": "App-Einstellungen",
+				"agent_context": "App-Kontext mit dem Agenten teilen"
 			},
 			"filesReadOnly": "Die aufgeführten Dateien in diesem Arbeitsverzeichnis ansehen.",
 			"filesReadWrite": "Ausgaben und Auftragsverlauf ansehen und Generierungsanfragen an den aufgeführten Orten erstellen.",
@@ -1149,7 +1150,9 @@
 			"watchChanges": "Änderungen sofort sehen",
 			"allow": "Mit Zugriff öffnen",
 			"notNow": "Nicht jetzt",
-			"saving": "Wird gespeichert…"
+			"saving": "Wird gespeichert…",
+			"agentContextSummary": "Dem Agenten den Kontext dieser App ({{topics}} Themen) zeigen und ihn ihre Aktionen anfragen lassen ({{actions}}).",
+			"requiresActivation": "nur nach Bestätigung"
 		}
 	}
 }
