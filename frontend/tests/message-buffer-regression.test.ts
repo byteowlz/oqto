@@ -23,6 +23,10 @@ import {
 import type { DisplayMessage, RawMessage } from "@/features/chat/hooks/types";
 import { describe, expect, it } from "vitest";
 
+// A fixed clock: merge order depends on timestamps, so Date.now() made these
+// tests pass or fail depending on whether a millisecond elapsed mid-fixture.
+const FIXTURE_TIME = 1_700_000_000_000;
+
 function textMsg(
 	id: string,
 	role: DisplayMessage["role"],
@@ -33,7 +37,7 @@ function textMsg(
 		id,
 		role,
 		parts: [{ type: "text", id: `p-${id}`, text }],
-		timestamp: Date.now(),
+		timestamp: FIXTURE_TIME,
 		...extra,
 	};
 }
@@ -122,18 +126,18 @@ describe("disappearing message regression", () => {
 		// Scenario: Pi compacted its context, but the buffer was populated from
 		// AgentEnd which provides the complete (compacted) list. hstry has the
 		// full history. The frontend should show hstry's complete history.
+		// The buffer is filled at AgentEnd, after the persisted turns.
+		const agentEnd = { timestamp: FIXTURE_TIME + 60_000 };
 		const localFromBuffer = [
-			textMsg("pi_msg_0", "user", "Q1 (compacted)"),
-			textMsg("pi_msg_1", "assistant", "summary of context"),
+			textMsg("pi_msg_0", "user", "Q1 (compacted)", agentEnd),
+			textMsg("pi_msg_1", "assistant", "summary of context", agentEnd),
 		];
-		const hstryComplete = [
-			textMsg("h-1", "user", "Q1"),
-			textMsg("h-2", "assistant", "A1"),
-			textMsg("h-3", "user", "Q2"),
-			textMsg("h-4", "assistant", "A2"),
-			textMsg("h-5", "user", "Q3"),
-			textMsg("h-6", "assistant", "A3"),
-		];
+		const hstryComplete = ["Q1", "A1", "Q2", "A2", "Q3", "A3"].map(
+			(text, index) =>
+				textMsg(`h-${index + 1}`, index % 2 ? "assistant" : "user", text, {
+					timestamp: FIXTURE_TIME + index * 1_000,
+				}),
+		);
 		// After idle, hstry fetch provides complete history
 		const result = mergeServerMessages(
 			localFromBuffer,
