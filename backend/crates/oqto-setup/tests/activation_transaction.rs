@@ -807,3 +807,54 @@ fn timestamp_named_artifacts_are_rejected_before_extraction() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn release_tree_is_public_even_when_the_installer_runs_under_umask_077() -> Result<()> {
+    // deploy runs the transaction under umask 077 for private staging; the
+    // published release must still be traversable by every runner principal.
+    let root = tempfile::tempdir()?;
+    let releases = root.path().join("releases");
+    let binaries = root.path().join("bin");
+    let artifact = bundle(root.path(), "1.0.0")?;
+    let checksum = artifact.with_file_name(format!(
+        "{}.sha256",
+        artifact.file_name().unwrap().to_string_lossy()
+    ));
+    let digest = Sha256::digest(fs::read(&artifact)?);
+    fs::write(&checksum, format!("{digest:x}  {}\n", artifact.display()))?;
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg("umask 077; exec \"$@\"")
+        .arg("sh")
+        .arg(env!("CARGO_BIN_EXE_oqto-setup"))
+        .arg("install")
+        .arg("--artifact")
+        .arg(&artifact)
+        .arg("--checksum")
+        .arg(&checksum)
+        .arg("--releases-root")
+        .arg(&releases)
+        .arg("--bin-dir")
+        .arg(&binaries)
+        .arg("--web-root")
+        .arg(root.path().join("web"))
+        .args(["--doctor-strict", "false"])
+        .status()?;
+    ensure!(status.success(), "install under umask 077 failed");
+    let release = fs::read_link(releases.join("current"))?;
+    for dir in [
+        release.clone(),
+        release.join("immutable"),
+        release.join("immutable/bin"),
+        release.join("immutable/frontend"),
+    ] {
+        let mode = fs::metadata(&dir)?.permissions().mode() & 0o777;
+        ensure!(mode == 0o755, "{} is {mode:o}, not 755", dir.display());
+    }
+    let runner = fs::metadata(release.join("immutable/bin/oqto-runner"))?;
+    ensure!(
+        runner.permissions().mode() & 0o755 == 0o755,
+        "runner binary is not world-executable"
+    );
+    Ok(())
+}

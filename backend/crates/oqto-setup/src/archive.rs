@@ -19,6 +19,30 @@ pub(crate) fn extract_tool_bundle(artifact: &Path, dst: &Path) -> Result<()> {
     extract_with_limits(artifact, dst, None, MAX_ENTRIES, MAX_UNPACKED_BYTES)
 }
 
+/// Create missing ancestors of `relative` (exclusive) below `dst` as 0755.
+///
+/// Archives normally list their directories first; a member whose parent was
+/// not listed must not inherit a restrictive installer umask either.
+fn create_public_parents(dst: &Path, relative: &Path) -> Result<()> {
+    let mut current = dst.to_path_buf();
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            Ok(_) => anyhow::bail!("Invalid archive: directory collides with file"),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&current)?;
+                fs::set_permissions(&current, fs::Permissions::from_mode(0o755))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn extract_with_limits(
     artifact: &Path,
     dst: &Path,
@@ -69,21 +93,25 @@ pub(crate) fn extract_with_limits(
             anyhow::bail!("Invalid archive: privileged file mode");
         }
         if relative.as_os_str().is_empty() {
+            // The archive root is the release directory itself.
+            fs::set_permissions(dst, fs::Permissions::from_mode(mode & 0o777))?;
             continue;
         }
-        let target = dst.join(relative);
+        let target = dst.join(&relative);
         if kind.is_dir() {
             if let Ok(existing) = fs::symlink_metadata(&target) {
                 if !existing.file_type().is_dir() {
                     anyhow::bail!("Invalid archive: directory collides with file");
                 }
             } else {
-                fs::create_dir_all(&target)?;
+                create_public_parents(dst, &relative)?;
+                fs::create_dir(&target)?;
             }
+            // Modes come from the archive, never from the installer's umask:
+            // the release must be traversable by every runner principal.
+            fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))?;
         } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-            }
+            create_public_parents(dst, &relative)?;
             let mut output = OpenOptions::new()
                 .write(true)
                 .create_new(true)
