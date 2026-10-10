@@ -272,14 +272,14 @@ export function MachineChats({
 														>
 															{chat.title || "Untitled chat"}
 														</span>
-														{chat.updated_at && (
+														{Number.isFinite(Date.parse(chat.updated_at)) && (
 															<span
 																className={cn(
 																	"block text-muted-foreground mt-0.5",
 																	isMobile ? "text-[11px]" : "text-[9px]",
 																)}
 															>
-																{formatSessionDate(chat.updated_at)}
+																{formatSessionDate(Date.parse(chat.updated_at))}
 															</span>
 														)}
 													</span>

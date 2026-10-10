@@ -653,7 +653,11 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleOpenOqtoApp = useCallback(
-		(instance: AppInstanceSummary, presentation: AppPresentationDocument) => {
+		(
+			instance: AppInstanceSummary,
+			// Headless (operations-only) Apps have no presentation.
+			presentation: AppPresentationDocument | null,
+		) => {
 			setAppTabs((previous) => {
 				const opened = openOqtoAppTab(previous, instance, presentation);
 				setActiveAppTabId(opened.activeTabId);
