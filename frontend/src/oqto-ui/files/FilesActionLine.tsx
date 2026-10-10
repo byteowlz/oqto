@@ -27,10 +27,10 @@ export function FilesActionLine({ actions, target }: FilesActionLineProps) {
 			</button>
 		</div>
 	) : (
-		// biome-ignore lint/a11y/noAutofocus: the action line is opened by a key and must receive it.
 		<input
 			className="wb-files-filter"
 			type="text"
+			// biome-ignore lint/a11y/noAutofocus: the action line is opened by a key and must receive it.
 			autoFocus
 			value={actions.draft}
 			placeholder={t(

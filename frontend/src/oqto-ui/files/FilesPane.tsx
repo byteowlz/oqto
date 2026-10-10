@@ -255,8 +255,8 @@ export function FilesPane({
 				className="wb-files-body"
 				ref={focus.ref}
 				data-fidelity={fidelity}
-				// biome-ignore lint/a11y/noNoninteractiveTabindex: the listing is keyboard-navigated.
 				tabIndex={0}
+				// biome-ignore lint/a11y/useSemanticElements: a native <select> cannot host the tree, columns and previews of this keyboard-navigated listing.
 				role="listbox"
 				aria-label={t("oqtoUi.files.tree")}
 				onKeyDown={onKeyDown}

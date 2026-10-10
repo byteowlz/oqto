@@ -44,6 +44,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { dedentMarkdown, stripAnsiSequences } from "./chat-render-text";
@@ -1725,18 +1726,21 @@ function PiPartRenderer({
 	}
 }
 
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
+
+function subscribeCoarsePointer(onChange: () => void): () => void {
+	const mediaQuery = window.matchMedia(COARSE_POINTER_QUERY);
+	mediaQuery.addEventListener("change", onChange);
+	return () => mediaQuery.removeEventListener("change", onChange);
+}
+
+/** A media query is an external store; no effect or mirrored state needed. */
 function useCoarsePointerDevice(): boolean {
-	const [isCoarsePointer, setIsCoarsePointer] = useState(false);
-
-	useEffect(() => {
-		const mediaQuery = window.matchMedia("(pointer: coarse)");
-		const update = () => setIsCoarsePointer(mediaQuery.matches);
-		update();
-		mediaQuery.addEventListener("change", update);
-		return () => mediaQuery.removeEventListener("change", update);
-	}, []);
-
-	return isCoarsePointer;
+	return useSyncExternalStore(
+		subscribeCoarsePointer,
+		() => window.matchMedia(COARSE_POINTER_QUERY).matches,
+		() => false,
+	);
 }
 
 /**
@@ -2359,6 +2363,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		);
 	}, [isImage, resolvedWorkspacePath, workspaceScopedPath]);
 
+	// useeffect-guardrail: allow - resolves the referenced file for the current inputs and cancels stale resolutions
 	useEffect(() => {
 		let cancelled = false;
 		setIsLoading(true);

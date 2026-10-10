@@ -3595,9 +3595,14 @@
 .wb-chat-detail {
 	display: grid;
 	gap: 4px;
+	min-inline-size: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
 }
 
-.wb-chat-detail button {
+.wb-chat-detail label {
+	position: relative;
 	display: grid;
 	gap: 2px;
 	padding: 8px 10px;
@@ -3608,11 +3613,25 @@
 	cursor: pointer;
 }
 
-.wb-chat-detail button:hover {
+/* The radio stays focusable and announced; the card is its visible control. */
+.wb-chat-detail input {
+	position: absolute;
+	inline-size: 1px;
+	block-size: 1px;
+	margin: 0;
+	opacity: 0;
+}
+
+.wb-chat-detail label:hover {
 	border-color: var(--primary);
 }
 
-.wb-chat-detail button[data-active] {
+.wb-chat-detail label:has(input:focus-visible) {
+	outline: 2px solid var(--primary);
+	outline-offset: 1px;
+}
+
+.wb-chat-detail label[data-active] {
 	border-color: var(--primary);
 	background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
