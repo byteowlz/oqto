@@ -58,7 +58,7 @@ export function AddContent({ options, label, labels, onAdd }: AddContentProps) {
 			</button>
 			{open ? (
 				<div className="oqto-compositor-add-menu">
-					<div className="oqto-compositor-add-where" role="group">
+					<fieldset className="oqto-compositor-add-where">
 						{PLACEMENTS.map((candidate) => (
 							<button
 								key={candidate}
@@ -71,7 +71,7 @@ export function AddContent({ options, label, labels, onAdd }: AddContentProps) {
 								{GLYPHS[candidate]}
 							</button>
 						))}
-					</div>
+					</fieldset>
 					<ul aria-label={labels.placements[placement]}>
 						{options.map((content) => (
 							<li key={content.id}>

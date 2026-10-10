@@ -149,6 +149,11 @@
 	cursor: row-resize;
 }
 
+.oqto-compositor-gutter:focus-visible {
+	outline: 2px solid var(--primary);
+	outline-offset: -1px;
+}
+
 .oqto-compositor-gutter:hover {
 	background: var(--primary);
 }
@@ -227,6 +232,10 @@
 }
 
 .oqto-compositor-palette {
+	/* Native <dialog open>: drop the user-agent absolute centering and padding. */
+	position: static;
+	margin: 0;
+	padding: 0;
 	inline-size: min(40rem, 90%);
 	max-block-size: 70vh;
 	display: flex;
@@ -255,20 +264,18 @@
 	list-style: none;
 }
 
-.oqto-compositor-palette-item button {
+.oqto-compositor-palette-item {
 	display: flex;
 	inline-size: 100%;
 	justify-content: space-between;
 	gap: 1rem;
 	padding: 0.5rem 1rem;
-	border: 0;
-	background: transparent;
 	color: inherit;
-	font: inherit;
 	text-align: start;
+	cursor: pointer;
 }
 
-.oqto-compositor-palette-item[data-active] button {
+.oqto-compositor-palette-item[data-active] {
 	background: var(--muted);
 	color: var(--primary);
 }
@@ -279,6 +286,7 @@
 }
 
 .oqto-compositor-palette-empty {
+	margin: 0;
 	padding: 0.5rem 1rem;
 	color: var(--muted-foreground);
 }
@@ -378,7 +386,10 @@
 .oqto-compositor-add-where {
 	display: flex;
 	gap: 2px;
+	min-inline-size: 0;
+	margin: 0;
 	padding: 4px;
+	border: 0;
 	border-block-end: 1px solid var(--border);
 }
 

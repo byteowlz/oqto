@@ -123,6 +123,7 @@ export function ChatSelectionToolbar({
 		});
 	}, [passage]);
 
+	// useeffect-guardrail: allow - document pointer, key and selection listeners place and dismiss the toolbar
 	useEffect(() => {
 		// While the pointer is down the selection is still being made, so the
 		// toolbar stays out of the way entirely.

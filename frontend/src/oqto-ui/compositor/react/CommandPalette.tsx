@@ -5,7 +5,7 @@
  * effects, no DOM queries; Escape closes, Enter runs the highlighted item.
  */
 
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, useId, useState } from "react";
 import type { PaletteLabels } from "./contracts";
 import {
 	type CompositorAction,
@@ -26,6 +26,7 @@ export function CommandPalette({
 	onRun,
 	onClose,
 }: CommandPaletteProps) {
+	const listId = useId();
 	const [query, setQuery] = useState("");
 	const [highlighted, setHighlighted] = useState(0);
 	const entries = bindings
@@ -59,22 +60,34 @@ export function CommandPalette({
 			run(entries[active].action);
 		}
 	};
+	// Only a click on the backdrop itself closes; clicks inside the dialog
+	// bubble here too and must not dismiss it.
+	const onBackdropClick = (event: MouseEvent<HTMLElement>) => {
+		if (event.target === event.currentTarget) onClose();
+	};
+	const optionId = (index: number) => `${listId}-option-${index}`;
 	return (
 		<div
 			className="oqto-compositor-palette-backdrop"
-			onClick={onClose}
+			onClick={onBackdropClick}
 			onKeyDown={onKeyDown}
 		>
-			<div
+			<dialog
+				open
 				className="oqto-compositor-palette"
-				role="dialog"
 				aria-modal="true"
 				aria-label={labels.title}
-				onClick={(event) => event.stopPropagation()}
 			>
+				{/* WAI-ARIA combobox: focus stays in the input, the highlighted
+				    option is announced through aria-activedescendant. */}
 				<input
 					className="oqto-compositor-palette-search"
 					type="search"
+					role="combobox"
+					aria-expanded="true"
+					aria-controls={listId}
+					aria-autocomplete="list"
+					aria-activedescendant={entries[active] ? optionId(active) : undefined}
 					// biome-ignore lint/a11y/noAutofocus: a modal palette must receive focus on open.
 					autoFocus
 					value={query}
@@ -85,33 +98,38 @@ export function CommandPalette({
 						setHighlighted(0);
 					}}
 				/>
-				<ul
+				{entries.length === 0 ? (
+					<p className="oqto-compositor-palette-empty">{labels.noMatches}</p>
+				) : null}
+				<div
+					id={listId}
 					className="oqto-compositor-palette-list"
+					// biome-ignore lint/a11y/useSemanticElements: a native <select> cannot render filtered commands with their key chords.
 					role="listbox"
+					tabIndex={-1}
 					aria-label={labels.title}
 				>
-					{entries.length === 0 ? (
-						<li className="oqto-compositor-palette-empty">
-							{labels.noMatches}
-						</li>
-					) : (
-						entries.map((entry, index) => (
-							<li
-								key={entry.id}
-								role="option"
-								aria-selected={index === active}
-								data-active={index === active || undefined}
-								className="oqto-compositor-palette-item"
-							>
-								<button type="button" onClick={() => run(entry.action)}>
-									<span>{entry.label}</span>
-									<kbd>{entry.chord}</kbd>
-								</button>
-							</li>
-						))
-					)}
-				</ul>
-			</div>
+					{entries.map((entry, index) => (
+						<div
+							key={entry.id}
+							id={optionId(index)}
+							// biome-ignore lint/a11y/useSemanticElements: options of the combobox listbox above, not a native <select>.
+							role="option"
+							tabIndex={-1}
+							aria-selected={index === active}
+							data-active={index === active || undefined}
+							className="oqto-compositor-palette-item"
+							onClick={() => run(entry.action)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter") run(entry.action);
+							}}
+						>
+							<span>{entry.label}</span>
+							<kbd>{entry.chord}</kbd>
+						</div>
+					))}
+				</div>
+			</dialog>
 		</div>
 	);
 }

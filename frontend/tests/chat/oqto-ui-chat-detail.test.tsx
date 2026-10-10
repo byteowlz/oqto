@@ -27,7 +27,9 @@ describe("chat detail", () => {
 	it("offers three levels named for what the reader sees", () => {
 		render(<ChatDetail />);
 		expect(
-			screen.getAllByRole("radio").map((option) => option.textContent),
+			screen
+				.getAllByRole("radio")
+				.map((option) => option.closest("label")?.textContent),
 		).toEqual([
 			"AnswersWhat the agent said, with its work folded away",
 			"SummaryAnswers plus a line per step it took",
@@ -47,6 +49,20 @@ describe("chat detail", () => {
 		expect(screen.getByRole("radio", { name: /^Answers/ })).toBeChecked();
 		fireEvent.click(screen.getByRole("radio", { name: /^Summary/ }));
 		expect(stored["oqto:chatVerbosity"]).toBe("2");
+	});
+
+	it("is one named group of native radios", () => {
+		render(<ChatDetail />);
+		const group = screen.getByRole("group", { name: "Chat detail" });
+		const radios = screen.getAllByRole("radio");
+		expect(radios).toHaveLength(3);
+		for (const radio of radios) {
+			expect(group).toContainElement(radio);
+			expect(radio.tagName).toBe("INPUT");
+		}
+		expect(
+			new Set(radios.map((radio) => radio.getAttribute("name"))).size,
+		).toBe(1);
 	});
 
 	it("shows the level the host already had", () => {

@@ -128,6 +128,42 @@ describe("command palette", () => {
 		expect(store.getSnapshot().revision).toBe(0);
 	});
 
+	it("is a combobox whose highlighted option is announced and clickable", () => {
+		const { store, root } = mount();
+		fireEvent.keyDown(root, { key: "P", ctrlKey: true, shiftKey: true });
+		const input = screen.getByRole("combobox", {
+			name: LABELS.palette.searchPlaceholder,
+		});
+		const listbox = screen.getByRole("listbox", { name: LABELS.palette.title });
+		expect(input).toHaveAttribute("aria-controls", listbox.id);
+		const options = screen.getAllByRole("option");
+		expect(input).toHaveAttribute("aria-activedescendant", options[0].id);
+		expect(options[0]).toHaveAttribute("aria-selected", "true");
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		expect(input).toHaveAttribute(
+			"aria-activedescendant",
+			screen.getAllByRole("option")[1].id,
+		);
+		fireEvent.change(input, { target: { value: "navigation" } });
+		fireEvent.click(screen.getByRole("option"));
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(containerByRole(store.getSnapshot(), "navigation").collapsed).toBe(
+			true,
+		);
+	});
+
+	it("closes on a backdrop click but not on a click inside the dialog", () => {
+		const { store, root } = mount();
+		fireEvent.keyDown(root, { key: "P", ctrlKey: true, shiftKey: true });
+		const dialog = screen.getByRole("dialog", { name: LABELS.palette.title });
+		fireEvent.click(dialog);
+		fireEvent.click(screen.getByRole("listbox"));
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		fireEvent.click(dialog.parentElement as HTMLElement);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(store.getSnapshot().revision).toBe(0);
+	});
+
 	it("reflects config-overridden chords in its help", () => {
 		const bindings = bindingsFromConfig([
 			{ keys: "ctrl+alt+b", action: "compositor.toggleNavigation" },
@@ -169,5 +205,21 @@ describe("live resize preview", () => {
 			view.container.querySelector(".oqto-compositor"),
 		).not.toHaveAttribute("data-previewing");
 		expect(grid()).not.toBe(before);
+	});
+
+	it("resizes from the keyboard through a focusable splitter", () => {
+		const { store, view } = mount();
+		const gutter = view.getAllByLabelText(LABELS.resizeColumns)[1];
+		expect(gutter).toHaveAttribute("tabindex", "0");
+		const size = () =>
+			activeArrangementOf(store.getSnapshot()).grid.columns[1].size.value;
+		const before = size();
+		fireEvent.keyDown(gutter, { key: "ArrowUp" });
+		expect(store.getSnapshot().revision).toBe(0);
+		fireEvent.keyDown(gutter, { key: "ArrowRight" });
+		expect(store.getSnapshot().revision).toBe(1);
+		expect(size()).toBeGreaterThan(before);
+		fireEvent.keyDown(gutter, { key: "ArrowLeft" });
+		expect(store.getSnapshot().revision).toBe(2);
 	});
 });

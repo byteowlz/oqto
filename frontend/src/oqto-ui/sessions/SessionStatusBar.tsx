@@ -26,7 +26,7 @@ export function SessionStatusBar({
 	return (
 		<footer className="wb-statusbar">
 			<div className="wb-statusbar__group">
-				{status && status.runningSessions ? (
+				{status?.runningSessions ? (
 					<span
 						className="wb-statusbar__item"
 						title={t("oqtoUi.statusBar.runningSessions")}

@@ -139,6 +139,7 @@ export function useChatAppearance() {
 		window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: merged }));
 	}, []);
 
+	// useeffect-guardrail: allow - subscribes to cross-tab storage and same-tab appearance events and applies the CSS variables they carry
 	useEffect(() => {
 		applyChatAppearance(appearance);
 		const handleStorage = (event: StorageEvent) => {

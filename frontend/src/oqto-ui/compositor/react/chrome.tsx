@@ -83,6 +83,21 @@ export interface GutterProps {
 	) => void;
 }
 
+/** Pixel delta per arrow key, matching the gutter's orientation. */
+const KEYBOARD_RESIZE_STEP_PX = 16;
+const KEYBOARD_RESIZE_STEPS: Readonly<
+	Record<GutterProps["axis"], Readonly<Record<string, number>>>
+> = {
+	inline: {
+		ArrowLeft: -KEYBOARD_RESIZE_STEP_PX,
+		ArrowRight: KEYBOARD_RESIZE_STEP_PX,
+	},
+	block: {
+		ArrowUp: -KEYBOARD_RESIZE_STEP_PX,
+		ArrowDown: KEYBOARD_RESIZE_STEP_PX,
+	},
+};
+
 /** Pointer-captured drag between two adjacent tracks. */
 export function Gutter({
 	axis,
@@ -100,6 +115,14 @@ export function Gutter({
 			role="separator"
 			aria-orientation={axis === "inline" ? "vertical" : "horizontal"}
 			aria-label={label}
+			// A focusable splitter: arrow keys resize by one step.
+			tabIndex={0}
+			onKeyDown={(event) => {
+				const step = KEYBOARD_RESIZE_STEPS[axis][event.key];
+				if (step === undefined) return;
+				event.preventDefault();
+				onResize(axis, index, step);
+			}}
 			className="oqto-compositor-gutter"
 			data-axis={axis}
 			style={
