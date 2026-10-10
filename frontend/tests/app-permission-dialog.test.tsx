@@ -91,4 +91,48 @@ describe("AppPermissionDialog", () => {
 		expect(onNotNow).toHaveBeenCalledOnce();
 		expect(screen.queryByText(/agree|terms|consent/i)).toBeNull();
 	});
+
+	it("explains agent-context access instead of showing a bare key", () => {
+		render(
+			<AppPermissionDialog
+				request={{
+					...request,
+					capabilities: [
+						{
+							capability: "agent_context",
+							topics: [
+								{
+									id: "queue",
+									title: "Render queue",
+									disclosure: "Pending jobs and their prompts",
+								},
+							],
+							actions: [
+								{
+									id: "comfy.cancel",
+									title: "Cancel a job",
+									requires_user_activation: true,
+								},
+							],
+						},
+					],
+				}}
+				busy={false}
+				error={null}
+				onAllow={vi.fn()}
+				onNotNow={vi.fn()}
+				onClose={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText("Share App context with your agent")).toBeTruthy();
+		expect(
+			screen.getByText(/context \(1 topics\).*actions \(1\)/),
+		).toBeTruthy();
+		expect(screen.queryByText(/apps\.permissions/)).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Show exact access" }));
+		expect(screen.getByText("Render queue")).toBeTruthy();
+		expect(screen.getByText(/Pending jobs and their prompts/)).toBeTruthy();
+		expect(screen.getByText(/only after you confirm/)).toBeTruthy();
+	});
 });
