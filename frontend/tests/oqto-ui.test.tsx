@@ -165,44 +165,54 @@ describe("OqtoUI shell", () => {
 				"workDirectory=skillissues",
 			);
 		});
-		const chatTab = await screen.findByRole("tab", {
-			name: /Audit browser skills/,
-		});
-		expect(chatTab).toHaveAttribute(
-			"title",
-			expect.stringContaining("skillissues [skill-audit]"),
+		// The selected scope's session is the one the shell now shows.
+		expect(
+			(await screen.findAllByText("skillissues [skill-audit]")).length,
+		).toBeGreaterThan(0);
+		expect(screen.getAllByText("Audit browser skills").length).toBeGreaterThan(
+			0,
 		);
 		expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
 			"sonnet-4.6",
 		);
 	});
 
-	it("owns work-area tab selection in the route with visible tab ownership", async () => {
+	/** Panes are chosen from the Destinations menu; the route owns the choice. */
+	async function openDestination(name: RegExp) {
+		fireEvent.click(screen.getByRole("button", { name: /^Destinations:/ }));
+		fireEvent.click(
+			within(
+				screen.getByRole("navigation", { name: "Destinations" }),
+			).getByRole("button", { name }),
+		);
+	}
+
+	it("owns work-area pane selection in the route", async () => {
 		await renderShell(
 			"/dev/oqto-ui?workDirectory=oqto&session=frontend-rebuild",
 		);
-		const workArea = within(
-			screen.getByRole("tablist", { name: "Work area tabs" }),
-		);
-		const terminalTab = workArea.getByRole("tab", { name: /Terminal/ });
-		expect(terminalTab).toHaveAttribute("title", "Work directory tab");
-		fireEvent.click(terminalTab);
+		await openDestination(/Terminal/);
 		await waitFor(() => {
 			expect(screen.getByTestId("location-search")).toHaveTextContent(
 				"tab=terminal",
 			);
 		});
 		expect(screen.getByText("$ just check")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /^Destinations: Terminal/ }),
+		).toBeInTheDocument();
 	});
 
-	it("opens the bound Gallery resources as a work-area tab", async () => {
-		await renderShell();
-		fireEvent.click(
-			within(screen.getByRole("tablist", { name: "Work area tabs" })).getByRole(
-				"tab",
-				{ name: /Gallery/ },
-			),
+	it("restores the routed pane on load", async () => {
+		await renderShell(
+			"/dev/oqto-ui?workDirectory=oqto&session=frontend-rebuild&tab=terminal",
 		);
+		expect(await screen.findByText("$ just check")).toBeInTheDocument();
+	});
+
+	it("opens the bound Gallery resources as a work-area pane", async () => {
+		await renderShell();
+		await openDestination(/Gallery/);
 		await waitFor(() => {
 			expect(screen.getByTestId("location-search")).toHaveTextContent(
 				"tab=gallery",

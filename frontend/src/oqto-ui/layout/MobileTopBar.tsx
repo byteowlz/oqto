@@ -47,11 +47,15 @@ export function MobileTopBar({
 	const { t } = useTranslation();
 	const [menuOpen, setMenuOpen] = useState(false);
 	const menuId = useId();
+	// Same naming as the menu items below: a tool pane is named for its tool,
+	// not reported as Chat.
+	const activePane = tabs.find((tab) => tab.id === activeTab);
 	const activeLabel =
 		activeView === "files"
 			? t("oqtoUi.mobile.files")
-			: (tabs.find((tab) => tab.id === activeTab)?.fileName ??
-				t("oqtoUi.mobile.chat"));
+			: !activePane || activePane.id === "chat"
+				? t("oqtoUi.mobile.chat")
+				: (activePane.fileName ?? t(`oqtoUi.tools.${activePane.id}`));
 
 	const select = (next: UiNavigation) => {
 		onNavigate(next);
