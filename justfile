@@ -893,6 +893,7 @@ test-deploy-mode:
     python3 -B scripts/tests/test-verified-setup-bootstrap.py
     python3 -B scripts/tests/test-deploy-transaction.py
     python3 -B scripts/tests/test-release-provenance.py
+    ./scripts/tests/test-stage-pi-runtime-idempotent.sh
 
 # Offline install/update matrix preflight regression checks (no root or host changes)
 test-install-matrix:
