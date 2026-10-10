@@ -98,6 +98,25 @@ git -C "$checkout" -c user.email=t@example.invalid -c user.name=t commit -qm fix
 printf 'scratch\n' > "$checkout/untracked.txt"
 expect_fail "dirty build" "uncommitted or untracked" "$checkout/scripts/deploy.sh" --host test-local --dry-run
 
+# The deploy build must stage everything the canonical release build stages;
+# a step missing here only shows up on a clean checkout (dist/ is untracked).
+python3 - "$DEPLOY" "$ROOT_DIR/.github/workflows/release.yml" <<'PY'
+import re, sys
+deploy, release = (open(path).read() for path in sys.argv[1:])
+body = deploy.split("\nbuild_artifact() {\n", 1)[1].split("\n}\n", 1)[0]
+script_for = {
+    "dist-sync": "sync.sh",
+    "dist-stage-pi-runtime": "stage-pi-runtime.sh",
+    "dist-stage-binaries": "stage-binaries.sh",
+    "dist-stage-frontend": "stage-frontend.sh",
+    "dist-package": "package.sh",
+}
+deploy_steps = [step for step in re.findall(r"^\s+(?:[A-Z_]+=\S+\s+)*just (dist-[a-z-]+)", body, re.M) if step in script_for]
+release_steps = [name for name in re.findall(r"scripts/dist/([a-z-]+\.sh)", release) if name in script_for.values()]
+mapped = [script_for[step] for step in deploy_steps]
+assert mapped == release_steps, f"deploy build {mapped} != release build {release_steps}"
+PY
+
 help_output="$("$DEPLOY" --help)"
 grep -q -- '--backfill-only' <<<"$help_output"
 grep -q -- '--allow-downgrade' <<<"$help_output"

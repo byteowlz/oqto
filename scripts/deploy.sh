@@ -260,12 +260,16 @@ build_artifact() {
     DEPLOY_CHECKSUM="${DEPLOY_ARTIFACT}.sha256"
     log "Building release $version ($target) from $(git -C "$ROOT_DIR" rev-parse --short HEAD)"
     if [[ "$DRY_RUN" == true ]]; then
-        echo -e "${YELLOW}  [dry-run]${NC} just dist-sync / dist-stage-binaries --build / dist-stage-frontend --build / lint-dist-manifest-strict / dist-package $version $target"
+        echo -e "${YELLOW}  [dry-run]${NC} just dist-sync / dist-stage-pi-runtime / dist-stage-binaries --build / dist-stage-frontend --build / lint-dist-manifest-strict / dist-package $version $target"
         return 0
     fi
     (
         cd "$ROOT_DIR"
+        # Same sequence as .github/workflows/release.yml (checked by
+        # scripts/tests/deploy-mode-test.sh): the bundled Pi runtime is part
+        # of every full release.
         just dist-sync
+        just dist-stage-pi-runtime
         DIST_REQUIRE_GLIBC_FLOOR="${DIST_REQUIRE_GLIBC_FLOOR:-1}" just dist-stage-binaries --build
         just dist-stage-frontend --build
         just lint-dist-manifest-strict
