@@ -801,8 +801,8 @@ bump version:
 
     cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
 
-    jq --arg v "$new_version" '.version = $v' "$ROOT/frontend/src-tauri/tauri.conf.json" > "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" \
-        && mv "$ROOT/frontend/src-tauri/tauri.conf.json.tmp" "$ROOT/frontend/src-tauri/tauri.conf.json"
+    # Edit only the version value: re-serializing (jq) breaks the Biome format gate.
+    python3 "$ROOT/scripts/release/set-tauri-version.py" "$ROOT/frontend/src-tauri/tauri.conf.json" "$new_version"
 
     echo "Bumped all components to $new_version"
 
@@ -910,6 +910,7 @@ test-setup-installed-doctor:
 test-release-version-sync:
     python3 -B scripts/tests/test-sync-platform-pin.py
     python3 scripts/tests/test-release-version-sync.py
+    python3 -B scripts/tests/test-set-tauri-version.py
 
 # Dist sources resolve to pinned refs, preserving dirty or unknown local caches
 test-dist-sync-pins:
