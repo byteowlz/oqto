@@ -160,6 +160,20 @@ class SystemHost:
     def system_unit(self, action: str, unit: str) -> None:
         subprocess.run(["systemctl", action, unit], check=True, timeout=120)
 
+    def user_unit_active(self, principal: Principal, unit: str) -> bool:
+        result = self.run_as(
+            principal, ["systemctl", "--user", "is-active", "--quiet", unit], 30
+        )
+        return result.returncode == 0
+
+    def system_unit_active(self, unit: str) -> bool:
+        return (
+            subprocess.run(
+                ["systemctl", "is-active", "--quiet", unit], check=False, timeout=30
+            ).returncode
+            == 0
+        )
+
     def system_unit_exists(self, unit: str) -> bool:
         result = subprocess.run(
             ["systemctl", "show", unit, "-p", "LoadState", "--value"],
@@ -268,31 +282,39 @@ def refuse_busy_sessions(
 # ---------------------------------------------------------------- activation
 
 
+def is_sqlite_file(path: Path) -> bool:
+    return ".db" in path.name or path.suffix in (".sqlite", ".sqlite3")
+
+
 def snapshot_platform_state(stage: Path, homes: list[Path]) -> list[dict]:
-    """Coherent byte copies of stopped-service SQLite and user config; never opens SQLite."""
+    """Byte copies of stopped-service platform state; never opens SQLite.
+
+    Only what activation can affect: the top-level platform databases in
+    ~/.local/share/oqto (oqto.db + WAL/SHM), ~/.config/oqto and Pi's model,
+    settings and auth files. History (oqto-log), workspaces, runtimes and
+    caches are never touched by activation and are not copied; history is
+    protected by the backfill transaction, which snapshots it per principal.
+    """
     records = []
     root = stage / "state"
     root.mkdir(mode=0o700)
     for home in sorted(set(homes)):
         target = root / (home.name or "home")
         target.mkdir(mode=0o700)
-        sources = [
-            (home / ".local/share/oqto", "data", True),
-            (home / ".config/oqto", "config", False),
-        ]
-        for area, label, only_db in sources:
-            if not area.is_dir() or area.is_symlink():
-                continue
-            for path in sorted(area.rglob("*")):
-                if path.is_symlink() or not path.is_file():
-                    continue
-                if only_db and not (
-                    ".db" in path.name or path.suffix in (".sqlite", ".sqlite3")
-                ):
-                    continue
-                records.append(
-                    copy_preserving(path, target / label / path.relative_to(area))
-                )
+        data = home / ".local/share/oqto"
+        if data.is_dir() and not data.is_symlink():
+            for path in sorted(data.iterdir()):
+                if path.is_file() and not path.is_symlink() and is_sqlite_file(path):
+                    records.append(copy_preserving(path, target / "data" / path.name))
+        config = home / ".config/oqto"
+        if config.is_dir() and not config.is_symlink():
+            for path in sorted(config.rglob("*")):
+                if path.is_file() and not path.is_symlink():
+                    records.append(
+                        copy_preserving(
+                            path, target / "config" / path.relative_to(config)
+                        )
+                    )
         for name in ("models.json", "settings.json", "auth.json"):
             path = home / ".pi/agent" / name
             if path.is_file() and not path.is_symlink():
@@ -324,6 +346,51 @@ def stop_services(host: SystemHost, info: dict, principals: list[Principal]) -> 
     host.system_unit("stop", "oqto.service")
     for principal in principals:
         host.user_unit(principal, "stop", "oqto-runner.service")
+
+
+WATCHDOG_TIMER = "oqto-healthcheck.timer"
+
+
+def pause_watchdog(host: SystemHost, info: dict, principals: list[Principal]) -> bool:
+    """Stop the health watchdog: it restarts services the transaction stopped.
+
+    Returns whether it was running, so it is resumed only in that case.
+    """
+    if info["profile"] == "personal":
+        if not host.user_unit_active(principals[0], WATCHDOG_TIMER):
+            return False
+        host.user_unit(principals[0], "stop", WATCHDOG_TIMER)
+        return True
+    if not host.system_unit_active(WATCHDOG_TIMER):
+        return False
+    host.system_unit("stop", WATCHDOG_TIMER)
+    return True
+
+
+def resume_watchdog(host: SystemHost, info: dict, principals: list[Principal]) -> None:
+    if info["profile"] == "personal":
+        host.user_unit(principals[0], "start", WATCHDOG_TIMER)
+    else:
+        host.system_unit("start", WATCHDOG_TIMER)
+
+
+def require_writers_stopped(
+    host: SystemHost, info: dict, principals: list[Principal]
+) -> None:
+    """The snapshot is only coherent if nothing writes platform state."""
+    watched = [(p.uid, "oqto-runner") for p in principals]
+    watched.append((info["backend_uid"], "oqto"))
+    deadline = time.monotonic() + 30
+    while True:
+        running = [(uid, comm) for uid, comm in watched if host.processes(uid, comm)]
+        if not running:
+            return
+        if time.monotonic() > deadline:
+            raise TransactionError(
+                "services were restarted while stopped for activation: "
+                + ", ".join(f"{comm} (uid {uid})" for uid, comm in running)
+            )
+        time.sleep(1)
 
 
 def restart_services(host: SystemHost, info: dict, principals: list[Principal]) -> None:
@@ -496,6 +563,7 @@ def activate(args: argparse.Namespace, host: SystemHost | None = None) -> Path:
         "health_url": args.health_url,
         "health_budget": args.health_budget,
         "artifact_sha256": sha256(artifact),
+        "backend_uid": backend_home.stat().st_uid,
     }
     save(stage / "before.json", info)
     hook = stage / "service-check"
@@ -505,8 +573,32 @@ def activate(args: argparse.Namespace, host: SystemHost | None = None) -> Path:
     )
     hook.chmod(0o700)
 
+    watchdog_was_active = pause_watchdog(host, info, principals)
+    try:
+        activate_stopped(
+            host, args, stage, artifact, hook, info, principals, backend_home
+        )
+    finally:
+        if watchdog_was_active:
+            resume_watchdog(host, info, principals)
+    print(f"ACTIVATED {stage}")
+    return stage
+
+
+def activate_stopped(
+    host: SystemHost,
+    args: argparse.Namespace,
+    stage: Path,
+    artifact: Path,
+    hook: Path,
+    info: dict,
+    principals: list[Principal],
+    backend_home: Path,
+) -> None:
+    current = RELEASES / "current"
     stop_services(host, info, principals)
     try:
+        require_writers_stopped(host, info, principals)
         records = snapshot_platform_state(
             stage, [backend_home, *[p.home for p in principals]]
         )
@@ -572,8 +664,6 @@ def activate(args: argparse.Namespace, host: SystemHost | None = None) -> Path:
                 },
             )
         raise
-    print(f"ACTIVATED {stage}")
-    return stage
 
 
 # ---------------------------------------------------------------- backfill

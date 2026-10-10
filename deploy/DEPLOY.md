@@ -58,8 +58,12 @@ check-release` prints them.
    - inventories principals with a live managed runner socket (team: every
      `/run/oqto/runner-sockets/<user>/oqto-runner.sock` whose owner matches; personal:
      the host's `user`), refuses busy sessions, records `before.json`;
-   - stops services, takes byte snapshots of platform SQLite (`~/.local/share/oqto`),
-     `~/.config/oqto` and Pi `models/settings/auth.json` without opening any database;
+   - pauses the `oqto-healthcheck` watchdog timer (resumed at the end if it was
+     running), stops services and refuses if a backend or runner comes back;
+   - byte-snapshots only platform state: top-level `~/.local/share/oqto/*.db*`
+     (`oqto.db` + WAL/SHM), `~/.config/oqto` and Pi `models/settings/auth.json`.
+     oqto-log history, workspaces and runtimes are not copied (activation never
+     touches them; the backfill transaction protects history);
    - runs `oqto-setup install --post-activate-check <check>`. The check restarts
      usermgr → runners → control plane and requires backend health **at the new
      version**, every runner's `MainPID` executing the new release's `oqto-runner`,

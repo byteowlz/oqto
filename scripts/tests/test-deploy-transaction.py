@@ -56,6 +56,8 @@ class FakeHost(tx.SystemHost):
         self.sessions_by_name: dict[str, list[dict]] = {}
         self.exe_path: Path | None = None
         self.doctor_exit = 0
+        self.watchdog_active = False
+        self.backend_running: list[int] = []
 
     def run_as(self, principal, argv, timeout):
         if argv[:1] == ["oqtoctl"]:
@@ -72,6 +74,14 @@ class FakeHost(tx.SystemHost):
     def user_unit_exists(self, principal, unit):
         return True
 
+    def user_unit_active(self, principal, unit):
+        assert unit == tx.WATCHDOG_TIMER
+        return self.watchdog_active
+
+    def system_unit_active(self, unit):
+        assert unit == tx.WATCHDOG_TIMER
+        return self.watchdog_active
+
     def system_unit(self, action, unit):
         self.events.append((f"system-{action}", unit))
 
@@ -79,6 +89,8 @@ class FakeHost(tx.SystemHost):
         return False
 
     def processes(self, uid, comm):
+        if comm == "oqto":
+            return self.backend_running
         return self.stray if comm == "oqto-runner" else []
 
     def ping(self, principal):
@@ -304,14 +316,48 @@ class Activation(Fixture):
         stage.mkdir()
         records = tx.snapshot_platform_state(stage, [self.home, self.home])
         copied = sorted(Path(r["path"]).name for r in records)
-        self.assertEqual(
-            copied,
-            ["config.toml", "models.json", "oqto.db", "session.db", "session.db-wal"],
-        )
+        # History (oqto-log shards) is never part of the activation snapshot.
+        self.assertEqual(copied, ["config.toml", "models.json", "oqto.db"])
+        self.assertFalse(any("oqto-log" in r["path"] for r in records))
         for record in records:
             self.assertEqual(
                 Path(record["copy"]).read_bytes(), Path(record["path"]).read_bytes()
             )
+
+    def test_watchdog_is_paused_and_resumed_only_if_it_was_running(self) -> None:
+        for profile, stop, start in (
+            ("personal", ("stop", tx.WATCHDOG_TIMER), ("start", tx.WATCHDOG_TIMER)),
+            (
+                "team",
+                ("system-stop", tx.WATCHDOG_TIMER),
+                ("system-start", tx.WATCHDOG_TIMER),
+            ),
+        ):
+            info = {"profile": profile}
+            self.host.events.clear()
+            self.host.watchdog_active = True
+            self.assertTrue(tx.pause_watchdog(self.host, info, [self.principal]))
+            tx.resume_watchdog(self.host, info, [self.principal])
+            self.assertEqual(self.host.events, [stop, start])
+            self.host.events.clear()
+            self.host.watchdog_active = False
+            self.assertFalse(tx.pause_watchdog(self.host, info, [self.principal]))
+            self.assertEqual(self.host.events, [])
+
+    def test_writers_restarted_during_the_window_abort_activation(self) -> None:
+        info = {"backend_uid": ME.pw_uid}
+        tx.require_writers_stopped(self.host, info, [self.principal])
+        self.host.backend_running = [99]
+        clock = iter([0.0, 0.0, 31.0])
+        original_monotonic, original_sleep = tx.time.monotonic, tx.time.sleep
+        tx.time.monotonic = lambda: next(clock)
+        tx.time.sleep = lambda _: None
+        try:
+            with self.assertRaises(tx.TransactionError) as refused:
+                tx.require_writers_stopped(self.host, info, [self.principal])
+        finally:
+            tx.time.monotonic, tx.time.sleep = original_monotonic, original_sleep
+        self.assertIn("restarted while stopped", str(refused.exception))
 
     def test_pi_entrypoint_is_relinked_only_when_managed(self) -> None:
         entry = self.root / "pi"
