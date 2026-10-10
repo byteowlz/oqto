@@ -1956,28 +1956,136 @@ fn resolve_frontend_dir() -> Option<PathBuf> {
 }
 
 fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
-    match resolve_frontend_dir() {
-        Some(frontend_dir) => {
-            info!(
-                "Serving frontend static files from {}",
-                frontend_dir.display()
-            );
-            let spa_fallback = ServeFile::new(frontend_dir.join("index.html"));
-            let static_service = ServeDir::new(frontend_dir)
-                .append_index_html_on_directories(true)
-                .fallback(spa_fallback);
-
-            axum::Router::new()
-                .nest("/api", api_router)
-                .fallback_service(axum::routing::get_service(static_service))
-        }
-        None => {
-            warn!(
-                "No frontend static files found. API is available under /api, but / will return 404. \
+    let frontend_dir = resolve_frontend_dir();
+    match &frontend_dir {
+        Some(dir) => info!("Serving frontend static files from {}", dir.display()),
+        None => warn!(
+            "No frontend static files found. API is available under /api, but / will return 404. \
 Set OQTO_FRONTEND_DIR or deploy frontend to /var/www/oqto"
-            );
-            axum::Router::new().nest("/api", api_router)
+        ),
+    }
+    web_router(api_router, frontend_dir.as_deref())
+}
+
+/// Compose `/api` with the SPA and cross-origin isolation.
+///
+/// Browser speech recognition needs `SharedArrayBuffer`, which browsers only
+/// enable for cross-origin-isolated pages. Personal installs serve the UI from
+/// this process with no reverse proxy, so the isolation headers must come from
+/// here; proxies may add the same values again harmlessly.
+fn web_router(api_router: axum::Router, frontend_dir: Option<&Path>) -> axum::Router {
+    use axum::http::{HeaderName, HeaderValue};
+    use tower_http::set_header::SetResponseHeaderLayer;
+
+    let router = axum::Router::new().nest("/api", api_router);
+    let router = match frontend_dir {
+        Some(dir) => {
+            let static_service = ServeDir::new(dir)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(dir.join("index.html")));
+            router.fallback_service(axum::routing::get_service(static_service))
         }
+        None => router,
+    };
+    router
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("cross-origin-opener-policy"),
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("cross-origin-embedder-policy"),
+            HeaderValue::from_static("require-corp"),
+        ))
+}
+
+#[cfg(test)]
+mod web_router_tests {
+    use super::web_router;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn get(router: axum::Router, uri: &str) -> anyhow::Result<axum::http::Response<Body>> {
+        Ok(router
+            .oneshot(Request::get(uri).body(Body::empty())?)
+            .await?)
+    }
+
+    fn assert_isolated(response: &axum::http::Response<Body>, uri: &str) {
+        let headers = response.headers();
+        assert_eq!(
+            headers
+                .get("cross-origin-opener-policy")
+                .map(|v| v.as_bytes()),
+            Some(&b"same-origin"[..]),
+            "{uri} lacks COOP"
+        );
+        assert_eq!(
+            headers
+                .get("cross-origin-embedder-policy")
+                .map(|v| v.as_bytes()),
+            Some(&b"require-corp"[..]),
+            "{uri} lacks COEP"
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_assets_spa_routes_and_api_are_cross_origin_isolated() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        std::fs::write(
+            dir.path().join("index.html"),
+            "<!doctype html><main>Oqto</main>",
+        )?;
+        std::fs::create_dir(dir.path().join("speech"))?;
+        std::fs::write(dir.path().join("speech/moonshine.wasm"), b"\0asm")?;
+        let api = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+        let router = web_router(api, Some(dir.path()));
+
+        for uri in [
+            "/",
+            "/sessions/abc",
+            "/speech/moonshine.wasm",
+            "/api/health",
+        ] {
+            let response = get(router.clone(), uri).await?;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_isolated(&response, uri);
+        }
+        let spa = get(router.clone(), "/sessions/abc").await?;
+        let body = axum::body::to_bytes(spa.into_body(), 1 << 16).await?;
+        assert!(
+            body.starts_with(b"<!doctype html>"),
+            "SPA fallback serves index.html"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn api_only_servers_are_isolated_too() -> anyhow::Result<()> {
+        let api = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+        let response = get(web_router(api, None), "/api/health").await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_isolated(&response, "/api/health");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_handler_choosing_its_own_policy_is_not_overridden() -> anyhow::Result<()> {
+        let api = axum::Router::new().route(
+            "/embed",
+            axum::routing::get(|| async {
+                ([("cross-origin-embedder-policy", "credentialless")], "ok")
+            }),
+        );
+        let response = get(web_router(api, None), "/api/embed").await?;
+        assert_eq!(
+            response
+                .headers()
+                .get("cross-origin-embedder-policy")
+                .map(|v| v.as_bytes()),
+            Some(&b"credentialless"[..])
+        );
+        Ok(())
     }
 }
 
@@ -2860,11 +2968,18 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     //   - Updates: admin panel "Sync Models to All Users" or `just admin-eavs --sync-models`
     // The backend never auto-generates or overwrites models.json.
 
-    // One-time deterministic backfill for canonical chat session target metadata.
-    // This runs from authoritative runner session listings and keeps routing
-    // independent of runtime fallback heuristics.
-    if let Err(err) = backfill_session_targets_once(&state).await {
-        warn!("Session target backfill failed: {}", err);
+    // Reconcile canonical session target metadata from authoritative runner
+    // listings in the background. Sessions record their target at creation,
+    // on listing and on access; this only repairs stragglers, and a missing
+    // binding fails closed for control commands. It is O(all sessions), so it
+    // must not delay binding the listener (deploy health checks wait on it).
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(err) = backfill_session_targets_once(&state).await {
+                warn!("Session target backfill failed: {err:#}");
+            }
+        });
     }
 
     // Create router - all API routes are served under /api prefix only.
