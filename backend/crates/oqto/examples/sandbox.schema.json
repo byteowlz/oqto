@@ -515,6 +515,7 @@
             "/run/oqto",
             "~/.config/oqto/config.toml",
             "~/.local/share/oqto/credentials",
+            "~/.local/share/oqto/oqto-log",
             "/usr/bin/systemctl",
             "/bin/systemctl",
             "/usr/bin/systemd-run",
