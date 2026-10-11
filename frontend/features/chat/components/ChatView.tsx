@@ -278,6 +278,13 @@ export interface ChatViewProps {
 /**
  * Chat view using Pi agent runtime.
  */
+/** Grow the composer with its content, up to the scrollable cap. */
+const COMPOSER_MAX_HEIGHT_PX = 200;
+export function fitComposerHeight(textarea: HTMLTextAreaElement): void {
+	textarea.style.height = "auto";
+	textarea.style.height = `${Math.min(textarea.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+}
+
 export function ChatView({
 	locale = "en",
 	className,
@@ -385,11 +392,15 @@ export function ChatView({
 	const inputValueRef = useRef(inputInitialValue);
 	// Lightweight state only for send-button enabled/disabled
 	const [canSendInput, setCanSendInput] = useState(!!inputInitialValue.trim());
-	// Helper to imperatively set the textarea value and sync ref
+	// Helper to imperatively set the textarea value and sync ref. Programmatic
+	// writes (completed dictation sentences, clears, inserts) never fire an
+	// input event, so the height is recomputed here too.
 	const setInput = useCallback((value: string) => {
 		inputValueRef.current = value;
-		if (inputRef.current) {
-			inputRef.current.value = value;
+		const textarea = inputRef.current;
+		if (textarea) {
+			textarea.value = value;
+			fitComposerHeight(textarea);
 		}
 		startTransition(() => setCanSendInput(!!value.trim()));
 	}, []);
@@ -2119,9 +2130,7 @@ export function ChatView({
 
 			// Keep textarea stable during dictation to avoid reflow storms.
 			if (!dictation.isActive) {
-				// Auto-resize textarea immediately
-				textarea.style.height = "auto";
-				textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+				fitComposerHeight(textarea);
 			}
 
 			// Debounce draft persistence to localStorage (300ms)
