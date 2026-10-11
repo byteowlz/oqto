@@ -3,6 +3,18 @@
 {
 	admin off
 	auto_https off
+	# Runtime reverse-proxy failures also log requests, even without access logs.
+	# Caddy's built-in sensitive-header list does not cover our edge credential.
+	# Keep actual error diagnostics; remove ALL headers and the complete URI.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>uri delete
+			}
+		}
+	}
 }
 # A bind address is not a site Host matcher. Catch every Host and deny unknowns.
 http://:{$PILOT_GATEWAY_PORT} {
@@ -29,17 +41,18 @@ http://:{$PILOT_GATEWAY_PORT} {
 			request_header -X-Oqto-Account
 			request_header -X-Oqto-Workload
 			request_header -Forwarded
+			# URLs are not credential channels. Reject BEFORE the auth hop so an
+			# outage cannot send credential queries to it or turn this denial into 502.
+			@token_query query token=*
+			@apikey_query query api_key=*
+			respond @token_query "credential URL denied" 400
+			respond @apikey_query "credential URL denied" 400
 			forward_auth {$PILOT_AUTH_UPSTREAM} {
 				uri /service-access/v1/check?service_id=design-studio&workspace_id=fixture-workspace&resource_id=catalog&audience=https%3A%2F%2Fdesign-studio.example.test
 				# Gate checks native-looking/Oqto credential collisions;
 				# it neither logs nor authenticates native Studio tokens.
 				header_up -Cookie
 			}
-			# URLs are not credential channels.
-			@token_query query token=*
-			@apikey_query query api_key=*
-			respond @token_query "credential URL denied" 400
-			respond @apikey_query "credential URL denied" 400
 			reverse_proxy unix/{$PILOT_STUDIO_SOCKET} {
 				header_up -X-Oqto-*
 			}

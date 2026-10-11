@@ -715,14 +715,72 @@ fn example_path() -> PathBuf {
         .join("../../../docs/examples/service-access-pilot.Caddyfile")
 }
 
+/// Inspect real runtime errors, never print captured logs/credentials on failure.
+async fn assert_redacted_runtime_errors(
+    path: &Path,
+    minimum: usize,
+    secrets: &[&str],
+) -> Result<usize> {
+    for _ in 0..100 {
+        let logs = std::fs::read_to_string(path)?;
+        let errors: Vec<Value> = logs
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|record| {
+                record["level"] == "error"
+                    && record["logger"] == "http.log.error"
+                    && record["status"] == 502
+            })
+            .collect();
+        if errors.len() >= minimum {
+            for secret in secrets {
+                ensure!(!secret.is_empty(), "empty synthetic log marker");
+                ensure!(
+                    !logs.contains(secret),
+                    "runtime log leaked a synthetic credential/query marker"
+                );
+            }
+            for error in &errors {
+                ensure!(
+                    error["msg"].as_str().is_some_and(|msg| !msg.is_empty()),
+                    "runtime error lacked a cause"
+                );
+                ensure!(
+                    error["request"].get("headers").is_none()
+                        && error["request"].get("uri").is_none(),
+                    "runtime request fields were not redacted"
+                );
+            }
+            return Ok(errors.len());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    anyhow::bail!("expected real HTTP 502 runtime errors were not emitted")
+}
+
 /// Requires `caddy` on PATH. Explicitly opt-in: cargo test --test service_access_pilot -- --ignored.
 #[tokio::test]
 #[ignore = "requires real Caddy executable; synthetic local listeners only"]
 async fn service_access_caddy_real_http() -> Result<()> {
     let mut fixture = Fixture::new().await?;
     let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+    // Graceful fixture teardown closes pooled idle connections as well as listeners.
+    let auth_listener = TcpListener::bind("127.0.0.1:0").await?;
+    let auth_address = auth_listener.local_addr()?;
+    let (auth_stop, auth_stopped) = tokio::sync::oneshot::channel::<()>();
+    let auth_app = pilot_router(fixture.state.clone(), false);
+    let auth_task = fixture.tasks.len();
+    fixture.tasks.push(tokio::spawn(async move {
+        axum::serve(auth_listener, auth_app)
+            .with_graceful_shutdown(async {
+                let _ = auth_stopped.await;
+            })
+            .await
+            .expect("fixture Caddy auth server");
+    }));
     let socket = fixture.root.path().join("studio.sock");
     let listener = UnixListener::bind(&socket)?;
+    let (studio_stop, studio_stopped) = tokio::sync::oneshot::channel::<()>();
     let upstream = Router::new().route(
         "/{*path}",
         get(|headers: HeaderMap| async move {
@@ -737,28 +795,36 @@ async fn service_access_caddy_real_http() -> Result<()> {
             }
             assert!(!headers.contains_key("cookie"));
             assert!(!headers.contains_key("x-api-key"));
-            "synthetic studio"
+            // Prove presence/omission without reflecting any credential in the response.
+            let native_auth = if headers.contains_key("authorization") {
+                "present"
+            } else {
+                "absent"
+            };
+            ([("X-Fixture-Native-Auth", native_auth)], "synthetic studio")
         }),
     );
+    let studio_task = fixture.tasks.len();
     fixture.tasks.push(tokio::spawn(async move {
         axum::serve(listener, upstream)
+            .with_graceful_shutdown(async {
+                let _ = studio_stopped.await;
+            })
             .await
             .expect("fixture Unix HTTP upstream");
     }));
     let reserved = TcpListener::bind("127.0.0.1:0").await?;
     let port = reserved.local_addr()?.port();
     drop(reserved);
-    let log = std::fs::File::create(fixture.root.path().join("caddy.log"))?;
+    let log_path = fixture.root.path().join("caddy.log");
+    let log = std::fs::File::create(&log_path)?;
     let mut caddy = Caddy(
         Command::new("caddy")
             .args(["run", "--config"])
             .arg(example_path())
             .args(["--adapter", "caddyfile"])
             .env("PILOT_GATEWAY_PORT", port.to_string())
-            .env(
-                "PILOT_AUTH_UPSTREAM",
-                fixture.base.trim_start_matches("http://"),
-            )
+            .env("PILOT_AUTH_UPSTREAM", auth_address.to_string())
             .env("PILOT_STUDIO_SOCKET", &socket)
             .stdout(Stdio::null())
             .stderr(log)
@@ -804,6 +870,13 @@ async fn service_access_caddy_real_http() -> Result<()> {
             .insert("Authorization", format!("Bearer {token}").parse()?);
         let response = client.execute(alternate).await?;
         assert_eq!(response.status(), StatusCode::OK); // Credential omitted upstream.
+        assert_eq!(
+            response
+                .headers()
+                .get("x-fixture-native-auth")
+                .and_then(|h| h.to_str().ok()),
+            Some("absent")
+        );
     }
     assert_eq!(
         request("design-studio.example.test", &workload)
@@ -831,6 +904,13 @@ async fn service_access_caddy_real_http() -> Result<()> {
     for token in [&fixture.token, &workload] {
         let response = request("design-studio.example.test", token).send().await?;
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-fixture-native-auth")
+                .and_then(|h| h.to_str().ok()),
+            Some("present")
+        );
         assert_eq!(response.text().await?, "synthetic studio");
     }
     assert_eq!(
@@ -939,6 +1019,37 @@ async fn service_access_caddy_real_http() -> Result<()> {
             .status(),
         StatusCode::FORBIDDEN
     );
+    // Studio outage: real auth still allows this human, but no upstream exists.
+    studio_stop
+        .send(())
+        .map_err(|_| anyhow::anyhow!("fixture Studio already stopped"))?;
+    tokio::time::timeout(Duration::from_secs(5), &mut fixture.tasks[studio_task]).await??;
+    std::fs::remove_file(&socket)?;
+    const QUERY_MARKER: &str = "synthetic-private-runtime-query-marker";
+    const COOKIE_MARKER: &str = "synthetic-private-runtime-cookie-marker";
+    let secret_markers = [
+        &fixture.token[..],
+        &workload[..],
+        &api_key[..],
+        NATIVE_TOKEN,
+        "synthetic-native-cookie",
+        "synthetic-oqto-cookie",
+        QUERY_MARKER,
+        COOKIE_MARKER,
+    ];
+    let failure_request = |edge: &str| {
+        request("design-studio.example.test", edge)
+            .query(&[("review", QUERY_MARKER)])
+            .header("X-Regression-JWT", &fixture.token)
+            .header("X-Regression-Workload", &workload)
+            .header("X-Regression-API-Key", &api_key)
+            .header("Cookie", format!("private_fixture={COOKIE_MARKER}"))
+    };
+    assert_eq!(
+        failure_request(&fixture.token).send().await?.status(),
+        StatusCode::BAD_GATEWAY
+    );
+    let studio_errors = assert_redacted_runtime_errors(&log_path, 1, &secret_markers).await?;
     // Simulate a future/imported workload credential colliding with native syntax.
     // The real issuance route cannot create this shape. Known collisions still deny.
     use sha2::{Digest, Sha256};
@@ -953,12 +1064,36 @@ async fn service_access_caddy_real_http() -> Result<()> {
             .status(),
         StatusCode::FORBIDDEN
     );
-    fixture.tasks[0].abort(); // Authentication service outage.
-    let status = request("design-studio.example.test", &fixture.token)
-        .send()
-        .await?
-        .status();
-    assert!(status.is_server_error());
+    // Auth outage: close real listener/pooled connections, then emit genuine errors.
+    auth_stop
+        .send(())
+        .map_err(|_| anyhow::anyhow!("fixture auth already stopped"))?;
+    tokio::time::timeout(Duration::from_secs(5), &mut fixture.tasks[auth_task]).await??;
+    for edge in [&fixture.token, &workload] {
+        assert_eq!(
+            failure_request(edge).send().await?.status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
+    let auth_errors =
+        assert_redacted_runtime_errors(&log_path, studio_errors + 2, &secret_markers).await?;
+    // Reject every credential query BEFORE auth, even when auth is unavailable.
+    // Status and unchanged error count prove none reached the failing auth hop.
+    for name in ["token", "api_key"] {
+        assert_eq!(
+            request("design-studio.example.test", &fixture.token)
+                .query(&[(name, QUERY_MARKER)])
+                .send()
+                .await?
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        assert_redacted_runtime_errors(&log_path, auth_errors, &secret_markers).await?,
+        auth_errors
+    );
     assert_eq!(
         request("immich.example.test", &fixture.token)
             .send()
