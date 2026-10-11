@@ -17,7 +17,7 @@ const MESSAGES: usize = 24;
 
 fn message(index: usize, body: &str) -> AgentMessage {
     AgentMessage {
-        role: if index % 2 == 0 { "user" } else { "assistant" }.to_string(),
+        role: if index.is_multiple_of(2) { "user" } else { "assistant" }.to_string(),
         content: serde_json::Value::String(format!("#{index:03} {body}")),
         timestamp: Some(1_000 + index as u64),
         tool_call_id: None,
