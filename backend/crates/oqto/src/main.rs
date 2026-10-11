@@ -548,6 +548,8 @@ struct AppConfig {
     server: ServerConfig,
     /// Runtime-discovered Oqto App origin configuration.
     apps: AppsConfig,
+    /// Opt-in single-service pilot; no upstream or credential configuration.
+    service_access_pilot: Option<auth::service_access::PilotConfig>,
     /// Onboarding templates configuration.
     onboarding_templates: templates::OnboardingTemplatesConfig,
     /// sldr configuration.
@@ -678,6 +680,7 @@ impl Default for AppConfig {
             agent_browser: agent_browser::AgentBrowserConfig::default(),
             server: ServerConfig::default(),
             apps: AppsConfig::default(),
+            service_access_pilot: None,
             onboarding_templates: templates::OnboardingTemplatesConfig::default(),
             feedback: feedback::FeedbackConfig::default(),
             placement: runner::placement::PlacementConfig::default(),
@@ -2657,6 +2660,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         session_target_repo,
         max_proxy_body_bytes,
     );
+    if let Some(config) = ctx.config.service_access_pilot.clone() {
+        state.service_access_pilot = Some(auth::service_access::PilotState::new(
+            auth::service_access::PilotRepository::new(database.pool().clone()),
+            state.auth.clone(),
+            config,
+        )?);
+    }
     state = state.with_single_user(single_user);
     state.runner_targets = runner_targets.clone();
     state = state.with_feedback_config(ctx.config.feedback.clone());

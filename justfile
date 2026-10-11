@@ -105,6 +105,11 @@ dist-package version="" target="":
 # Test
 # =============================================================================
 
+# Synthetic Design Studio pilot: actual HTTP authority plus real Caddy gate.
+service-access-pilot-proof:
+    cd backend && cargo test -p oqto --test service_access_pilot
+    cd backend && cargo test -p oqto --test service_access_pilot -- --ignored
+
 # Run all tests
 test: agent-check-on-change test-backend test-frontend
 

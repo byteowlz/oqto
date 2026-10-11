@@ -494,6 +494,17 @@ fn create_router_with_config_and_auth(
         // TRX (issue tracking) now uses mux-only channel
         .with_state(state.clone());
 
+    // This pilot owns its scoped credential adapter. Never place workload
+    // credentials through general CurrentUser middleware or remote admin roles.
+    let pilot_routes = state
+        .service_access_pilot
+        .clone()
+        .map_or_else(Router::new, |pilot| {
+            crate::auth::service_access::pilot_router(
+                pilot,
+                matches!(&auth_mode, AuthMode::Admin(_)),
+            )
+        });
     let protected_routes =
         apply_auth_layers(protected_routes, state.clone(), auth_state, auth_mode);
 
@@ -571,6 +582,7 @@ fn create_router_with_config_and_auth(
     Router::new()
         .merge(public_routes)
         .merge(auth_routes)
+        .merge(pilot_routes)
         .merge(protected_routes)
         .merge(delegate_routes)
         .merge(test_routes)

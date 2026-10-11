@@ -1,0 +1,51 @@
+# Synthetic proof template, NOT deployed configuration.
+# Parent must merge with phase-1 source gates, TLS and the canonical Studio owner.
+{
+	admin off
+	auto_https off
+}
+# A bind address is not a site Host matcher. Catch every Host and deny unknowns.
+http://:{$PILOT_GATEWAY_PORT} {
+	bind 127.0.0.1
+	@studio host design-studio.example.test
+	handle @studio {
+		route {
+			# Client claims confer no identity. Keep edge credential separate from
+			# Studio's native feedback login Authorization/Cookie.
+			# Studio source 092ca1e: native token_urlsafe(32), Bearer only,
+			# no Cookie authentication. Do not forward mixed ambient cookies.
+			@drop_auth {
+				not {
+					path /api/feedback /api/feedback/*
+					header_regexp Authorization "^Bearer [A-Za-z0-9_-]{43}$"
+				}
+			}
+			request_header @drop_auth -Authorization
+			request_header -Cookie
+			request_header -X-API-Key
+			request_header -X-Dev-User
+			request_header -X-User-ID
+			request_header -X-Workspace-ID
+			request_header -X-Oqto-Account
+			request_header -X-Oqto-Workload
+			request_header -Forwarded
+			forward_auth {$PILOT_AUTH_UPSTREAM} {
+				uri /service-access/v1/check?service_id=design-studio&workspace_id=fixture-workspace&resource_id=catalog&audience=https%3A%2F%2Fdesign-studio.example.test
+				# Gate checks native-looking/Oqto credential collisions;
+				# it neither logs nor authenticates native Studio tokens.
+				header_up -Cookie
+			}
+			# URLs are not credential channels.
+			@token_query query token=*
+			@apikey_query query api_key=*
+			respond @token_query "credential URL denied" 400
+			respond @apikey_query "credential URL denied" 400
+			reverse_proxy unix/{$PILOT_STUDIO_SOCKET} {
+				header_up -X-Oqto-*
+			}
+		}
+	}
+	handle {
+		respond "service denied" 403
+	}
+}

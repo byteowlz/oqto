@@ -9,6 +9,7 @@ mod config;
 mod error;
 pub mod local_admin;
 mod middleware;
+pub mod service_access;
 
 pub use claims::{Claims, Role};
 #[allow(unused_imports)]

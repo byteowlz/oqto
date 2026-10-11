@@ -243,6 +243,8 @@ pub struct AppState {
     pub api_keys: Arc<ApiKeyRepository>,
     /// Authentication state.
     pub auth: AuthState,
+    /// Disabled-by-default external Design Studio access pilot.
+    pub service_access_pilot: Option<crate::auth::service_access::PilotState>,
     /// HTTP client for proxying requests to per-session services.
     pub http_client: Client<HttpConnector, Body>,
     /// Whether the deployment is single-user (local) rather than multi-user.
@@ -352,6 +354,7 @@ impl AppState {
             invites: Arc::new(invites),
             api_keys: Arc::new(api_keys),
             auth,
+            service_access_pilot: None,
             http_client,
             single_user: false,
             voice,

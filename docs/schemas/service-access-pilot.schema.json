@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oqto.example/schema/service-access-pilot-v1",
+  "title": "Oqto bounded service-access pilot v1",
+  "oneOf": [
+    { "$ref": "#/$defs/config" },
+    { "$ref": "#/$defs/scope" },
+    { "$ref": "#/$defs/grantRequest" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "config": {
+      "type": "object", "additionalProperties": false,
+      "required": ["audience", "workspace_id"],
+      "properties": {
+        "audience": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+$" },
+        "workspace_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["service_id", "workspace_id", "resource_id", "audience"],
+      "properties": {
+        "service_id": { "const": "design-studio" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "resource_id": { "const": "catalog" },
+        "audience": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+$" }
+      }
+    },
+    "grantRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "workload_id", "scope", "expires_at", "owner_account_id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "workload_id": { "const": "design-review" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "expires_at": { "type": "integer", "description": "Server requires now < expiry <= now+3600; schema is not authority." },
+        "owner_account_id": { "$ref": "#/$defs/id" }
+      }
+    }
+  }
+}
