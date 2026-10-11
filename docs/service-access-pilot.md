@@ -6,7 +6,9 @@ first-two-phase approval; phase 3 and browser/UI work are not approved here.
 
 ## Pinned sources and scope
 
-- Oqto implementation/test revision: `9e8d898d337052d8a1377bea0eba5ce564eaaeee`.
+- Oqto implementation/test revision: `9c3800ea91daf084912a82568ac2395288ca2690`.
+- Initial implementation: `9e8d898d`; parent-reviewed artifact `8b82647f`
+  failed runtime-log secrecy verification (see regression below).
 - Independent peer-credential fix: `bff14af7`; base: `origin/main` at `0c93b3b1`.
 - Coordination source: Governor `docs/briefs/tailnet-service-access-pilot.md`,
   approved 2026-10-11; [decision](adr/0057-bounded-design-studio-service-access-pilot.md).
@@ -152,7 +154,12 @@ method for the gate, strips identity/API-key headers, consumes/removes all
 `X-Oqto-*` headers before Studio, and drops **all Cookie**, including mixed
 Studio/Oqto cookies. Only Studio's pinned `Bearer` URL-safe 43-character syntax
 is retained on `/api/feedback` or `/api/feedback/*`; other Authorization is
-omitted. Credential query parameters are rejected. Headers/bodies are not logged.
+omitted. Credential query parameters `token` and `api_key` are rejected **before
+`forward_auth`**, including during auth outage. The global runtime logger filters
+**all** `request>headers` and the complete `request>uri`, without disabling actual
+error diagnostics. This is required even with no access logger: Caddy's default
+runtime error logger otherwise captures custom edge headers and query values.
+Production merges must retain this filter; tested error paths are bounded below.
 
 Syntax is not credential provenance or native authentication. Proof generates
 actual Oqto JWT/API-key/workload credentials and checks their disjoint formats,
@@ -208,9 +215,13 @@ Observed outcomes at the pinned source:
   and HTTP authorization against the same store.
 - Real Caddy proof covers allowed human/workload HTTP, spoofed identities,
   native credential filtering/collision, unknown/Immich host, unsupported
-  methods/SSE/upgrades, URL credential rejection, revoke and auth outage.
+  methods/SSE/upgrades, pre-auth URL credential rejection, revoke and auth outage.
+  Native bearer presence/omission is now explicitly asserted without reflecting
+  secrets. Both auth and Studio upstream outages emit real 502 error records,
+  inspected for header/URI removal and absence of all synthetic secret markers.
 
-Structural review commands were also run:
+Initial implementation structural review commands were also run (at the
+`9e8d898d` implementation delta, before the runtime-log fix):
 
 ```sh
 ripwire . --quality-delta --legend=compact
@@ -231,6 +242,73 @@ PR context is evidence, not certification. Test-gate returned 4 for required
 tests/name-based untested radius; actual HTTP/router tests above passed, but
 broad unrelated subsystem coverage is not claimed. Re-run against the peer-fix
 parent (`bff14af7`) to inspect the implementation delta after checkout.
+
+## Runtime-log security regression and re-review
+
+Parent verification `parent-review-8b82647-runtime-secret-log` failed the prior
+artifact. The original six fixture tests checked HTTP outcomes but **did not
+assert runtime-log secrecy**; their success did not justify the previous logging
+claim. No real credentials were used or found in this reproduction.
+
+Root causes: no filter on Caddy's default runtime error logger, whose built-in
+sensitive-header list does not recognize the custom edge credential; and query
+rejection ordered after the failing `forward_auth` hop. A lack of access logging
+is not a runtime-log secrecy guarantee.
+
+The parent's local synthetic-only probe was rerun unchanged:
+
+```sh
+uv run --no-project /tmp/oqto-pilot-parent-review/probe_runtime_logs.py
+```
+
+At `8b82647f` it returned HTTP **502**, `edge_credential_logged=true`,
+`query_credential_logged=true`, `native_credential_logged=false`. At the pinned
+fixed source it returns HTTP **400** and all three logged flags **false**. This
+local probe is supporting evidence, not a portable repo prerequisite.
+
+The checked-in real-Caddy regression was added **before** the configuration fix.
+Against the old template it failed with `runtime log leaked a synthetic
+credential/query marker` on the real Studio-outage path. After the fix,
+`just service-access-pilot-proof` again executes **six passing fixtures**
+(5 standard + 1 opt-in Caddy), now additionally proving:
+
+- Graceful synthetic shutdown closes both listeners and pooled idle connections;
+  Studio Unix upstream outage and auth TCP connection refusal produce HTTP 502.
+- Captured logs contain at least **one Studio-outage error and two further
+  auth-outage errors**, each with `level=error`, `logger=http.log.error`, status
+  502 and a nonempty cause. Empty/no-error logs cannot pass.
+- Every captured error lacks request headers/URI. The entire log capture contains
+  no edge/JWT/workload/API-key/native/Cookie/query marker, including markers in
+  otherwise nonsensitive custom headers and an ordinary `review` query parameter.
+- `token` and `api_key` queries return 400 while auth is unavailable and do not
+  increase runtime error count, proving rejection precedes the auth hop.
+- Existing auth/filter/action-boundary proof is retained; native feedback bearer
+  presence and Oqto Authorization omission are now explicitly checked.
+
+Re-executed checks at the fixed source: six fixture tests, **39 auth unit tests
+passed/one existing manual ignored**, peer policy tests, cargo check, workspace
+fmt, targeted clippy `-D warnings`, production guardrails and `git diff --check`.
+All executable checks pass; there is no warning handoff or secret-log output in
+the regression's failure messages.
+
+Narrow structural review of the fix (vs `8b82647f`):
+
+```sh
+ripwire . --quality-delta --legend=compact
+ripwire . --edit-check=backend/crates/oqto/tests/service_access_pilot.rs:service_access_caddy_real_http --legend=compact
+ripwire . --pr-context --legend=compact --max-tokens=4000
+```
+
+Quality delta remains **non-green (exit 2)**: one fixture verbosity finding,
+241 -> 327 lines, from the required shutdown/error/secrecy assertions. This is
+an explicit sequential integration-fixture trade-off, not suppressed or
+misreported as a clean quality gate. Contract review reports unchanged
+signature (exit 0); PR context exits 0 but does not index Caddy's configuration,
+so the real-Caddy tests, not that graph, are the configuration proof.
+
+The parent's failed verification remains a historical record. This source fixes
+the reproduced synthetic blocker but still requires **parent re-review**;
+no live rollout or broader security certification is implied.
 
 ## Revocation bounds and outstanding live gates
 
