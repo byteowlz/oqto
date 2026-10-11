@@ -57,6 +57,6 @@ pi-linux-arm64-sha256 = "f3b0cac459f9df5420e4e48b48e95d81bfab57b701dd3fe4b08fda7
 node = "24.14.1"
 node-linux-x64-sha256 = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
 pi-extensions = "e70d7259cb1126eb8ddb4bea59236a390dedad32"  # coherent collection 2.9.0; candidate qualification required
-oqto-templates = "277fbdc903e21c109e1c9d89b03610e8f33fc756"  # immutable release defaults revision
+oqto-templates = "1629eb05f703a2490e19322fef85fa63dd2746d3"  # immutable release defaults revision
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv

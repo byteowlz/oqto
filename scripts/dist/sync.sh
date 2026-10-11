@@ -41,22 +41,20 @@ resolve_source_repo() {
   local name="$1" local_path="$2" url="$3" ref="$4"
   local cached_path="$DIST_CACHE_DIR/$name"
 
+  # A sibling development checkout is used only when it is exactly the pinned,
+  # clean commit. Otherwise (work in progress, other branch, not git) it is
+  # left alone and the pinned commit comes from a private cached clone; a
+  # release never contains uncommitted or unpinned bytes either way.
   if [[ -e "$local_path" ]]; then
     local actual expected
-    actual="$(git -C "$local_path" rev-parse HEAD 2>/dev/null)" || {
-      echo "error: $name at $local_path is not a verifiable git checkout" >&2
-      return 1
-    }
-    expected="$(git -C "$local_path" rev-parse "${ref}^{commit}" 2>/dev/null)" || {
-      echo "error: pinned $name commit $ref is unavailable in $local_path" >&2
-      return 1
-    }
-    [[ "$actual" == "$expected" && -z "$(git -C "$local_path" status --porcelain)" ]] || {
-      echo "error: $name at $local_path is dirty or does not match pinned commit $ref" >&2
-      return 1
-    }
-    echo "$local_path"
-    return 0
+    actual="$(git -C "$local_path" rev-parse HEAD 2>/dev/null || true)"
+    expected="$(git -C "$local_path" rev-parse "${ref}^{commit}" 2>/dev/null || true)"
+    if [[ -n "$actual" && "$actual" == "$expected" \
+      && -z "$(git -C "$local_path" status --porcelain 2>/dev/null)" ]]; then
+      echo "$local_path"
+      return 0
+    fi
+    echo "[dist-sync] $name at $local_path is not the clean pinned commit $ref; using a pinned clone" >&2
   fi
 
   if ! command -v git >/dev/null 2>&1; then
@@ -70,10 +68,10 @@ resolve_source_repo() {
       echo "error: refusing to overwrite unknown $name cache at $cached_path" >&2
       return 1
     }
-    echo "[dist-sync] $name missing at $local_path; cloning $url into $cached_path" >&2
+    echo "[dist-sync] cloning $name from $url into $cached_path" >&2
     git clone --filter=blob:none "$url" "$cached_path" >&2
   else
-    echo "[dist-sync] $name missing at $local_path; updating cached checkout $cached_path" >&2
+    echo "[dist-sync] updating cached $name checkout $cached_path" >&2
     git -C "$cached_path" fetch --tags --prune origin >&2
   fi
 

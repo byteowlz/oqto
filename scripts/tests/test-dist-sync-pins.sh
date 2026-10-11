@@ -17,15 +17,24 @@ if PI_AGENT_EXTENSIONS_REF=main "$sync" --print-refs > "$scratch/output" 2>&1; t
 fi
 grep -Fq 'source ref overrides must match dependencies.toml' "$scratch/output"
 
+# A sibling checkout that is not the clean pinned commit is never used: sync
+# falls back to the pinned cache (here an unknown cache, so it stops before any
+# network access) and leaves the checkout untouched.
 mkdir "$scratch/unpinned"
 git -C "$scratch/unpinned" init -q
 git -C "$scratch/unpinned" -c user.name=fixture -c user.email=fixture@example.test \
   commit -q --allow-empty -m 'unpinned source'
-if OQTO_TEMPLATES_REPO="$scratch/unpinned" "$sync" > "$scratch/output" 2>&1; then
+printf 'work in progress\n' > "$scratch/unpinned/wip"
+mkdir -p "$scratch/fallback-cache/oqto-templates"
+printf 'user cache data\n' > "$scratch/fallback-cache/oqto-templates/keep"
+if OQTO_TEMPLATES_REPO="$scratch/unpinned" OQTO_DIST_CACHE_DIR="$scratch/fallback-cache" \
+  "$sync" > "$scratch/output" 2>&1; then
   echo 'local unpinned source checkout was accepted' >&2
   exit 1
 fi
-grep -Eq 'pinned oqto-templates commit .* unavailable|does not match pinned commit' "$scratch/output"
+grep -Fq 'is not the clean pinned commit' "$scratch/output"
+grep -Fq 'refusing to overwrite unknown oqto-templates cache' "$scratch/output"
+grep -Fxq 'work in progress' "$scratch/unpinned/wip"
 
 mkdir -p "$scratch/cache/oqto-templates"
 printf 'user cache data\n' > "$scratch/cache/oqto-templates/keep"
