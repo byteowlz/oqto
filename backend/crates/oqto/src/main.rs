@@ -27,9 +27,7 @@ use hyper_util::service::TowerToHyperService;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-#[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 
 mod agent_browser;
 
@@ -3279,19 +3277,11 @@ async fn run_admin_socket_server(
 ) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
-        let peer_uid = match unix_peer_uid(&stream) {
-            Ok(uid) => uid,
-            Err(err) => {
-                warn!("Failed to read admin socket peer uid: {err:?}");
-                continue;
-            }
-        };
-
-        if !(peer_uid == 0 || peer_uid == server_uid) {
-            warn!(
-                "Rejected admin socket connection from uid {} (expected 0 or {})",
-                peer_uid, server_uid
-            );
+        if let Err(error) = auth::local_admin::authorize_peer_uid(
+            stream.peer_cred().map(|credentials| credentials.uid()),
+            server_uid,
+        ) {
+            warn!("Rejected admin socket peer: {error}");
             continue;
         }
 
@@ -3303,38 +3293,6 @@ async fn run_admin_socket_server(
                 warn!("Admin socket connection failed: {err:?}");
             }
         });
-    }
-}
-
-#[cfg(unix)]
-fn unix_peer_uid(stream: &UnixStream) -> Result<u32> {
-    #[cfg(target_os = "linux")]
-    {
-        let fd = stream.as_raw_fd();
-        let mut ucred = libc::ucred {
-            pid: 0,
-            uid: 0,
-            gid: 0,
-        };
-        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                &mut ucred as *mut _ as *mut _,
-                &mut len,
-            )
-        };
-        if rc != 0 {
-            return Err(anyhow!("failed to read unix peer credentials"));
-        }
-        Ok(ucred.uid)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(unsafe { libc::geteuid() } as u32)
     }
 }
 

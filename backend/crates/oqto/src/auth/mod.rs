@@ -7,6 +7,7 @@
 mod claims;
 mod config;
 mod error;
+pub mod local_admin;
 mod middleware;
 
 pub use claims::{Claims, Role};
