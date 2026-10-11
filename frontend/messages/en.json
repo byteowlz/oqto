@@ -72,7 +72,8 @@
 		"quote": "Quote",
 		"selectionActions": "Selection actions",
 		"activitySteps_one": "{{count}} step",
-		"activitySteps_other": "{{count}} steps"
+		"activitySteps_other": "{{count}} steps",
+		"historyLoadFailed": "This chat's history could not be loaded."
 	},
 	"sessions": {
 		"title": "Sessions",

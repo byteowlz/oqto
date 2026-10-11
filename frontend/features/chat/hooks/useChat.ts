@@ -136,6 +136,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const [historyLoading, setHistoryLoading] = useState(
 		Boolean(activeSessionId && messages.length === 0),
 	);
+	// A failed history load is not an empty chat: the UI must say so and offer
+	// a retry instead of rendering "No messages yet" over intact history.
+	const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
 	const { setSessionBusy } = useBusySessions();
 
 	// Refs
@@ -627,6 +630,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
 				const history = await getChatMessages(sessionId, swId);
+				if (isCurrentSession(sessionId)) setHistoryLoadFailed(false);
 
 				// Guard: after the async fetch, verify the session and transport
 				// epoch are still current. If the user switched sessions or the
@@ -693,6 +697,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					);
 				}
 			} catch (err) {
+				if (isCurrentSession(sessionId)) setHistoryLoadFailed(true);
 				if (isPiDebugEnabled()) {
 					console.debug("[useChat] Failed to load history:", err);
 				}
@@ -2088,6 +2093,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				setHistoryLoading(true);
 			}
 			setHistoryHydrated(false);
+			setHistoryLoadFailed(false);
 
 			// Reset streaming and agent state for the new session.
 			// Clearing state prevents stale sessionName from the previous
@@ -2414,6 +2420,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		promptQueue,
 		historyHydrated,
 		historyLoading,
+		historyLoadFailed,
 		send,
 		appendLocalAssistantMessage,
 		abort,

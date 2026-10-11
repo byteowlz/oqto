@@ -69,7 +69,8 @@
 		"quote": "Zitieren",
 		"selectionActions": "Aktionen für die Auswahl",
 		"activitySteps_one": "{{count}} Schritt",
-		"activitySteps_other": "{{count}} Schritte"
+		"activitySteps_other": "{{count}} Schritte",
+		"historyLoadFailed": "Der Verlauf dieses Chats konnte nicht geladen werden."
 	},
 	"sessions": {
 		"title": "Sitzungen",

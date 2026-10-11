@@ -82,6 +82,8 @@ export type UseChatReturn = {
 	historyHydrated: boolean;
 	/** True while waiting for first authoritative history for current session */
 	historyLoading: boolean;
+	/** True when the last history load for the current session failed */
+	historyLoadFailed: boolean;
 	/** Send a message */
 	send: (message: string, options?: SendOptions) => Promise<void>;
 	/** Append a local assistant message (no agent call) */

@@ -344,6 +344,7 @@ export function ChatView({
 		promptQueue,
 		historyHydrated,
 		historyLoading,
+		historyLoadFailed,
 		send,
 		appendLocalAssistantMessage,
 		abort,
@@ -2522,11 +2523,26 @@ export function ChatView({
 								messages.length === 0 &&
 								!sendPending &&
 								!isStreaming &&
-								!isAwaitingResponse && (
+								!isAwaitingResponse &&
+								(historyLoadFailed ? (
+									<div
+										role="alert"
+										className="flex items-center gap-2 text-sm text-muted-foreground"
+									>
+										<span>{t("chat.historyLoadFailed")}</span>
+										<button
+											type="button"
+											className="underline underline-offset-2 hover:text-foreground"
+											onClick={() => void refresh()}
+										>
+											{t("chat.retry")}
+										</button>
+									</div>
+								) : (
 									<div className="flex items-center gap-2 text-sm text-muted-foreground">
 										<span>{t("chat.noMessages")}</span>
 									</div>
-								)}
+								))}
 
 							{/* Load more indicator */}
 							{messages.length > visibleCount && (
