@@ -1776,11 +1776,18 @@ impl Runner {
     ) -> RunnerResponse {
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
 
-        let paged = req.before.is_some()
+        // Any bounded authoritative read pages, including the newest (first)
+        // page, so callers always get `has_more`/`next_before` to continue.
+        let paged = (req.before.is_some() || req.limit.is_some())
             && matches!(req.source, WorkspaceChatMessagesSource::Authoritative);
 
         let (messages, source_label, source_mode, has_more, next_before) = match req.source {
             WorkspaceChatMessagesSource::Authoritative if paged => {
+                if req.before.is_none() {
+                    // Newest page read: let background ingest pick up
+                    // out-of-band (bare pi) JSONL changes, as full reads do.
+                    self.jsonl_ingest.nudge(&req.session_id);
+                }
                 let page = if let Ok(home) = std::env::var("HOME") {
                     let home_path = std::path::Path::new(&home);
                     match oqto_history::oqto_log::projector::project_session_messages_page_auto(

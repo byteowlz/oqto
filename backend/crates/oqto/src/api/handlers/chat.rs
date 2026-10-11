@@ -939,12 +939,7 @@ pub async fn get_chat_messages(
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
     let response = runner
-        .get_workspace_chat_session_messages(
-            &resolved_session_id,
-            query.render,
-            None,
-            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
-        )
+        .get_workspace_chat_session_messages_all(&resolved_session_id, query.render)
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
 

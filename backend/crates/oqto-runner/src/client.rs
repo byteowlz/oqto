@@ -813,6 +813,63 @@ impl RunnerClient {
             .await
     }
 
+    /// Get a session's complete history by walking pages newest to oldest.
+    ///
+    /// A single unbounded reply for a long session exceeds the runner frame
+    /// limit and is dropped, so complete-history readers must use this. Each
+    /// page is bounded; a page that still fails (huge tool outputs) is retried
+    /// with half the size before giving up. Result is oldest-first.
+    pub async fn get_workspace_chat_session_messages_all(
+        &self,
+        session_id: &str,
+        render: bool,
+    ) -> Result<WorkspaceChatSessionMessagesResponse> {
+        const START_PAGE: usize = 100;
+        let mut pages: Vec<Vec<ChatMessageProto>> = Vec::new();
+        let mut before: Option<String> = None;
+        let mut page_size = START_PAGE;
+        loop {
+            let page = match self
+                .get_workspace_chat_session_messages_paged(
+                    session_id.to_string(),
+                    render,
+                    Some(page_size),
+                    before.clone(),
+                    WorkspaceChatMessagesSource::Authoritative,
+                )
+                .await
+            {
+                Ok(page) => page,
+                Err(error) if page_size > 1 => {
+                    tracing::warn!(
+                        session_id,
+                        page_size,
+                        "history page failed, retrying smaller: {error:#}"
+                    );
+                    page_size /= 2;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            pages.push(page.messages);
+            match (page.has_more, page.next_before) {
+                (true, Some(next)) => {
+                    before = Some(next);
+                    page_size = START_PAGE;
+                }
+                _ => break,
+            }
+        }
+        let messages = pages.into_iter().rev().flatten().collect();
+        Ok(WorkspaceChatSessionMessagesResponse {
+            session_id: session_id.to_string(),
+            source: WorkspaceChatMessagesSource::Authoritative,
+            messages,
+            has_more: false,
+            next_before: None,
+        })
+    }
+
     /// Get one page of messages, oldest-first. `before` is an opaque cursor
     /// from a previous response's `next_before`; `None` returns the newest page.
     pub async fn get_workspace_chat_session_messages_paged(

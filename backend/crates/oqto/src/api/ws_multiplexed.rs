@@ -2158,13 +2158,8 @@ async fn handle_get_messages(
     // prompts after reconnect. Live streaming events remain an overlay in the
     // frontend; persisted history comes from oqto-log.
     match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        runner.get_workspace_chat_session_messages(
-            session_id,
-            false,
-            None,
-            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
-        ),
+        std::time::Duration::from_secs(10),
+        runner.get_workspace_chat_session_messages_all(session_id, false),
     )
     .await
     {
