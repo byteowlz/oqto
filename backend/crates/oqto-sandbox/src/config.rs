@@ -2403,11 +2403,8 @@ impl SandboxConfig {
             self.profile
         );
 
-        // Check if bwrap is available
-        if !Self::is_bwrap_available() {
-            warn!("bubblewrap (bwrap) not found, sandboxing disabled");
-            return None;
-        }
+        // Pure policy -> argv translation; whether bwrap exists is checked
+        // where it is executed (spawn paths refuse to run unsandboxed).
 
         // Per-workspace toolchain caches. Under an enforcing profile the real
         // caches are not writable, so builds need a writable location that is
@@ -3286,7 +3283,7 @@ mod tests {
         std::fs::create_dir_all(&ws_a).expect("ws a");
         std::fs::create_dir_all(&ws_b).expect("ws b");
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.landlock_mode = LandlockMode::Enforce;
         config.workspace_cache_enabled = true;
         config.workspace_cache_root = tmp.path().join("caches").to_string_lossy().to_string();
@@ -3400,7 +3397,7 @@ mod tests {
         let workspace = tmp.path().join("ws");
         std::fs::create_dir_all(&workspace).expect("workspace");
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.landlock_mode = LandlockMode::Enforce;
         config.allow_write = vec!["/tmp".to_string()];
 
@@ -3434,7 +3431,7 @@ mod tests {
         let workspace = tmp.path().join("ws");
         std::fs::create_dir_all(&workspace).expect("workspace");
 
-        let config = SandboxConfig::from_profile("strict");
+        let config = strict_fixture();
         let args = config
             .build_bwrap_args_for_user(&workspace, None)
             .expect("args built");
@@ -3467,7 +3464,7 @@ mod tests {
 
         // Only the strict profile layers individual writable dirs on a
         // read-only home; development/minimal bind the whole home read-write.
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.allow_write = vec![
             present.to_string_lossy().to_string(),
             absent.to_string_lossy().to_string(),
@@ -3652,6 +3649,24 @@ max_cpu_seconds = 32
 
     fn env_guard() -> std::sync::MutexGuard<'static, ()> {
         ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The strict profile with its enforced Landlock shim and seccomp policy
+    /// supplied as fixtures, so argv tests do not depend on the developer's
+    /// installed `oqto-sandbox` binary or system seccomp policy file.
+    fn strict_fixture() -> SandboxConfig {
+        static FIXTURES: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        let dir = FIXTURES.get_or_init(|| {
+            let dir = tempdir().expect("fixture dir").keep();
+            std::fs::write(dir.join("oqto-sandbox"), b"#!/bin/true\n").expect("shim fixture");
+            std::fs::write(dir.join("seccomp.bpf"), b"bpf").expect("seccomp fixture");
+            dir
+        });
+        crate::landlock_shim::TEST_SHIM_BINARY
+            .with(|shim| *shim.borrow_mut() = Some(dir.join("oqto-sandbox")));
+        let mut config = SandboxConfig::from_profile("strict");
+        config.seccomp_bpf_path = Some(dir.join("seccomp.bpf").to_string_lossy().into_owned());
+        config
     }
 
     #[test]
@@ -4117,10 +4132,7 @@ log_requests = true
             None => unsafe { env::remove_var("PATH") },
         }
 
-        let Some(args) = result else {
-            eprintln!("skipping: bwrap unavailable");
-            return;
-        };
+        let args = result.expect("a sparse launcher PATH must not prevent building args");
 
         let path_idx = args
             .windows(2)
@@ -4258,12 +4270,8 @@ log_requests = true
     }
 
     /// Builds bwrap args for `cfg` against a fresh HOME, or returns `None` when
-    /// the builder refuses. Skips (returns `Some(vec![])`) when bwrap is absent.
+    /// the builder refuses. Pure: does not need bwrap installed.
     fn args_for(cfg: &SandboxConfig) -> Option<Vec<String>> {
-        if !SandboxConfig::is_bwrap_available() {
-            eprintln!("skipping: bwrap not available");
-            return Some(vec![]);
-        }
         let _env = env_guard();
         let temp = tempdir().unwrap();
         let original_home = env::var_os("HOME");
@@ -4293,10 +4301,6 @@ log_requests = true
 
     #[test]
     fn proxy_mode_without_port_fails_closed() {
-        if !SandboxConfig::is_bwrap_available() {
-            eprintln!("skipping: bwrap not available");
-            return;
-        }
         let cfg = config_with_network(NetworkConfig {
             mode: NetworkMode::Proxy,
             proxy_tcp_port: None,
@@ -4403,7 +4407,7 @@ log_requests = true
         let home = dirs::home_dir().expect("home");
         let home_str = home.to_string_lossy().to_string();
 
-        let config = SandboxConfig::from_profile("strict");
+        let config = strict_fixture();
         assert_eq!(config.read_policy, ReadPolicy::Allowlist);
         let args = config
             .build_bwrap_args_for_user(&workspace, None)
@@ -4438,7 +4442,7 @@ log_requests = true
         std::fs::create_dir_all(&present).expect("present");
         let absent = tmp.path().join("definitely-absent");
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.allow_read = vec![
             present.to_string_lossy().to_string(),
             absent.to_string_lossy().to_string(),
@@ -4475,7 +4479,7 @@ log_requests = true
         std::fs::create_dir_all(&workspace).expect("workspace");
         let home = dirs::home_dir().expect("home");
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.deny_read = vec!["~/.config".to_string(), "/usr/bin/systemctl".to_string()];
 
         let args = config
@@ -4568,7 +4572,7 @@ log_requests = true
         let workspace = home.join("byteowlz/demo");
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let config = SandboxConfig::from_profile("strict");
+        let config = strict_fixture();
         let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
 
         // Resolve while HOME still points at the fixture: these paths are
@@ -4750,7 +4754,7 @@ log_requests = true
         let workspace = home.join("mine");
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let config = SandboxConfig::from_profile("strict");
+        let config = strict_fixture();
         let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
 
         match original_home {
@@ -4954,7 +4958,7 @@ log_requests = true
         let secret = workspace.join("flag.txt");
         std::fs::write(&secret, "secret").unwrap();
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.deny_read = vec![secret.to_string_lossy().to_string()];
 
         let args = config.build_bwrap_args_for_user(&workspace, None).unwrap();
@@ -4987,7 +4991,7 @@ log_requests = true
         let workspace = home.join("ws");
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let mut config = SandboxConfig::from_profile("strict");
+        let mut config = strict_fixture();
         config.allow_read = vec!["~/.config/git".to_string()];
         config.deny_read = vec!["~/.config".to_string()];
 

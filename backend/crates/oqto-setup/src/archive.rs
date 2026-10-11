@@ -10,6 +10,9 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_ENTRIES: usize = 100_000;
 const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Installed trees are never group/other-writable, whatever the archive
+/// builder's umask recorded; execute and read bits are kept as archived.
+const PUBLIC_MODE_MASK: u32 = 0o755;
 
 pub(crate) fn extract_release(artifact: &Path, dst: &Path, root: &str) -> Result<()> {
     extract_with_limits(artifact, dst, Some(root), MAX_ENTRIES, MAX_UNPACKED_BYTES)
@@ -94,7 +97,7 @@ pub(crate) fn extract_with_limits(
         }
         if relative.as_os_str().is_empty() {
             // The archive root is the release directory itself.
-            fs::set_permissions(dst, fs::Permissions::from_mode(mode & 0o777))?;
+            fs::set_permissions(dst, fs::Permissions::from_mode(mode & PUBLIC_MODE_MASK))?;
             continue;
         }
         let target = dst.join(&relative);
@@ -109,7 +112,7 @@ pub(crate) fn extract_with_limits(
             }
             // Modes come from the archive, never from the installer's umask:
             // the release must be traversable by every runner principal.
-            fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(mode & PUBLIC_MODE_MASK))?;
         } else {
             create_public_parents(dst, &relative)?;
             let mut output = OpenOptions::new()
@@ -120,7 +123,7 @@ pub(crate) fn extract_with_limits(
             if copied != size {
                 anyhow::bail!("Invalid archive: truncated file data");
             }
-            fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(mode & PUBLIC_MODE_MASK))?;
         }
     }
     if seen.is_empty() {

@@ -45,9 +45,13 @@ fn platform_command(
     args: &[String],
     _stdin: SandboxStdin,
 ) -> Result<Command> {
-    let sandbox_args = config.build_bwrap_args_for_user(workspace, None).context(
-        "bubblewrap unavailable or sandbox policy rejected; refusing unsandboxed execution",
-    )?;
+    ensure!(
+        SandboxConfig::is_bwrap_available(),
+        "bubblewrap (bwrap) is not installed or not runnable; refusing unsandboxed execution"
+    );
+    let sandbox_args = config
+        .build_bwrap_args_for_user(workspace, None)
+        .context("sandbox policy rejected; refusing unsandboxed execution")?;
     let mut command = Command::new("bwrap");
     command.args(sandbox_args).arg(program).args(args);
     Ok(command)

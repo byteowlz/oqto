@@ -52,6 +52,15 @@ pub fn maybe_run_shim() -> Result<()> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Unit-test injection point: argv-construction tests must not depend on
+    /// the developer's installed shim. Thread-local, so no process environment
+    /// races; compiled only into this crate's unit tests.
+    pub(crate) static TEST_SHIM_BINARY: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Resolve the absolute path to a binary that can serve as the Landlock shim.
 ///
 /// Resolution order:
@@ -65,6 +74,10 @@ pub fn maybe_run_shim() -> Result<()> {
 /// outer process used new policy -- a mismatch that is invisible at runtime and
 /// produces misleading test results.
 pub fn resolve_shim_binary() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_SHIM_BINARY.with(|shim| shim.borrow().clone()) {
+        return Some(path);
+    }
     if let Ok(raw) = env::var(SHIM_BIN_OVERRIDE_ENV) {
         let p = PathBuf::from(raw);
         if p.exists() {

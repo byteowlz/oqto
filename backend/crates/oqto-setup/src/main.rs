@@ -1634,6 +1634,9 @@ mod tests {
     fn service_check_failure_restores_previous_release_before_marking_good() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
+        // Activation checks reject group/other-writable ancestors; a temp root
+        // must not inherit a permissive test umask (e.g. Ubuntu's 002).
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let releases = root.path().join("releases");
         let bins = root.path().join("bin");
         let web = root.path().join("web");
@@ -1677,6 +1680,9 @@ mod tests {
     fn activation_check_rejects_relative_symlink_and_writable_programs() {
         use std::os::unix::fs::{PermissionsExt, symlink};
         let root = tempfile::tempdir().unwrap();
+        // Activation checks reject group/other-writable ancestors; a temp root
+        // must not inherit a permissive test umask (e.g. Ubuntu's 002).
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let check = root.path().join("check");
         fs::write(&check, "#!/bin/sh\nexit 0\n").unwrap();
         fs::set_permissions(&check, fs::Permissions::from_mode(0o700)).unwrap();

@@ -607,9 +607,12 @@ impl ProcessManager {
             .map(|global| global.with_workspace_config(workspace));
 
         // Build bwrap args for the target user (important for multi-user mode)
+        // Argument construction is pure; executing bwrap needs it installed.
+        // Either missing piece falls through to the refusal below.
         let sandbox_args = effective_sandbox
             .as_ref()
             .filter(|s| s.enabled)
+            .filter(|_| SandboxConfig::is_bwrap_available())
             .and_then(|s| s.build_bwrap_args_for_user(workspace, target_user));
 
         if let Some(bwrap_args) = sandbox_args {

@@ -172,6 +172,8 @@ fn native_checked_tool_fixture_installs_without_clobbering_unmanaged_bin() -> Re
     )?;
     let bin = root.path().join("bin");
     fs::create_dir(&bin)?;
+    // An installer-owned bin directory is 0755; do not inherit the test umask.
+    fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
     fs::write(bin.join("unmanaged"), b"preserved")?;
     let output = Command::new(env!("CARGO_BIN_EXE_oqto-setup"))
         .args(["acquire", "--manifest"])
