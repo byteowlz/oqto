@@ -337,7 +337,7 @@
 	 * The box lands on the turn itself rather than on the message inside it,
 	 * because the header has to sit inside the border to be a header. */
 	:root[data-chat-agent="boxed"] .chat-turn--user {
-		max-inline-size: min(80%, 62ch);
+		max-inline-size: 80%;
 		margin-inline: auto 0;
 		align-items: stretch;
 		border: 1px solid color-mix(in oklab, var(--primary), transparent 68%);
