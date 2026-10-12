@@ -866,10 +866,8 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
     let mut warnings: Vec<String> = Vec::new();
 
     // 1. Stop user services (best-effort, they might not exist)
-    for svc in ["oqto-runner.service"] {
-        if let Err(e) = run_user_systemctl(&["stop", svc]) {
-            warnings.push(format!("stop {svc}: {e}"));
-        }
+    if let Err(e) = run_user_systemctl(&["stop", "oqto-runner.service"]) {
+        warnings.push(format!("stop oqto-runner.service: {e}"));
     }
 
     // 2. Disable linger (stops the user systemd instance from auto-starting)
@@ -1347,10 +1345,8 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     }
 
     // Enable managed user services.
-    for svc in ["oqto-runner.service"] {
-        if let Err(e) = run_user_systemctl(&["enable", svc]) {
-            eprintln!("oqto-usermgr: enable {svc} failed: {e}");
-        }
+    if let Err(e) = run_user_systemctl(&["enable", "oqto-runner.service"]) {
+        eprintln!("oqto-usermgr: enable oqto-runner.service failed: {e}");
     }
 
     // Check if the runner is already active. If so, restart to pick up
