@@ -1,0 +1,7 @@
+# One Rust toolchain for local builds, CI and release artifacts. New stable
+# releases add lints; bump this deliberately (and fix what they flag) instead
+# of letting CI drift ahead of developer machines.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

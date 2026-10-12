@@ -14,6 +14,8 @@ if [[ -z "${CARGO_HOME:-}" || "${CARGO_HOME:-}" == /usr/local/cargo* || ! -w "${
 fi
 mkdir -p "$CARGO_HOME"
 
+# The pinned toolchain from rust-toolchain.toml, unless explicitly overridden.
+CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$ROOT_DIR/rust-toolchain.toml" 2>/dev/null)}"
 CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-stable}"
 CARGO_CMD=(cargo "+$CARGO_TOOLCHAIN")
 if ! "${CARGO_CMD[@]}" --version >/dev/null 2>&1; then

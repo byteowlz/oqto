@@ -34,7 +34,8 @@ jobs:
           python3 -B scripts/release/check-tag-version.py --tag "$RELEASE_TAG"
           python3 -B scripts/tests/test-release-tag-version.py
           python3 -B scripts/tests/test-release-assets.py
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.2'
