@@ -135,14 +135,19 @@ describe("chat message rendering", () => {
 		// transcript must change measure at the same width, not at 640.
 		expect(stylesheet).toMatch(/@media \(max-width: 48rem\)/);
 
-		// The cap still governs a wide screen; this is a width rule, not a
-		// different shape for the turn. The boxed variant puts that cap on the
-		// turn, which is the one that governs the default appearance.
+		// Boxed desktop turns use a proportional cap, not a character cap:
+		// short questions must not be stranded in a narrow box on wide screens.
+		// Other appearance presets retain their own bubble measure.
 		const wide = stylesheet.slice(
 			0,
 			stylesheet.indexOf("A phone column is already"),
 		);
-		expect(wide).toMatch(/max-inline-size: min\(80%, 62ch\);/);
+		expect(wide).toMatch(
+			/data-chat-agent="boxed"\] \.chat-turn--user \{\s*max-inline-size: 80%;/,
+		);
+		expect(wide).not.toMatch(
+			/data-chat-agent="boxed"\] \.chat-turn--user \{\s*max-inline-size: min\(80%, 62ch\);/,
+		);
 		expect(phone).toMatch(
 			/data-chat-agent="boxed"\] \.chat-turn--user \{\s*max-inline-size: 100%;/,
 		);

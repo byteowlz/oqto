@@ -73,3 +73,6 @@ dist/immutable/pi-runtime/
 
 # Node dependencies (never tracked anywhere)
 node_modules/
+
+# trx ledger lives in the central store
+/.trx/
