@@ -1,0 +1,237 @@
+//! Disposable headless carrier for native Durable qualification, NOT an Oqto
+//! authentication route. The trusted test supervisor creates separate pipes
+//! for tools and operator; tools cannot select the control role over the wire.
+//! History is a bounded fixture, not direct access to real history stores.
+use anyhow::{Context, Result, bail, ensure};
+use oq_permissions::*;
+use oqto_sandbox::{
+    SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command, configure_bwrap_pre_exec,
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::{
+    io::{self, BufRead, Write},
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum Command {
+    Invoke {
+        operation: Operation,
+    },
+    Inspect {
+        id: String,
+    },
+    Decide {
+        id: String,
+        digest: String,
+        revision: u64,
+        lifetime: GrantLifetime,
+        allow: bool,
+    },
+    Revoke {
+        grant_id: String,
+    },
+}
+fn now() -> Result<u64> {
+    Ok(u64::try_from(
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+    )?)
+}
+
+fn confined_read(directory: &std::path::Path) -> Result<String> {
+    let extra = directory.join("extra").canonicalize()?;
+    let file = extra.join("token").canonicalize()?;
+    ensure!(
+        file.starts_with(&extra),
+        "file resource escaped its registered root"
+    );
+    let mut config = SandboxConfig::strict();
+    config.allow_read.clear();
+    config.allow_write.clear();
+    config.extra_ro_bind = vec![extra.display().to_string()];
+    config.extra_rw_bind.clear();
+    config.workspace_cache_enabled = false;
+    config.seccomp_mode = SeccompMode::Enforce;
+    config.seccomp_bpf_path = Some(std::env::var("OQ_ADAPTIVE_SECCOMP_BPF")?);
+    let args = vec!["-c".into(), "4096".into(), file.display().to_string()];
+    let workdir = directory.join("workdir");
+    let mut command = build_sandbox_command(
+        &config,
+        &workdir,
+        std::path::Path::new("/usr/bin/head"),
+        &args,
+        SandboxStdin::Redirected,
+    )?;
+    command.env_clear().stdin(std::process::Stdio::null());
+    configure_bwrap_pre_exec(&mut command, &config, &workdir, None)?;
+    // Fresh read-only hands per invocation: wait confirms completion/teardown
+    // before the permission carrier can admit another operation.
+    let output = command.output()?;
+    ensure!(
+        output.status.success(),
+        "confined fixture read failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let mut args = std::env::args().skip(1);
+    let role = args.next().context("role: tools or operator")?;
+    ensure!(
+        role == "tools" || role == "operator",
+        "unsupported carrier role"
+    );
+    let directory = PathBuf::from(
+        args.next()
+            .context("private fixture authority directory required")?,
+    );
+    ensure!(args.next().is_none(), "unexpected arguments");
+    let binding = Binding {
+        account_id: "fixture-owner".into(),
+        principal_id: "fixture-principal".into(),
+        workspace_id: "fixture-workspace".into(),
+        work_directory_id: "fixture-workdir".into(),
+        session_id: "fixture-public-session".into(),
+        audience: "fixture-owner-only".into(),
+    };
+    let policy = Policy {
+        revision: "fixture-v1".into(),
+        rules: vec![
+            Rule {
+                target: Target {
+                    capability: Capability::HistorySearch,
+                    resource_id: "own-history".into(),
+                },
+                mode: RuleMode::Allow,
+            },
+            Rule {
+                target: Target {
+                    capability: Capability::HistorySearch,
+                    resource_id: "account-history".into(),
+                },
+                mode: RuleMode::Ask,
+            },
+            Rule {
+                target: Target {
+                    capability: Capability::FileRead,
+                    resource_id: "extra-resource".into(),
+                },
+                mode: RuleMode::Ask,
+            },
+        ],
+    };
+    let authority = Authority::open(&directory.join("permissions.sqlite"), binding, policy).await?;
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let mut stdout = io::stdout().lock();
+    let mut reads = 0;
+    loop {
+        // Hard frame limit, including malformed/unterminated input. Do not
+        // allocate an unbounded string before checking the protocol limit.
+        let mut frame = Vec::new();
+        loop {
+            let buffer = input.fill_buf()?;
+            if buffer.is_empty() {
+                break;
+            }
+            let count = buffer
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(buffer.len(), |i| i + 1);
+            ensure!(frame.len() + count <= 16_384, "carrier frame too large");
+            let newline = buffer[count - 1] == b'\n';
+            frame.extend_from_slice(&buffer[..count]);
+            input.consume(count);
+            if newline {
+                break;
+            }
+        }
+        if frame.is_empty() {
+            break;
+        }
+        let response: Result<Value> = async {
+            let command: Command = serde_json::from_slice(&frame)?;
+            match command {
+                Command::Invoke { operation } if role == "tools" => {
+                    let admission = authority.admit(operation.clone(), now()?).await?;
+                    match &admission {
+                        Admission::Allowed(permit) => {
+                            authority.check(permit, &operation, now()?).await?;
+                            let text = match operation.target.capability {
+                                Capability::HistorySearch => {
+                                    ensure!(
+                                        operation.arguments == json!({"query":"fixture-token"}),
+                                        "unsupported fixture query"
+                                    );
+                                    match operation.target.resource_id.as_str() {
+                                        "own-history" => "own fixture-token".to_string(),
+                                        "account-history" => "broader fixture-token".to_string(),
+                                        _ => bail!("unknown fixture history resource"),
+                                    }
+                                }
+                                Capability::FileRead => {
+                                    ensure!(
+                                        operation.target.resource_id == "extra-resource"
+                                            && operation.arguments
+                                                == json!({"relative_path":"token"}),
+                                        "unsupported fixture file resource/arguments"
+                                    );
+                                    confined_read(&directory)?
+                                }
+                                _ => bail!("fixture does not implement this provider"),
+                            };
+                            reads += 1;
+                            authority.check(permit, &operation, now()?).await?;
+                            Ok(json!({"status":"allowed", "text":text, "fixture_reads":reads}))
+                        }
+                        _ => Ok(json!({"admission":admission, "fixture_reads":reads})),
+                    }
+                }
+                Command::Inspect { id } if role == "operator" => {
+                    Ok(json!({"request":authority.inspect(&id).await?}))
+                }
+                Command::Decide {
+                    id,
+                    digest,
+                    revision,
+                    lifetime,
+                    allow,
+                } if role == "operator" => {
+                    let time = now()?;
+                    let request = authority
+                        .decide(
+                            "fixture-owner",
+                            &id,
+                            &digest,
+                            revision,
+                            lifetime,
+                            allow,
+                            time.checked_add(60_000).context("expiry overflow")?,
+                            time,
+                        )
+                        .await?;
+                    Ok(json!({"request":request}))
+                }
+                Command::Revoke { grant_id } if role == "operator" => {
+                    authority.revoke("fixture-owner", &grant_id).await?;
+                    Ok(json!({"revoked":true}))
+                }
+                _ => bail!("command unavailable on this role/channel"),
+            }
+        }
+        .await;
+        let encoded = match response {
+            Ok(value) => json!({"ok":true, "result":value}),
+            Err(error) => json!({"ok":false, "error":error.to_string()}),
+        };
+        writeln!(stdout, "{encoded}")?;
+        stdout.flush()?;
+    }
+    authority.close().await;
+    Ok(())
+}

@@ -117,6 +117,11 @@ test-containment:
 test-frontend:
     cd frontend && bun run test
 
+# Isolated adaptive permissions + real Durable/confinement qualification.
+# Requires the previously built exact upstream source; never installs/activates.
+test-adaptive-sandbox PI_SOURCE:
+    bash tools/adaptive-sandbox/run.sh "{{PI_SOURCE}}"
+
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:
     ./scripts/sandbox/tests/run-all.sh {{ARGS}}

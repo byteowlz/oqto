@@ -63,6 +63,19 @@ _Avoid_: agent (ambiguous), backend (wrong layer)
 The level of network/process containment a session runs under: open, level-2 (captured egress — netns redirect to the eavs egress firewall + domain ACL), level-3 (microVM). A runner-side per-session policy, advertised as a placement capability, not a backend runtime mode (see ADR-0001, ADR-0007).
 _Avoid_: sandbox profile (that is the bwrap/landlock file-access config, a different axis), network mode
 
+**Permission Policy**:
+The protected ceiling and baseline for a bound Session's semantic operations. Distinguishes allowed, requestable and prohibited access; an approval cannot override a prohibition. Process confinement implements part of this policy, not its entirety (ADR-0053).
+
+**Permission Request**:
+A pending decision about an exact operation, bound to its acting authority, resource, arguments, policy revision and disclosure audience. Waiting for this decision does not create a new Session or itself confer authority.
+
+**Permission Grant**:
+An approved, scoped and expiring authorization for a logical operation or Session. Distinct from a tool being advertised, a reachable socket, or a filesystem mount; revocation blocks subsequent admitted access but does not undo effects or erase disclosed data.
+
+**Executor**:
+Runner-supervised confined execution of files, processes and untrusted code on behalf of a Harness. Replaceable without replacing the Session; a generation identifies one admission boundary, not durable conversation identity.
+_Avoid_: brain (the Harness's orchestration), Session (its durable identity); hands is informal shorthand only.
+
 **Session**:
 One durable harness conversation identified publicly by one Oqto session id. A Session may contain an in-session entry tree, but remains one Session until explicitly forked.
 _Avoid_: conversation (ambiguous), process (one Session may have many runtime incarnations)
