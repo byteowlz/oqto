@@ -18,14 +18,28 @@ if not workdir.is_dir():
 if subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() != PIN:
     raise SystemExit("Wrong Pi source pin")
 subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--"], check=True)
-files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/worker.ts", repo / "tools/oqt/launcher.ts", *sorted((repo / "tools/oqt/plugin").rglob("*"))]
+files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / "tools/oqt/worker.ts", repo / "tools/oqt/launcher.ts", *sorted((repo / "tools/oqt/plugin").rglob("*"))]
 files = [file for file in files if file.is_file()]
 identity = hashlib.sha256(PIN.encode())
 for file in files:
     identity.update(str(file.relative_to(repo)).encode()); identity.update(file.read_bytes())
-with (repo / "backend/target/debug/examples/permission_carrier").open("rb") as binary:
-    while chunk := binary.read(1024 * 1024):
-        identity.update(chunk)
+binary_path = repo / "backend/target/debug/examples/permission_carrier"
+meta = binary_path.stat()
+binary_identity = [meta.st_ino,meta.st_size,meta.st_mtime_ns]
+digest_cache = repo / "backend/target/oqt-prepared/carrier-digest.json"
+saved_digest = json.loads(digest_cache.read_text()) if digest_cache.is_file() else {}
+if saved_digest.get("identity") == binary_identity:
+    binary_digest = saved_digest["digest"]
+else:
+    binary_hash = hashlib.sha256()
+    with binary_path.open("rb") as binary:
+        while chunk := binary.read(1024 * 1024):
+            binary_hash.update(chunk)
+    binary_digest = binary_hash.hexdigest()
+    temporary = digest_cache.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"identity":binary_identity,"digest":binary_digest}))
+    temporary.replace(digest_cache)
+identity.update(binary_digest.encode())
 artifact = identity.hexdigest()[:20]
 # Keep Linux sockaddr_un paths below 108 bytes, including server UUID/nonces.
 base = Path("/var/tmp") / f"q{os.getuid()}-{artifact[:10]}"

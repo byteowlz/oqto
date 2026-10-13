@@ -29,13 +29,23 @@ Local operator trust is this prototype's private OS-owned Unix/profile boundary.
 
 Runtime/profile directories are private and hash-keyed; unknown or non-private directories, workspace collisions and runtime edits are refused. Unix socket paths are bounded below Linux's 108-byte limit. Runtime artifact changes produce a new profile; demo Sessions are not automatically migrated across artifacts. Files under existing `~/.pi`/`~/.config`, ordinary Pi JSONL and installed commands are not rewritten. No PATH installation, service activation, release tag, or deployment occurs.
 
-Build/preparation phases use one CPU, nice 19, one Cargo worker and 90-second deadlines. The interactive session inherits affinity/nice and a 512 MiB V8 heap ceiling (not an aggregate memory quota). Closing the TUI closes its source-only server and workers. Simultaneous-client launcher/reuse and abnormal termination/recovery are not qualified here.
+Warm launches cache Cargo preparation and seccomp generation by source/toolchain inputs and artifact identities; carrier hashing is cached by file identity. These are performance caches, not authority or signatures. Runtime source hashes are still checked. Build/preparation phases use one CPU, nice 19, one Cargo worker and 90-second deadlines. The interactive session inherits affinity/nice and a 512 MiB V8 heap ceiling (not an aggregate memory quota). Closing the TUI closes its source-only server and workers. Simultaneous-client launcher/reuse and abnormal termination/recovery are not qualified here.
+
+## Real-session groundwork (not activated)
+
+`oqt_hands.rs` starts the actual Pi `RemoteExecutionEnv` daemon inside enforcing bwrap/seccomp, with a trusted private spec, workspace read/write, no network, clean environment, explicit protected roots and no host-local fallback. An independent native transport test proves workspace FS/shell work and outside/authority/symlink reads fail. This transport is not yet connected to the permission ledger or the normal coding registry. Its strict fixture policy does **not** qualify the production global/workspace ceiling compiler. Do not enable it as a real Session until those gates and drain/replacement fencing are wired.
+
+`readonly-profile.ts` provides an owning-machine read-only credential interface: no profile writes, credential commands, logout, or OAuth refresh side effects. Static API keys are supported in this initial module; OAuth is deliberately rejected before any refresh callback. OAuth-backed defaults require the owning credential-broker integration, not a secret copy or unsynchronized token rotation. The module is not connected to the launcher yet.
 
 ## Proof
 
 ```sh
 ./oqt --smoke
 just test-oqt-ui
+# Independent transport/credential foundation, with explicit exact-source artifacts:
+just test-oqt-hands /tmp/oqto-pi-service-spike.PVTso2/source \
+  /tmp/oqto-pi-env-qualified-target/debug/pi-env \
+  backend/target/oqt-prepared/bpf/default-x86_64.bpf
 CARGO_TARGET_DIR=/home/wismut/byteowlz/oqto_refactor/backend/target \
   just test-adaptive-sandbox /tmp/oqto-pi-service-spike.PVTso2/source
 ```

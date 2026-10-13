@@ -20,20 +20,16 @@ export CARGO_BUILD_JOBS=1
 # Runtime artifacts are local to this worktree, never installed globally.
 export CARGO_TARGET_DIR="$root/backend/target"
 bounded() { timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 "$@"; }
-cd "$root/backend"
-bounded cargo build --offline -p oq-permissions --example permission_carrier
-bounded cargo build --offline -p oqto-sandbox --bin seccomp-policy-gen
 cd "$root"
+bpf=$(bounded python3 tools/oqt/build-assets.py)
 runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir")
 value() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$runtime" "$1"; }
 snapshot=$(value source); profile=$(value profile); home=$(value home); agent=$(value agent)
-mkdir -p "$profile/bpf"
-bounded "$CARGO_TARGET_DIR/debug/seccomp-policy-gen" --policy "$root/backend/crates/oqto/examples/seccomp/default.policy.toml" --out-dir "$profile/bpf" --arches x86_64
 cd "$workdir"
 exec taskset -c "$cpu" nice -n 19 env -i PATH="$PATH" HOME="$home" LANG="${LANG:-C.UTF-8}" \
  TERM="${TERM:-xterm-256color}" COLORTERM="${COLORTERM:-}" \
  NODE_OPTIONS=--max-old-space-size=512 PI_EXPERIMENTAL=1 PI_CODING_AGENT_DIR="$agent" \
  OQT_SERVER_DIR="$profile" OQT_CARRIER="$CARGO_TARGET_DIR/debug/examples/permission_carrier" \
- OQT_SECCOMP_BPF="$profile/bpf/default-x86_64.bpf" \
+ OQT_SECCOMP_BPF="$bpf" \
  node --import "$snapshot/packages/coding-agent/src/experimental/source-resolver.ts" \
  "$snapshot/packages/coding-agent/src/experimental/oqt-launcher.ts" "${args[@]}"

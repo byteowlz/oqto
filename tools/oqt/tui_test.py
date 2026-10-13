@@ -17,6 +17,7 @@ CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 class Terminal:
     def __init__(self):
+        self.started = time.monotonic()
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 112, 0, 0))
         self.process = subprocess.Popen([str(ROOT / "oqt"), "--demo"], cwd=ROOT,
@@ -58,6 +59,7 @@ def scenario(prompt, choice, result, label, revoke=False):
     terminal = Terminal()
     try:
         terminal.expect("faux/faux-1")
+        print(f"TUI ready ({label}): {time.monotonic()-terminal.started:.3f}s", flush=True)
         terminal.expect("oqt DEMO")
         marker = len(terminal.raw)
         terminal.send(prompt + "\r")
