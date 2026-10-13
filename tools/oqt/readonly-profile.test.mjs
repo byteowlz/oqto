@@ -28,7 +28,12 @@ test("read-only credentials never execute key commands, mutate the owning file o
 		assert.equal(await store.read("missing"), undefined);
 		assert.equal((await store.list()).length, 3);
 		await assert.rejects(store.read("command"), /commands/);
-		await assert.rejects(store.read("oauth"), /OAuth/);
+		assert.deepEqual(await store.read("oauth"), {
+			type: "oauth",
+			access: "fixture-access",
+			refresh: "",
+			expires: 0,
+		});
 		await assert.rejects(
 			store.modify("oauth", async () => {
 				invoked = true;
@@ -42,7 +47,7 @@ test("read-only credentials never execute key commands, mutate the owning file o
 		await rm(path);
 		await writeFile(join(root, "other"), original);
 		await symlink(join(root, "other"), path);
-		await assert.rejects(store.read("static"), /regular file/);
+		await assert.rejects(store.read("static"), { code: "ELOOP" });
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
