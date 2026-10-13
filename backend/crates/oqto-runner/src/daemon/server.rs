@@ -3871,12 +3871,23 @@ impl Runner {
                     // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
                         let session_id = sub_req.session_id.clone();
-                        if let Err(e) = self
-                            .handle_pi_subscribe(&session_id, sub_req.resume.as_ref(), &mut writer)
-                            .await
-                        {
-                            error!("Failed to handle Pi subscription: {}", e);
-                            break;
+                        // An idle session emits nothing, so a write failure
+                        // would never reveal a departed client: watch for EOF.
+                        tokio::select! {
+                            result = self.handle_pi_subscribe(
+                                &session_id,
+                                sub_req.resume.as_ref(),
+                                &mut writer,
+                            ) => {
+                                if let Err(e) = result {
+                                    error!("Failed to handle Pi subscription: {}", e);
+                                    break;
+                                }
+                            }
+                            () = client_closed(&mut reader) => {
+                                debug!("Client disconnected during Pi subscription {session_id}");
+                                break;
+                            }
                         }
                         // After subscription ends, continue the connection loop
                         continue;
@@ -3927,58 +3938,76 @@ impl Runner {
                                     }
                                 }
 
-                                // Stream new lines as they arrive
-                                loop {
-                                    match rx.recv().await {
-                                        Ok(StdoutEvent::Line(stdout_line)) => {
-                                            let resp =
-                                                RunnerResponse::StdoutLine(StdoutLineResponse {
-                                                    id: process_id.clone(),
-                                                    line: stdout_line,
-                                                });
-                                            let line = match Self::serialize_response_line(&resp) {
-                                                Ok(line) => line,
-                                                Err(err) => {
-                                                    error!(
-                                                        "Failed to serialize stdout line event: {}",
-                                                        err
-                                                    );
+                                // Stream new lines as they arrive, until the
+                                // process ends or the client goes away.
+                                let stream = async {
+                                    loop {
+                                        match rx.recv().await {
+                                            Ok(StdoutEvent::Line(stdout_line)) => {
+                                                let resp = RunnerResponse::StdoutLine(
+                                                    StdoutLineResponse {
+                                                        id: process_id.clone(),
+                                                        line: stdout_line,
+                                                    },
+                                                );
+                                                let line = match Self::serialize_response_line(
+                                                    &resp,
+                                                ) {
+                                                    Ok(line) => line,
+                                                    Err(err) => {
+                                                        error!(
+                                                            "Failed to serialize stdout line event: {}",
+                                                            err
+                                                        );
+                                                        break;
+                                                    }
+                                                };
+                                                if writer.write_all(line.as_bytes()).await.is_err()
+                                                {
                                                     break;
                                                 }
-                                            };
-                                            if writer.write_all(line.as_bytes()).await.is_err() {
+                                            }
+                                            Ok(StdoutEvent::Closed { exit_code }) => {
+                                                let resp =
+                                                    RunnerResponse::StdoutEnd(StdoutEndResponse {
+                                                        id: process_id.clone(),
+                                                        exit_code,
+                                                    });
+                                                if let Ok(line) =
+                                                    Self::serialize_response_line(&resp)
+                                                {
+                                                    let _ = writer.write_all(line.as_bytes()).await;
+                                                }
+                                                break;
+                                            }
+                                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                                warn!(
+                                                    "Stdout subscription lagged, missed {} events",
+                                                    n
+                                                );
+                                                // Continue receiving
+                                            }
+                                            Err(broadcast::error::RecvError::Closed) => {
+                                                let resp =
+                                                    RunnerResponse::StdoutEnd(StdoutEndResponse {
+                                                        id: process_id.clone(),
+                                                        exit_code: None,
+                                                    });
+                                                if let Ok(line) =
+                                                    Self::serialize_response_line(&resp)
+                                                {
+                                                    let _ = writer.write_all(line.as_bytes()).await;
+                                                }
                                                 break;
                                             }
                                         }
-                                        Ok(StdoutEvent::Closed { exit_code }) => {
-                                            let resp =
-                                                RunnerResponse::StdoutEnd(StdoutEndResponse {
-                                                    id: process_id.clone(),
-                                                    exit_code,
-                                                });
-                                            if let Ok(line) = Self::serialize_response_line(&resp) {
-                                                let _ = writer.write_all(line.as_bytes()).await;
-                                            }
-                                            break;
-                                        }
-                                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                                            warn!(
-                                                "Stdout subscription lagged, missed {} events",
-                                                n
-                                            );
-                                            // Continue receiving
-                                        }
-                                        Err(broadcast::error::RecvError::Closed) => {
-                                            let resp =
-                                                RunnerResponse::StdoutEnd(StdoutEndResponse {
-                                                    id: process_id.clone(),
-                                                    exit_code: None,
-                                                });
-                                            if let Ok(line) = Self::serialize_response_line(&resp) {
-                                                let _ = writer.write_all(line.as_bytes()).await;
-                                            }
-                                            break;
-                                        }
+                                    }
+                                };
+                                tokio::select! {
+                                    () = stream => {}
+                                    () = client_closed(&mut reader) => {
+                                        debug!("Client disconnected during stdout subscription {process_id}");
+                                        break;
                                     }
                                 }
                                 // After subscription ends, continue the connection loop
@@ -4381,6 +4410,19 @@ fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
         closed_at: issue.closed_at.map(|t| t.to_rfc3339()),
         parent_id,
         blocked_by,
+    }
+}
+
+/// Resolves once the client has closed its side of the connection.
+///
+/// Used while streaming, when no request is expected: EOF ends the stream so
+/// its socket and subscription are released. Bytes sent mid-stream are left
+/// buffered for the request loop and are not taken as a disconnect.
+async fn client_closed<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R) {
+    use tokio::io::AsyncBufReadExt;
+    match reader.fill_buf().await {
+        Ok([]) | Err(_) => {}
+        Ok(_) => std::future::pending::<()>().await,
     }
 }
 

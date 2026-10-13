@@ -32,6 +32,9 @@ ExecStart=/usr/local/bin/oqto-runner --socket %t/oqto-runner.sock
 
 Restart=on-failure
 RestartSec=5
+# Each client connection and Pi session holds descriptors; the 1024 default
+# was exhausted in production (trx-4s8v).
+LimitNOFILE=65536
 TimeoutStartSec=30
 
 # Environment

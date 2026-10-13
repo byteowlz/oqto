@@ -72,6 +72,9 @@ Type=notify
 ExecStart=${oqto_runner_bin} --socket %t/oqto-runner.sock
 Restart=on-failure
 RestartSec=5
+# Each client connection and Pi session holds descriptors; the 1024 default
+# was exhausted in production (trx-4s8v).
+LimitNOFILE=65536
 TimeoutStartSec=30
 Environment=RUST_LOG=info
 Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin

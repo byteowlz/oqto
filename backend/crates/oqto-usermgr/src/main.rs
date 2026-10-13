@@ -60,6 +60,9 @@ Type=notify
 ExecStart={RUNNER_BINARY} --socket {socket_path}
 Restart=always
 RestartSec=3
+# Each client connection and Pi session holds descriptors; the 1024 default
+# was exhausted in production (trx-4s8v).
+LimitNOFILE=65536
 Environment=RUST_LOG=info
 Environment=PATH={user_path}
 Environment=HOME={home}
