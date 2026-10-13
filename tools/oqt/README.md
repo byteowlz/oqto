@@ -37,6 +37,8 @@ Warm launches cache Cargo preparation and seccomp generation by source/toolchain
 
 `readonly-profile.ts` provides an owning-machine read-only credential interface: no profile writes, credential commands, logout, or OAuth refresh side effects. It opens owned private regular files without following the final symlink, bounds reads on the opened descriptor, and rereads each invocation. Static API keys and existing OAuth access tokens are supported; refresh secrets are removed from the returned credential. The exact upstream OAuth resolver is tested: valid tokens resolve with account metadata; expired/near-expiry tokens fail before its refresh callback; no ambient API-key fallback occurs after that failure. An atomic credential replacement by the owning Pi becomes visible on the next invocation. This is a **read-only bridge**, not an automatic refresh broker: renew through owning Pi when needed. No original credential is copied to a new profile. The interface is not connected to the launcher yet, and no live provider request is claimed.
 
+`owner-models.ts` reads owning Pi model defaults and exposes an upstream `ModelsStore` with owner catalog reads plus an in-memory write/delete overlay. Runtime cache updates never create locks or modify the original catalog; a new runtime starts again from the owner's catalog. An exact upstream `ModelRuntime.create` fixture test composes a custom provider/model and derives its auth with no profile writes. This is local composition evidence, **not** a live provider turn. Normal coding registry/launcher integration remains disabled.
+
 ## Proof
 
 ```sh

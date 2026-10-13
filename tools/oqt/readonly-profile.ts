@@ -9,7 +9,10 @@ import type {
 	CredentialStore,
 } from "@earendil-works/pi-ai";
 
-async function ownedJson(path: string): Promise<Record<string, unknown>> {
+export async function readOwnedJson(
+	path: string,
+	privateOnly = true,
+): Promise<Record<string, unknown>> {
 	const handle = await open(
 		path,
 		constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -20,7 +23,7 @@ async function ownedJson(path: string): Promise<Record<string, unknown>> {
 		if (
 			!info.isFile() ||
 			info.uid !== userInfo().uid ||
-			info.mode & 0o077 ||
+			info.mode & (privateOnly ? 0o077 : 0o022) ||
 			info.size > limit
 		)
 			throw new Error(
@@ -90,13 +93,13 @@ export function readOnlyCredentials(agentDirectory: string): CredentialStore {
 	return {
 		async read(providerId: string, options?: AuthOperationOptions) {
 			options?.signal?.throwIfAborted();
-			const data = await ownedJson(path);
+			const data = await readOwnedJson(path);
 			options?.signal?.throwIfAborted();
 			return credential(data[providerId]);
 		},
 		async list(options?: AuthOperationOptions) {
 			options?.signal?.throwIfAborted();
-			const data = await ownedJson(path);
+			const data = await readOwnedJson(path);
 			return Object.entries(data).flatMap(([providerId, value]) => {
 				if (typeof value !== "object" || value === null || !("type" in value))
 					return [];
