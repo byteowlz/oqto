@@ -39,6 +39,8 @@ Warm launches cache Cargo preparation and seccomp generation by source/toolchain
 
 `owner-models.ts` reads owning Pi model defaults and exposes an upstream `ModelsStore` with owner catalog reads plus an in-memory write/delete overlay. Runtime cache updates never create locks or modify the original catalog; a new runtime starts again from the owner's catalog. An exact upstream `ModelRuntime.create` fixture test composes a custom provider/model and derives its auth with no profile writes. This is local composition evidence, **not** a live provider turn. Normal coding registry/launcher integration remains disabled.
 
+`confined-coding.ts` composes only upstream `createCodingTools()` with `RemoteExecutionEnv`: read/write/edit/bash, no local environment factory, no codemode/skills/plugins/subagents. Conversation `cwd` must match the owner-bound workspace; missing/different targets fail. Native Durable proof runs a full write → edit → read → bash turn, verifies actual filesystem effects, and checks an outside authority read becomes a tool error with no secret in durable/model history. **This composition proves isolation only:** ledger admission/delivery, progress fencing, policy ceiling compilation, confirmed-stop/replacement and uncertain-effect reconciliation are not connected. Do not activate it for real models yet.
+
 ## Proof
 
 ```sh
