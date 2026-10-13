@@ -373,6 +373,58 @@ async fn deny_is_a_durable_disposition_not_a_repeated_prompt() {
 }
 
 #[tokio::test]
+async fn revoke_all_is_owner_only_durable_and_preserves_baseline() {
+    let (directory, authority) = setup().await;
+    let baseline = op("baseline", Capability::HistorySearch, "own-history");
+    let Admission::Allowed(baseline_permit) = authority.admit(baseline.clone(), 100).await.unwrap()
+    else {
+        panic!("baseline must be allowed");
+    };
+    let expanded = op("expanded", Capability::FileRead, "extra-directory");
+    let request = pending(&authority, &expanded).await;
+    approve(&authority, &request, GrantLifetime::Session).await;
+    let Admission::Allowed(permit) = authority.admit(expanded.clone(), 100).await.unwrap() else {
+        panic!("approved overlay must be allowed");
+    };
+    assert!(authority.revoke_all("agent").await.is_err());
+    authority.check(&permit, &expanded, 100).await.unwrap();
+    authority.close().await;
+    let reopened = Authority::open(
+        &directory.path().join("permissions.sqlite"),
+        binding(),
+        policy(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(reopened.revoke_all("owner").await.unwrap(), 1);
+    assert_eq!(reopened.revoke_all("owner").await.unwrap(), 0);
+    assert!(reopened.check(&permit, &expanded, 100).await.is_err());
+    // Ledger revisions fence *all* in-flight permits, including baseline.
+    // The immutable baseline remains available on fresh admission.
+    assert!(
+        reopened
+            .check(&baseline_permit, &baseline, 100)
+            .await
+            .is_err()
+    );
+    let Admission::Allowed(fresh_baseline) = reopened.admit(baseline.clone(), 100).await.unwrap()
+    else {
+        panic!("baseline must not need approval after overlay revocation");
+    };
+    reopened
+        .check(&fresh_baseline, &baseline, 100)
+        .await
+        .unwrap();
+    assert!(matches!(
+        reopened
+            .admit(op("next", Capability::FileRead, "extra-directory"), 100)
+            .await
+            .unwrap(),
+        Admission::Pending(_)
+    ));
+}
+
+#[tokio::test]
 async fn revoke_blocks_inflight_delivery_and_future_calls() {
     let (_dir, a) = setup().await;
     let operation = op("revoke", Capability::MemoryRead, "personal-memory");

@@ -360,6 +360,25 @@ impl Authority {
         Ok(())
     }
 
+    /// Operator-only revocation of this bound Session's approved overlays.
+    /// Baseline policy is not an overlay and remains pinned.
+    pub async fn revoke_all(&self, operator: &str) -> Result<u64> {
+        ensure!(
+            operator == self.binding.account_id,
+            "operator cannot revoke this Session"
+        );
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let count = sqlx::query("UPDATE grants SET revoked=1 WHERE revoked=0")
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if count > 0 {
+            advance(&mut tx).await?;
+        }
+        tx.commit().await?;
+        Ok(count)
+    }
+
     /// Check before entering the provider AND before returning results/pages.
     /// An unrelated authority mutation also fences old permits deliberately.
     pub async fn check(&self, permit: &Permit, operation: &Operation, now: u64) -> Result<()> {

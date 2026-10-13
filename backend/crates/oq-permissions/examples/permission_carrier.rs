@@ -34,6 +34,7 @@ enum Command {
     Revoke {
         grant_id: String,
     },
+    RevokeAll,
 }
 fn now() -> Result<u64> {
     Ok(u64::try_from(
@@ -91,7 +92,7 @@ async fn main() -> Result<()> {
             .context("private fixture authority directory required")?,
     );
     ensure!(args.next().is_none(), "unexpected arguments");
-    let binding = Binding {
+    let default_binding = Binding {
         account_id: "fixture-owner".into(),
         principal_id: "fixture-principal".into(),
         workspace_id: "fixture-workspace".into(),
@@ -99,6 +100,14 @@ async fn main() -> Result<()> {
         session_id: "fixture-public-session".into(),
         audience: "fixture-owner-only".into(),
     };
+    // This environment is set only by the trusted demo runner, never read
+    // from a tool/control frame. It is not a production identity assertion.
+    let binding = match std::env::var("OQ_DEMO_BINDING") {
+        Ok(encoded) => serde_json::from_str::<Binding>(&encoded)?,
+        Err(std::env::VarError::NotPresent) => default_binding,
+        Err(error) => return Err(error.into()),
+    };
+    let operator = binding.account_id.clone();
     let policy = Policy {
         revision: "fixture-v1".into(),
         rules: vec![
@@ -205,7 +214,7 @@ async fn main() -> Result<()> {
                     let time = now()?;
                     let request = authority
                         .decide(
-                            "fixture-owner",
+                            &operator,
                             &id,
                             &digest,
                             revision,
@@ -218,8 +227,11 @@ async fn main() -> Result<()> {
                     Ok(json!({"request":request}))
                 }
                 Command::Revoke { grant_id } if role == "operator" => {
-                    authority.revoke("fixture-owner", &grant_id).await?;
+                    authority.revoke(&operator, &grant_id).await?;
                     Ok(json!({"revoked":true}))
+                }
+                Command::RevokeAll if role == "operator" => {
+                    Ok(json!({"revoked":authority.revoke_all(&operator).await?}))
                 }
                 _ => bail!("command unavailable on this role/channel"),
             }

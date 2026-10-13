@@ -27,11 +27,12 @@ Broker grants need no process restart. Direct mount/seccomp expansion uses fresh
 - [x] Actual bwrap/seccomp denies extra access before grant/after revoked replacement. Native fresh hands preserve native conversation identity; persistent replacement is separately proven with a stable supervisor/fixture Session binding.
 - [ ] Descendant cleanup and stale-generation rejection; interrupted effects explicitly uncertain.
 - [x] Native Durable read-only permission wait/recovery demonstrated separately from synthetic core tests.
-- [ ] TUI/Web/headless use the same semantic contract; no claim of shipped UI before authenticated integration.
+- [x] Source-only upstream Pi TUI fixture demo uses the same ledger/gates: in-turn Once/Session approval, default denial and live revoke/re-request pass PTY coverage. See `tools/oqt/README.md`.
+- [ ] Authenticated TUI/Web/headless integration and real coding profiles; the private local demo is not a shipped production UI.
 - [x] Resource-bounded gates, no user config/live service changes, no default activation.
 
 Initial proof uses disposable resources and a deterministic provider. A headless trusted operator is the initial approval surface. App grants already have reviewed-definition binding but are App-instance-specific; do not reuse those rows as generic Session grants or introduce a bypass to App authority.
 
 ## Consequences
 
-The runner remains sole execution authority. Narrow service grants can adapt immediately; confinement generation changes may require a brief reload-like transition. Pending work, decisions and effect disposition are inspectable. Multi-client private-history disclosure must be approved for the Session audience; hiding a tool card alone is insufficient. Authentication, real mmry/trx providers, full oqto-log translation and Pi TUI facets remain explicit integration gates until demonstrated.
+The runner remains sole execution authority. Narrow service grants can adapt immediately; confinement generation changes may require a brief reload-like transition. Pending work, decisions and effect disposition are inspectable. Multi-client private-history disclosure must be approved for the Session audience; hiding a tool card alone is insufficient. Authentication, real mmry/trx providers, full oqto-log translation and production Pi TUI integration remain explicit gates. The source-only `oqt` fixture TUI is separately demonstrated and does not qualify those gates.
