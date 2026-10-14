@@ -2,7 +2,8 @@
 //! The trusted owner supplies a private spec; model tool arguments cannot alter it.
 use anyhow::{Context, Result, ensure};
 use oqto_sandbox::{
-    SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command, configure_bwrap_pre_exec,
+    NetworkConfig, NetworkMode, SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command,
+    configure_bwrap_pre_exec,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -14,6 +15,19 @@ struct HandsSpec {
     daemon: PathBuf,
     bpf: PathBuf,
     protected_roots: Vec<PathBuf>,
+    /// Operator-approved extra resources, compiled by the guard from active
+    /// grants. Never derived from model arguments without approval.
+    #[serde(default)]
+    read_paths: Vec<PathBuf>,
+    #[serde(default)]
+    write_paths: Vec<PathBuf>,
+    #[serde(default)]
+    network: bool,
+}
+
+/// A grant may neither sit inside a protected root nor contain one.
+fn overlaps(path: &std::path::Path, protected: &std::path::Path) -> bool {
+    path.starts_with(protected) || protected.starts_with(path)
 }
 
 #[cfg(target_os = "linux")]
@@ -62,6 +76,7 @@ fn main() -> Result<()> {
     config.isolate_network = true;
     config.seccomp_mode = SeccompMode::Enforce;
     config.seccomp_bpf_path = Some(spec.bpf.canonicalize()?.display().to_string());
+    let mut protected_roots = Vec::new();
     for path in spec.protected_roots {
         let protected = path
             .canonicalize()
@@ -72,6 +87,42 @@ fn main() -> Result<()> {
         );
         config.deny_read.push(protected.display().to_string());
         config.deny_write.push(protected.display().to_string());
+        protected_roots.push(protected);
+    }
+    ensure!(
+        spec.read_paths.len() + spec.write_paths.len() <= 32,
+        "too many granted resources"
+    );
+    let granted = |paths: &[PathBuf], target: &mut Vec<String>| -> Result<()> {
+        for path in paths {
+            let resolved = path
+                .canonicalize()
+                .with_context(|| format!("resolving granted path {}", path.display()))?;
+            ensure!(
+                resolved != std::path::Path::new("/") && !workspace.starts_with(&resolved),
+                "granted path must not contain the work directory or root"
+            );
+            for protected in &protected_roots {
+                ensure!(
+                    !overlaps(&resolved, protected),
+                    "granted path {} overlaps protected root {}",
+                    resolved.display(),
+                    protected.display()
+                );
+            }
+            target.push(resolved.display().to_string());
+        }
+        Ok(())
+    };
+    // Through the policy allow lists so bwrap and Landlock agree on access.
+    granted(&spec.read_paths, &mut config.allow_read)?;
+    granted(&spec.write_paths, &mut config.allow_write)?;
+    if spec.network {
+        config.isolate_network = false;
+        config.network = Some(NetworkConfig {
+            mode: NetworkMode::Open,
+            ..NetworkConfig::default()
+        });
     }
     let payload: Vec<String> = args
         .map(|arg| {

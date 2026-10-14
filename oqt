@@ -39,7 +39,7 @@ exec taskset -c "$cpu" nice -n 19 env -i PATH="$PATH" HOME="$home" LANG="${LANG:
  OQT_MODE="$mode" OQT_OWNER_AGENT_DIR="$owner" OQT_RUNTIME_ROOT="$(value runtime_root)" \
  OQT_TRUSTED_SOURCE_ROOT="$root" OQT_SOURCE_CHECKOUT="$source" \
  OQT_SERVER_DIR="$profile" OQT_CARRIER="$(value carrier)" \
- OQT_HANDS="$(value hands)" OQT_ENV_DAEMON="$(value daemon)" OQT_SANDBOX_SHIM="$(value shim)" \
- OQT_SECCOMP_BPF="$(value bpf)" \
+ OQT_HANDS="$(value hands)" OQT_BRAIN="$(value brain)" PI_OFFLINE=1 OQT_ENV_DAEMON="$(value daemon)" OQT_SANDBOX_SHIM="$(value shim)" \
+ OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" \
  node --import "$snapshot/packages/coding-agent/src/experimental/source-resolver.ts" \
  "$snapshot/packages/coding-agent/src/experimental/oqt-launcher.ts" "${args[@]}"

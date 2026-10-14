@@ -45,6 +45,8 @@ enum Command {
         grant_id: String,
     },
     RevokeAll,
+    Recover,
+    AcknowledgeInterrupted,
 }
 fn now() -> Result<u64> {
     Ok(u64::try_from(
@@ -209,7 +211,9 @@ async fn main() -> Result<()> {
                     let admission = authority.admit(operation.clone(), now()?).await?;
                     match admission {
                         Admission::Allowed(permit) => {
-                            authority.check(&permit, &operation, now()?).await?;
+                            // Journal before any effect: an owner crash after this
+                            // point is reported as interrupted, never replayed.
+                            authority.begin(&permit, &operation, now()?).await?;
                             let expires_at = permit.expires_at();
                             permits.insert(operation.request_id.clone(), (permit, operation));
                             Ok(json!({"status":"allowed", "expires_at":expires_at}))
@@ -226,7 +230,8 @@ async fn main() -> Result<()> {
                     Ok(json!({"checked":true}))
                 }
                 Command::Finish { id } if role == "tools" && coding.is_some() => {
-                    permits.remove(&id);
+                    permits.remove(&id).context("no live invocation permit")?;
+                    authority.end(&id).await?;
                     Ok(json!({"finished":true}))
                 }
                 Command::Invoke { operation } if role == "tools" && coding.is_none() => {
@@ -296,6 +301,12 @@ async fn main() -> Result<()> {
                 Command::RevokeAll if role == "operator" => {
                     Ok(json!({"revoked":authority.revoke_all(&operator).await?}))
                 }
+                Command::Recover if role == "operator" => {
+                    Ok(json!({"interrupted":authority.recover(&operator).await?}))
+                }
+                Command::AcknowledgeInterrupted if role == "operator" => Ok(json!({
+                    "acknowledged":authority.acknowledge_interrupted(&operator).await?
+                })),
                 _ => bail!("command unavailable on this role/channel"),
             }
         }

@@ -56,6 +56,15 @@ pub enum Admission {
     Denied,
 }
 
+/// An admitted invocation whose owner died before confirming completion.
+/// Its effects are unknown; it is never replayed and must be inspected.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Interrupted {
+    pub operation: Operation,
+    pub started_at: u64,
+}
+
 impl Permit {
     /// Admission deadline for a trusted supervisor; not a transferable grant.
     pub fn expires_at(&self) -> u64 {
@@ -88,7 +97,8 @@ impl Authority {
             .await?;
         sqlx::raw_sql("CREATE TABLE IF NOT EXISTS authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), fingerprint TEXT NOT NULL, ledger_id TEXT NOT NULL, generation INTEGER NOT NULL, clock INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, digest TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL, document TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);")
+            CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS invocations (id TEXT PRIMARY KEY, operation TEXT NOT NULL, started INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('live','interrupted')));")
             .execute(&pool).await?;
         let fingerprint = digest(&(&binding, &policy))?;
         sqlx::query(
@@ -386,9 +396,104 @@ impl Authority {
         Ok(count)
     }
 
+    /// Check a permit and durably journal the invocation as live in one
+    /// transaction. A journal entry that outlives its owner becomes
+    /// `Interrupted` on the next `recover`, never a silent replay.
+    pub async fn begin(&self, permit: &Permit, operation: &Operation, now: u64) -> Result<()> {
+        let mut tx = self.permit_check(permit, operation, now).await?;
+        let changed = sqlx::query(
+            "INSERT INTO invocations (id, operation, started, state) VALUES (?, ?, ?, 'live') ON CONFLICT(id) DO NOTHING",
+        )
+        .bind(&operation.request_id)
+        .bind(serde_json::to_string(operation)?)
+        .bind(i64::try_from(now)?)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        ensure!(
+            changed == 1,
+            "invocation already journaled; refusing re-entry"
+        );
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Confirm the owner observed completion (success or failure) of a live invocation.
+    pub async fn end(&self, request_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM invocations WHERE id=? AND state='live'")
+            .bind(request_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Owner-only, at startup before admitting work. Live journal rows belong
+    /// to a dead owner: mark them interrupted, revoke every overlay and fence
+    /// generations so no grant silently covers a retry. Returns all
+    /// unacknowledged interruptions.
+    pub async fn recover(&self, operator: &str) -> Result<Vec<Interrupted>> {
+        ensure!(
+            operator == self.binding.account_id,
+            "operator cannot recover this Session"
+        );
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let orphaned = sqlx::query("UPDATE invocations SET state='interrupted' WHERE state='live'")
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if orphaned > 0 {
+            sqlx::query("UPDATE grants SET revoked=1 WHERE revoked=0")
+                .execute(&mut *tx)
+                .await?;
+            advance(&mut tx).await?;
+        }
+        let rows = sqlx::query(
+            "SELECT operation, started FROM invocations WHERE state='interrupted' ORDER BY started, id",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(Interrupted {
+                    operation: serde_json::from_str(&row.get::<String, _>("operation"))?,
+                    started_at: u64::try_from(row.get::<i64, _>("started"))?,
+                })
+            })
+            .collect()
+    }
+
+    /// Operator confirms interrupted effects were inspected. Records only;
+    /// acknowledging never grants or replays anything.
+    pub async fn acknowledge_interrupted(&self, operator: &str) -> Result<u64> {
+        ensure!(
+            operator == self.binding.account_id,
+            "operator cannot acknowledge for this Session"
+        );
+        Ok(
+            sqlx::query("DELETE FROM invocations WHERE state='interrupted'")
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+
     /// Check before entering the provider AND before returning results/pages.
     /// An unrelated authority mutation also fences old permits deliberately.
     pub async fn check(&self, permit: &Permit, operation: &Operation, now: u64) -> Result<()> {
+        self.permit_check(permit, operation, now)
+            .await?
+            .commit()
+            .await?;
+        Ok(())
+    }
+
+    async fn permit_check(
+        &self,
+        permit: &Permit,
+        operation: &Operation,
+        now: u64,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
         operation.validate()?;
         ensure!(
             permit.authority_fingerprint == self.fingerprint
@@ -409,14 +514,13 @@ impl Authority {
         } else {
             true
         };
-        // Commit the clock floor even on denial: a backward clock cannot
-        // resurrect an expired grant after a failed delivery check.
-        tx.commit().await?;
-        ensure!(
-            generation == permit.generation && permit.expires_at > now && active,
-            "stale, revoked or expired permit"
-        );
-        Ok(())
+        if !(generation == permit.generation && permit.expires_at > now && active) {
+            // Commit the clock floor even on denial: a backward clock cannot
+            // resurrect an expired grant after a failed delivery check.
+            tx.commit().await?;
+            anyhow::bail!("stale, revoked or expired permit");
+        }
+        Ok(tx)
     }
 }
 

@@ -32,14 +32,14 @@ sha.update(str(source).encode())
 for relative in subprocess.check_output(['git','-C',str(source),'ls-files','packages/env/daemon'],text=True).splitlines():
     sha.update((source/relative).read_bytes())
 key=sha.hexdigest()
-binaries=[TARGET/'debug/examples/permission_carrier',TARGET/'debug/seccomp-policy-gen',TARGET/'debug/examples/oqt_hands',TARGET/'debug/examples/oqt_shim',TARGET/'oqt-env/debug/pi-env']
+binaries=[TARGET/'debug/examples/permission_carrier',TARGET/'debug/seccomp-policy-gen',TARGET/'debug/examples/oqt_hands',TARGET/'debug/examples/oqt_shim',TARGET/'debug/examples/oqt_brain',TARGET/'oqt-env/debug/pi-env']
 bpf=CACHE/'bpf/default-x86_64.bpf'
 def identities():
     return {str(path):[path.stat().st_ino,path.stat().st_size,path.stat().st_mtime_ns] for path in [*binaries,bpf] if path.is_file()}
 previous=json.loads(STAMP.read_text()) if STAMP.is_file() else {}
-if previous.get('key')!=key or previous.get('artifacts')!=identities() or len(identities())!=6:
+if previous.get('key')!=key or previous.get('artifacts')!=identities() or len(identities())!=7:
     env={**os.environ,'CARGO_TARGET_DIR':str(TARGET),'CARGO_BUILD_JOBS':'1'}
-    for args in [['-p','oq-permissions','--example','permission_carrier','--example','oqt_hands','--example','oqt_shim'],['-p','oqto-sandbox','--bin','seccomp-policy-gen']]:
+    for args in [['-p','oq-permissions','--example','permission_carrier','--example','oqt_hands','--example','oqt_shim','--example','oqt_brain'],['-p','oqto-sandbox','--bin','seccomp-policy-gen']]:
         subprocess.run(['cargo','build','--offline',*args],cwd=ROOT/'backend',env=env,check=True,timeout=90)
     subprocess.run(['cargo','build','--offline','--manifest-path',str(source/'packages/env/daemon/Cargo.toml')],env={**env,'CARGO_TARGET_DIR':str(TARGET/'oqt-env')},check=True,timeout=90)
     bpf.parent.mkdir(mode=0o700,exist_ok=True)

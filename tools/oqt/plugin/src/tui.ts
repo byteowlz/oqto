@@ -5,11 +5,20 @@ import {
 	SlashCommands,
 } from "@earendil-works/pi-coding-agent/experimental/plugin";
 import { type PendingPermission, Permissions } from "./contract.ts";
+import { guardPermissions } from "./guard-client.ts";
 
 export default defineFacet({
 	id: "oq.permissions.demo.tui",
 	setup(env) {
-		const permissions = env.use(Permissions);
+		// Coding mode: decisions go straight to the guard's operator socket, which
+		// no brain can reach. The synthetic demo keeps its worker-provided service.
+		const operatorPath = process.env.OQT_GUARD_OPERATOR;
+		const guard = operatorPath ? guardPermissions(operatorPath) : undefined;
+		if (guard) env.own(() => guard.close());
+		const demo = guard ? undefined : env.use(Permissions);
+		const permissions = guard ?? (demo as NonNullable<typeof demo>);
+		const coding = guard !== undefined;
+		let reportedInterrupted = 0;
 		const commands = env.use(SlashCommands);
 		const ui = env.use(PresentationUI);
 		const shown = new Set<string>();
@@ -20,15 +29,14 @@ export default defineFacet({
 			shown.add(request.digest);
 			try {
 				const action = await ui.select(
-					`${permissions.state.value?.mode === "coding" ? "Coding" : "DEMO"} permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
+					`${coding ? "Coding" : "DEMO"} permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
 					[
 						{ value: "once", label: "Allow once" },
 						{
 							value: "session",
-							label:
-								permissions.state.value?.mode === "coding"
-									? "Allow workspace tools for this Session (60 seconds)"
-									: "Allow for this Session (60 seconds)",
+							label: coding
+								? "Allow workspace tools for this Session (60 seconds)"
+								: "Allow for this Session (60 seconds)",
 						},
 						{ value: "deny", label: "Deny" },
 					],
@@ -42,16 +50,20 @@ export default defineFacet({
 					);
 					return;
 				}
-				await permissions.decide(
-					{
-						id: request.id,
-						digest: request.digest,
-						revision: request.revision,
-						allow: action !== "deny",
-						lifetime: action === "session" ? "session" : "once",
-					},
-					context,
-				);
+				const decision = {
+					id: request.id,
+					digest: request.digest,
+					revision: request.revision,
+					allow: action !== "deny",
+					lifetime:
+						action === "session" ? ("session" as const) : ("once" as const),
+				};
+				if (guard)
+					await guard.decide(
+						{ ...decision, session: request.session },
+						context,
+					);
+				else await demo?.decide(decision, context);
 				ui.showStatus(
 					action === "deny"
 						? "Permission denied"
@@ -68,8 +80,8 @@ export default defineFacet({
 			const bannerTimer = setTimeout(
 				() =>
 					ui.showStatus(
-						permissions.state.value?.mode === "coding"
-							? "oqt coding · owning Pi model · confined workspace tools · exact approvals · /permissions revoke"
+						coding
+							? "oqt coding · owning Pi model · confined brain and workspace tools · exact approvals · /permissions revoke"
 							: "oqt DEMO · synthetic model/history · confined fixture files · no credentials/local tools. Try: own history, global history, read file",
 						BACKGROUND_CONTEXT,
 					),
@@ -77,13 +89,25 @@ export default defineFacet({
 			);
 			env.own(() => clearTimeout(bannerTimer));
 			ui.showStatus(
-				permissions.state.value?.mode === "coding"
-					? "oqt coding · owning Pi model · confined workspace tools · exact approvals"
+				coding
+					? "oqt coding · owning Pi model · confined brain and workspace tools · exact approvals"
 					: "oqt DEMO · synthetic model/history · real permission gates and confined fixture hands. Try: own history, global history, read file",
 				BACKGROUND_CONTEXT,
 			);
 			env.own(
 				permissions.state.subscribe((state, context) => {
+					const interrupted =
+						"interrupted" in state && Array.isArray(state.interrupted)
+							? state.interrupted
+							: [];
+					if (interrupted.length > reportedInterrupted) {
+						const last = interrupted[interrupted.length - 1];
+						ui.showStatus(
+							`Interrupted: ${last.tool} ${last.argumentsText.slice(0, 120)} — effects uncertain; grants revoked. Inspect, then /permissions ack`,
+							context,
+						);
+					}
+					reportedInterrupted = interrupted.length;
 					const request = state.pending.find((row) => !shown.has(row.digest));
 					if (request) void choose(request, context);
 				}),
@@ -93,8 +117,20 @@ export default defineFacet({
 					name: "permissions",
 					description:
 						"Inspect/decide permissions; /permissions revoke stops hands and clears approved overlays",
-					argumentHint: "[revoke]",
+					argumentHint: "[revoke|ack]",
 					async run(args, context) {
+						if (args.trim() === "ack") {
+							if (!guard) {
+								ui.showStatus("Nothing to acknowledge in the demo", context);
+								return undefined;
+							}
+							await guard.acknowledge(context);
+							ui.showStatus(
+								"Interrupted calls acknowledged as inspected; nothing was replayed",
+								context,
+							);
+							return undefined;
+						}
 						if (args.trim() === "revoke") {
 							await permissions.revokeAll(context);
 							ui.showStatus(

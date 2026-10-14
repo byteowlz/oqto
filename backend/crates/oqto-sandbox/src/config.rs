@@ -2436,6 +2436,7 @@ impl SandboxConfig {
         // the work directory and every deny, is decided by one policy and
         // emitted parent-first (ADR-0028).
         let permission_args = self.permission_args(workspace, username)?;
+        let tmp_mounts = policy_mounts_under_tmp(&permission_args, workspace);
 
         // The managed agent runtime and the systemd-resolved stub directory are
         // part of the policy's read-only baseline, so they are no longer bound
@@ -2515,6 +2516,10 @@ impl SandboxConfig {
                 workspace_str
             );
         }
+        // Same masking problem for every other policy mount under /tmp
+        // (e.g. extra_ro_bind of a toolchain checkout): replay them, in their
+        // original order so denies still follow their parent binds.
+        args.extend(tmp_mounts);
 
         // Overlayfs redirection for selected paths.
         // This keeps original paths readable while redirecting writes to
@@ -3274,8 +3279,75 @@ impl SandboxConfig {
     // macOS seatbelt/sandbox-exec helpers are implemented in the `oqto-sandbox` CLI.
 }
 
+/// bwrap applies mounts in order and the private /tmp is mounted late. Policy
+/// mounts whose destination lies under /tmp, outside the work directory (which
+/// is rebound separately), must be replayed above it or they silently vanish.
+fn policy_mounts_under_tmp(args: &[String], workspace: &Path) -> Vec<String> {
+    let mut replay = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arity = match args[index].as_str() {
+            "--bind" | "--ro-bind" | "--symlink" => 2,
+            "--tmpfs" => 1,
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        let Some(destination) = args.get(index + arity) else {
+            break;
+        };
+        let destination = Path::new(destination);
+        if destination.starts_with("/tmp")
+            && destination != Path::new("/tmp")
+            && !destination.starts_with(workspace)
+        {
+            replay.extend_from_slice(&args[index..=index + arity]);
+        }
+        index += arity + 1;
+    }
+    replay
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn policy_mounts_under_tmp_are_replayed_in_order_outside_workspace() {
+        let args: Vec<String> = [
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/tmp/src",
+            "/tmp/src",
+            "--tmpfs",
+            "/tmp/src/secret",
+            "--bind",
+            "/tmp/work",
+            "/tmp/work",
+            "--symlink",
+            "../x",
+            "/tmp/link",
+            "--tmpfs",
+            "/tmp",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(
+            super::policy_mounts_under_tmp(&args, std::path::Path::new("/tmp/work")),
+            [
+                "--ro-bind",
+                "/tmp/src",
+                "/tmp/src",
+                "--tmpfs",
+                "/tmp/src/secret",
+                "--symlink",
+                "../x",
+                "/tmp/link",
+            ]
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

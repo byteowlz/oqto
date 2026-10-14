@@ -134,6 +134,11 @@ test-oqt-ui:
 test-oqt-coding:
     timeout --kill-after=5s 100s python3 tools/oqt/coding_tui_test.py
 
+# Kill the confined brain mid-shell: hands stop, TUI reattaches, call is reported
+# interrupted (never replayed) and the retry needs fresh approval.
+test-oqt-recovery:
+    timeout --kill-after=5s 140s python3 tools/oqt/recovery_tui_test.py
+
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:
     ./scripts/sandbox/tests/run-all.sh {{ARGS}}

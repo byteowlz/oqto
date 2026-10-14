@@ -22,7 +22,9 @@ mode = sys.argv[3] if len(sys.argv) > 3 else 'demo'
 if mode not in ['demo','coding']: raise SystemExit('Unsupported runtime mode')
 runtime_modules = [p for p in sorted((repo / 'tools/oqt').glob('*.ts')) if not p.name.endswith('.test.ts')]
 runtime_modules.append(repo / 'tools/oqt/hands-proxy.mjs')
-files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
+sys.path.insert(0, str(repo / 'tools/oqt'))
+import source_patches
+files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / 'tools/oqt/source_patches.py', *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
 files = [file for file in files if file.is_file()]
 identity = hashlib.sha256(PIN.encode())
 for file in files:
@@ -31,6 +33,7 @@ assets = {
     'carrier': repo/'backend/target/debug/examples/permission_carrier',
     'hands': repo/'backend/target/debug/examples/oqt_hands',
     'shim': repo/'backend/target/debug/examples/oqt_shim',
+    'brain': repo/'backend/target/debug/examples/oqt_brain',
     'daemon': repo/'backend/target/oqt-env/debug/pi-env',
     'bpf': repo/'backend/target/oqt-prepared/bpf/default-x86_64.bpf',
 }
@@ -102,6 +105,7 @@ if not manifest.exists():
     # Reuse the public Harness factory seam. This private derivative replaces
     # only application composition, not Durable/protocol/client machinery.
     worker.write_text(text.replace(original, 'return import("./oqt-runtime-worker.ts").then(({createOqtHarness}) => runSessionWorkerWithHarness(args, createOqtHarness));'))
+    patched = source_patches.apply(snapshot)
     shutil.copyfile(repo / "tools/oqt/worker.ts", experimental / "oqt-runtime-worker.ts")
     shutil.copyfile(repo / "tools/oqt/launcher.ts", experimental / "oqt-launcher.ts")
     copied_modules = []
@@ -111,7 +115,7 @@ if not manifest.exists():
         shutil.copyfile(module,target); copied_modules.append(target)
     plugin = snapshot / "packages/coding-agent/examples/plugins/oq-permissions"
     shutil.copytree(repo / "tools/oqt/plugin", plugin)
-    tracked = [worker, experimental / "oqt-runtime-worker.ts", experimental / "oqt-launcher.ts", *copied_modules, *[p for p in plugin.rglob("*") if p.is_file()]]
+    tracked = [worker, *dict.fromkeys(patched), experimental / "oqt-runtime-worker.ts", experimental / "oqt-launcher.ts", *copied_modules, *[p for p in plugin.rglob("*") if p.is_file()]]
     hashes = {str(path.relative_to(snapshot)):hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
     manifest.write_text(json.dumps({"upstream_pin":PIN,"artifact":artifact,"files":hashes},indent=2))
 else:

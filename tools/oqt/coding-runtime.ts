@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { lstat, mkdir } from "node:fs/promises";
-import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -10,102 +7,87 @@ import {
 	Harness,
 	type ModelRef,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
-import { CodingAuthority, type CodingRequest } from "./coding-authority.ts";
-import { gatedTool } from "./gated-tool.ts";
-import { HandsSupervisor } from "./hands-supervisor.ts";
+import { type CodingGate, gatedTool } from "./gated-tool.ts";
+import type { HandsClient } from "./hands-client.ts";
 
-/** Protected local composition. No NodeExecutionEnv, skills, shell config
- * commands, codemode, or unreviewed plugin registry is installed here.
- */
-export async function openCodingRuntime(options: {
+/** Brain-side protected coding composition. No NodeExecutionEnv, skills,
+ * shell config commands, codemode, or unreviewed plugin registry. Authority
+ * and hands are reached only through the supplied guard gate/client. */
+export async function openCodingHarness(options: {
 	databasePath: string;
-	directory: string;
 	session: string;
 	workspace: string;
-	launcher: string;
-	daemon: string;
-	bpf: string;
-	protectedRoots: string[];
 	models: Models;
 	model: ModelRef;
 	thinkingLevel?: ModelThinkingLevel;
-	policy: "ask" | "deny";
-	publish: (requests: CodingRequest[]) => void;
+	gate: CodingGate;
+	hands: HandsClient;
+	/** Adopt the guard's current hands generation before harness-internal access. */
+	refresh: () => Promise<void>;
 }) {
 	const workspace = resolve(options.workspace);
-	await mkdir(options.directory, { mode: 0o700, recursive: true });
-	const metadata = await lstat(options.directory);
-	if (
-		!metadata.isDirectory() ||
-		metadata.uid !== userInfo().uid ||
-		(metadata.mode & 0o077) !== 0
-	)
-		throw new Error("Coding authority directory must be private and owned");
-	const hash = createHash("sha256").update(workspace).digest("hex");
-	const supervisor = await HandsSupervisor.open({
-		workspace,
-		launcher: options.launcher,
-		daemon: options.daemon,
-		bpf: options.bpf,
-		protectedRoots: [...options.protectedRoots, options.directory],
+	const registry = createRegistry();
+	const coding = createCodingTools();
+	registry.install({
+		...coding,
+		tools: coding.tools?.map((tool) =>
+			gatedTool(tool, options.gate, options.session),
+		),
 	});
-	const authority = new CodingAuthority(
-		options.session,
-		options.directory,
-		{
-			account_id: "local-operator",
-			principal_id: `uid:${userInfo().uid}`,
-			workspace_id: `local:${hash}`,
-			work_directory_id: `workdir:${hash}`,
-			session_id: options.session,
-			audience: "local-operator-only",
-		},
-		options.publish,
-		options.policy,
-		async () => {
-			await supervisor.replace();
-		},
-	);
-	let harness: Harness | undefined;
-	try {
-		const registry = createRegistry();
-		const coding = createCodingTools();
-		registry.install({
-			...coding,
-			tools: coding.tools?.map((tool) =>
-				gatedTool(tool, authority, options.session),
-			),
-		});
-		registry.install(
-			defineExtension({
-				name: "oqt-protected-coding-prompt",
-				sections: [
-					{
-						key: "oqt",
-						render: () =>
-							"You are a coding assistant using confined executors. Every coding call needs an exact local-operator approval. Protected runtime, credentials, and authority are unavailable to tools. Never bypass a denial. Interrupted effects are uncertain: inspect before retrying. No skills, codemode, subagents, or unrestricted execution are available.",
-					},
-				],
-			}),
-		);
-		harness = await Harness.open(
-			await openNodeSqliteStorage(options.databasePath),
-			{
-				models: options.models,
-				registry,
-				async env(target, context) {
-					await authority.ready(context);
-					if (!target.cwd || resolve(target.cwd) !== workspace)
-						throw new Error(
-							"Conversation attempted to change the owner-bound workspace",
-						);
-					return supervisor.execution;
+	registry.install(
+		defineExtension({
+			name: "oqt-protected-coding-prompt",
+			sections: [
+				{
+					key: "oqt",
+					render: () =>
+						"You are a coding assistant using confined executors. Every coding call needs local-operator approval. Protected runtime, credentials, and authority are unavailable to tools. Never bypass a denial. Interrupted effects are uncertain: inspect before retrying. No skills, codemode, subagents, or unrestricted execution are available.",
 				},
+			],
+		}),
+	);
+	const execution = new Proxy({} as ExecutionEnv, {
+		get(_target, key) {
+			if (key === "cwd") return workspace;
+			// One stable namespace: every generation sees the same workspace paths.
+			if (key === "id") return "oqt-guarded-workspace";
+			// Hands are guard-owned; brain shutdown must not try to manage them.
+			if (key === "cleanup") return async () => {};
+			if (key === "then") return undefined; // not a thenable
+			// Harness-internal access only (e.g. context files); tool calls use the
+			// env pinned at admission by the gate. Resolved per call.
+			return async (...args: unknown[]) => {
+				await options.refresh();
+				const current = options.hands.current as unknown as Record<
+					PropertyKey,
+					unknown
+				>;
+				const value = current[key];
+				if (typeof value !== "function")
+					throw new Error(`Unsupported execution property ${String(key)}`);
+				return value.apply(current, args);
+			};
+		},
+	});
+	const harness = await Harness.open(
+		await openNodeSqliteStorage(options.databasePath),
+		{
+			models: options.models,
+			registry,
+			env(target) {
+				if (!target.cwd || resolve(target.cwd) !== workspace)
+					throw new Error(
+						"Conversation attempted to change the owner-bound workspace",
+					);
+				return execution;
 			},
-			BACKGROUND_CONTEXT,
-		);
+		},
+		BACKGROUND_CONTEXT,
+	);
+	try {
 		const conversation = await harness.root(BACKGROUND_CONTEXT, {
 			agent: {
 				cwd: workspace,
@@ -115,26 +97,9 @@ export async function openCodingRuntime(options: {
 					: {}),
 			},
 		});
-		return {
-			harness,
-			conversation,
-			authority,
-			supervisor,
-			async cleanup() {
-				try {
-					await supervisor.close();
-				} finally {
-					await authority.close();
-				}
-			},
-		};
+		return { harness, conversation };
 	} catch (error) {
-		await harness?.close(BACKGROUND_CONTEXT);
-		try {
-			await supervisor.close();
-		} finally {
-			await authority.close();
-		}
+		await harness.close(BACKGROUND_CONTEXT);
 		throw error;
 	}
 }

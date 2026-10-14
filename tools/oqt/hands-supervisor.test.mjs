@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { HandsClient } from "./hands-client.ts";
 import { HandsSupervisor } from "./hands-supervisor.ts";
 
 const require = createRequire(join(process.env.OQT_PI_SOURCE, "package.json"));
@@ -13,7 +14,7 @@ const { BACKGROUND_CONTEXT: context } = await import(
 );
 
 test(
-	"owned supervisor confirms confined descendant stop before replacement and fences retained env handles",
+	"guard supervisor confirms confined descendant stop before replacement and fences stale epochs",
 	{ timeout: 15000 },
 	async () => {
 		const root = await mkdtemp("/var/tmp/oqt-stop-proof-");
@@ -28,8 +29,11 @@ test(
 			bpf: process.env.OQT_SECCOMP_BPF,
 			protectedRoots: [],
 		});
+		const client = new HandsClient(supervisor.socketPath, workspace);
+		const retained = new HandsClient(supervisor.socketPath, workspace);
 		try {
-			const stale = supervisor.execution;
+			const oldEpoch = supervisor.epoch;
+			const stale = client.use(oldEpoch);
 			assert.equal(
 				(await stale.writeFile("hello", "before", context)).ok,
 				true,
@@ -48,7 +52,7 @@ test(
 			assert.ok((await readFile(join(workspace, "heartbeat"))).length > 0);
 			await supervisor.stop();
 			assert.equal(supervisor.children.size, 0);
-			assert.throws(() => supervisor.execution, /frozen/);
+			assert.throws(() => supervisor.epoch, /frozen/);
 			const settled = await effect;
 			assert.equal(
 				settled.ok,
@@ -63,18 +67,27 @@ test(
 				"detached descendant survived stop",
 			);
 			supervisor.install();
+			assert.notEqual(supervisor.epoch, oldEpoch);
+			// A brain that keeps the old epoch cannot reconnect to fresh hands.
+			const retainedEnv = retained.use(oldEpoch);
 			assert.equal(
-				(await stale.writeFile("stale-write", "bad", context)).ok,
+				(await retainedEnv.writeFile("stale-write", "bad", context)).ok,
 				false,
 			);
 			await assert.rejects(readFile(join(workspace, "stale-write")), {
 				code: "ENOENT",
 			});
 			assert.equal(
-				(await supervisor.execution.writeFile("fresh-write", "ok", context)).ok,
+				(
+					await client
+						.use(supervisor.epoch)
+						.writeFile("fresh-write", "ok", context)
+				).ok,
 				true,
 			);
 		} finally {
+			client.close();
+			retained.close();
 			await supervisor.close();
 			await rm(root, { recursive: true, force: true });
 		}

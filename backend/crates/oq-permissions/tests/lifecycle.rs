@@ -677,3 +677,54 @@ fn executor_generations_fail_closed_until_confirmed_install() {
     assert!(fence.admit(1).is_err());
     fence.admit(2).unwrap();
 }
+
+#[tokio::test]
+async fn owner_death_marks_live_invocations_interrupted_and_fences_session_grants() {
+    let (dir, a) = setup().await;
+    let first = op("store:task-1", Capability::MemoryWrite, "project-memory");
+    let request = pending(&a, &first).await;
+    approve(&a, &request, GrantLifetime::Session).await;
+    let p = permit(&a, &first, 102).await;
+    a.begin(&p, &first, 103).await.unwrap();
+    // Re-entry of the same logical invocation is refused, not double-run.
+    assert!(a.begin(&p, &first, 103).await.is_err());
+    let finished = op("store:task-2", Capability::MemoryWrite, "project-memory");
+    let q = permit(&a, &finished, 104).await;
+    a.begin(&q, &finished, 104).await.unwrap();
+    a.end("store:task-2").await.unwrap();
+    // Owner dies without `end` for task-1.
+    a.close().await;
+    let b = Authority::open(&dir.path().join("permissions.sqlite"), binding(), policy())
+        .await
+        .unwrap();
+    assert!(b.recover("intruder").await.is_err());
+    let interrupted = b.recover("owner").await.unwrap();
+    assert_eq!(interrupted.len(), 1);
+    assert_eq!(interrupted[0].operation, first);
+    assert_eq!(interrupted[0].started_at, 103);
+    // The still-unexpired Session grant no longer covers a retry.
+    let retry = op("store:task-3", Capability::MemoryWrite, "project-memory");
+    pending(&b, &retry).await;
+    // Old permits are generation-fenced.
+    assert!(b.check(&p, &first, 105).await.is_err());
+    // Recovery is idempotent and reporting persists until acknowledged.
+    assert_eq!(b.recover("owner").await.unwrap().len(), 1);
+    assert!(b.acknowledge_interrupted("intruder").await.is_err());
+    assert_eq!(b.acknowledge_interrupted("owner").await.unwrap(), 1);
+    assert!(b.recover("owner").await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn clean_recovery_keeps_active_grants() {
+    let (_dir, a) = setup().await;
+    let first = op("store:task-1", Capability::MemoryWrite, "project-memory");
+    let request = pending(&a, &first).await;
+    approve(&a, &request, GrantLifetime::Session).await;
+    assert!(a.recover("owner").await.unwrap().is_empty());
+    permit(
+        &a,
+        &op("store:task-2", Capability::MemoryWrite, "project-memory"),
+        103,
+    )
+    .await;
+}

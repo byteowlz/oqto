@@ -8,7 +8,7 @@
 mod ledger;
 mod policy;
 
-pub use ledger::{Admission, Authority, GrantLifetime, Permit, Request, RequestState};
+pub use ledger::{Admission, Authority, GrantLifetime, Interrupted, Permit, Request, RequestState};
 pub use policy::{Binding, Capability, Operation, Policy, Rule, RuleMode, Target};
 
 use anyhow::{Result, ensure};

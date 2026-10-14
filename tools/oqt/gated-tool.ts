@@ -17,6 +17,9 @@ export interface CodingGate {
 	finish(operation: CodingOperation): Promise<void>;
 	budget?(operation: CodingOperation): number;
 	drain?(operation: CodingOperation): Promise<void>;
+	/** Execution env pinned to the generation admitted for this operation.
+	 * A revoke closes it; the tool then fails instead of moving to new hands. */
+	env?(operation: CodingOperation): unknown;
 }
 
 /** Withhold ALL progress until delivery authorization, including failures.
@@ -52,6 +55,7 @@ export function gatedTool(
 				const buffered = new Proxy(api, {
 					get(target, key) {
 						if (key === "outputWindow") return undefined;
+						if (key === "env" && gate.env) return gate.env(operation);
 						if (key === "output")
 							return (chunk: string | Uint8Array, skipped?: unknown) => {
 								if (skipped !== undefined)

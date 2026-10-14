@@ -1,14 +1,15 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 
-/** Owns only processes this supervisor spawned. No PID-file/reused-PID kills.
- * Each epoch has fresh Connection/RemoteExecutionEnv objects: retained handles
- * cannot reconnect after stop. bwrap PID namespace teardown fences descendants.
+/** Guard-side owner of confined executor processes. Owns only processes it
+ * spawned (no PID-file/reused-PID kills). Each generation has a fresh random
+ * epoch; the transport handshake must name the current epoch, so a retained
+ * brain-side Connection cannot reconnect after stop/replacement. bwrap PID
+ * namespace teardown fences descendants.
  */
 export class HandsSupervisor {
 	readonly children = new Set<ChildProcessWithoutNullStreams>();
@@ -21,16 +22,19 @@ export class HandsSupervisor {
 	readonly workspace: string;
 	#active = false;
 	#closed = false;
-	#epoch = 0;
+	#epoch = "";
 	#replacement: Promise<void> | undefined;
-	#connection: Connection | undefined;
-	#execution: RemoteExecutionEnv | undefined;
-	constructor(directory: string, launcher: string, workspace: string) {
+	constructor(
+		directory: string,
+		launcher: string,
+		workspace: string,
+		socketPath?: string,
+	) {
 		this.directory = directory;
 		this.launcher = launcher;
 		this.workspace = workspace;
 		this.spec = join(directory, "hands.json");
-		this.socketPath = join(directory, "transport.sock");
+		this.socketPath = socketPath ?? join(directory, "transport.sock");
 	}
 	static async open(options: {
 		launcher: string;
@@ -38,25 +42,24 @@ export class HandsSupervisor {
 		daemon: string;
 		bpf: string;
 		protectedRoots: string[];
+		/** Directory for the private spec; defaults to a fresh /var/tmp/oqh-*. */
+		parent?: string;
+		/** Brain-visible transport socket; defaults inside the private directory. */
+		socketPath?: string;
+		readPaths?: string[];
+		writePaths?: string[];
+		network?: boolean;
 	}) {
-		const directory = await mkdtemp("/var/tmp/oqh-");
+		const directory = await mkdtemp(join(options.parent ?? "/var/tmp", "oqh-"));
 		await chmod(directory, 0o700);
 		const supervisor = new HandsSupervisor(
 			directory,
 			options.launcher,
 			options.workspace,
+			options.socketPath,
 		);
 		try {
-			await writeFile(
-				supervisor.spec,
-				JSON.stringify({
-					workspace: options.workspace,
-					daemon: options.daemon,
-					bpf: options.bpf,
-					protected_roots: [...options.protectedRoots, directory],
-				}),
-				{ mode: 0o600 },
-			);
+			await supervisor.writeSpec(options);
 			await new Promise<void>((resolve, reject) => {
 				supervisor.server.once("error", reject);
 				supervisor.server.listen(supervisor.socketPath, () => {
@@ -72,27 +75,52 @@ export class HandsSupervisor {
 			throw error;
 		}
 	}
+	#base: { daemon: string; bpf: string; protectedRoots: string[] } | undefined;
+	/** Replace the trusted spec. Only valid while frozen (between stop and install). */
+	async writeSpec(options: {
+		daemon?: string;
+		bpf?: string;
+		protectedRoots?: string[];
+		readPaths?: string[];
+		writePaths?: string[];
+		network?: boolean;
+	}) {
+		if (this.#active) throw new Error("Cannot change hands spec while active");
+		// The trusted base (daemon, policy, protected roots) is fixed at open;
+		// later replacements may only change the approved resource grants.
+		this.#base ??= {
+			daemon: options.daemon ?? "",
+			bpf: options.bpf ?? "",
+			protectedRoots: [...(options.protectedRoots ?? []), this.directory],
+		};
+		const base = this.#base;
+		await writeFile(
+			this.spec,
+			JSON.stringify({
+				workspace: this.workspace,
+				daemon: base.daemon,
+				bpf: base.bpf,
+				protected_roots: base.protectedRoots,
+				read_paths: options.readPaths ?? [],
+				write_paths: options.writePaths ?? [],
+				network: options.network ?? false,
+			}),
+			{ mode: 0o600 },
+		);
+	}
 	install() {
 		if (this.#closed || this.#active || this.children.size !== 0)
 			throw new Error("Cannot install hands before confirmed stop");
-		this.#epoch++;
-		this.#connection = new Connection({
-			command: [
-				process.execPath,
-				fileURLToPath(new URL("./hands-proxy.mjs", import.meta.url)),
-				this.socketPath,
-			],
-		});
-		this.#execution = new RemoteExecutionEnv({
-			connection: this.#connection,
-			id: `oqt-hands-${this.#epoch}`,
-			cwd: this.workspace,
-		});
+		this.#epoch = randomBytes(16).toString("hex");
 		this.#active = true;
 	}
-	get execution() {
-		if (!this.#active || !this.#execution) throw new Error("Hands are frozen");
-		return this.#execution;
+	get active() {
+		return this.#active;
+	}
+	/** Current generation for the brain-side transport; throws while frozen. */
+	get epoch() {
+		if (!this.#active) throw new Error("Hands are frozen");
+		return this.#epoch;
 	}
 	accept(socket: Socket) {
 		if (!this.#active || this.sockets.size >= 8) {
@@ -113,10 +141,10 @@ export class HandsSupervisor {
 			header = Buffer.concat([header, chunk]);
 			const newline = header.indexOf(10);
 			if (newline < 0) {
-				if (header.length > 128) socket.destroy();
+				if (header.length > 160) socket.destroy();
 				return;
 			}
-			if (newline > 128 || !this.#active) {
+			if (newline > 160 || !this.#active) {
 				socket.destroy();
 				return;
 			}
@@ -129,9 +157,11 @@ export class HandsSupervisor {
 					typeof value !== "object" ||
 					!("token" in value) ||
 					typeof value.token !== "string" ||
-					!/^[a-f0-9]{32}$/.test(value.token)
+					!/^[a-f0-9]{32}$/.test(value.token) ||
+					!("epoch" in value) ||
+					value.epoch !== this.#epoch
 				)
-					throw new Error("Invalid daemon transport token");
+					throw new Error("Invalid or stale daemon transport handshake");
 				socket.off("data", handshake);
 				clearTimeout(timer);
 				child = spawn(
@@ -168,14 +198,15 @@ export class HandsSupervisor {
 		};
 		socket.on("data", handshake);
 	}
-	async replace() {
-		if (!this.#replacement) {
-			this.#replacement = (async () => {
-				await this.stop();
-				this.install();
-			})();
-		}
-		const current = this.#replacement;
+	/** Freeze, confirm stop, optionally swap the spec, then install a fresh epoch. */
+	async replace(spec?: Parameters<HandsSupervisor["writeSpec"]>[0]) {
+		while (this.#replacement) await this.#replacement.catch(() => {});
+		const current = (async () => {
+			await this.stop();
+			if (spec) await this.writeSpec(spec);
+			this.install();
+		})();
+		this.#replacement = current;
 		try {
 			await current;
 		} finally {
@@ -184,9 +215,6 @@ export class HandsSupervisor {
 	}
 	async stop() {
 		this.#active = false; // freeze before closing transport/admitting replacements
-		this.#connection?.close();
-		this.#connection = undefined;
-		this.#execution = undefined;
 		const children = [...this.children];
 		for (const socket of this.sockets) socket.destroy();
 		await Promise.all(
