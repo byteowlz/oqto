@@ -13,7 +13,8 @@ export class Carrier {
 		role: "tools" | "operator",
 		directory: string,
 		binding: object,
-		codingPolicy?: "ask" | "deny",
+		/** Coding ceiling inputs (compiled by the carrier); absent for the demo. */
+		ceiling?: object,
 	) {
 		const binary = process.env.OQT_CARRIER;
 		if (!binary)
@@ -25,7 +26,7 @@ export class Carrier {
 				OQ_ADAPTIVE_SECCOMP_BPF: process.env.OQT_SECCOMP_BPF,
 				OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
 				OQ_DEMO_BINDING: JSON.stringify(binding),
-				...(codingPolicy ? { OQT_CODING_POLICY: codingPolicy } : {}),
+				...(ceiling ? { OQT_POLICY_INPUT: JSON.stringify(ceiling) } : {}),
 			},
 		});
 		const lines = createInterface({ input: this.child.stdout });

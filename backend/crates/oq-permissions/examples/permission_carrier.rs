@@ -47,6 +47,7 @@ enum Command {
     RevokeAll,
     Recover,
     AcknowledgeInterrupted,
+    Resources,
 }
 fn now() -> Result<u64> {
     Ok(u64::try_from(
@@ -120,20 +121,19 @@ async fn main() -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     let operator = binding.account_id.clone();
-    let coding = match std::env::var("OQT_CODING_POLICY") {
-        Ok(value) if value == "ask" => Some(RuleMode::Ask),
-        Ok(value) if value == "deny" => Some(RuleMode::Deny),
-        Ok(_) => bail!("unsupported coding policy; refusing fallback"),
+    // Coding mode: the trusted guard supplies the ceiling inputs (global and
+    // workspace TOML text plus protected roots); unsupported values fail closed.
+    let ceiling = match std::env::var("OQT_POLICY_INPUT") {
+        Ok(encoded) => Some(compile_ceiling(&serde_json::from_str::<CeilingInput>(
+            &encoded,
+        )?)?),
         Err(std::env::VarError::NotPresent) => None,
         Err(error) => return Err(error.into()),
     };
+    let coding = ceiling.is_some();
     let mut policy = Policy {
-        revision: if coding.is_some() {
-            "coding-ask-v1"
-        } else {
-            "fixture-v1"
-        }
-        .into(),
+        paths: vec![],
+        revision: "fixture-v1".into(),
         rules: vec![
             Rule {
                 target: Target {
@@ -158,16 +158,17 @@ async fn main() -> Result<()> {
             },
         ],
     };
-    if let Some(mode) = coding {
-        policy.rules = vec![Rule {
-            target: Target {
-                capability: Capability::Execute,
-                resource_id: "workspace-tools".into(),
-            },
-            mode,
-        }];
+    if let Some(ceiling) = ceiling {
+        policy = ceiling;
     }
-    let authority = Authority::open(&directory.join("permissions.sqlite"), binding, policy).await?;
+    let ledger = directory.join("permissions.sqlite");
+    // Only the owner's operator channel may adopt a changed ceiling (which
+    // revokes every grant); the tool channel always opens strictly.
+    let authority = if coding && role == "operator" {
+        Authority::open_replacing_policy(&ledger, binding, policy).await?
+    } else {
+        Authority::open(&ledger, binding, policy).await?
+    };
     // Permits never cross the wire and cannot be reconstructed from tool input.
     // The bounded map holds only this process's live invocations.
     let mut permits: HashMap<String, (Permit, Operation)> = HashMap::new();
@@ -202,7 +203,7 @@ async fn main() -> Result<()> {
         let response: Result<Value> = async {
             let command: Command = serde_json::from_slice(&frame)?;
             match command {
-                Command::Prepare { operation } if role == "tools" && coding.is_some() => {
+                Command::Prepare { operation } if role == "tools" && coding => {
                     ensure!(permits.len() < 64, "too many live invocations");
                     ensure!(
                         !permits.contains_key(&operation.request_id),
@@ -221,7 +222,7 @@ async fn main() -> Result<()> {
                         other => Ok(json!({"admission":other})),
                     }
                 }
-                Command::Check { operation } if role == "tools" && coding.is_some() => {
+                Command::Check { operation } if role == "tools" && coding => {
                     let (permit, admitted) = permits
                         .get(&operation.request_id)
                         .context("no live invocation permit")?;
@@ -229,12 +230,12 @@ async fn main() -> Result<()> {
                     authority.check(permit, &operation, now()?).await?;
                     Ok(json!({"checked":true}))
                 }
-                Command::Finish { id } if role == "tools" && coding.is_some() => {
+                Command::Finish { id } if role == "tools" && coding => {
                     permits.remove(&id).context("no live invocation permit")?;
                     authority.end(&id).await?;
                     Ok(json!({"finished":true}))
                 }
-                Command::Invoke { operation } if role == "tools" && coding.is_none() => {
+                Command::Invoke { operation } if role == "tools" && !coding => {
                     let admission = authority.admit(operation.clone(), now()?).await?;
                     match &admission {
                         Admission::Allowed(permit) => {
@@ -280,6 +281,18 @@ async fn main() -> Result<()> {
                     allow,
                 } if role == "operator" => {
                     let time = now()?;
+                    // External resources become executor mounts: Session-scoped
+                    // for one hour. Workspace tool grants stay short.
+                    let resource = coding
+                        && matches!(
+                            authority.inspect(&id).await?.operation.target.capability,
+                            Capability::FileRead | Capability::FileWrite | Capability::Network
+                        );
+                    ensure!(
+                        !(resource && allow && matches!(lifetime, GrantLifetime::Once)),
+                        "resource access is granted per Session, not once"
+                    );
+                    let ttl = if resource { 3_600_000 } else { 60_000 };
                     let request = authority
                         .decide(
                             &operator,
@@ -288,7 +301,7 @@ async fn main() -> Result<()> {
                             revision,
                             lifetime,
                             allow,
-                            time.checked_add(60_000).context("expiry overflow")?,
+                            time.checked_add(ttl).context("expiry overflow")?,
                             time,
                         )
                         .await?;
@@ -303,6 +316,13 @@ async fn main() -> Result<()> {
                 }
                 Command::Recover if role == "operator" => {
                     Ok(json!({"interrupted":authority.recover(&operator).await?}))
+                }
+                Command::Resources if role == "operator" && coding => {
+                    let grants = authority.active_resource_grants(now()?).await?;
+                    Ok(json!({"resources": grants
+                        .into_iter()
+                        .map(|(target, expires)| json!({"target":target, "expires_at":expires}))
+                        .collect::<Vec<_>>()}))
                 }
                 Command::AcknowledgeInterrupted if role == "operator" => Ok(json!({
                     "acknowledged":authority.acknowledge_interrupted(&operator).await?

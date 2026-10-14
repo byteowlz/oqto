@@ -76,6 +76,17 @@ An approved, scoped and expiring authorization for a logical operation or Sessio
 Runner-supervised confined execution of files, processes and untrusted code on behalf of a Harness. Replaceable without replacing the Session; a generation identifies one admission boundary, not durable conversation identity.
 _Avoid_: brain (the Harness's orchestration), Session (its durable identity); hands is informal shorthand only.
 
+**Permission Guard**:
+The trusted process that holds a Session's Permission Policy ledger, Executors, owner credentials and the operator decision surface, outside the confined Harness process. The Harness reaches it only through its own per-Session tool channel; operators reach it through a separate channel no Harness can see (ADR-0053).
+_Avoid_: runner (the guard is local composition, not the authenticated runner), broker (only its credential part brokers)
+
+**Interrupted Invocation**:
+An admitted operation whose owning process died before confirming completion. Its effects are unknown: it is reported, never replayed, and its detection revokes every Permission Grant so a retry needs a fresh decision.
+_Avoid_: failed call (failure is observed; interruption is not)
+
+**Resource Grant**:
+A Session-scoped, expiring Permission Grant for an exact external path or network access, compiled into the next Executor generation. It never covers individual tool calls, which are still admitted separately.
+
 **Session**:
 One durable harness conversation identified publicly by one Oqto session id. A Session may contain an in-session entry tree, but remains one Session until explicitly forked.
 _Avoid_: conversation (ambiguous), process (one Session may have many runtime incarnations)

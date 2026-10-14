@@ -16,6 +16,7 @@ fn binding() -> Binding {
 }
 fn policy() -> Policy {
     Policy {
+        paths: vec![],
         revision: "policy-v1".into(),
         rules: vec![
             Rule {

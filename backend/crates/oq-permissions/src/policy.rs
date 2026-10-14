@@ -26,6 +26,8 @@ pub enum Capability {
     IssueUpdate,
     IssueClose,
     FileRead,
+    FileWrite,
+    Network,
     Execute,
 }
 
@@ -67,6 +69,41 @@ pub struct Rule {
 pub struct Policy {
     pub revision: String,
     pub rules: Vec<Rule>,
+    /// Ceiling layers for `path:` file resources. Each layer is evaluated
+    /// independently; the most restrictive answer across layers wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<PathLayer>,
+}
+
+/// One ceiling layer (built-in, global or workspace).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathLayer {
+    pub default: RuleMode,
+    /// Denied: the path is inside one of these, or contains one of them.
+    pub deny: Vec<String>,
+    /// Requestable roots (inside); otherwise `default`.
+    pub ask: Vec<String>,
+}
+
+impl PathLayer {
+    fn mode(&self, path: &std::path::Path) -> RuleMode {
+        let denied = self.deny.iter().any(|root| {
+            let root = std::path::Path::new(root);
+            path.starts_with(root) || root.starts_with(path)
+        });
+        if denied {
+            RuleMode::Deny
+        } else if self
+            .ask
+            .iter()
+            .any(|root| path.starts_with(std::path::Path::new(root)))
+        {
+            RuleMode::Ask
+        } else {
+            self.default
+        }
+    }
 }
 
 impl Policy {
@@ -80,14 +117,44 @@ impl Policy {
                 "duplicate/ambiguous policy rule"
             );
         }
+        ensure!(self.paths.len() <= 8, "too many ceiling layers");
+        for layer in &self.paths {
+            ensure!(
+                layer.deny.len() <= 512 && layer.ask.len() <= 512,
+                "ceiling layer too large"
+            );
+            for path in layer.deny.iter().chain(&layer.ask) {
+                ensure!(
+                    crate::ceiling::normalize(std::path::Path::new(path))?.as_os_str()
+                        == std::ffi::OsStr::new(path),
+                    "ceiling paths must be absolute and normalized"
+                );
+            }
+        }
         Ok(())
     }
 
     pub fn mode(&self, target: &Target) -> RuleMode {
-        self.rules
-            .iter()
-            .find(|rule| rule.target == *target)
-            .map_or(RuleMode::Deny, |rule| rule.mode)
+        if let Some(rule) = self.rules.iter().find(|rule| rule.target == *target) {
+            return rule.mode;
+        }
+        match (target.capability, target.resource_id.strip_prefix("path:")) {
+            (Capability::FileRead | Capability::FileWrite, Some(path))
+                if !self.paths.is_empty() =>
+            {
+                let path = std::path::Path::new(path);
+                // Unnormalized or relative resources never match a ceiling.
+                match crate::ceiling::normalize(path) {
+                    Ok(normal) if normal.as_os_str() == path.as_os_str() => self
+                        .paths
+                        .iter()
+                        .map(|layer| layer.mode(path))
+                        .fold(RuleMode::Allow, crate::ceiling::narrower),
+                    _ => RuleMode::Deny,
+                }
+            }
+            _ => RuleMode::Deny,
+        }
     }
 }
 
@@ -114,7 +181,14 @@ impl Binding {
 impl Operation {
     pub(crate) fn validate(&self) -> Result<()> {
         bounded_id(&self.request_id)?;
-        bounded_id(&self.target.resource_id)?;
+        if let Some(path) = self.target.resource_id.strip_prefix("path:") {
+            ensure!(
+                !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control),
+                "invalid path resource"
+            );
+        } else {
+            bounded_id(&self.target.resource_id)?;
+        }
         let encoded = serde_json::to_vec(&self.arguments)?;
         ensure!(
             encoded.len() <= 8192,

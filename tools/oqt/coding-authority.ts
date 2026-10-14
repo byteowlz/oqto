@@ -1,16 +1,33 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Carrier } from "./carrier.ts";
-import type { CodingOperation } from "./gated-tool.ts";
 
+/** Any guarded operation: workspace tools, external paths or network. */
+export interface Operation {
+	request_id: string;
+	target: { capability: string; resource_id: string };
+	arguments: Record<string, unknown>;
+}
 export interface CodingRequest {
 	id: string;
 	digest: string;
 	revision: number;
-	operation: CodingOperation;
+	operation: Operation;
 }
 export interface InterruptedInvocation {
-	operation: CodingOperation;
+	operation: Operation;
 	started_at: number;
+}
+export interface ResourceGrant {
+	target: { capability: string; resource_id: string };
+	expires_at: number;
+}
+/** Trusted ceiling inputs; the carrier compiles them deterministically. */
+export interface CeilingInput {
+	global: string | null;
+	workspace_file: string | null;
+	home: string;
+	workspace: string;
+	hard_deny: string[];
 }
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object";
@@ -21,7 +38,7 @@ function object(value: unknown): value is Record<string, unknown> {
  * tool channel, the operator only through the guard's operator socket.
  */
 export class CodingAuthority {
-	tools: Carrier;
+	tools!: Carrier;
 	readonly operator: Carrier;
 	readonly pending = new Map<string, CodingRequest>();
 	readonly session: string;
@@ -29,15 +46,15 @@ export class CodingAuthority {
 	readonly replaceHands: (() => Promise<void>) | undefined;
 	readonly #directory: string;
 	readonly #binding: object;
-	readonly #policy: "ask" | "deny";
+	readonly #ceiling: CeilingInput;
 	#frozen = false;
 	#transition: Promise<void> | undefined;
-	constructor(
+	private constructor(
 		session: string,
 		directory: string,
 		binding: object,
 		publish: (requests: CodingRequest[]) => void,
-		policy: "ask" | "deny" = "ask",
+		ceiling: CeilingInput,
 		replaceHands?: () => Promise<void>,
 	) {
 		this.session = session;
@@ -45,9 +62,36 @@ export class CodingAuthority {
 		this.replaceHands = replaceHands;
 		this.#directory = directory;
 		this.#binding = binding;
-		this.#policy = policy;
-		this.tools = new Carrier("tools", directory, binding, policy);
-		this.operator = new Carrier("operator", directory, binding, policy);
+		this.#ceiling = ceiling;
+		this.operator = new Carrier("operator", directory, binding, ceiling);
+	}
+	/** Operator first: only it may adopt a changed ceiling (revoking every
+	 * grant) and recover a dead owner's journal, before the tool channel opens
+	 * strictly against the same ledger. */
+	static async open(
+		session: string,
+		directory: string,
+		binding: object,
+		publish: (requests: CodingRequest[]) => void,
+		ceiling: CeilingInput,
+		replaceHands?: () => Promise<void>,
+	) {
+		const authority = new CodingAuthority(
+			session,
+			directory,
+			binding,
+			publish,
+			ceiling,
+			replaceHands,
+		);
+		try {
+			const interrupted = await authority.recover();
+			authority.tools = new Carrier("tools", directory, binding, ceiling);
+			return { authority, interrupted };
+		} catch (error) {
+			await authority.operator.close();
+			throw error;
+		}
 	}
 	async ready(signal?: AbortSignal) {
 		signal?.throwIfAborted();
@@ -73,11 +117,18 @@ export class CodingAuthority {
 			"tools",
 			this.#directory,
 			this.#binding,
-			this.#policy,
+			this.#ceiling,
 		);
 		await previous.close();
 	}
-	async prepare(operation: CodingOperation, signal: AbortSignal) {
+	/** Active Session overlays for external resources (paths, network). */
+	async resources(): Promise<ResourceGrant[]> {
+		const result = await this.operator.call({ command: "resources" });
+		if (!object(result) || !Array.isArray(result.resources))
+			throw new Error("Invalid resource response");
+		return result.resources as ResourceGrant[];
+	}
+	async prepare(operation: Operation, signal: AbortSignal) {
 		if (!operation.request_id.startsWith(`${this.session}:store:`))
 			throw new Error("Operation is not bound to the public Session");
 		try {
@@ -117,7 +168,7 @@ export class CodingAuthority {
 				this.publish([...this.pending.values()]);
 		}
 	}
-	async check(operation: CodingOperation) {
+	async check(operation: Operation) {
 		if (this.#frozen) throw new Error("Authority delivery is frozen");
 		const result = await this.tools.call({ command: "check", operation });
 		if (!object(result) || result.checked !== true)
@@ -158,6 +209,6 @@ export class CodingAuthority {
 		});
 	}
 	async close() {
-		await Promise.all([this.tools.close(), this.operator.close()]);
+		await Promise.all([this.tools?.close(), this.operator.close()]);
 	}
 }

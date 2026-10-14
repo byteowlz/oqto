@@ -1,126 +1,163 @@
 # oqt: experimental standalone workspace coding
 
-Use it from a project directory **outside this launcher’s own trusted source tree**:
+Run it from a project directory **outside this launcher's own source tree**:
 
 ```sh
 /home/wismut/byteowlz/oqto-durable-support/oqt --coding --workdir /path/to/project
-# Reopen the latest native Session for the same workspace/runtime artifact:
+# Reopen (or join, from a second terminal) the latest Session for that workspace:
 /home/wismut/byteowlz/oqto-durable-support/oqt --coding --continue --workdir /path/to/project
 ```
 
-This opens upstream Pi’s actual experimental Durable TUI with your owning Pi
-model defaults/catalog and **read-only** credentials. It enables upstream
-`read`, `write`, `edit`, and `bash`, exclusively through confined hands. There is
-no stock local-tool fallback. `--owner-profile DIR` selects another owned Pi
-agent directory; otherwise `OQT_OWNER_AGENT_DIR`, `PI_CODING_AGENT_DIR`, then
-`~/.pi/agent` are considered. No installed profile, commands, services or defaults
-are changed.
+This opens upstream Pi's experimental Durable TUI. It uses your owning Pi
+model defaults and catalog. Your credentials are brokered by the guard, never
+copied. The model gets upstream `read`, `write`, `edit` and `bash`, which only
+ever run on confined hands, plus `request_access` for anything outside the
+workspace. There is no stock local-tool fallback. `--owner-profile DIR` selects
+another owned Pi agent directory. Otherwise `OQT_OWNER_AGENT_DIR`,
+`PI_CODING_AGENT_DIR` and then `~/.pi/agent` are used. Nothing is installed,
+and no service, default or PATH entry changes.
 
-## Permissions and limits
+## Architecture
 
-- **Allow once** approves the displayed arguments for that logical invocation.
-- **Allow workspace tools for this Session (60 seconds)** is broader: it covers
-  the fixed workspace-tools capability for this public Session, not just the
-  displayed command. It cannot expand filesystem/network policy.
-- **Deny** is the default. `/permissions` revisits a dismissed pending dialog.
-- `/permissions revoke` freezes admission/delivery, revokes overlays, confirms
-  executor/descendant exit, then installs fresh hands. Already completed effects
-  or disclosures cannot be undone.
-- Tool invocations are sequential and bounded to **30 seconds**, or the remaining
-  protected lease minus a stop margin, whichever is shorter. Completed and failed
-  invocations retire their executor before delivery: detached writers cannot
-  survive a completed call. Background servers/jobs are intentionally unsupported.
-- Workspace files are read/write; tool network is isolated. Outside files,
-  credentials, runtime/source, ledger, and control sockets remain unavailable.
-  Approval does **not** request or grant outside-workspace resources.
-- Synchronous progress/details/diagnostics are withheld until delivery checks.
-  Output beyond the 1 MiB buffer fails closed. Interrupted effects are uncertain;
-  inspect before retrying. Native coding tasks use `replay: "unsafe"`.
-- No skills, codemode, subagents, arbitrary plugins or `/reload`. Command-valued
-  credentials/model configuration are rejected. Unsupported/missing defaults
-  fail rather than silently choosing another model or execution environment.
-
-The brain is a **reviewed, trusted Node host**, not an OS-confined untrusted plugin
-host. Private runtime/profile/source and owning credentials are protected from
-hands; this is not production brain isolation. Local OS ownership/UID binding is
-not Oqto Account authentication. This is usable **experimental local coding**, not
-an authenticated Oqto deployment or permission-policy compiler.
-
-## Owning credentials
-
-`readonly-profile.ts` opens bounded, owned regular JSON files without following
-final symlinks; credential files must be private. It never runs credential
-commands, logs secrets, modifies the owner’s profile, logs out, or rotates OAuth.
-Existing API keys and valid OAuth access/account metadata are supported; refresh
-secrets are stripped. Expired/near-expiry tokens fail before refresh and before
-ambient-key fallback. **Renew/login through owning Pi**; its replacement becomes
-visible on the next credential read. There is no automatic refresh broker.
-
-`owner-models.ts` supplies owning defaults/catalog reads and an in-memory catalog
-write/delete overlay. Upstream runtime cache updates never write or lock the
-owner catalog. Session history and authority live in the separate private runtime
-profile; credentials are not copied there.
-
-## Composition and preparation
-
-Linux x86_64, bwrap, Node 26, cached Cargo dependencies and the qualified upstream
-checkout at `cdaf6c227d4718a72b59ccd02152c9614df44cfc` are required. Set
-`OQT_PI_SOURCE` to its location; wrong/dirty tracked pins fail closed.
-
-Preparation copies the controlled composition into a private source distribution
-under `/var/tmp/q<uid>-<artifact>/`. `runSessionWorkerWithHarness` selects
-`coding-worker.ts`/`openCodingRuntime`, never the stock unrestricted harness.
-Only the controlled TUI package and static permission provider are configured.
-Exact-source carrier, hands, Landlock shim, daemon and BPF are privately staged
-outside the workspace. Enforcement-helper failure never selects a fallback.
-
-The carrier holds non-deserializable, operation-bound permits. Separate bounded
-operator/tool pipes prohibit tool-side decisions/revocation. Invocation and
-handoff are reauthorized against the protected ledger; native Durable SQLite is
-transcript/task authority, not the permission ledger. Public Session identity is
-separate from native conversation/task IDs.
-
-Runtime/profile paths are private and artifact/workspace/mode keyed. Runtime
-changes select a new profile; migration across artifacts is not automatic.
-Synthetic demo and real coding histories are separate. Socket paths are bounded
-below Linux’s 108-byte limit. Unknown/non-private paths and runtime edits are
-refused. Preparation caches are performance aids, not authority/signatures.
-Build/preparation uses one CPU, nice 19, one Cargo worker and 90-second deadlines;
-the interactive process inherits affinity/nice and a 512 MiB V8 heap ceiling,
-not an aggregate memory quota. Normal TUI close stops its owned server/workers.
-
-## Proof and remaining qualification
-
-```sh
-# Original synthetic model/history demo remains the default:
-./oqt --demo --smoke
-just test-oqt-ui
-# Disposable owner profile + real HTTP provider transport + all four tools + reopen:
-just test-oqt-coding
-just test-oqt-hands /tmp/oqto-pi-service-spike.PVTso2/source \
-  /tmp/oqto-pi-env-qualified-target/debug/pi-env \
-  backend/target/oqt-prepared/bpf/default-x86_64.bpf
-just test-adaptive-sandbox /tmp/oqto-pi-service-spike.PVTso2/source
-# Explicit live owning-provider request, no tools:
-./oqt --coding --smoke --workdir /path/to/project
+```
+launcher (TUI) ──unix──▶ host (upstream server + guard) ──spawns──▶ brain (confined session worker)
+     │                       │  guard: ledger carriers, hands, owner broker      │
+     └── operator socket ───▶│                                                   ├─ per-session tool socket
+                             └── hands (bwrap) ◀──── epoch-fenced transport ─────┘
 ```
 
-Local qualification includes 11 coding/credential/confinement foundations, 27
-core/native/replacement tests, three original demo PTY cases, and the real coding
-TUI/provider-transport workflow. The composed proof covers active revoke, withheld
-secret output, same-turn fresh hands, and detached-descendant stop after normal
-completion. A bounded **actual owning `openai-codex/gpt-5.6-sol` request and actual
-TUI-approved confined write** passed with same-turn completion; owner auth,
-settings, models and catalog bytes stayed unchanged.
+- **Host**: a detached process per workspace profile. Launchers attach to a
+  running host or start one under a lock. It retires when no client or worker
+  remains.
+- **Guard**: owns the permission ledger, the confined hands, the owner
+  credential broker and the operator socket. TUI decisions go straight to the
+  guard, so no brain can approve its own requests.
+- **Brain**: each Session worker runs inside `oqt_brain`
+  (bwrap/seccomp/Landlock) with explicit binds only: private source snapshot,
+  pinned checkout, its session store and its own sockets. Your `auth.json`,
+  `~/.ssh`, the ledger and guard state are not visible. The brain has network
+  for model providers.
+- **Hands**: guard-owned `RemoteExecutionEnv` daemons in bwrap/seccomp/Landlock
+  sandboxes. They see only the workspace plus approved resources, with no
+  network unless granted. Every generation has a fresh epoch, and tool calls are
+  pinned to the generation admitted for them. Completed, failed or revoked calls
+  retire their executor, descendants included, before delivery.
 
-Production Account authority, global/workspace ceiling compilation, external
-resource expansion, automatic OAuth refresh, simultaneous launcher clients,
-in-flight kill/recovery/uncertain-effect reconciliation, browser/mobile/SSH and
-deployment remain unqualified. Normal completed-session reopen is not in-flight
-crash recovery.
+## Permissions
 
-Accepted isolated upstream type debt: three pinned OpenAI response SDK type
-mismatches (`prompt_cache_options`, `fast`) remain in a full source check. Owned
-composition diagnostics must be clean. The scoped live owning-model path is
-runtime-qualified; this is **not** qualification of every provider or a claim
-that full upstream TypeScript passes. See ADR-0053 for the production contract.
+| Request | Dialog choices | Effect |
+|---|---|---|
+| Workspace tool call | Allow once · Allow workspace tools for this Session (60 s) · **Deny** | Exact arguments (once) or the fixed workspace-tools capability (Session) |
+| `request_access` path/network | Allow for this Session (1 h) · **Deny** | Exact canonical path (read or write) or host network, mounted on fresh hands; tool calls are still approved one by one |
+
+Commands:
+- `/permissions` reopens a dismissed dialog.
+- `/permissions revoke` freezes the authority, revokes every grant, confirms the
+  hands and their descendants stopped, then installs fresh hands with no grants.
+- `/permissions ack` acknowledges interrupted calls once you have inspected
+  them.
+
+Completed effects and disclosures cannot be undone.
+
+### Ceilings
+
+The global file `~/.config/oqt/policy.toml` is optional and only read. The
+workspace file `<workspace>/.oqt/policy.toml` is also optional. It is
+agent-writable, so it **can only narrow**.
+
+```toml
+workspace_tools = "ask"     # allow | ask | deny
+network = "ask"             # allow | ask | deny
+outside_paths = "ask"       # ask | deny ("allow" is rejected)
+ask_paths = ["~/Code"]      # still requestable when outside_paths = "deny"
+deny_paths = ["~/Code/secrets"]
+```
+
+Built-in hard denies always apply: credential and config dirs (`~/.ssh`,
+`~/.config`, `~/.pi`, `~/.aws` and others), system roots (`/proc`, `/etc/shadow`
+and others), protected runtime roots, the workspace itself, and **anything
+containing these**, such as `$HOME` or `/`. Unknown keys or values fail closed. A
+changed ceiling takes effect when the Session's host starts. Adopting it revokes
+every grant.
+
+## Crash recovery
+
+- **Brain killed mid-call:** the guard stops the hands, discards in-memory
+  permits, records the call as interrupted, revokes every grant and installs
+  fresh hands. The TUI reattaches by itself and shows `Interrupted: … effects
+  uncertain`. Durable reports the call as interrupted and never replays it. A
+  retry needs a fresh decision even if a Session grant was active.
+- **Host killed:** hands die with it. On the next launch, the journal marks the
+  call interrupted with the same rules, and the dead host's private
+  directories are swept.
+
+## Owner credentials
+
+The broker reads bounded, owned, private regular files without following
+symlinks. It never runs credential commands. OAuth tokens within 10 minutes of
+expiry are renewed with upstream Pi's own file-locked `AuthStorage` and provider
+refresh, after writing a private `auth.json.oqt-backup`. Only that provider's
+entry is rewritten, so other entries and owning Pi keep working. Brains receive
+access tokens and account metadata only; refresh secrets never leave the guard.
+A failed renewal fails closed.
+
+## Preparation
+
+- **Requirements:** Linux x86_64, bwrap, Node 26, cached Cargo dependencies, and
+  the qualified upstream checkout at `cdaf6c227d4718a72b59ccd02152c9614df44cfc`
+  (`OQT_PI_SOURCE`). A wrong or dirty pin fails closed.
+- **Private derivative:** preparation builds a private source derivative under
+  `/var/tmp/q<uid>-<artifact>/`. Upstream code is reused unchanged except for
+  the reviewed exact-text patches in `source_patches.py`: confined worker spawn,
+  guard-attested worker pid, client reattach after worker loss, and server error
+  logging. A patch fails closed if upstream changes its text.
+- **Staged assets:** the exact-source carrier, hands, brain launcher, Landlock
+  shim, daemon and BPF are staged privately outside any workspace.
+- **Logs:** `OQT_DEBUG=1` records brain startup phases. The host log and brain
+  log live in the private profile.
+- **Network:** `PI_OFFLINE=1` disables upstream's Radius relay, so a session is
+  never remotely exposed.
+
+Startup takes about 7–8 s; it was about 3.6 s before the host/brain split.
+
+## Proof
+
+```sh
+just test-oqt-hands /tmp/oqto-pi-service-spike.PVTso2/source \
+  /tmp/oqto-pi-env-qualified-target/debug/pi-env \
+  backend/target/oqt-prepared/bpf/default-x86_64.bpf   # guard/brain/broker/resources/supervisor
+just test-oqt-coding     # real TUI: four tools, exact approvals, reopen
+just test-oqt-recovery   # real TUI: brain kill and host kill mid-shell
+just test-oqt-access     # real TUI: outside-path request, approval, mount
+just test-oqt-multi      # two real TUIs on one host/Session
+just test-oqt-ui         # original synthetic demo
+just test-adaptive-sandbox /tmp/oqto-pi-service-spike.PVTso2/source
+cd backend && cargo test -p oq-permissions --test lifecycle --test ceiling
+```
+
+Live acceptance with the owning `openai-codex/gpt-5.6-sol` passed: a smoke run
+and a TUI-approved confined write with same-turn completion. Credentials went
+through the guard broker into the confined brain, and owner profile bytes
+stayed unchanged. The real upstream OAuth refresh path is proven with only the
+token endpoint stubbed at `fetch`; a live renewal happens whenever a token
+nears expiry.
+
+## Limits
+
+- **Operator boundary:** local OS ownership, not Oqto Account authentication.
+  Authenticated runner/Web/mobile/SSH integration and deployment are not part
+  of this.
+- **Trusted processes:** the guard and host are trusted, unconfined code.
+- **Brain network:** the brain can reach the network, which it needs for
+  providers.
+- **Network grants:** these expose the host network, including localhost
+  services.
+- **Revocation scope:** revocation cannot undo completed effects or erase
+  disclosed data.
+- **Mount changes:** a resource grant that expires mid-call keeps its mount
+  until that call ends (at most 30 s).
+- **Session-store visibility:** the brain sees the session store of its own
+  workspace profile, which includes sibling Sessions of the same workspace.
+- **Upstream type debt:** three pinned OpenAI SDK type mismatches remain in a
+  full upstream typecheck. The owned composition and the patched upstream files
+  typecheck cleanly.

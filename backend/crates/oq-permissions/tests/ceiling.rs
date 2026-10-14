@@ -1,0 +1,323 @@
+#![cfg(unix)]
+
+use oq_permissions::*;
+use serde_json::json;
+use std::path::PathBuf;
+use tempfile::TempDir;
+
+const HOME: &str = "/home/tester";
+const WORKSPACE: &str = "/home/tester/Code/project";
+
+fn input(global: Option<&str>, workspace: Option<&str>) -> CeilingInput {
+    CeilingInput {
+        global: global.map(str::to_string),
+        workspace_file: workspace.map(str::to_string),
+        home: PathBuf::from(HOME),
+        workspace: PathBuf::from(WORKSPACE),
+        hard_deny: vec![
+            PathBuf::from("/var/tmp/runtime"),
+            PathBuf::from("/home/tester/.pi/agent"),
+        ],
+    }
+}
+fn path(capability: Capability, path: &str) -> Target {
+    Target {
+        capability,
+        resource_id: format!("path:{path}"),
+    }
+}
+fn read(path_: &str) -> Target {
+    path(Capability::FileRead, path_)
+}
+fn tools() -> Target {
+    Target {
+        capability: Capability::Execute,
+        resource_id: WORKSPACE_TOOLS.into(),
+    }
+}
+fn network() -> Target {
+    Target {
+        capability: Capability::Network,
+        resource_id: NETWORK_EGRESS.into(),
+    }
+}
+
+#[test]
+fn defaults_ask_outside_and_hard_deny_secrets_roots_and_containers() {
+    let p = compile_ceiling(&input(None, None)).unwrap();
+    assert_eq!(p.mode(&tools()), RuleMode::Ask);
+    assert_eq!(p.mode(&network()), RuleMode::Ask);
+    assert_eq!(p.mode(&read("/home/tester/Code/library")), RuleMode::Ask);
+    assert_eq!(
+        p.mode(&path(Capability::FileWrite, "/home/tester/Code/library")),
+        RuleMode::Ask
+    );
+    for denied in [
+        "/home/tester/.ssh",
+        "/home/tester/.ssh/id_ed25519",
+        "/home/tester/.config/gh",
+        "/home/tester/.pi/agent/auth.json",
+        "/home/tester", // contains secrets
+        "/home",
+        "/",
+        "/etc/shadow",
+        "/proc/self/environ",
+        "/var/tmp/runtime/ledger",
+        "/var/tmp",                      // contains a protected root
+        "/home/tester/Code/project/src", // already granted to hands
+        "/home/tester/Code",             // contains the workspace
+        "/home/tester/Code/../.ssh",     // unnormalized never matches
+        "relative/path",
+    ] {
+        assert_eq!(p.mode(&read(denied)), RuleMode::Deny, "{denied}");
+    }
+    // Unknown capabilities/resources stay denied.
+    assert_eq!(
+        p.mode(&Target {
+            capability: Capability::Network,
+            resource_id: "other".into()
+        }),
+        RuleMode::Deny
+    );
+}
+
+#[test]
+fn global_ceiling_shapes_requestable_paths() {
+    let p = compile_ceiling(&input(
+        Some(
+            r#"
+workspace_tools = "allow"
+network = "deny"
+outside_paths = "deny"
+ask_paths = ["~/Code", "/opt/data"]
+deny_paths = ["~/Code/secrets"]
+"#,
+        ),
+        None,
+    ))
+    .unwrap();
+    assert_eq!(p.mode(&tools()), RuleMode::Allow);
+    assert_eq!(p.mode(&network()), RuleMode::Deny);
+    assert_eq!(p.mode(&read("/home/tester/Code/library")), RuleMode::Ask);
+    assert_eq!(p.mode(&read("/opt/data/set")), RuleMode::Ask);
+    assert_eq!(p.mode(&read("/home/tester/Documents")), RuleMode::Deny);
+    assert_eq!(
+        p.mode(&read("/home/tester/Code/secrets/key")),
+        RuleMode::Deny
+    );
+}
+
+#[test]
+fn workspace_file_can_only_narrow() {
+    let global = r#"
+workspace_tools = "ask"
+outside_paths = "deny"
+ask_paths = ["~/Code"]
+"#;
+    // Attempts to widen are ineffective.
+    let widen = compile_ceiling(&input(
+        Some(global),
+        Some(
+            r#"
+workspace_tools = "allow"
+network = "allow"
+outside_paths = "ask"
+ask_paths = ["~/Documents"]
+"#,
+        ),
+    ))
+    .unwrap();
+    assert_eq!(widen.mode(&tools()), RuleMode::Ask);
+    assert_eq!(widen.mode(&network()), RuleMode::Ask);
+    assert_eq!(
+        widen.mode(&read("/home/tester/Documents/x")),
+        RuleMode::Deny
+    );
+    // Narrowing applies.
+    let narrow = compile_ceiling(&input(
+        Some(global),
+        Some(
+            r#"
+workspace_tools = "deny"
+network = "deny"
+deny_paths = ["../shared-secrets", "~/Code/library/private"]
+"#,
+        ),
+    ));
+    let narrow = narrow.unwrap_err().to_string();
+    assert!(narrow.contains(".."), "{narrow}");
+    let narrow = compile_ceiling(&input(
+        Some(global),
+        Some(
+            r#"
+workspace_tools = "deny"
+network = "deny"
+outside_paths = "deny"
+deny_paths = ["~/Code/library/private"]
+"#,
+        ),
+    ))
+    .unwrap();
+    assert_eq!(narrow.mode(&tools()), RuleMode::Deny);
+    assert_eq!(narrow.mode(&network()), RuleMode::Deny);
+    // Workspace layer has outside_paths=deny and no ask roots of its own.
+    assert_eq!(
+        narrow.mode(&read("/home/tester/Code/library")),
+        RuleMode::Deny
+    );
+}
+
+#[test]
+fn unsupported_ceiling_values_fail_closed() {
+    for bad in [
+        "outside_paths = \"allow\"",
+        "unknown_key = 1",
+        "workspace_tools = \"sometimes\"",
+        "deny_paths = [\"\"]",
+        "this is not toml",
+    ] {
+        assert!(compile_ceiling(&input(Some(bad), None)).is_err(), "{bad}");
+        assert!(compile_ceiling(&input(None, Some(bad))).is_err(), "{bad}");
+    }
+}
+
+fn binding() -> Binding {
+    Binding {
+        account_id: "owner".into(),
+        principal_id: "principal".into(),
+        workspace_id: "workspace".into(),
+        work_directory_id: "workdir".into(),
+        session_id: "public-session".into(),
+        audience: "owner-only-v1".into(),
+    }
+}
+fn private_dir() -> TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    dir
+}
+fn op(id: &str, target: Target) -> Operation {
+    Operation {
+        request_id: id.into(),
+        target,
+        arguments: json!({"reason":"test"}),
+    }
+}
+async fn approve(a: &Authority, operation: &Operation, lifetime: GrantLifetime, expires: u64) {
+    let request = match a.admit(operation.clone(), 100).await.unwrap() {
+        Admission::Pending(request) => *request,
+        other => panic!("expected pending, got {other:?}"),
+    };
+    a.decide(
+        "owner",
+        &operation.request_id,
+        &request.digest,
+        request.revision,
+        lifetime,
+        true,
+        expires,
+        101,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn resource_grants_are_listed_until_revoked_or_expired() {
+    let dir = private_dir();
+    let policy = compile_ceiling(&input(None, None)).unwrap();
+    let a = Authority::open(&dir.path().join("p.sqlite"), binding(), policy)
+        .await
+        .unwrap();
+    let library = read("/home/tester/Code/library");
+    approve(
+        &a,
+        &op("s:store:1", library.clone()),
+        GrantLifetime::Session,
+        5000,
+    )
+    .await;
+    approve(
+        &a,
+        &op("s:store:2", network()),
+        GrantLifetime::Session,
+        2000,
+    )
+    .await;
+    // Once grants bind one logical invocation, never an executor mount.
+    approve(
+        &a,
+        &op("s:store:3", read("/home/tester/Code/other")),
+        GrantLifetime::Once,
+        5000,
+    )
+    .await;
+    let mut active: Vec<_> = a
+        .active_resource_grants(1000)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(target, _)| target)
+        .collect();
+    active.sort_by_key(|t| t.resource_id.clone());
+    let mut expected = vec![library.clone(), network()];
+    expected.sort_by_key(|t| t.resource_id.clone());
+    assert_eq!(active, expected);
+    assert_eq!(
+        a.active_resource_grants(3000).await.unwrap().len(),
+        1,
+        "expired network grant dropped"
+    );
+    a.revoke_all("owner").await.unwrap();
+    assert!(a.active_resource_grants(1000).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn changed_ceiling_needs_explicit_owner_replacement_which_revokes_everything() {
+    let dir = private_dir();
+    let file = dir.path().join("p.sqlite");
+    let first = compile_ceiling(&input(None, None)).unwrap();
+    let a = Authority::open(&file, binding(), first).await.unwrap();
+    approve(
+        &a,
+        &op("s:store:1", read("/home/tester/Code/library")),
+        GrantLifetime::Session,
+        5000,
+    )
+    .await;
+    let pending = op("s:store:2", read("/home/tester/Code/other"));
+    assert!(matches!(
+        a.admit(pending.clone(), 100).await.unwrap(),
+        Admission::Pending(_)
+    ));
+    a.close().await;
+    let changed = compile_ceiling(&input(Some("network = \"deny\""), None)).unwrap();
+    assert!(
+        Authority::open(&file, binding(), changed.clone())
+            .await
+            .is_err()
+    );
+    let mut other = binding();
+    other.audience = "wider-audience".into();
+    assert!(
+        Authority::open_replacing_policy(&file, other, changed.clone())
+            .await
+            .is_err()
+    );
+    let b = Authority::open_replacing_policy(&file, binding(), changed.clone())
+        .await
+        .unwrap();
+    assert!(
+        b.active_resource_grants(1000).await.unwrap().is_empty(),
+        "grants revoked"
+    );
+    // The discarded pending request is re-reviewed under the new ceiling.
+    assert!(matches!(
+        b.admit(pending, 200).await.unwrap(),
+        Admission::Pending(_)
+    ));
+    b.close().await;
+    // Replacement is idempotent; strict reopen now matches.
+    Authority::open(&file, binding(), changed).await.unwrap();
+}

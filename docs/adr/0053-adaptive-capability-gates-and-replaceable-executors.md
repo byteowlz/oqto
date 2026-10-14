@@ -16,6 +16,19 @@ Use stable native tool-task identities plus protected store/Session bindings for
 
 Broker grants need no process restart. Direct mount/seccomp expansion uses fresh or replacement hands; no unsandboxed fallback. Freeze old admissions, drain/cancel, confirm stop, replace and fence generations. Failed replacement fails closed. Do not claim that Durable checkpoints a shell process or that uncertain effects may safely replay. Every shell/codemode/skill/subagent path must use the same executor boundary before production use.
 
+## Local standalone composition (oqt)
+
+The standalone `oqt --coding` composition implements this contract locally:
+
+- **Permission Guard outside the brain.** A detached per-workspace host runs upstream's server plus a guard. The guard owns the ledger carriers, Executors, owner credential broker and operator socket. Each Session worker (the brain) runs confined in its own bwrap/seccomp/Landlock sandbox with explicit binds only; owner credentials, the ledger and guard state are never bindable (inside or as an ancestor). The brain reaches only its per-Session tool socket; operator decisions arrive on a separate socket no brain can see. Approval authority therefore does not live in the brain.
+- **Interrupted Invocations.** The ledger journals every admitted invocation. A brain loss (or a dead host on restart) marks live entries interrupted, revokes every grant and advances the generation; Durable reports the call as interrupted and never replays it (`replay: "unsafe"`). Retries need a fresh decision even if a Session grant was active. Hands stop with the brain or the host.
+- **Ceilings.** A global owner file and a workspace file compile into path layers; each layer is evaluated independently and the most restrictive answer wins, so the agent-writable workspace file can only narrow. Built-in hard denies cover credential/system paths, protected runtime roots and anything containing them; `outside_paths = "allow"` is rejected. A changed ceiling is adopted only through an explicit owner path that revokes every grant; a plain reopen still fails closed.
+- **Resource Grants.** Exact outside paths (read or write) and network are requestable, Session-scoped for one hour, and compiled into the next Executor generation after confirmed stop. Expiry and revocation remove the mount before the next admitted call. Individual tool calls are still admitted separately.
+- **Owner credentials.** The guard renews near-expiry OAuth with upstream's own file-locked store and provider refresh, after a private backup; brains receive access tokens only.
+- **Several clients.** Launchers attach to the same host/guard; decisions are single-winner CAS. Upstream server/client code is reused unchanged except for small reviewed source patches (worker spawn, worker pid attestation, client reattach after worker loss, server error logging), applied only when the pinned text matches exactly.
+
+Limits: local OS ownership is the operator boundary, not Account authentication; the brain has network for providers; the guard and host are trusted, unconfined code; network grants expose the host network including localhost services.
+
 ## Prototype boundary and security checklist
 
 - [ ] Verify actor and target binding independently of model arguments; prototype identities are explicitly synthetic until runner authentication is wired.
@@ -29,7 +42,8 @@ Broker grants need no process restart. Direct mount/seccomp expansion uses fresh
 - [x] Native Durable read-only permission wait/recovery demonstrated separately from synthetic core tests.
 - [x] Source-only upstream Pi TUI fixture demo uses the same ledger/gates: in-turn Once/Session approval, default denial and live revoke/re-request pass PTY coverage. See `tools/oqt/README.md`.
 - [x] Opt-in standalone real coding uses owning defaults/read-only credentials, exact Once or explicit workspace-wide 60-second Session approval, bounded sequential invocations and confirmed executor retirement before delivery. Actual owning-model TUI write/continuation and disposable-profile all-tool/reopen proofs qualify local experimental use. The reviewed brain remains trusted, not OS-confined.
-- [ ] Authenticated TUI/Web/headless runner integration, production brain confinement, external-resource policy compilation and in-flight kill/recovery; local qualification is not a shipped production UI.
+- [x] Local brain confinement behind a guard, ceiling compilation with workspace narrowing, exact external Resource Grants, in-flight brain/host kill recovery and multi-client attach are implemented and proven with real TUI/PTY runs (`tools/oqt/README.md`).
+- [ ] Authenticated TUI/Web/headless runner integration and Account-level authority; the local guard is not that gate.
 - [x] Resource-bounded gates, no user config/live service changes, no default activation.
 
 Initial proof uses disposable resources and a deterministic provider. A headless trusted operator is the initial approval surface. App grants already have reviewed-definition binding but are App-instance-specific; do not reuse those rows as generic Session grants or introduce a bypass to App authority.

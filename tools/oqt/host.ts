@@ -1,9 +1,11 @@
 // Detached oqt coding host: upstream server + guard for one workspace profile.
 // Launchers attach to it; it retires when no client or worker remains.
-import { existsSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import lockfile from "proper-lockfile";
 import { Guard } from "./guard.ts";
 import { OwnerBroker } from "./owner-broker.ts";
 import { ownerModelDefaults } from "./owner-models.ts";
@@ -50,7 +52,69 @@ if (existsSync(modelsPath))
 	rejectCommands(await readOwnedJson(modelsPath, false));
 await mkdir(sessionDir, { recursive: true, mode: 0o700 });
 
+// A host killed outright leaves its private guard state behind (its carriers
+// and hands die with it). Sweep directories whose host liveness lock is stale.
+async function sweepDeadGuards() {
+	for (const name of readdirSync("/var/tmp")) {
+		if (!name.startsWith("oqg-")) continue;
+		const dir = join("/var/tmp", name);
+		try {
+			const meta = lstatSync(dir);
+			if (
+				!meta.isDirectory() ||
+				meta.uid !== userInfo().uid ||
+				(meta.mode & 0o077) !== 0
+			)
+				continue;
+			// A guard that has not yet taken its lock is younger than this.
+			if (Date.now() - meta.mtimeMs < 60_000) continue;
+			// Dead when its recorded host process is gone (or the pid was reused
+			// by something else), or when its liveness lock went stale.
+			let dead = false;
+			try {
+				const pid = Number(await readFile(join(dir, "host.pid"), "utf8"));
+				const command = await readFile(`/proc/${pid}/cmdline`, "utf8").catch(
+					() => "",
+				);
+				dead = !command.includes("host.ts");
+			} catch {}
+			if (
+				!dead &&
+				(await lockfile.check(join(dir, "alive"), {
+					realpath: false,
+					stale: 15_000,
+				}))
+			)
+				continue;
+			let roots: unknown = [];
+			try {
+				roots = JSON.parse(await readFile(join(dir, "roots.json"), "utf8"));
+			} catch {}
+			for (const root of Array.isArray(roots) ? roots : [])
+				if (
+					typeof root === "string" &&
+					/^\/var\/tmp\/oqs-[A-Za-z0-9]+$/.test(root)
+				)
+					await rm(root, { recursive: true, force: true });
+			await rm(dir, { recursive: true, force: true });
+		} catch {
+			// Best effort; never touch anything we cannot positively identify.
+		}
+	}
+}
+await sweepDeadGuards();
+
+// Owner's global ceiling (read-only). Workspace .oqt/policy.toml may only narrow it.
+const home = userInfo().homedir;
+const globalCeiling = join(home, ".config", "oqt", "policy.toml");
 const guard = await Guard.open({
+	ceiling: {
+		global: existsSync(globalCeiling)
+			? await readFile(globalCeiling, "utf8")
+			: null,
+		home,
+		hardDeny: [agent],
+	},
 	authorityRoot: join(directory, "authority"),
 	protectedRoots: [owner, trusted, checkout, runtimeRoot],
 	hands: {
@@ -88,6 +152,14 @@ const guard = await Guard.open({
 	},
 });
 installGuard(guard);
+await writeFile(join(guard.directory, "host.pid"), String(process.pid), {
+	mode: 0o600,
+});
+const releaseAlive = await lockfile.lock(join(guard.directory, "alive"), {
+	realpath: false,
+	stale: 15_000,
+	update: 5_000,
+});
 let runtime: Awaited<ReturnType<typeof startServer>> | undefined;
 try {
 	runtime = await startServer({
@@ -115,6 +187,7 @@ try {
 	await runtime?.close().catch(() => {});
 	await rm(manifest, { force: true });
 	installGuard(undefined);
+	await releaseAlive().catch(() => {});
 	await guard.close();
 }
 process.exit(0);

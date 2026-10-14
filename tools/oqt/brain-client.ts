@@ -56,6 +56,25 @@ export class GuardGate implements CodingGate {
 			(this.#deadlines.get(operation.request_id) ?? 0) - Date.now() - 100,
 		);
 	}
+	/** Ask the guard for an external resource; resolves once the operator decided. */
+	async requestAccess(
+		params: {
+			request_id: string;
+			path?: string;
+			access?: "read" | "write";
+			network?: boolean;
+			reason: string;
+		},
+		signal?: AbortSignal,
+	) {
+		const result = this.#adopt(
+			await this.guard.call("request_resource", params, signal),
+		);
+		return result as {
+			granted: { capability: string; resource: string };
+			expires_at: number;
+		};
+	}
 	async drain() {
 		this.#adopt(await this.guard.call("drain"));
 	}

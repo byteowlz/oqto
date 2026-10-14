@@ -172,6 +172,7 @@ async fn real_bwrap_seccomp_replacement_and_revocation_keep_brain_identity() {
     fs::write(&file, "approved extra token").unwrap();
     fs::write(protected.join("private-history"), "must never reach hands").unwrap();
     let policy = Policy {
+        paths: vec![],
         revision: "v1".into(),
         rules: vec![Rule {
             target: Target {

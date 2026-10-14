@@ -5,11 +5,13 @@
 //! invocations and result deliveries. Never derive either identity from model
 //! arguments. OS confinement and domain stores retain their existing owners.
 
+mod ceiling;
 mod ledger;
 mod policy;
 
+pub use ceiling::{CeilingInput, NETWORK_EGRESS, PATH_PREFIX, WORKSPACE_TOOLS, compile_ceiling};
 pub use ledger::{Admission, Authority, GrantLifetime, Interrupted, Permit, Request, RequestState};
-pub use policy::{Binding, Capability, Operation, Policy, Rule, RuleMode, Target};
+pub use policy::{Binding, Capability, Operation, PathLayer, Policy, Rule, RuleMode, Target};
 
 use anyhow::{Result, ensure};
 

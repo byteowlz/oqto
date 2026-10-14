@@ -137,7 +137,15 @@ test-oqt-coding:
 # Kill the confined brain mid-shell: hands stop, TUI reattaches, call is reported
 # interrupted (never replayed) and the retry needs fresh approval.
 test-oqt-recovery:
-    timeout --kill-after=5s 140s python3 tools/oqt/recovery_tui_test.py
+    timeout --kill-after=5s 260s python3 tools/oqt/recovery_tui_test.py
+
+# Model requests an outside path; operator approves; guard mounts it on fresh hands.
+test-oqt-access:
+    timeout --kill-after=5s 120s python3 tools/oqt/access_tui_test.py
+
+# Two real TUIs share one host/guard and Session; single-winner approval.
+test-oqt-multi:
+    timeout --kill-after=5s 200s python3 tools/oqt/multiclient_tui_test.py
 
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:

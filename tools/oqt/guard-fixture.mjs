@@ -1,7 +1,14 @@
 // Test fixture: a real Guard session (ledger carriers, guard-owned confined
 // hands, tool + operator sockets) and the real brain-side composition talking
 // to it over those sockets. Only the model provider is synthetic.
-import { chmod, copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+	chmod,
+	copyFile,
+	mkdir,
+	mkdtemp,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,13 +33,20 @@ export const call = (name, args, id) =>
 	});
 
 /** `decide(request, operator)` runs for each newly pending request. */
-export async function withGuard(run, { policy = "ask", decide } = {}) {
+export async function withGuard(
+	run,
+	{ policy = "ask", ceiling, workspaceCeiling, decide } = {},
+) {
 	const root = await mkdtemp("/var/tmp/oqt-guard-proof-");
 	await chmod(root, 0o700);
 	const workspace = join(root, "workspace");
 	const owner = join(root, "owner");
 	await mkdir(workspace);
 	await mkdir(owner, { mode: 0o700 });
+	if (workspaceCeiling) {
+		await mkdir(join(workspace, ".oqt"));
+		await writeFile(join(workspace, ".oqt", "policy.toml"), workspaceCeiling);
+	}
 	const daemon = join(root, "pi-env");
 	await copyFile(process.env.OQT_ENV_DAEMON, daemon);
 	const guard = await Guard.open({
@@ -44,7 +58,12 @@ export async function withGuard(run, { policy = "ask", decide } = {}) {
 			bpf: process.env.OQT_SECCOMP_BPF,
 		},
 		broker: new OwnerBroker(owner),
-		policy,
+		ceiling: {
+			global:
+				ceiling ?? (policy === "deny" ? 'workspace_tools = "deny"' : null),
+			home: root,
+			hardDeny: [],
+		},
 		parent: root,
 	});
 	const session = "coding-public-session";
@@ -89,6 +108,7 @@ export async function withGuard(run, { policy = "ask", decide } = {}) {
 			gate,
 			hands,
 			refresh: () => gate.refresh(),
+			requestAccess: (params, signal) => gate.requestAccess(params, signal),
 		});
 		await run({
 			root,

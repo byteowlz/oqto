@@ -103,6 +103,7 @@ export async function createCodingHarness(
 			gate,
 			hands,
 			refresh: () => gate.refresh(),
+			requestAccess: (params, signal) => gate.requestAccess(params, signal),
 		});
 		debug("harness open");
 		return {

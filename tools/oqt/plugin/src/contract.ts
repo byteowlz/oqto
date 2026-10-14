@@ -8,6 +8,8 @@ export interface PendingPermission {
 	readonly id: string;
 	readonly digest: string;
 	readonly revision: number;
+	/** Coding mode: workspace tool call or external resource request. */
+	readonly kind?: "tool" | "resource";
 	readonly capability: string;
 	readonly resource: string;
 	readonly argumentsText: string;

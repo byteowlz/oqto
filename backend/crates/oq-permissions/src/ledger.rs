@@ -7,7 +7,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::{Binding, Operation, Policy, RuleMode, policy::digest};
+use crate::{Binding, Capability, Operation, Policy, RuleMode, Target, policy::digest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +84,27 @@ pub struct Authority {
 
 impl Authority {
     pub async fn open(path: &Path, binding: Binding, policy: Policy) -> Result<Self> {
+        Self::open_inner(path, binding, policy, false).await
+    }
+
+    /// Owner-only: adopt a changed ceiling for the same verified binding. All
+    /// overlays are revoked and pending requests discarded in one transaction,
+    /// so nothing approved under the previous ceiling survives. A different
+    /// binding/audience still fails closed.
+    pub async fn open_replacing_policy(
+        path: &Path,
+        binding: Binding,
+        policy: Policy,
+    ) -> Result<Self> {
+        Self::open_inner(path, binding, policy, true).await
+    }
+
+    async fn open_inner(
+        path: &Path,
+        binding: Binding,
+        policy: Policy,
+        replace: bool,
+    ) -> Result<Self> {
         binding.validate()?;
         policy.validate()?;
         prepare_private_file(path)?;
@@ -95,26 +116,66 @@ impl Authority {
             .max_connections(1)
             .connect_with(options)
             .await?;
-        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), fingerprint TEXT NOT NULL, ledger_id TEXT NOT NULL, generation INTEGER NOT NULL, clock INTEGER NOT NULL);
+        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), fingerprint TEXT NOT NULL, ledger_id TEXT NOT NULL, generation INTEGER NOT NULL, clock INTEGER NOT NULL, binding TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, digest TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL, document TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, resource TEXT);
             CREATE TABLE IF NOT EXISTS invocations (id TEXT PRIMARY KEY, operation TEXT NOT NULL, started INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('live','interrupted')));")
             .execute(&pool).await?;
+        // Ledgers created before these columns existed: migrate once, under an
+        // exclusive transaction so concurrent openers cannot both alter.
+        let mut migration = pool.begin_with("BEGIN IMMEDIATE").await?;
+        for (table, column) in [("authority", "binding"), ("grants", "resource")] {
+            let present: i64 = sqlx::query_scalar(&format!(
+                "SELECT count(*) FROM pragma_table_info('{table}') WHERE name='{column}'"
+            ))
+            .fetch_one(&mut *migration)
+            .await?;
+            if present == 0 {
+                sqlx::raw_sql(&format!(
+                    "ALTER TABLE {table} ADD COLUMN {column} TEXT{}",
+                    if column == "binding" {
+                        " NOT NULL DEFAULT ''"
+                    } else {
+                        ""
+                    }
+                ))
+                .execute(&mut *migration)
+                .await?;
+            }
+        }
+        migration.commit().await?;
         let fingerprint = digest(&(&binding, &policy))?;
+        let binding_digest = digest(&binding)?;
         sqlx::query(
-            "INSERT OR IGNORE INTO authority VALUES (1, ?, lower(hex(randomblob(16))), 0, 0)",
+            "INSERT OR IGNORE INTO authority (singleton, fingerprint, ledger_id, generation, clock, binding) VALUES (1, ?, lower(hex(randomblob(16))), 0, 0, ?)",
         )
         .bind(&fingerprint)
+        .bind(&binding_digest)
         .execute(&pool)
         .await?;
-        let saved: String =
-            sqlx::query_scalar("SELECT fingerprint FROM authority WHERE singleton=1")
-                .fetch_one(&pool)
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let row = sqlx::query("SELECT fingerprint, binding FROM authority WHERE singleton=1")
+            .fetch_one(&mut *tx)
+            .await?;
+        let saved: String = row.get("fingerprint");
+        if saved != fingerprint {
+            ensure!(
+                replace && row.get::<String, _>("binding") == binding_digest,
+                "authority binding/audience/policy mismatch"
+            );
+            sqlx::query("UPDATE grants SET revoked=1 WHERE revoked=0")
+                .execute(&mut *tx)
                 .await?;
-        ensure!(
-            saved == fingerprint,
-            "authority binding/audience/policy mismatch"
-        );
+            sqlx::query("DELETE FROM requests WHERE state='pending'")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE authority SET fingerprint=? WHERE singleton=1")
+                .bind(&fingerprint)
+                .execute(&mut *tx)
+                .await?;
+            advance(&mut tx).await?;
+        }
+        tx.commit().await?;
         let ledger_id: String =
             sqlx::query_scalar("SELECT ledger_id FROM authority WHERE singleton=1")
                 .fetch_one(&pool)
@@ -324,11 +385,12 @@ impl Authority {
                 GrantLifetime::Session => None,
             };
             let grant_id = digest(&(&request.digest, request.revision, lifetime, expires_at))?;
-            sqlx::query("INSERT INTO grants (id, target, operation, expires) VALUES (?, ?, ?, ?)")
+            sqlx::query("INSERT INTO grants (id, target, operation, expires, resource) VALUES (?, ?, ?, ?, ?)")
                 .bind(&grant_id)
                 .bind(target_hash)
                 .bind(operation)
                 .bind(i64::try_from(expires_at)?)
+                .bind(serde_json::to_string(&request.operation.target)?)
                 .execute(&mut *tx)
                 .await?;
             request.state = RequestState::Approved;
@@ -476,6 +538,29 @@ impl Authority {
                 .await?
                 .rows_affected(),
         )
+    }
+
+    /// Active, unexpired Session overlays for external resources (paths,
+    /// network). The owner compiles these into the executor's mounts.
+    pub async fn active_resource_grants(&self, now: u64) -> Result<Vec<(Target, u64)>> {
+        let rows = sqlx::query(
+            "SELECT resource, expires FROM grants WHERE revoked=0 AND expires>? AND operation IS NULL AND resource IS NOT NULL ORDER BY id",
+        )
+        .bind(i64::try_from(now)?)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut grants = Vec::new();
+        for row in rows {
+            let target: Target = serde_json::from_str(&row.get::<String, _>("resource"))?;
+            if matches!(
+                target.capability,
+                Capability::FileRead | Capability::FileWrite | Capability::Network
+            ) && self.policy.mode(&target) == RuleMode::Ask
+            {
+                grants.push((target, u64::try_from(row.get::<i64, _>("expires"))?));
+            }
+        }
+        Ok(grants)
     }
 
     /// Check before entering the provider AND before returning results/pages.

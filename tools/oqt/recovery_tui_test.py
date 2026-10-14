@@ -82,3 +82,74 @@ with coding_world(script, 'oqt-recovery-') as (provider, owner, work):
               'no replay, retry ran only after fresh approval', flush=True)
     finally:
         terminal.close('coding-recovery')
+
+
+# Second scenario: the whole host (server + guard) is killed mid-call.
+def host_pids(owner):
+    return [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
+            if cmdline(pid).rstrip().endswith('host.ts')
+            and os.path.basename(os.readlink(f'/proc/{pid}/exe')) == 'node']
+
+
+def guard_dirs(since):
+    found = []
+    for entry in Path('/var/tmp').iterdir():
+        try:
+            if entry.name.startswith('oqg-') and entry.stat().st_ctime >= since and entry.stat().st_uid == os.getuid():
+                found.append(entry)
+        except OSError:
+            continue
+    return found
+
+
+with coding_world(script, 'oqt-host-crash-') as (provider, owner, work):
+    started = time.time()
+    terminal = Terminal(['--coding', '--owner-profile', str(owner), '--workdir', str(work)])
+    terminal.deadline = time.monotonic() + 60
+    try:
+        terminal.expect('oqt coding')
+        marker = len(terminal.raw)
+        terminal.send('Start the long loop.\r')
+        terminal.expect('Coding permission', marker)
+        terminal.expect('→ Deny', marker)
+        terminal.send('\x1b[A\r')  # Session grant
+        terminal.expect('Permission applied', marker)
+        heartbeat = work / 'heartbeat'
+        for _ in range(200):
+            if size(heartbeat) > 20:
+                break
+            time.sleep(0.025)
+        assert size(heartbeat) > 20, 'approved shell never started'
+        hosts = host_pids(owner)
+        assert len(hosts) == 1, hosts
+        dead_dirs = guard_dirs(started)
+        assert dead_dirs, 'guard directory not found'
+        os.kill(hosts[0], signal.SIGKILL)
+        time.sleep(1.5)
+        settled = size(heartbeat)
+        time.sleep(0.6)
+        assert size(heartbeat) == settled, 'hands survived the host'
+        print('PASS host SIGKILL: guard-owned hands and descendants died with the host', flush=True)
+    finally:
+        terminal.close('coding-host-crash')
+    # Age the dead host's private state past the sweeper's grace period.
+    for directory in dead_dirs:
+        os.utime(directory, (time.time() - 300, time.time() - 300))
+    reopened = Terminal(['--coding', '--continue', '--owner-profile', str(owner), '--workdir', str(work)])
+    reopened.deadline = time.monotonic() + 90
+    try:
+        reopened.expect('oqt coding')
+        reopened.expect('Interrupted', 0)
+        reopened.expect('Coding permission', 0)
+        reopened.expect('retried', 0)
+        reopened.expect('→ Deny', 0)
+        assert not (work / 'retried').exists(), 'retry ran before fresh approval'
+        assert not any(d.exists() for d in dead_dirs), 'dead host state was not swept'
+        marker = len(reopened.raw)
+        reopened.send('\x1b[A\x1b[A\r')
+        reopened.expect('recovery-complete', marker)
+        assert (work / 'retried').read_text() == 'retried\n'
+        print('PASS host recovery: journal reported the call interrupted on restart, Session grant '
+              'fenced, retry re-approved, dead host state swept', flush=True)
+    finally:
+        reopened.close('coding-host-recovery')

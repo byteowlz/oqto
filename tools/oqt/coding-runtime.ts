@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import {
+	type Models,
+	type ModelThinkingLevel,
+	Type,
+} from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineExtension,
@@ -10,6 +14,7 @@ import {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
+import type { GuardGate } from "./brain-client.ts";
 import { type CodingGate, gatedTool } from "./gated-tool.ts";
 import type { HandsClient } from "./hands-client.ts";
 
@@ -27,6 +32,8 @@ export async function openCodingHarness(options: {
 	hands: HandsClient;
 	/** Adopt the guard's current hands generation before harness-internal access. */
 	refresh: () => Promise<void>;
+	/** Guard-mediated external resource requests (operator-approved mounts). */
+	requestAccess?: GuardGate["requestAccess"];
 }) {
 	const workspace = resolve(options.workspace);
 	const registry = createRegistry();
@@ -37,6 +44,75 @@ export async function openCodingHarness(options: {
 			gatedTool(tool, options.gate, options.session),
 		),
 	});
+	const requestAccess = options.requestAccess;
+	if (requestAccess)
+		registry.install(
+			defineExtension({
+				name: "oqt-resource-requests",
+				tools: [
+					{
+						name: "request_access",
+						description:
+							"Ask the local operator for access outside the workspace: an existing path (read or write) or outbound network. Explain why. The operator may deny. Once granted, use the normal tools with absolute paths; each tool call is still approved separately. Grants are Session-scoped and expire.",
+						parameters: Type.Object({
+							path: Type.Optional(
+								Type.String({
+									description: "Absolute or workspace-relative existing path",
+								}),
+							),
+							access: Type.Optional(
+								Type.Union([Type.Literal("read"), Type.Literal("write")]),
+							),
+							network: Type.Optional(
+								Type.Boolean({
+									description: "Request outbound network for tools",
+								}),
+							),
+							reason: Type.String({ description: "Why the access is needed" }),
+						}),
+						replay: "unsafe",
+						executionMode: "sequential",
+						async execute(args, api, context) {
+							const { path, access, network, reason } = args as {
+								path?: string;
+								access?: "read" | "write";
+								network?: boolean;
+								reason: string;
+							};
+							if ((path === undefined) === (network !== true))
+								throw new Error(
+									"Request either a path (with access) or network",
+								);
+							try {
+								const result = await requestAccess(
+									{
+										request_id: `${options.session}:store:${api.conversationId}:${api.taskId}`,
+										...(path === undefined
+											? {}
+											: { path, access: access ?? "read" }),
+										...(network ? { network: true } : {}),
+										reason,
+									},
+									context.abortSignal,
+								);
+								return {
+									output: [
+										{
+											type: "text" as const,
+											text: `Granted ${result.granted.capability} access to ${result.granted.resource} until ${new Date(result.expires_at).toISOString()}. Use absolute paths with the normal tools; each call is still approved.`,
+										},
+									],
+								};
+							} catch (error) {
+								throw new Error(
+									`Access not granted: ${error instanceof Error ? error.message : String(error)}`,
+								);
+							}
+						},
+					},
+				],
+			}),
+		);
 	registry.install(
 		defineExtension({
 			name: "oqt-protected-coding-prompt",
@@ -44,7 +120,7 @@ export async function openCodingHarness(options: {
 				{
 					key: "oqt",
 					render: () =>
-						"You are a coding assistant using confined executors. Every coding call needs local-operator approval. Protected runtime, credentials, and authority are unavailable to tools. Never bypass a denial. Interrupted effects are uncertain: inspect before retrying. No skills, codemode, subagents, or unrestricted execution are available.",
+						"You are a coding assistant using confined executors limited to the workspace, without network. Every coding call needs local-operator approval. Use request_access to ask for a specific outside path or for network, with a reason; never try to work around a denial. Protected runtime, credentials, and authority are unavailable. Interrupted effects are uncertain: inspect before retrying. No skills, codemode, subagents, or unrestricted execution are available.",
 				},
 			],
 		}),

@@ -28,18 +28,26 @@ export default defineFacet({
 			selecting = true;
 			shown.add(request.digest);
 			try {
+				const resource = request.kind === "resource";
 				const action = await ui.select(
-					`${coding ? "Coding" : "DEMO"} permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
-					[
-						{ value: "once", label: "Allow once" },
-						{
-							value: "session",
-							label: coding
-								? "Allow workspace tools for this Session (60 seconds)"
-								: "Allow for this Session (60 seconds)",
-						},
-						{ value: "deny", label: "Deny" },
-					],
+					resource
+						? `Access request · ${request.capability} ${request.resource}\nReason: ${request.argumentsText}\nSession: ${request.session}\nGrants mount on fresh hands for 1 hour; tool calls are still approved one by one.`
+						: `${coding ? "Coding" : "DEMO"} permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
+					resource
+						? [
+								{ value: "session", label: "Allow for this Session (1 hour)" },
+								{ value: "deny", label: "Deny" },
+							]
+						: [
+								{ value: "once", label: "Allow once" },
+								{
+									value: "session",
+									label: coding
+										? "Allow workspace tools for this Session (60 seconds)"
+										: "Allow for this Session (60 seconds)",
+								},
+								{ value: "deny", label: "Deny" },
+							],
 					"deny",
 					context,
 				);
