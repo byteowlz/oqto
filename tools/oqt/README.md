@@ -108,6 +108,15 @@ entry is rewritten, so other entries and owning Pi keep working. Brains receive
 access tokens and account metadata only; refresh secrets never leave the guard.
 A failed renewal fails closed.
 
+## Look and feel
+
+The TUI is upstream Pi's client TUI with classic-Pi chrome: your owning theme,
+`hideThinkingBlock`, editor behavior, keybindings and custom themes are mirrored
+read-only into the private profile, there is no server/session heading, and the
+footer shows cwd, model, thinking and cumulative token usage. Still different
+from classic Pi: no extension-driven statusline/header, no context-percentage
+gauge, and the client loads only the permission plugin.
+
 ## Preparation
 
 - **Requirements:** Linux x86_64, bwrap, Node 26, cached Cargo dependencies, and

@@ -201,7 +201,10 @@ export class HandsSupervisor {
 				// OQT_DEBUG private log sees them.
 				if (process.env.OQT_DEBUG)
 					owned.stderr.on("data", (chunk: Buffer) =>
-						console.error(`oqt hands[${epoch.slice(0, 6)}]:`, String(chunk)),
+						console.error(
+							`oqt hands[${this.#epoch.slice(0, 6)}]:`,
+							String(chunk),
+						),
 					);
 				else owned.stderr.resume();
 				owned.stdout.pipe(socket);

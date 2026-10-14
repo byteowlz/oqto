@@ -1,7 +1,13 @@
 // Private source-only composition. Stock Pi/default local tools are never selected.
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import {
+	copyFile,
+	mkdir,
+	readdir,
+	readFile,
+	writeFile,
+} from "node:fs/promises";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import lockfile from "proper-lockfile";
 import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
+import { readOwnedJson } from "./readonly-profile.ts";
 import { startServer } from "./server.ts";
 
 const args = process.argv.slice(2);
@@ -130,8 +137,59 @@ async function ensureHost(): Promise<Host> {
 	}
 }
 
+/** The TUI reads appearance from the private agent profile; mirror the owner's
+ * look (theme, editor behavior, keybindings, custom themes) so oqt renders
+ * exactly like the owning Pi. Never credentials, never model defaults. */
+const APPEARANCE_KEYS = [
+	"theme",
+	"hideThinkingBlock",
+	"lastChangelogVersion",
+	"clearOnShrink",
+	"showHardwareCursor",
+	"fullscreenWheelScrollLines",
+] as const;
+async function mirrorAppearance(owner: string, agentDir: string) {
+	try {
+		const settings = await readOwnedJson(join(owner, "settings.json"), false);
+		const appearance: Record<string, unknown> = {};
+		for (const key of APPEARANCE_KEYS)
+			if (key in settings) appearance[key] = settings[key];
+		await mkdir(agentDir, { recursive: true, mode: 0o700 });
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify(appearance, null, 2),
+			{
+				mode: 0o600,
+			},
+		);
+		const themes = join(owner, "themes");
+		try {
+			const entries = await readdir(themes, { withFileTypes: true });
+			if (entries.length <= 64) {
+				await mkdir(join(agentDir, "themes"), { recursive: true, mode: 0o700 });
+				for (const entry of entries)
+					if (entry.isFile()) {
+						const target = join(agentDir, "themes", entry.name);
+						await copyFile(join(themes, entry.name), target).catch(() => {});
+					}
+			}
+		} catch {}
+		await copyFile(
+			join(owner, "keybindings.json"),
+			join(agentDir, "keybindings.json"),
+		).catch(() => {});
+	} catch (error) {
+		// No owner settings: defaults remain; never fail the session for looks.
+		if (process.env.OQT_DEBUG) console.error("oqt appearance mirror:", error);
+	}
+}
+
 if (coding) {
 	const host = await ensureHost();
+	await mirrorAppearance(
+		process.env.OQT_OWNER_AGENT_DIR ?? "",
+		process.env.PI_CODING_AGENT_DIR ?? "",
+	);
 	// The TUI permission facet talks to the guard directly; brains cannot.
 	process.env.OQT_GUARD_OPERATOR = host.operator;
 	const command = {

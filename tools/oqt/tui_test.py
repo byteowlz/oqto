@@ -68,7 +68,8 @@ def scenario(prompt, choice, result, label, revoke=False):
         # Safest default is Deny. Once is two Up presses; Session is one.
         terminal.send({"once":"\x1b[A\x1b[A\r", "session":"\x1b[A\r", "deny":"\r"}[choice])
         terminal.expect(result, marker)
-        terminal.expect("5 entries", marker)
+        # Usage arrows appear in the classic-style footer once the turn settled.
+        terminal.expect("\u2191", marker)
         if revoke:
             marker = len(terminal.raw)
             terminal.send("/permissions revoke\r")

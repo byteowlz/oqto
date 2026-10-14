@@ -128,10 +128,60 @@ PATCHES = [
 			sessionId,
 			pid: Number(process.env.OQT_HOST_PID ?? process.pid),""",
     },
+    {
+        "id": "client-tui-classic-chrome",
+        "why": "Render like classic Pi: no Server/Session heading; footer shows cwd, model, "
+               "thinking and cumulative usage instead of an entry counter.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """		this.#sessionHeading.setText(
+			this.#sessionId === undefined || this.#selectedServerId === undefined
+				? ""
+				: theme.fg("dim", `Server: ${this.#selectedServerId}\\nSession: ${this.#sessionId}`),
+		);""",
+        "new": """		// Classic Pi shows no server/session heading (see /sessions instead).
+		this.#sessionHeading.setText("");""",
+    },
+    {
+        "id": "client-tui-classic-footer",
+        "why": "Classic-style footer: cwd, model, thinking and cumulative token usage.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	#footer(): string {
+		const view = this.#conversationView();
+		if (!view) return "/model · /thinking · /compact · /reload";
+		const agent = (view.docs["pi.agent"] ?? {}) as AgentState;
+		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
+		return `${model} · thinking:${agent.thinkingLevel ?? "off"} · ${view.entries.length} entries · /model · /thinking · /compact · /reload`;
+	}""",
+        "new": """	#footer(): string {
+		const view = this.#conversationView();
+		if (!view) return "/model · /thinking · /compact · /reload";
+		const agent = (view.docs["pi.agent"] ?? {}) as AgentState;
+		const model = agent.model === undefined ? "no model" : `${agent.model.provider}/${agent.model.modelId}`;
+		// Classic-style: cwd, model, thinking, cumulative token usage.
+		let inputTokens = 0;
+		let outputTokens = 0;
+		for (const entry of view.entries)
+			for (const message of entry.model ?? [])
+				if (message.role === "assistant" && message.usage) {
+					inputTokens += message.usage.input ?? 0;
+					outputTokens += message.usage.output ?? 0;
+				}
+		return `${process.cwd()} · ${model} · thinking:${agent.thinkingLevel ?? "off"} · ↑${formatTokens(inputTokens)} ↓${formatTokens(outputTokens)} · /model · /thinking · /compact`;
+	}""",
+    },
+    {
+        "id": "client-tui-classic-footer-import",
+        "why": "Import the shared token formatter for the classic-style footer.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
+        "new": """import { formatTokens } from "../modes/interactive/components/footer.ts";
+import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
+    },
 ]
 
 
 def apply(snapshot):
+
     applied = []
     for patch in PATCHES:
         path = snapshot / patch["file"]

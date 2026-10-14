@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 /** Protected owner channel. Role and binding come from composition, not frames. */
 export class Carrier {
 	readonly child;
-	readonly replies: Array<{
+	replies: Array<{
 		resolve: (value: unknown) => void;
 		reject: (error: Error) => void;
 		timer: ReturnType<typeof setTimeout>;
