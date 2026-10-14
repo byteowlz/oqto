@@ -115,6 +115,21 @@ pub fn check_installable(
     check_order(named, active, guards)
 }
 
+/// Dev builds (`just deploy --dev`) are `<core>-dev.<timestamp>.g<sha>[.dirty]`.
+pub fn is_dev_build(version: &Version) -> bool {
+    version.pre.as_str().starts_with("dev.")
+}
+
+/// Semver orders `X-dev.*` below release `X`, but a dev build is made from a
+/// tree already declaring `X`, i.e. after (or while preparing) that release:
+/// it may replace the released `X`. Dev-over-dev is plain semver (timestamp).
+fn is_dev_build_over_its_release(candidate: &Version, current: &Version) -> bool {
+    is_dev_build(candidate)
+        && current.pre.is_empty()
+        && (candidate.major, candidate.minor, candidate.patch)
+            == (current.major, current.minor, current.patch)
+}
+
 /// Strictly-newer ordering against the active release, before extraction.
 pub fn check_order(
     candidate: &Version,
@@ -126,6 +141,7 @@ pub fn check_order(
     };
     match installed_release_version(active) {
         Some(current) if candidate > &current => Ok(()),
+        Some(current) if is_dev_build_over_its_release(candidate, &current) => Ok(()),
         _ if guards.allow_downgrade => Ok(()),
         Some(current) => anyhow::bail!(
             "refusing to install {candidate}: active release {} is {current}; only strictly newer \
@@ -285,6 +301,39 @@ mod tests {
             ..strict
         };
         assert!(check_installable(&v("0.6.0"), &dirty, Some(&active), allow_dirty).is_ok());
+    }
+
+    #[test]
+    fn dev_builds_order_by_core_then_build_time() {
+        let root = tempfile::tempdir().unwrap();
+        let strict = InstallGuards::default();
+        let active = |name: &str, version: &str| versioned(root.path(), name, version, false);
+        let release = active("oqto-0.5.11-x86_64-unknown-linux-gnu", "0.5.11");
+        let dev_t1 = "0.5.11-dev.20261014061200.g794dd7b8";
+        let dev_t2 = "0.5.11-dev.20261014071500.gabc12345.dirty";
+        let older = active("dev-old", dev_t1);
+
+        // A dev build replaces the release of its own core, and later dev builds
+        // replace earlier ones.
+        assert!(check_order(&v(dev_t1), Some(&release), strict).is_ok());
+        assert!(check_order(&v(dev_t2), Some(&older), strict).is_ok());
+        // But never an older dev build, an older core, or a newer release.
+        let newer = active("dev-new", dev_t2);
+        assert!(check_order(&v(dev_t1), Some(&newer), strict).is_err());
+        assert!(
+            check_order(
+                &v("0.5.10-dev.20261014071500.g794dd7b8"),
+                Some(&release),
+                strict
+            )
+            .is_err()
+        );
+        let next = active("oqto-0.5.12-x86_64-unknown-linux-gnu", "0.5.12");
+        assert!(check_order(&v(dev_t2), Some(&next), strict).is_err());
+        // The release itself still replaces its dev builds.
+        assert!(check_order(&v("0.5.11"), Some(&newer), strict).is_ok());
+        // An ordinary prerelease is not a dev build.
+        assert!(check_order(&v("0.5.11-rc.1"), Some(&release), strict).is_err());
     }
 
     #[test]

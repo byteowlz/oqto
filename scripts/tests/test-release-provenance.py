@@ -136,6 +136,35 @@ class Provenance(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already declares", result.stderr)
 
+    def head8(self) -> str:
+        return self.commit[:8]
+
+    def test_dev_versions_describe_their_source_truthfully(self) -> None:
+        clean = f"0.5.9-dev.20261014061200.g{self.head8()}"
+        result = self.run_script(clean)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.release()["version"], clean)
+        self.assertIs(self.release()["source_dirty"], False)
+
+        (self.root / "scratch.txt").write_text("work in progress")
+        for wrong, reason in (
+            (clean, "omits .dirty"),
+            (f"0.5.8-dev.20261014061200.g{self.head8()}.dirty", "does not match"),
+            ("0.5.9-dev.20261014061200.gdeadbeef.dirty", "names commit"),
+        ):
+            self.manifest.write_text(MANIFEST)
+            refused = self.run_script(wrong)
+            self.assertNotEqual(refused.returncode, 0, wrong)
+            self.assertIn(reason, refused.stderr)
+        self.manifest.write_text(MANIFEST)
+        dirty = f"{clean}.dirty"
+        accepted = self.run_script(dirty)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertIs(self.release()["source_dirty"], True)
+        # A dirty tree still never yields a plain release version.
+        self.manifest.write_text(MANIFEST)
+        self.assertNotEqual(self.run_script("0.5.9").returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

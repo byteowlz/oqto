@@ -43,12 +43,21 @@ else
   echo "[dist-stage] WARNING: binaries may fail on hosts with older glibc than this build host." >&2
 fi
 
+# DIST_PROFILE=release (default) builds release artifacts; DIST_PROFILE=deploy-fast
+# is the dev-deploy path (thin LTO, parallel codegen, incremental) and builds
+# every binary in one cargo invocation.
+DIST_PROFILE="${DIST_PROFILE:-release}"
+case "$DIST_PROFILE" in
+  release|deploy-fast) ;;
+  *) echo "error: unsupported DIST_PROFILE '$DIST_PROFILE' (release or deploy-fast)" >&2; exit 2 ;;
+esac
+
 # Honor the Cargo target directory so staging never reads stale local artifacts.
 BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/backend/target}"
 if $USE_ZIGBUILD; then
-  REL_DIR="$BUILD_TARGET_DIR/${TARGET_TRIPLE}/release"
+  REL_DIR="$BUILD_TARGET_DIR/${TARGET_TRIPLE}/$DIST_PROFILE"
 else
-  REL_DIR="$BUILD_TARGET_DIR/release"
+  REL_DIR="$BUILD_TARGET_DIR/$DIST_PROFILE"
 fi
 
 cargo_build() {
@@ -62,7 +71,13 @@ cargo_build() {
 }
 
 BUILD_FIRST="${1:-}"
-if [[ "$BUILD_FIRST" == "--build" ]]; then
+if [[ "$BUILD_FIRST" == "--build" && "$DIST_PROFILE" == deploy-fast ]]; then
+  cd backend
+  cargo_build --profile deploy-fast -p oqto -p oqtoctl -p oqto-setup -p oqto-runner -p oqto-files -p oqto-usermgr \
+    --bin oqto --bin oqto-sandbox --bin oqto-ssh-proxy --bin pi-bridge --bin oqtoctl --bin oqto-setup \
+    --bin oqto-runner --bin oqto-files --bin oqto-usermgr
+  cd "$ROOT_DIR"
+elif [[ "$BUILD_FIRST" == "--build" ]]; then
   cd backend
   cargo_build --release -p oqto --bin oqto --bin oqto-sandbox --bin oqto-ssh-proxy --bin pi-bridge
   cargo_build --release -p oqtoctl --bin oqtoctl

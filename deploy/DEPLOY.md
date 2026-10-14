@@ -124,3 +124,22 @@ when the transaction itself cannot run:
 ```bash
 sudo ln -sfn "$(readlink -f /var/lib/oqto/releases/last-good)" /var/lib/oqto/releases/current
 ```
+
+## Fast development deployments
+
+`just deploy --dev --host archvm` builds the current tree, including uncommitted
+and untracked source, using Cargo's `deploy-fast` profile (thin LTO, 16 codegen
+units, incremental). It retains the normal frontend build, portable glibc floor,
+checksummed packaging, activation transaction, health checks and rollback.
+Warm Cargo caches help; no measured build-time guarantee is claimed.
+
+Dev archives use `<Cargo version>-dev.<UTC timestamp>.g<sha8>[.dirty]`;
+no `just bump` is required. Manifest provenance records HEAD and dirty state.
+Dirty-source installation is explicitly enabled by `--dev`. Dev builds replace
+the release of the same core version or older dev builds, never a newer core.
+The ordinary release replaces its own dev builds. Same-second builds can be
+rejected; retry later. Dev versions must not be tagged or publicly published.
+
+Multi-user hosts require `--allow-dev-shared` as well. `--dev` cannot be combined
+with `--artifact`. Use `--dry-run` to inspect without building or restarting.
+Normal deployments still require clean source and a newer release version.

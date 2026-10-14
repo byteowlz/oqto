@@ -32,6 +32,8 @@ DEPLOY_MODE="release"
 HEALTH_TIMEOUT_SECONDS=180
 MIN_FREE_MB=1024
 KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
+DEV=false
+ALLOW_DEV_SHARED=false
 ALLOW_DOWNGRADE=false
 ALLOW_DIRTY_SOURCE=false
 ALLOW_BUSY_SESSIONS=false
@@ -82,6 +84,8 @@ Hosts:
   --dry-run                Print the plan, change nothing
 Policy:
   --mode MODE              Tool dependency policy: release (default) or dev
+  --dev                    Fast test build; permits dirty source, no version bump
+  --allow-dev-shared       Explicitly allow dev builds on multi-user hosts
   --allow-downgrade        Install a release not newer than the active one
   --allow-dirty-source     Install a release recorded as built from a dirty tree
   --allow-busy-sessions    Proceed while agent sessions are streaming
@@ -111,6 +115,8 @@ while [[ $# -gt 0 ]]; do
         --canary-then-fleet) CANARY_THEN_FLEET=true; shift ;;
         --status) STATUS_ONLY=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
+        --dev) DEV=true; ALLOW_DIRTY_SOURCE=true; shift ;;
+        --allow-dev-shared) ALLOW_DEV_SHARED=true; shift ;;
         --allow-downgrade) ALLOW_DOWNGRADE=true; shift ;;
         --allow-dirty-source) ALLOW_DIRTY_SOURCE=true; shift ;;
         --allow-busy-sessions) ALLOW_BUSY_SESSIONS=true; shift ;;
@@ -287,10 +293,18 @@ build_artifact() {
     local version target
     version="$(declared_version)"
     target="$(uname -m)-unknown-linux-gnu"
-    require_clean_source
-    require_newer_than_hosts "$version"
+    if [[ "$DEV" != true ]]; then
+        require_clean_source
+        require_newer_than_hosts "$version"
+    fi
     python3 "$ROOT_DIR/scripts/release/check-tag-version.py" --tag "v$version" \
         || fail "Cargo, dependency pin and frontend versions disagree; use 'just bump'"
+    if [[ "$DEV" == true ]]; then
+        version="${version}-dev.$(date -u +%Y%m%d%H%M%S).g$(git -C "$ROOT_DIR" rev-parse HEAD | cut -c1-8)"
+        [[ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ]] || version+=".dirty"
+        export DIST_PROFILE=deploy-fast
+        log "Dev build: deploy-fast profile; dirty source explicitly permitted"
+    fi
     DEPLOY_ARTIFACT="$ROOT_DIR/dist/out/oqto-${version}-${target}.tar.gz"
     DEPLOY_CHECKSUM="${DEPLOY_ARTIFACT}.sha256"
     log "Building release $version ($target) from $(git -C "$ROOT_DIR" rev-parse --short HEAD)"
@@ -311,7 +325,7 @@ build_artifact() {
         just dist-package "$version" "$target"
     ) || fail "release build failed"
     # The build itself must not dirty the tree (it would make provenance lie).
-    require_clean_source
+    [[ "$DEV" == true ]] || require_clean_source
     [[ -f "$DEPLOY_ARTIFACT" && -f "$DEPLOY_CHECKSUM" ]] || fail "dist-package did not produce $DEPLOY_ARTIFACT"
     ok "Built $DEPLOY_ARTIFACT"
 }
@@ -623,6 +637,14 @@ else
     collect_targets true true selected
 fi
 [[ "${#selected[@]}" -gt 0 ]] || fail "No hosts matched filters"
+if [[ "$DEV" == true ]]; then
+    [[ -z "$DEPLOY_ARTIFACT" ]] || fail "--dev builds source; do not combine with --artifact"
+    for i in "${selected[@]}"; do
+        if [[ "$(profile_for "${H_MODE[$i]}")" == team && "$ALLOW_DEV_SHARED" != true ]]; then
+            fail "Dev deploy to shared host ${H_NAME[$i]} requires --allow-dev-shared"
+        fi
+    done
+fi
 
 if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" ]]; then
     build_artifact

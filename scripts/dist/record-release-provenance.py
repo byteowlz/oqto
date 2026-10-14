@@ -51,6 +51,36 @@ def source_state(root: Path) -> tuple[str, bool]:
     return commit, dirty
 
 
+DEV_VERSION = re.compile(
+    r"^(?P<core>.+)-dev\.(?P<stamp>\d{14})\.g(?P<sha>[0-9a-f]{8})(?P<dirty>\.dirty)?$"
+)
+
+
+def dev_version(version: str, declared: str, commit: str, dirty: bool) -> bool:
+    """Validate a dev build version; False when it is not a dev version.
+
+    A dev version must describe its own source truthfully: declared core,
+    the actual commit, and `.dirty` exactly when the tree is dirty.
+    """
+    match = DEV_VERSION.fullmatch(version)
+    if not match:
+        return False
+    if match["core"] != declared:
+        raise ProvenanceError(
+            f"dev version core {match['core']} does not match the Cargo workspace version {declared}"
+        )
+    if not commit.startswith(match["sha"]):
+        raise ProvenanceError(
+            f"dev version names commit g{match['sha']} but HEAD is {commit[:8]}"
+        )
+    if bool(match["dirty"]) != dirty:
+        state = "dirty" if dirty else "clean"
+        raise ProvenanceError(
+            f"dev version {'claims' if match['dirty'] else 'omits'} .dirty but the worktree is {state}"
+        )
+    return True
+
+
 def requested_version(requested: str, declared: str) -> str:
     version = requested[1:] if requested.startswith("v") else requested
     if not SEMVER.fullmatch(version):
@@ -96,9 +126,13 @@ def main() -> int:
     parser.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
     try:
-        version = requested_version(args.version, workspace_version(args.root))
+        declared = workspace_version(args.root)
         commit, dirty = source_state(args.root)
-        if dirty and not args.allow_dirty:
+        # Dev builds (`just deploy --dev`) may come from a dirty tree; their
+        # version records that, and oqto-setup still needs explicit consent.
+        is_dev = dev_version(args.version, declared, commit, dirty)
+        version = args.version if is_dev else requested_version(args.version, declared)
+        if dirty and not (is_dev or args.allow_dirty):
             raise ProvenanceError(
                 "refusing to package from a worktree with uncommitted or untracked changes; "
                 "commit or stash them (OQTO_DIST_ALLOW_DIRTY=1 records a dirty build that "

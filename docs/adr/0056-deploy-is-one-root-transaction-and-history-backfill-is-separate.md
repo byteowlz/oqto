@@ -18,3 +18,11 @@ We decided:
 - Tools older than their pin fail preflight with the acquisition command instead of being reacquired as a whole set, which could have downgraded newer installed tools.
 - Sidebars no longer refresh from a deploy-time identity sync; runners converge in the background or an operator runs `just deploy-backfill <host>`.
 - Release activation still does not install policy assets such as the seccomp BPF; preflight fails closed when enforcement is configured without one.
+
+### Development build policy
+
+Explicit `deploy --dev` permits dirty source and uses `deploy-fast`. Timestamped
+source-stamped dev prereleases may replace a release with the same version core;
+normal semver ordering still governs dev-to-dev and cross-core installs. Shared
+hosts require explicit `--allow-dev-shared`. Transaction/rollback semantics remain
+identical; release cleanliness and tag/version equality are unchanged.
