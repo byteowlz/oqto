@@ -190,9 +190,24 @@ async fn http_probe_ok(
 /// - `AGENT_CTX_WORKSPACE_ID`: must use the canonical oqto-log workspace-id
 ///   derivation (SHA-256 of the canonicalized path) so it joins; pending a
 ///   single shared helper (oqto-nbs7 follow-up).
-/// - `AGENT_CTX_RUN_MODE`: awaits the runtime-mode collapse (ADR-0001).
-fn inject_agent_ctx(env: &mut std::collections::HashMap<String, String>, session: &Session) {
-    env.insert("AGENT_CTX_VERSION".to_string(), "1".to_string());
+/// - `AGENT_CTX_EXEC_ENV`: oqto is the authority for this target-owned fact.
+///   Oqto's container runtime is a verified Linux OCI target (docker/podman),
+///   so it injects `linux-container`. On switch to Local it clears the stale
+///   container value it previously produced, but never erases a value it did
+///   not produce (an explicitly configured local profile).
+
+/// The EXEC_ENV label Oqto injects for its container runtime. Grounded in the
+/// actual container implementation: the `deploy/docker/Dockerfile` base image
+/// is Ubuntu (a Linux OCI container run via docker/podman), and oqto-sandbox
+/// uses Linux-only namespace features. Oqto has no Windows-container runtime.
+const CONTAINER_EXEC_ENV: &str = "linux-container";
+
+fn inject_agent_ctx(
+    env: &mut std::collections::HashMap<String, String>,
+    session: &Session,
+    runtime_mode: RuntimeMode,
+) {
+    env.insert("AGENT_CTX_VERSION".to_string(), "3".to_string());
     env.insert("AGENT_CTX_PLATFORM_NAME".to_string(), "oqto".to_string());
     env.insert(
         "AGENT_CTX_PLATFORM_VERSION".to_string(),
@@ -209,6 +224,24 @@ fn inject_agent_ctx(env: &mut std::collections::HashMap<String, String>, session
     );
     if let Some(harness) = session.agent.as_deref() {
         env.insert("AGENT_CTX_HARNESS".to_string(), harness.to_string());
+    }
+    // EXEC_ENV is a target-owned fact. The container runtime is a verified
+    // Linux OCI target, so inject `linux-container`. On the Local runtime we
+    // clear only the stale value this injector previously produced for the
+    // container target; an explicitly configured local profile (which oqto
+    // never generates) is preserved.
+    match runtime_mode {
+        RuntimeMode::Container => {
+            env.insert(
+                "AGENT_CTX_EXEC_ENV".to_string(),
+                CONTAINER_EXEC_ENV.to_string(),
+            );
+        }
+        RuntimeMode::Local => {
+            if env.get("AGENT_CTX_EXEC_ENV").map(String::as_str) == Some(CONTAINER_EXEC_ENV) {
+                env.remove("AGENT_CTX_EXEC_ENV");
+            }
+        }
     }
 }
 
@@ -1681,7 +1714,7 @@ impl SessionService {
         // This is the SINGLE authority for what env vars the agent sees.
         // spawn_as_user() calls env_clear() so only vars in this map are passed.
         let mut env = crate::local::base_system_env();
-        inject_agent_ctx(&mut env, session);
+        inject_agent_ctx(&mut env, session, session.runtime_mode);
         if let Some(ref eavs_url) = self.config.eavs_container_url {
             env.insert("EAVS_URL".to_string(), eavs_url.clone());
         }
@@ -2133,7 +2166,7 @@ impl SessionService {
 
                 // Build environment variables (single authority for agent env)
                 let mut env = crate::local::base_system_env();
-                inject_agent_ctx(&mut env, session);
+                inject_agent_ctx(&mut env, session, session.runtime_mode);
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
                     env.insert("EAVS_URL".to_string(), eavs_url.clone());
                 }
@@ -3412,9 +3445,13 @@ delegated_fetch = true
     #[test]
     fn test_inject_agent_ctx_sets_platform_fields() {
         let mut env = std::collections::HashMap::new();
-        inject_agent_ctx(&mut env, &agent_ctx_test_session(Some("pi")));
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(Some("pi")),
+            RuntimeMode::Container,
+        );
 
-        assert_eq!(env.get("AGENT_CTX_VERSION").map(String::as_str), Some("1"));
+        assert_eq!(env.get("AGENT_CTX_VERSION").map(String::as_str), Some("3"));
         assert_eq!(
             env.get("AGENT_CTX_PLATFORM_NAME").map(String::as_str),
             Some("oqto")
@@ -3440,16 +3477,91 @@ delegated_fetch = true
         // PLATFORM_SESSION_ID supersedes the legacy OQTO_SESSION_ID; the
         // helper does not set OQTO_SESSION_ID (kept by the runner for now).
         assert!(!env.contains_key("OQTO_SESSION_ID"));
-        // Deferred by design (ADR-0013): WORKSPACE_ID needs the canonical
-        // oqto-log derivation; RUN_MODE awaits the ADR-0001 mode collapse.
+        // Container runtime is a verified Linux-container target, so EXEC_ENV
+        // is emitted. WORKSPACE_ID still awaits the canonical oqto-log
+        // derivation; no legacy RUN_MODE is emitted.
+        assert_eq!(
+            env.get("AGENT_CTX_EXEC_ENV").map(String::as_str),
+            Some(CONTAINER_EXEC_ENV)
+        );
         assert!(!env.contains_key("AGENT_CTX_WORKSPACE_ID"));
         assert!(!env.contains_key("AGENT_CTX_RUN_MODE"));
+        // Never a mutable live status in env.
+        assert!(!env.contains_key("AGENT_CTX_STATUS"));
+        assert!(!env.contains_key("AGENT_CTX_PROGRESS"));
+    }
+
+    #[test]
+    fn test_inject_agent_ctx_local_leaves_exec_env_unset() {
+        let mut env = std::collections::HashMap::new();
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(Some("pi")),
+            RuntimeMode::Local,
+        );
+        assert_eq!(env.get("AGENT_CTX_VERSION").map(String::as_str), Some("3"));
+        // Local native profile is not a verified target: EXEC_ENV stays unset
+        // (absent = unknown), never a fabricated default or legacy run-mode.
+        assert!(!env.contains_key("AGENT_CTX_EXEC_ENV"));
+        assert!(!env.contains_key("AGENT_CTX_RUN_MODE"));
+    }
+
+    #[test]
+    fn test_inject_agent_ctx_target_switch_clears_stale_container_env() {
+        // Simulate a switch from a Container binding (which injected
+        // linux-container) to a Local runtime. The stale target-owned EXEC_ENV
+        // must be cleared so the local child does not carry a foreign target
+        // fact. Session/other identity facts are preserved.
+        let mut env = std::collections::HashMap::new();
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(Some("pi")),
+            RuntimeMode::Container,
+        );
+        assert_eq!(
+            env.get("AGENT_CTX_EXEC_ENV").map(String::as_str),
+            Some(CONTAINER_EXEC_ENV)
+        );
+
+        // Switch to Local on the same env map.
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(Some("pi")),
+            RuntimeMode::Local,
+        );
+        assert!(env.get("AGENT_CTX_EXEC_ENV").is_none());
+        assert_eq!(
+            env.get("AGENT_CTX_PLATFORM_SESSION_ID").map(String::as_str),
+            Some("sess_abc")
+        );
+        assert_eq!(env.get("AGENT_CTX_VERSION").map(String::as_str), Some("3"));
+    }
+
+    #[test]
+    fn test_inject_agent_ctx_local_preserves_explicit_configured_profile() {
+        // A value oqto never generates is treated as an explicitly configured
+        // local profile: the injector must NOT erase it on a Local runtime.
+        let mut env = std::collections::HashMap::new();
+        env.insert("AGENT_CTX_EXEC_ENV".to_string(), "macos-vm".to_string());
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(Some("pi")),
+            RuntimeMode::Local,
+        );
+        assert_eq!(
+            env.get("AGENT_CTX_EXEC_ENV").map(String::as_str),
+            Some("macos-vm")
+        );
     }
 
     #[test]
     fn test_inject_agent_ctx_omits_harness_when_absent() {
         let mut env = std::collections::HashMap::new();
-        inject_agent_ctx(&mut env, &agent_ctx_test_session(None));
+        inject_agent_ctx(
+            &mut env,
+            &agent_ctx_test_session(None),
+            RuntimeMode::Container,
+        );
         assert!(!env.contains_key("AGENT_CTX_HARNESS"));
     }
 
