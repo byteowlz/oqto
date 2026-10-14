@@ -152,6 +152,7 @@ for principal in "${BACKFILL_PRINCIPALS[@]}"; do
     [[ "$principal" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "invalid --backfill-principal: $principal"
 done
 if [[ -n "$DEPLOY_ARTIFACT" ]]; then
+    [[ "$DEV" != true ]] || fail "--dev builds source; do not combine with --artifact"
     [[ -f "$DEPLOY_ARTIFACT" ]] || fail "Artifact not found: $DEPLOY_ARTIFACT"
     [[ -n "$DEPLOY_CHECKSUM" && -f "$DEPLOY_CHECKSUM" ]] \
         || fail "--artifact requires an existing --checksum file from a trusted independent source"
