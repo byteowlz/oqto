@@ -527,6 +527,15 @@ function isEmptyAssistantPlaceholderParts(parts: DisplayPart[]): boolean {
 }
 
 /**
+ * Non-user messages with nothing to show. Pi 1.1 records a `system` message
+ * with empty content (plus prompt sections/tool metadata) at session start;
+ * rendering it produced a blank bubble before the first prompt.
+ */
+function hasNoVisibleContent(parts: DisplayPart[]): boolean {
+	return parts.every((part) => part.type === "text" && part.text.trim() === "");
+}
+
+/**
  * Normalize raw messages (from any source) into DisplayMessage[].
  *
  * Handles hstry SerializableMessage (with parts_json), Pi JSONL messages,
@@ -715,8 +724,9 @@ export function normalizeMessages(
 				? message.id
 				: fallbackMessageId(idPrefix, normalizedRole, timestamp, content, idx);
 		if (
-			normalizedRole === "assistant" &&
-			isEmptyAssistantPlaceholderParts(parts)
+			(normalizedRole === "assistant" &&
+				isEmptyAssistantPlaceholderParts(parts)) ||
+			(normalizedRole !== "user" && hasNoVisibleContent(parts))
 		) {
 			continue;
 		}
