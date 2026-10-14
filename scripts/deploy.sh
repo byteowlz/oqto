@@ -249,11 +249,46 @@ require_clean_source() {
     fi
 }
 
+# Version of the release active on a host, from its manifest (or the legacy
+# release directory name); empty when the host has no readable release.
+host_release_version() {
+    local is_local="$1" ssh_target="$2"
+    local probe='m=/var/lib/oqto/releases/current/manifest.toml; v=$(sed -n "s/^version = \"\(.*\)\"/\1/p" "$m" 2>/dev/null | head -1); [ -n "$v" ] || v=$(basename "$(readlink -f /var/lib/oqto/releases/current 2>/dev/null)" | sed -n "s/^oqto-v\{0,1\}\([0-9][0-9.]*\)-.*/\1/p"); printf %s "$v"'
+    if [[ "$is_local" == true ]]; then
+        bash -c "$probe" 2>/dev/null
+    else
+        ssh -o ConnectTimeout=5 "$ssh_target" "$probe" 2>/dev/null
+    fi
+}
+
+# oqto-setup refuses anything not strictly newer than the active release; find
+# that out before a release build, not after it.
+require_newer_than_hosts() {
+    local version="$1" i current
+    [[ "$ALLOW_DOWNGRADE" == true ]] && return 0
+    for i in "${selected[@]}"; do
+        current="$(host_release_version "${H_LOCAL[$i]}" "${H_SSH[$i]}")"
+        [[ -n "$current" ]] || continue
+        if ! python3 - "$version" "$current" <<'PY'
+import re, sys
+def key(v):
+    core, _, pre = v.partition("-")
+    return tuple(int(x) for x in core.split(".")), (pre == "", pre)
+new, cur = sys.argv[1:]
+sys.exit(0 if key(new) > key(cur) else 1)
+PY
+        then
+            fail "${H_NAME[$i]} already runs $current; this checkout declares $version. Run 'just bump <next>' (or pass --allow-downgrade)."
+        fi
+    done
+}
+
 build_artifact() {
     local version target
     version="$(declared_version)"
     target="$(uname -m)-unknown-linux-gnu"
     require_clean_source
+    require_newer_than_hosts "$version"
     python3 "$ROOT_DIR/scripts/release/check-tag-version.py" --tag "v$version" \
         || fail "Cargo, dependency pin and frontend versions disagree; use 'just bump'"
     DEPLOY_ARTIFACT="$ROOT_DIR/dist/out/oqto-${version}-${target}.tar.gz"
