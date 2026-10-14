@@ -10,6 +10,7 @@ use oqto_sandbox::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     io::{self, BufRead, Write},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -18,6 +19,15 @@ use std::{
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    Prepare {
+        operation: Operation,
+    },
+    Check {
+        operation: Operation,
+    },
+    Finish {
+        id: String,
+    },
     Invoke {
         operation: Operation,
     },
@@ -108,8 +118,20 @@ async fn main() -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     let operator = binding.account_id.clone();
-    let policy = Policy {
-        revision: "fixture-v1".into(),
+    let coding = match std::env::var("OQT_CODING_POLICY") {
+        Ok(value) if value == "ask" => Some(RuleMode::Ask),
+        Ok(value) if value == "deny" => Some(RuleMode::Deny),
+        Ok(_) => bail!("unsupported coding policy; refusing fallback"),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut policy = Policy {
+        revision: if coding.is_some() {
+            "coding-ask-v1"
+        } else {
+            "fixture-v1"
+        }
+        .into(),
         rules: vec![
             Rule {
                 target: Target {
@@ -134,7 +156,19 @@ async fn main() -> Result<()> {
             },
         ],
     };
+    if let Some(mode) = coding {
+        policy.rules = vec![Rule {
+            target: Target {
+                capability: Capability::Execute,
+                resource_id: "workspace-tools".into(),
+            },
+            mode,
+        }];
+    }
     let authority = Authority::open(&directory.join("permissions.sqlite"), binding, policy).await?;
+    // Permits never cross the wire and cannot be reconstructed from tool input.
+    // The bounded map holds only this process's live invocations.
+    let mut permits: HashMap<String, (Permit, Operation)> = HashMap::new();
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout().lock();
@@ -166,7 +200,35 @@ async fn main() -> Result<()> {
         let response: Result<Value> = async {
             let command: Command = serde_json::from_slice(&frame)?;
             match command {
-                Command::Invoke { operation } if role == "tools" => {
+                Command::Prepare { operation } if role == "tools" && coding.is_some() => {
+                    ensure!(permits.len() < 64, "too many live invocations");
+                    ensure!(
+                        !permits.contains_key(&operation.request_id),
+                        "invocation already live"
+                    );
+                    let admission = authority.admit(operation.clone(), now()?).await?;
+                    match admission {
+                        Admission::Allowed(permit) => {
+                            authority.check(&permit, &operation, now()?).await?;
+                            permits.insert(operation.request_id.clone(), (permit, operation));
+                            Ok(json!({"status":"allowed"}))
+                        }
+                        other => Ok(json!({"admission":other})),
+                    }
+                }
+                Command::Check { operation } if role == "tools" && coding.is_some() => {
+                    let (permit, admitted) = permits
+                        .get(&operation.request_id)
+                        .context("no live invocation permit")?;
+                    ensure!(admitted == &operation, "invocation arguments changed");
+                    authority.check(permit, &operation, now()?).await?;
+                    Ok(json!({"checked":true}))
+                }
+                Command::Finish { id } if role == "tools" && coding.is_some() => {
+                    permits.remove(&id);
+                    Ok(json!({"finished":true}))
+                }
+                Command::Invoke { operation } if role == "tools" && coding.is_none() => {
                     let admission = authority.admit(operation.clone(), now()?).await?;
                     match &admission {
                         Admission::Allowed(permit) => {

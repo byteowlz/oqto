@@ -25,7 +25,7 @@ Broker grants need no process restart. Direct mount/seccomp expansion uses fresh
 - [x] Single-winner approval; once/Session expiry, revocation and delivery fencing tested.
 - [x] Protected pending request survives authority and native harness reopen; no raw domain databases mounted in hands.
 - [x] Actual bwrap/seccomp denies extra access before grant/after revoked replacement. Native fresh hands preserve native conversation identity; persistent replacement is separately proven with a stable supervisor/fixture Session binding.
-- [ ] Descendant cleanup and stale-generation rejection; interrupted effects explicitly uncertain.
+- [x] Local owned hands supervisor confirms bwrap/descendant stop before replacement; retained environment handles cannot reconnect. Composed native coding turn proves revocation during an active shell, withheld secret output, stopped detached writer and fresh-hand continuation. Interrupted coding effects use native unsafe replay and sanitized uncertainty errors. Authenticated runner/reopen/in-flight worker-kill qualification remains separate.
 - [x] Native Durable read-only permission wait/recovery demonstrated separately from synthetic core tests.
 - [x] Source-only upstream Pi TUI fixture demo uses the same ledger/gates: in-turn Once/Session approval, default denial and live revoke/re-request pass PTY coverage. See `tools/oqt/README.md`.
 - [ ] Authenticated TUI/Web/headless integration and real coding profiles; the private local demo is not a shipped production UI.

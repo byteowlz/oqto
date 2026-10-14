@@ -19,6 +19,10 @@ struct HandsSpec {
 #[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     use std::os::unix::{fs::MetadataExt, process::CommandExt};
+    tracing_subscriber::fmt()
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .with_writer(std::io::stderr)
+        .init();
     let mut args = std::env::args_os().skip(1);
     let spec_path = PathBuf::from(args.next().context("private hands spec required")?);
     let metadata = std::fs::symlink_metadata(&spec_path)?;
