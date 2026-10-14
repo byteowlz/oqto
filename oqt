@@ -19,6 +19,12 @@ while (($#)); do
  esac
 done
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Prototype requires Linux x86_64' >&2; exit 2; }
+workdir=$(cd "$workdir" 2>/dev/null && pwd) || { echo "Work directory does not exist: $workdir" >&2; exit 2; }
+if [[ "$mode" == coding ]]; then
+ case "$workdir" in
+  "$root"|"$root"/*) echo "Refusing: $workdir is inside oqt's own source tree, which coding workspaces may never be (the agent could reach oqt's own approval machinery). Run from your project directory or pass --workdir /path/to/project." >&2; exit 2;;
+ esac
+fi
 for command in node python3 cargo bwrap taskset nice timeout; do command -v "$command" >/dev/null; done
 cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
 export CARGO_BUILD_JOBS=1
