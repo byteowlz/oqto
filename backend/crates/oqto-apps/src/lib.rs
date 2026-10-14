@@ -22,11 +22,13 @@ pub use agent_context::{
     ContextLifetime, ContextTopicDefinition, parse_agent_context_catalog,
 };
 pub use capability::{
-    AppAgentContextCapability, AppCapabilityKind, AppCapabilityRequest, AppFileAccess,
-    AppFileResourceRequest, AppFilesCapability, AppOperationsCapability, CAPABILITY_AGENT_CONTEXT,
-    CAPABILITY_FILES, CAPABILITY_KV, CAPABILITY_OPERATIONS, CAPABILITY_THEME, CONTEXT_DIR,
-    DEFAULT_CONTEXT_CATALOG, DEFAULT_OPERATIONS_TABLE, OPERATIONS_DIR, RawAgentContextCapability,
-    RawCapabilityTable, RawFileResource, RawFilesCapability, RawOperationsCapability,
+    AppAgentContextCapability, AppCapabilityKind, AppCapabilityRequest, AppConnectionCapability,
+    AppConnectionSlot, AppFileAccess, AppFileResourceRequest, AppFilesCapability,
+    AppOperationsCapability, CAPABILITY_AGENT_CONTEXT, CAPABILITY_CONNECTION, CAPABILITY_FILES,
+    CAPABILITY_KV, CAPABILITY_OPERATIONS, CAPABILITY_THEME, CONNECTION_PROFILE_HTTPS_GET_V1,
+    CONTEXT_DIR, DEFAULT_CONTEXT_CATALOG, DEFAULT_OPERATIONS_TABLE, OPERATIONS_DIR,
+    RawAgentContextCapability, RawCapabilityTable, RawConnectionCapability, RawFileResource,
+    RawFilesCapability, RawOperationsCapability,
 };
 pub use digest::{ContentDigest, digest_bundle};
 pub use discovery::{

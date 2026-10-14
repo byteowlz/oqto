@@ -1,8 +1,28 @@
 use super::super::*;
+#[path = "credentials.rs"]
+mod credentials;
 
 pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> RunnerResponse {
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
+        RunnerRequest::ManageCredentials(request) => credentials::manage(runner, request).await,
+        RunnerRequest::RecordHostAction {
+            workspace_id,
+            record,
+        } => {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_absolute());
+            let recorded = match home {
+                Some(home) => {
+                    oqto_history::oqto_log::host_actions::append(&home, &workspace_id, &record)
+                        .await
+                        .is_ok()
+                }
+                None => false,
+            };
+            RunnerResponse::HostActionRecorded { recorded }
+        }
         RunnerRequest::GetCapabilities => runner.get_capabilities().await,
         RunnerRequest::HistoryRead(request) => {
             match crate::history_read::read(

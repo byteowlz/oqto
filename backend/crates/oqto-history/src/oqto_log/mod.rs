@@ -1,6 +1,7 @@
 pub mod bindings;
 pub mod event_assembler;
 pub mod ids;
+pub mod host_actions;
 pub mod importer;
 pub mod index;
 pub mod native_projector;

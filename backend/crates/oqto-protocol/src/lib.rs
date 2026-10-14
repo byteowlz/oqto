@@ -27,7 +27,10 @@
 pub mod apps;
 pub mod canon;
 pub mod commands;
+pub mod credential_connections;
+pub mod credentials;
 pub mod delegation;
+pub use credentials::*;
 pub mod events;
 pub mod messages;
 pub mod parts;

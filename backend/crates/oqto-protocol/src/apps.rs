@@ -104,6 +104,9 @@ pub struct AppContextActionRequest {
 #[serde(tag = "capability", rename_all = "snake_case")]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub enum AppCapabilityRequest {
+    Connections {
+        slots: Vec<crate::credential_connections::AppConnectionSlot>,
+    },
     /// Read or write specific bound work-directory resources.
     Files {
         resources: Vec<AppFileResourceRequest>,

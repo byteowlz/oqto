@@ -36,6 +36,7 @@ mod agent_browser;
 mod api;
 mod api_keys;
 mod apps;
+pub mod credentials;
 mod audit;
 mod auth;
 mod container;

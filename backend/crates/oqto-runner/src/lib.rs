@@ -6,11 +6,11 @@
 
 pub mod agent_browser;
 pub mod client;
+pub mod credentials;
 pub mod daemon;
 pub mod endpoint_bridge;
 pub mod history_import;
 pub mod history_read;
-pub mod session_resume;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
 pub mod pi_manager;
@@ -18,6 +18,7 @@ pub mod pi_translator;
 pub mod protocol;
 pub mod provider_login;
 pub mod reverse_bridge;
+pub mod session_resume;
 pub mod ssh_agent_proxy;
 pub mod tls;
 pub mod transport;

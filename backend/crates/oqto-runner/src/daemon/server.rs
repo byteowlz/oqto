@@ -38,6 +38,7 @@ pub struct Runner {
     /// User configuration (paths, etc.)
     user_config: RunnerUserConfig,
     provider_login: Arc<crate::provider_login::ProviderLoginManager>,
+    credentials: Arc<crate::credentials::CredentialManager>,
     /// Pi session manager (manages Pi agent processes).
     pi_manager: Arc<PiSessionManager>,
     /// Background Pi JSONL -> oqto-log ingest task.
@@ -579,6 +580,7 @@ impl Runner {
             binaries,
             user_config,
             provider_login: Arc::new(crate::provider_login::ProviderLoginManager::default()),
+            credentials: Arc::new(crate::credentials::CredentialManager::default()),
             pi_manager,
             jsonl_ingest: super::jsonl_ingest::spawn(),
             expose_dir,
@@ -630,6 +632,10 @@ impl Runner {
     }
 
     fn request_kind(req: &RunnerRequest) -> String {
+        // Never create a diagnostic serde Value containing secret inputs.
+        if matches!(req, RunnerRequest::ManageCredentials(_)) {
+            return "manage_credentials".to_owned();
+        }
         serde_json::to_value(req)
             .ok()
             .and_then(|v| {
@@ -652,7 +658,9 @@ impl Runner {
             | RunnerRequest::PiCloseSession(_) => std::time::Duration::from_secs(20),
             // Scanning and repairing JSONL chat metadata can be expensive for
             // users with large session histories.
-            RunnerRequest::RepairWorkspaceChatHistory(_) => std::time::Duration::from_secs(120),
+            RunnerRequest::RepairWorkspaceChatHistory(_) | RunnerRequest::ManageCredentials(_) => {
+                std::time::Duration::from_secs(120)
+            }
             RunnerRequest::RunAppOperation(_) => std::time::Duration::from_secs(305),
             _ => std::time::Duration::from_secs(10),
         }
@@ -3844,7 +3852,9 @@ impl Runner {
                     break;
                 }
                 Ok(Some(req)) => {
-                    debug!("Received request: {:?}", req);
+                    if !matches!(req, RunnerRequest::ManageCredentials(_)) {
+                        debug!("Received request: {:?}", req);
+                    }
 
                     // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
@@ -4037,6 +4047,7 @@ impl Runner {
                                 binaries: self.binaries.clone(),
                                 user_config: self.user_config.clone(),
                                 provider_login: Arc::clone(&self.provider_login),
+                                credentials: Arc::clone(&self.credentials),
                                 pi_manager: Arc::clone(&self.pi_manager),
                                 jsonl_ingest: self.jsonl_ingest.clone(),
                                 expose_dir: self.expose_dir.clone(),

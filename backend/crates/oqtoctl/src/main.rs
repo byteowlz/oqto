@@ -18,6 +18,8 @@ use reqwest::StatusCode;
 #[cfg(unix)]
 use hyperlocal::{UnixConnector, Uri as UnixUri};
 
+mod credentials;
+
 const DEFAULT_SERVER_URL: &str = "http://localhost:8080/api";
 const DEFAULT_ADMIN_SOCKET: &str = "/run/oqto/oqtoctl.sock";
 
@@ -48,9 +50,17 @@ fn main() -> ExitCode {
 #[tokio::main]
 async fn try_main() -> Result<()> {
     let cli = Cli::parse();
+    // Credentials must not auto-select the local administrative socket.
+    if let Command::Credentials { command } = &cli.command {
+        return credentials::handle(&cli.server, cli.admin_socket.as_deref(), command, cli.json)
+            .await;
+    }
     let client = OqtoClient::new(&cli.server, cli.admin_socket.as_deref())?;
 
     match cli.command {
+        Command::Credentials { .. } => {
+            unreachable!("credentials handled before transport selection")
+        }
         Command::Status => handle_status(&client, cli.json).await,
         Command::Ask {
             target,
@@ -127,6 +137,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Manage account credentials over authenticated HTTP (never the admin socket)
+    Credentials {
+        #[command(subcommand)]
+        command: credentials::CredentialsCommand,
+    },
+
     /// Check server status
     Status,
 

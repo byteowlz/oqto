@@ -1757,17 +1757,6 @@ pub(super) async fn handle_agent_command(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::should_filter_personal_runner_sessions;
-
-    #[test]
-    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
-        assert!(should_filter_personal_runner_sessions(true));
-        assert!(!should_filter_personal_runner_sessions(false));
-    }
-}
-
 /// The routing hint a read probe carries, if any. Mutating commands never
 /// contribute one: where a prompt goes is decided by the connection and the
 /// durable store, not by the client.
@@ -1781,5 +1770,16 @@ pub(super) fn read_probe_workspace_hint(
             .map(str::trim)
             .filter(|path| path.starts_with('/')),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_filter_personal_runner_sessions;
+
+    #[test]
+    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
+        assert!(should_filter_personal_runner_sessions(true));
+        assert!(!should_filter_personal_runner_sessions(false));
     }
 }

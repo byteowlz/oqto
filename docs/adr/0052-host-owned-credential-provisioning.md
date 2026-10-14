@@ -20,6 +20,10 @@ For HTTP credential use, resolve and attach credentials at the final trusted des
 
 Standalone byteowlz backends may use server-side .env or their own provider; Oqto App mode uses an explicit Oqto connection binding. No credential goes into VITE variables/browser bundles. Missing Oqto connections never activate standalone fallback. Sharing an App transfers neither credentials nor grants.
 
+## Host-action audit integration
+
+Metadata-only credential actions use `oqto-log`'s `host_action_audit` records through the owning Principal's runner. They are not Pi JSONL, chat messages, fabricated Sessions, or a parallel grant database. Duplicate event identities fail rather than overwrite prior records. The connection service audit adapter pins the authenticated Account and authoritative workspace partition; backend-local file writes are not an acceptable remote/placed-runner substitute. Audit failure prevents authorization. This append path does not itself authorize credential use or implement runtime/revocation fencing; those remain required at the execution gate.
+
 ## Security checklist before integration
 
 - Derive acting Account/Principal, runtime/Instance/Definition/binding from authenticated host context; never trust App payloads, paths, AGENT_CTX or visible pane identity.
