@@ -58,6 +58,7 @@ class FakeHost(tx.SystemHost):
         self.doctor_exit = 0
         self.watchdog_active = False
         self.backend_running: list[int] = []
+        self.backend_exe_path: Path | None = None
 
     def run_as(self, principal, argv, timeout):
         if argv[:1] == ["oqtoctl"]:
@@ -100,9 +101,16 @@ class FakeHost(tx.SystemHost):
         return self.sessions_by_name.get(principal.name, [])
 
     def main_pid(self, principal, unit):
-        return 4242
+        return 4343 if unit == "oqto.service" else 4242
+
+    def system_main_pid(self, unit):
+        assert unit == "oqto.service"
+        return 4343
 
     def exe(self, pid):
+        if pid == 4343:
+            assert self.backend_exe_path is not None
+            return self.backend_exe_path
         assert self.exe_path is not None
         return self.exe_path
 
@@ -378,6 +386,7 @@ class Activation(Fixture):
         release = releases / f"oqto-{version}-x86_64-unknown-linux-gnu"
         (release / "immutable/bin").mkdir(parents=True)
         (release / "immutable/bin/oqto-runner").write_text("#!/bin/true\n")
+        (release / "immutable/bin/oqto").write_text("#!/bin/true\n")
         pi = release / "immutable/pi-runtime/pi/pi"
         pi.parent.mkdir(parents=True)
         pi.write_text("#!/bin/sh\necho 1.1.0\n")
@@ -387,6 +396,7 @@ class Activation(Fixture):
         )
         (releases / "current").symlink_to(release)
         self.host.exe_path = (release / "immutable/bin/oqto-runner").resolve()
+        self.host.backend_exe_path = (release / "immutable/bin/oqto").resolve()
         return releases
 
     def check_stage(self, profile: str = "team") -> Path:
@@ -427,6 +437,48 @@ class Activation(Fixture):
     def test_check_rejects_stale_backend_version(self) -> None:
         with self.assertRaises(tx.TransactionError):
             self.run_check({"status": "ok", "version": "0.5.8"})
+
+    def test_check_accepts_dev_build_reporting_its_compiled_version(self) -> None:
+        tx.RELEASES = self.make_release("0.5.9-dev.20261014114048.gd3d60d2b.dirty")
+        original = tx.health
+        tx.health = lambda url: {"status": "ok", "version": "0.5.9"}
+        try:
+            tx.check(self.check_stage("personal"), self.host)
+            # ...but not a backend that reports something else.
+            tx.health = lambda url: {"status": "ok", "version": "0.5.8"}
+            with self.assertRaises(tx.TransactionError):
+                tx.check(self.check_stage_again(), self.host)
+        finally:
+            tx.health = original
+            tx.RELEASES = Path("/var/lib/oqto/releases")
+
+    def check_stage_again(self) -> Path:
+        import shutil
+
+        shutil.rmtree(self.root / "stage")
+        return self.check_stage("personal")
+
+    def test_check_rejects_backend_on_previous_binary(self) -> None:
+        original = tx.health
+        tx.health = lambda url: {"status": "ok", "version": "0.5.9"}
+        tx.RELEASES = self.make_release()
+        try:
+            # A same-version dev build cannot be told apart by health alone.
+            self.host.backend_exe_path = Path(
+                "/var/lib/oqto/releases/old/immutable/bin/oqto"
+            )
+            with self.assertRaises(tx.TransactionError):
+                tx.check(self.check_stage(), self.host)
+        finally:
+            tx.health = original
+            tx.RELEASES = Path("/var/lib/oqto/releases")
+
+    def test_compiled_version_strips_only_dev_builds(self) -> None:
+        self.assertEqual(
+            tx.compiled_version("0.5.11-dev.20261014114048.gd3d60d2b.dirty"), "0.5.11"
+        )
+        self.assertEqual(tx.compiled_version("0.5.11"), "0.5.11")
+        self.assertEqual(tx.compiled_version("0.5.11-rc.1"), "0.5.11-rc.1")
 
     def test_check_rejects_runner_on_previous_binary(self) -> None:
         original = tx.health

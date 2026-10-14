@@ -157,6 +157,16 @@ class SystemHost:
         )
         return int(result.stdout.strip() or 0)
 
+    def system_main_pid(self, unit: str) -> int:
+        result = subprocess.run(
+            ["systemctl", "show", unit, "-p", "MainPID", "--value"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return int(result.stdout.strip() or 0)
+
     def system_unit(self, action: str, unit: str) -> None:
         subprocess.run(["systemctl", action, unit], check=True, timeout=120)
 
@@ -448,6 +458,24 @@ def health(url: str) -> dict | None:
         return None
 
 
+def compiled_version(version: str) -> str:
+    """The version a release's binaries report about themselves.
+
+    Dev builds (`deploy --dev`) are `<core>-dev.<stamp>.g<sha>[.dirty]`; the
+    binaries are compiled from the declared `<core>` and report only that.
+    """
+    core, sep, pre = version.partition("-")
+    return core if sep and pre.startswith("dev.") else version
+
+
+def backend_pid(host: SystemHost, info: dict, principals: list[Principal]) -> int:
+    if info["profile"] == "personal":
+        if not host.user_unit_exists(principals[0], "oqto.service"):
+            return -1
+        return host.main_pid(principals[0], "oqto.service")
+    return host.system_main_pid("oqto.service")
+
+
 def check(stage: Path, host: SystemHost | None = None) -> None:
     """Post-activation hook: restart, then prove the *new* release serves."""
     host = host or SystemHost()
@@ -462,13 +490,19 @@ def check(stage: Path, host: SystemHost | None = None) -> None:
     def healthy() -> bool:
         nonlocal reply
         reply = health(info["health_url"]) or {}
-        return (
-            reply.get("status") == "ok" and reply.get("version") == identity["version"]
+        return reply.get("status") == "ok" and reply.get("version") == compiled_version(
+            identity["version"]
         )
 
     wait_for(
         healthy, float(info["health_budget"]), f"backend {identity['version']} health"
     )
+    # Health only proves the reported version; for dev builds that is shared by
+    # every build of the same core, so also prove the binary actually serving.
+    backend = (current / "immutable/bin/oqto").resolve(strict=True)
+    pid = backend_pid(host, info, principals)
+    if pid == 0 or (pid > 0 and host.exe(pid) != backend):
+        raise TransactionError(f"backend is not executing {backend}")
     runner = (current / "immutable/bin/oqto-runner").resolve(strict=True)
     receipts = []
     for principal in principals:
