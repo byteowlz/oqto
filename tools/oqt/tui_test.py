@@ -16,11 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 class Terminal:
-    def __init__(self):
+    def __init__(self, args=None, cwd=None, env=None):
         self.started = time.monotonic()
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 112, 0, 0))
-        self.process = subprocess.Popen([str(ROOT / "oqt"), "--demo"], cwd=ROOT,
+        self.process = subprocess.Popen([str(ROOT / "oqt"), *(args or ["--demo"])], cwd=cwd or ROOT, env=env,
             stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         self.raw = bytearray()
@@ -83,6 +83,7 @@ def scenario(prompt, choice, result, label, revoke=False):
     finally:
         terminal.close(label)
 
-scenario("global history", "once", "broader fixture-token", "history-once")
-scenario("read file", "deny", "Permission denied", "file-deny")
-scenario("read file", "session", "confined hands returned", "file-session-revoke", revoke=True)
+if __name__ == '__main__':
+    scenario("global history", "once", "broader fixture-token", "history-once")
+    scenario("read file", "deny", "Permission denied", "file-deny")
+    scenario("read file", "session", "confined hands returned", "file-session-revoke", revoke=True)

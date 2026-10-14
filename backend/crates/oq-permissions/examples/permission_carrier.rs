@@ -210,8 +210,9 @@ async fn main() -> Result<()> {
                     match admission {
                         Admission::Allowed(permit) => {
                             authority.check(&permit, &operation, now()?).await?;
+                            let expires_at = permit.expires_at();
                             permits.insert(operation.request_id.clone(), (permit, operation));
-                            Ok(json!({"status":"allowed"}))
+                            Ok(json!({"status":"allowed", "expires_at":expires_at}))
                         }
                         other => Ok(json!({"admission":other})),
                     }

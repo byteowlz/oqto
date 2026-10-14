@@ -1,69 +1,126 @@
-# oqt: source-only permission TUI demo
+# oqt: experimental standalone workspace coding
+
+Use it from a project directory **outside this launcher’s own trusted source tree**:
 
 ```sh
-cd /home/wismut/byteowlz/oqto-durable-support
-./oqt
-# Reopen the latest demo Session for this work directory:
-./oqt --continue
+/home/wismut/byteowlz/oqto-durable-support/oqt --coding --workdir /path/to/project
+# Reopen the latest native Session for the same workspace/runtime artifact:
+/home/wismut/byteowlz/oqto-durable-support/oqt --coding --continue --workdir /path/to/project
 ```
 
-`oqt` opens **upstream Pi's experimental Durable TUI**, not another renderer. This milestone is explicitly a **demo, not a usable coding/model profile**:
+This opens upstream Pi’s actual experimental Durable TUI with your owning Pi
+model defaults/catalog and **read-only** credentials. It enables upstream
+`read`, `write`, `edit`, and `bash`, exclusively through confined hands. There is
+no stock local-tool fallback. `--owner-profile DIR` selects another owned Pi
+agent directory; otherwise `OQT_OWNER_AGENT_DIR`, `PI_CODING_AGENT_DIR`, then
+`~/.pi/agent` are considered. No installed profile, commands, services or defaults
+are changed.
 
-- `own history`: baseline access to a synthetic history fixture.
-- `global history`: scoped request for the synthetic account-history fixture. The TUI presents **Allow once / Allow for this Session / Deny** while the original turn is waiting. Deny is the default.
-- `read file`: request for a registered fixture file; approval invokes actual bwrap/seccomp-confined hands.
-- `/permissions`: revisit a pending request after dismissing its dialog.
-- `/permissions revoke`: revoke approved overlays. Subsequent access asks again. Already disclosed data cannot be erased; baseline policy remains available through fresh admission. Every in-flight permit is revision-fenced.
+## Permissions and limits
 
-Session approvals expire after **60 seconds** in this demo. Ordinary read/edit/bash/codemode tools, arbitrary plugin reload, model credentials, real history/mmry/trx providers, and Oqto authentication are **not enabled**. The synthetic model ignores arbitrary query/path text and only selects those registered fixtures. Never interpret this as a secure general-purpose coding session or an authenticated Oqto Session.
+- **Allow once** approves the displayed arguments for that logical invocation.
+- **Allow workspace tools for this Session (60 seconds)** is broader: it covers
+  the fixed workspace-tools capability for this public Session, not just the
+  displayed command. It cannot expand filesystem/network policy.
+- **Deny** is the default. `/permissions` revisits a dismissed pending dialog.
+- `/permissions revoke` freezes admission/delivery, revokes overlays, confirms
+  executor/descendant exit, then installs fresh hands. Already completed effects
+  or disclosures cannot be undone.
+- Tool invocations are sequential and bounded to **30 seconds**, or the remaining
+  protected lease minus a stop margin, whichever is shorter. Completed and failed
+  invocations retire their executor before delivery: detached writers cannot
+  survive a completed call. Background servers/jobs are intentionally unsupported.
+- Workspace files are read/write; tool network is isolated. Outside files,
+  credentials, runtime/source, ledger, and control sockets remain unavailable.
+  Approval does **not** request or grant outside-workspace resources.
+- Synchronous progress/details/diagnostics are withheld until delivery checks.
+  Output beyond the 1 MiB buffer fails closed. Interrupted effects are uncertain;
+  inspect before retrying. Native coding tasks use `replay: "unsafe"`.
+- No skills, codemode, subagents, arbitrary plugins or `/reload`. Command-valued
+  credentials/model configuration are rejected. Unsupported/missing defaults
+  fail rather than silently choosing another model or execution environment.
 
-## Composition and isolation
+The brain is a **reviewed, trusted Node host**, not an OS-confined untrusted plugin
+host. Private runtime/profile/source and owning credentials are protected from
+hands; this is not production brain isolation. Local OS ownership/UID binding is
+not Oqto Account authentication. This is usable **experimental local coding**, not
+an authenticated Oqto deployment or permission-policy compiler.
 
-The launcher requires Linux x86_64, bwrap, cached Cargo dependencies, Node 26, and the qualified source checkout at `cdaf6c227d4718a72b59ccd02152c9614df44cfc`. Override its location with `OQT_PI_SOURCE`; wrong/dirty pins fail closed.
+## Owning credentials
 
-A private source distribution is created under `/var/tmp/q<uid>-<artifact>/`. It reuses upstream server/protocol/worker/harness/client/TUI code. Its application entry composes the public `runSessionWorkerWithHarness` factory seam with our gated registry instead of `createCodingAgentHarness`. Automatic server activation in that private distribution therefore cannot select stock local tools. Original upstream source and installed Pi remain unchanged.
+`readonly-profile.ts` opens bounded, owned regular JSON files without following
+final symlinks; credential files must be private. It never runs credential
+commands, logs secrets, modifies the owner’s profile, logs out, or rotates OAuth.
+Existing API keys and valid OAuth access/account metadata are supported; refresh
+secrets are stripped. Expired/near-expiry tokens fail before refresh and before
+ambient-key fallback. **Renew/login through owning Pi**; its replacement becomes
+visible on the next credential read. There is no automatic refresh broker.
 
-Only the distribution's controlled TUI package and static provider facet are configured. The provider owns separate private tool/operator carrier pipes. Tool frames cannot inspect/decide/revoke. Decisions bind the reviewed request digest and revision; authority rechecks before fixture access and result delivery. Public demo Session ID is distinct from native conversation/tool-task IDs; request correlation binds both plus the protected ledger namespace. Native Durable SQLite remains transcript/task authority; the permission ledger is not another Chat history.
+`owner-models.ts` supplies owning defaults/catalog reads and an in-memory catalog
+write/delete overlay. Upstream runtime cache updates never write or lock the
+owner catalog. Session history and authority live in the separate private runtime
+profile; credentials are not copied there.
 
-Local operator trust is this prototype's private OS-owned Unix/profile boundary. Account labels are synthetic, with a local UID Principal marker, **not production Account authentication**. The brain is trusted and unconfined; only the fixture hands are confined. This is not the authenticated runner integration gate.
+## Composition and preparation
 
-Runtime/profile directories are private and hash-keyed; unknown or non-private directories, workspace collisions and runtime edits are refused. Unix socket paths are bounded below Linux's 108-byte limit. Runtime artifact changes produce a new profile; demo Sessions are not automatically migrated across artifacts. Files under existing `~/.pi`/`~/.config`, ordinary Pi JSONL and installed commands are not rewritten. No PATH installation, service activation, release tag, or deployment occurs.
+Linux x86_64, bwrap, Node 26, cached Cargo dependencies and the qualified upstream
+checkout at `cdaf6c227d4718a72b59ccd02152c9614df44cfc` are required. Set
+`OQT_PI_SOURCE` to its location; wrong/dirty tracked pins fail closed.
 
-Warm launches cache Cargo preparation and seccomp generation by source/toolchain inputs and artifact identities; carrier hashing is cached by file identity. These are performance caches, not authority or signatures. Runtime source hashes are still checked. Build/preparation phases use one CPU, nice 19, one Cargo worker and 90-second deadlines. The interactive session inherits affinity/nice and a 512 MiB V8 heap ceiling (not an aggregate memory quota). Closing the TUI closes its source-only server and workers. Simultaneous-client launcher/reuse and abnormal termination/recovery are not qualified here.
+Preparation copies the controlled composition into a private source distribution
+under `/var/tmp/q<uid>-<artifact>/`. `runSessionWorkerWithHarness` selects
+`coding-worker.ts`/`openCodingRuntime`, never the stock unrestricted harness.
+Only the controlled TUI package and static permission provider are configured.
+Exact-source carrier, hands, Landlock shim, daemon and BPF are privately staged
+outside the workspace. Enforcement-helper failure never selects a fallback.
 
-## Real-session groundwork (not activated)
+The carrier holds non-deserializable, operation-bound permits. Separate bounded
+operator/tool pipes prohibit tool-side decisions/revocation. Invocation and
+handoff are reauthorized against the protected ledger; native Durable SQLite is
+transcript/task authority, not the permission ledger. Public Session identity is
+separate from native conversation/task IDs.
 
-`oqt_hands.rs` starts the actual Pi `RemoteExecutionEnv` daemon inside enforcing bwrap/seccomp, with a trusted private spec, workspace read/write, no network, clean environment, explicit protected roots and no host-local fallback. An independent native transport test proves workspace FS/shell work and outside/authority/symlink reads fail. The transport is connected to the normal coding registry and permission ledger by `coding-runtime.ts`, qualified with a synthetic provider in native Durable turns. Its strict policy does **not** qualify the production global/workspace ceiling compiler or protected brain. Real-model launcher activation remains disabled.
+Runtime/profile paths are private and artifact/workspace/mode keyed. Runtime
+changes select a new profile; migration across artifacts is not automatic.
+Synthetic demo and real coding histories are separate. Socket paths are bounded
+below Linux’s 108-byte limit. Unknown/non-private paths and runtime edits are
+refused. Preparation caches are performance aids, not authority/signatures.
+Build/preparation uses one CPU, nice 19, one Cargo worker and 90-second deadlines;
+the interactive process inherits affinity/nice and a 512 MiB V8 heap ceiling,
+not an aggregate memory quota. Normal TUI close stops its owned server/workers.
 
-`readonly-profile.ts` provides an owning-machine read-only credential interface: no profile writes, credential commands, logout, or OAuth refresh side effects. It opens owned private regular files without following the final symlink, bounds reads on the opened descriptor, and rereads each invocation. Static API keys and existing OAuth access tokens are supported; refresh secrets are removed from the returned credential. The exact upstream OAuth resolver is tested: valid tokens resolve with account metadata; expired/near-expiry tokens fail before its refresh callback; no ambient API-key fallback occurs after that failure. An atomic credential replacement by the owning Pi becomes visible on the next invocation. This is a **read-only bridge**, not an automatic refresh broker: renew through owning Pi when needed. No original credential is copied to a new profile. The interface is not connected to the launcher yet, and no live provider request is claimed.
-
-`owner-models.ts` reads owning Pi model defaults and exposes an upstream `ModelsStore` with owner catalog reads plus an in-memory write/delete overlay. Runtime cache updates never create locks or modify the original catalog; a new runtime starts again from the owner's catalog. An exact upstream `ModelRuntime.create` fixture test composes a custom provider/model and derives its auth with no profile writes. This is local composition evidence, **not** a live provider turn. Normal coding registry/launcher integration remains disabled.
-
-`confined-coding.ts` composes only upstream `createCodingTools()` with `RemoteExecutionEnv`: read/write/edit/bash, no local environment factory, no codemode/skills/plugins/subagents. Conversation `cwd` must match the owner-bound workspace; missing/different targets fail. Native Durable proof runs a full write → edit → read → bash turn, verifies actual filesystem effects, and checks an outside authority read becomes a tool error with no secret in durable/model history. The original ungated qualification remains isolation-only; optional gate composition wraps every tool. `coding-runtime.ts` is the fully gated local composition, not the launcher default. Do not activate it for real models yet.
-
-`coding-authority.ts` uses separate tool/operator carrier pipes. The Rust carrier holds operation-bound, non-deserializable permits in a bounded live-invocation map; wire commands cannot forge them. Every call waits for exact argument/digest/revision approval, rechecks immediately before execution and result handoff, and releases its live permit. Coding policy supports only `ask` and `deny`; unsupported values fail closed. This is a fixed conservative ceiling, not a production policy compiler.
-
-`gated-tool.ts` withholds synchronous output, details and diagnostics in a bounded buffer until delivery authorization. A revoked, aborted or failed operation emits a sanitized error, not executor data. All coding tools use native `replay: "unsafe"`: interrupted effects are uncertain and never blindly replayed. Output exceeding 1 MiB fails rather than committing unchecked progress. This trades live streaming for an enforceable delivery boundary.
-
-`hands-supervisor.ts` owns the actual launcher child handles behind a private Unix transport relay. Revocation freezes authority, advances the ledger revision, stops hands, waits for confirmed exit, and installs fresh environment/connection handles. Retained handles cannot reconnect. The shell cannot access the protected socket/spec; its stdout/stderr cannot act as supervision messages. Failure to confirm stop leaves admission and delivery frozen. The launcher retains a fixed PATH including `/usr/local/bin` for the enforcing Landlock shim; missing enforcement helpers fail closed, never fall back.
-
-The composed native proof executes a real shell that outputs a secret and starts a detached writing descendant, revokes its grant while running, verifies no secret reaches durable/model history, verifies the descendant stops, and then approves a write through fresh hands **within the same native turn**. Standalone tests also cover all four coding tools, hard denial before effects, tool-channel control rejection and stale environment handles. The foundation gate now has **11 passing tests**. This is not a live-provider, authenticated Oqto, brain-confinement, external-resource expansion, reopen/kill-recovery, or UI-launcher acceptance claim.
-
-## Proof
+## Proof and remaining qualification
 
 ```sh
-./oqt --smoke
+# Original synthetic model/history demo remains the default:
+./oqt --demo --smoke
 just test-oqt-ui
-# Independent transport/credential foundation, with explicit exact-source artifacts:
+# Disposable owner profile + real HTTP provider transport + all four tools + reopen:
+just test-oqt-coding
 just test-oqt-hands /tmp/oqto-pi-service-spike.PVTso2/source \
   /tmp/oqto-pi-env-qualified-target/debug/pi-env \
   backend/target/oqt-prepared/bpf/default-x86_64.bpf
-CARGO_TARGET_DIR=/home/wismut/byteowlz/oqto_refactor/backend/target \
-  just test-adaptive-sandbox /tmp/oqto-pi-service-spike.PVTso2/source
+just test-adaptive-sandbox /tmp/oqto-pi-service-spike.PVTso2/source
+# Explicit live owning-provider request, no tools:
+./oqt --coding --smoke --workdir /path/to/project
 ```
 
-The PTY gate drives the actual TUI: history Once approval inside the waiting turn, file denial, and file Session approval followed by live revoke and a new denied request. It verifies the safest default and completed native turns. This is PTY coverage, **not physical terminal/Web/multi-client acceptance**. Logs contain only demo fixture data and are written under `/tmp/oqt-*-pty.log`.
+Local qualification includes 11 coding/credential/confinement foundations, 27
+core/native/replacement tests, three original demo PTY cases, and the real coding
+TUI/provider-transport workflow. The composed proof covers active revoke, withheld
+secret output, same-turn fresh hands, and detached-descendant stop after normal
+completion. A bounded **actual owning `openai-codex/gpt-5.6-sol` request and actual
+TUI-approved confined write** passed with same-turn completion; owner auth,
+settings, models and catalog bytes stayed unchanged.
 
-Core/native gate: 23 lifecycle tests + actual confined replacement + 3 native Durable tests (27 total). Rust Clippy and owned TypeScript Biome are warning-free.
+Production Account authority, global/workspace ceiling compilation, external
+resource expansion, automatic OAuth refresh, simultaneous launcher clients,
+in-flight kill/recovery/uncertain-effect reconciliation, browser/mobile/SSH and
+deployment remain unqualified. Normal completed-session reopen is not in-flight
+crash recovery.
 
-Qualification debt: a full source TypeScript check initially omitted upstream ambient highlighter declarations; the corrected source check still encounters three existing OpenAI response SDK type mismatches (`prompt_cache_options`, `fast`). No owned demo-file type diagnostics were reported. Full upstream typecheck is **not claimed**. This prototype uses only the synthetic provider, so accepting this isolated source-only demo does not qualify real-provider or production use; that gate remains blocked until the pinned upstream dependency/type surface is qualified. Real coding must add verified runner authority, stable brain confinement and confined ExecutionEnv coverage for every local execution path before enabling normal tools.
+Accepted isolated upstream type debt: three pinned OpenAI response SDK type
+mismatches (`prompt_cache_options`, `fast`) remain in a full source check. Owned
+composition diagnostics must be clean. The scoped live owning-model path is
+runtime-qualified; this is **not** qualification of every provider or a claim
+that full upstream TypeScript passes. See ADR-0053 for the production contract.

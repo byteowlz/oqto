@@ -20,10 +20,16 @@ export default defineFacet({
 			shown.add(request.digest);
 			try {
 				const action = await ui.select(
-					`DEMO permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
+					`${permissions.state.value?.mode === "coding" ? "Coding" : "DEMO"} permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`,
 					[
 						{ value: "once", label: "Allow once" },
-						{ value: "session", label: "Allow for this Session (60 seconds)" },
+						{
+							value: "session",
+							label:
+								permissions.state.value?.mode === "coding"
+									? "Allow workspace tools for this Session (60 seconds)"
+									: "Allow for this Session (60 seconds)",
+						},
 						{ value: "deny", label: "Deny" },
 					],
 					"deny",
@@ -62,14 +68,18 @@ export default defineFacet({
 			const bannerTimer = setTimeout(
 				() =>
 					ui.showStatus(
-						"oqt DEMO · synthetic model/history · confined fixture files · no credentials/local tools. Try: own history, global history, read file",
+						permissions.state.value?.mode === "coding"
+							? "oqt coding · owning Pi model · confined workspace tools · exact approvals · /permissions revoke"
+							: "oqt DEMO · synthetic model/history · confined fixture files · no credentials/local tools. Try: own history, global history, read file",
 						BACKGROUND_CONTEXT,
 					),
 				1000,
 			);
 			env.own(() => clearTimeout(bannerTimer));
 			ui.showStatus(
-				"oqt DEMO · synthetic model/history · real permission gates and confined fixture hands. Try: own history, global history, read file",
+				permissions.state.value?.mode === "coding"
+					? "oqt coding · owning Pi model · confined workspace tools · exact approvals"
+					: "oqt DEMO · synthetic model/history · real permission gates and confined fixture hands. Try: own history, global history, read file",
 				BACKGROUND_CONTEXT,
 			);
 			env.own(
@@ -82,7 +92,7 @@ export default defineFacet({
 				commands.replace({
 					name: "permissions",
 					description:
-						"Inspect/decide demo permissions; /permissions revoke clears approved overlays",
+						"Inspect/decide permissions; /permissions revoke stops hands and clears approved overlays",
 					argumentHint: "[revoke]",
 					async run(args, context) {
 						if (args.trim() === "revoke") {
@@ -103,10 +113,10 @@ export default defineFacet({
 			env.own(
 				commands.replace({
 					name: "reload",
-					description: "Runtime code reload is disabled for the pinned demo",
+					description: "Runtime code reload is disabled for the pinned runtime",
 					async run(_args, context) {
 						ui.showStatus(
-							"This demo pins its runtime. Permission changes apply live; plugin code reload is disabled.",
+							"This Session pins its runtime. Permission changes apply live; plugin code reload is disabled.",
 							context,
 						);
 						return undefined;

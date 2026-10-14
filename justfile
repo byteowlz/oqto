@@ -122,13 +122,17 @@ test-frontend:
 test-adaptive-sandbox PI_SOURCE:
     bash tools/adaptive-sandbox/run.sh "{{PI_SOURCE}}"
 
-# Native confined ExecutionEnv + read-only credential foundation (not real-model activation).
+# Native confined ExecutionEnv + protected coding/runtime regressions.
 test-oqt-hands PI_SOURCE DAEMON BPF:
     bash tools/oqt/test-hands.sh "{{PI_SOURCE}}" "{{DAEMON}}" "{{BPF}}"
 
 # Real upstream TUI/PTY fixture approval proof, not authenticated production UI.
 test-oqt-ui:
     timeout --kill-after=5s 160s python3 tools/oqt/tui_test.py
+
+# Real coding TUI/provider transport with a disposable owner profile; no live paid requests.
+test-oqt-coding:
+    timeout --kill-after=5s 100s python3 tools/oqt/coding_tui_test.py
 
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:

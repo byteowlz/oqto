@@ -7,9 +7,17 @@ import { startServer } from "./server.ts";
 
 const args = process.argv.slice(2);
 const smoke = args.includes("--smoke");
+const coding = args.includes("--coding");
+if (coding && args.includes("--demo"))
+	throw new Error("Choose --coding or --demo, not both");
+if ((process.env.OQT_MODE === "coding") !== coding)
+	throw new Error("Launcher mode mismatch; refusing fallback");
 const continuing = args.includes("--continue") || args.includes("-c");
 if (
-	args.some((arg) => !["--demo", "--continue", "-c", "--smoke"].includes(arg))
+	args.some(
+		(arg) =>
+			!["--demo", "--coding", "--continue", "-c", "--smoke"].includes(arg),
+	)
 )
 	throw new Error("Unsupported oqt prototype option");
 if (!smoke && (!process.stdin.isTTY || !process.stdout.isTTY))
@@ -34,13 +42,18 @@ try {
 		...(continuing ? { continue: true } : {}),
 	};
 	if (smoke) {
-		const result = await runClient({ ...command, prompt: "own history" });
+		const result = await runClient({
+			...command,
+			prompt: coding
+				? "Do not use tools. Reply exactly oqt-coding-ready."
+				: "own history",
+		});
 		if (
 			result.kind !== "prompted" ||
-			!result.text.includes("own fixture-token")
+			!result.text.includes(coding ? "oqt-coding-ready" : "own fixture-token")
 		)
 			throw new Error(`Demo smoke failed: ${JSON.stringify(result)}`);
-		console.log(`oqt smoke PASS: ${result.text}`);
+		console.log(`oqt ${coding ? "coding" : "demo"} smoke PASS: ${result.text}`);
 	} else {
 		await runClientTui(command, { directory });
 	}

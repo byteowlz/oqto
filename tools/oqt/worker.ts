@@ -88,6 +88,7 @@ class Carrier {
 			env: {
 				PATH: process.env.PATH,
 				OQ_ADAPTIVE_SECCOMP_BPF: process.env.OQT_SECCOMP_BPF,
+				OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
 				OQ_DEMO_BINDING: JSON.stringify(binding),
 			},
 		});
@@ -145,6 +146,13 @@ export async function createOqtHarness(
 	databasePath: string,
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
+	if (process.env.OQT_MODE === "coding")
+		return (await import("./coding-worker.ts")).createCodingHarness(
+			databasePath,
+			options,
+		);
+	if (process.env.OQT_MODE && process.env.OQT_MODE !== "demo")
+		throw new Error("Unsupported oqt mode; refusing fallback");
 	const directory = join(options.metadata.path, "permissions-demo");
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	await chmod(directory, 0o700);

@@ -22,6 +22,7 @@ export class HandsSupervisor {
 	#active = false;
 	#closed = false;
 	#epoch = 0;
+	#replacement: Promise<void> | undefined;
 	#connection: Connection | undefined;
 	#execution: RemoteExecutionEnv | undefined;
 	constructor(directory: string, launcher: string, workspace: string) {
@@ -138,7 +139,11 @@ export class HandsSupervisor {
 					[this.spec, "serve", "--token", value.token],
 					{
 						stdio: ["pipe", "pipe", "pipe"],
-						env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: homedir() },
+						env: {
+							PATH: "/usr/local/bin:/usr/bin:/bin",
+							HOME: homedir(),
+							OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
+						},
 					},
 				);
 				const owned = child;
@@ -162,6 +167,20 @@ export class HandsSupervisor {
 			}
 		};
 		socket.on("data", handshake);
+	}
+	async replace() {
+		if (!this.#replacement) {
+			this.#replacement = (async () => {
+				await this.stop();
+				this.install();
+			})();
+		}
+		const current = this.#replacement;
+		try {
+			await current;
+		} finally {
+			if (this.#replacement === current) this.#replacement = undefined;
+		}
 	}
 	async stop() {
 		this.#active = false; // freeze before closing transport/admitting replacements

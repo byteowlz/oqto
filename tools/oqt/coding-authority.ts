@@ -18,6 +18,7 @@ export class CodingAuthority implements CodingGate {
 	readonly tools: Carrier;
 	readonly operator: Carrier;
 	readonly pending = new Map<string, CodingRequest>();
+	readonly deadlines = new Map<string, number>();
 	readonly session: string;
 	readonly publish: (requests: CodingRequest[]) => void;
 	readonly replaceHands: (() => Promise<void>) | undefined;
@@ -52,7 +53,15 @@ export class CodingAuthority implements CodingGate {
 				context.abortSignal?.throwIfAborted();
 				const result = await this.tools.call({ command: "prepare", operation });
 				if (!object(result)) throw new Error("Invalid admission response");
-				if (result.status === "allowed") return;
+				if (result.status === "allowed") {
+					if (
+						typeof result.expires_at !== "number" ||
+						!Number.isFinite(result.expires_at)
+					)
+						throw new Error("Missing protected invocation deadline");
+					this.deadlines.set(operation.request_id, result.expires_at);
+					return;
+				}
 				const admission = result.admission;
 				if (!object(admission) || admission.status !== "pending")
 					throw new Error("Permission denied");
@@ -84,7 +93,17 @@ export class CodingAuthority implements CodingGate {
 		if (!object(result) || result.checked !== true)
 			throw new Error("Delivery not authorized");
 	}
+	budget(operation: CodingOperation) {
+		return Math.max(
+			0,
+			(this.deadlines.get(operation.request_id) ?? 0) - Date.now() - 100,
+		);
+	}
+	async drain() {
+		await this.replaceHands?.();
+	}
 	async finish(operation: CodingOperation) {
+		this.deadlines.delete(operation.request_id);
 		await this.tools.call({ command: "finish", id: operation.request_id });
 	}
 	async decide(

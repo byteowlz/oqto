@@ -65,8 +65,7 @@ export async function openCodingRuntime(options: {
 		options.publish,
 		options.policy,
 		async () => {
-			await supervisor.stop();
-			supervisor.install();
+			await supervisor.replace();
 		},
 	);
 	let harness: Harness | undefined;

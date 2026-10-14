@@ -56,6 +56,13 @@ pub enum Admission {
     Denied,
 }
 
+impl Permit {
+    /// Admission deadline for a trusted supervisor; not a transferable grant.
+    pub fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+}
+
 /// One protected authority bound to one verified Session/audience/policy.
 /// SQLite owns permission state only; it never stores provider data or Chat.
 #[derive(Clone)]

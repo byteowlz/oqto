@@ -23,6 +23,7 @@ export class Carrier {
 			env: {
 				PATH: process.env.PATH,
 				OQ_ADAPTIVE_SECCOMP_BPF: process.env.OQT_SECCOMP_BPF,
+				OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
 				OQ_DEMO_BINDING: JSON.stringify(binding),
 				...(codingPolicy ? { OQT_CODING_POLICY: codingPolicy } : {}),
 			},

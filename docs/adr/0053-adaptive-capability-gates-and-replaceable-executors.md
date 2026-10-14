@@ -28,7 +28,8 @@ Broker grants need no process restart. Direct mount/seccomp expansion uses fresh
 - [x] Local owned hands supervisor confirms bwrap/descendant stop before replacement; retained environment handles cannot reconnect. Composed native coding turn proves revocation during an active shell, withheld secret output, stopped detached writer and fresh-hand continuation. Interrupted coding effects use native unsafe replay and sanitized uncertainty errors. Authenticated runner/reopen/in-flight worker-kill qualification remains separate.
 - [x] Native Durable read-only permission wait/recovery demonstrated separately from synthetic core tests.
 - [x] Source-only upstream Pi TUI fixture demo uses the same ledger/gates: in-turn Once/Session approval, default denial and live revoke/re-request pass PTY coverage. See `tools/oqt/README.md`.
-- [ ] Authenticated TUI/Web/headless integration and real coding profiles; the private local demo is not a shipped production UI.
+- [x] Opt-in standalone real coding uses owning defaults/read-only credentials, exact Once or explicit workspace-wide 60-second Session approval, bounded sequential invocations and confirmed executor retirement before delivery. Actual owning-model TUI write/continuation and disposable-profile all-tool/reopen proofs qualify local experimental use. The reviewed brain remains trusted, not OS-confined.
+- [ ] Authenticated TUI/Web/headless runner integration, production brain confinement, external-resource policy compilation and in-flight kill/recovery; local qualification is not a shipped production UI.
 - [x] Resource-bounded gates, no user config/live service changes, no default activation.
 
 Initial proof uses disposable resources and a deterministic provider. A headless trusted operator is the initial approval surface. App grants already have reviewed-definition binding but are App-instance-specific; do not reuse those rows as generic Session grants or introduce a bypass to App authority.

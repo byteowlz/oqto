@@ -14,6 +14,7 @@ export interface PendingPermission {
 	readonly session: string;
 }
 export interface PermissionState {
+	readonly mode?: "demo" | "coding";
 	readonly pending: readonly PendingPermission[];
 }
 export interface PermissionDecision {

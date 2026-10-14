@@ -56,6 +56,14 @@ test(
 				{ path: "after-revoke", content: "fresh epoch" },
 				"fresh-write",
 			),
+			call(
+				"bash",
+				{
+					command:
+						"setsid /bin/sh -c 'while true; do echo tick >> detached; sleep 0.05; done' >/dev/null 2>&1 </dev/null & while test ! -s detached; do sleep 0.01; done; exit 0",
+				},
+				"detached-completion",
+			),
 			fauxAssistantMessage("done"),
 		]);
 		const seen = new Set(),
@@ -81,7 +89,12 @@ test(
 							controls.push(
 								(async () => {
 									await runtime.authority.decide(request, true, "session");
-									if (request.operation.arguments.tool === "bash") {
+									if (
+										request.operation.arguments.tool === "bash" &&
+										request.operation.arguments.input.command.includes(
+											"cat private.txt",
+										)
+									) {
 										for (let i = 0; i < 80; i++) {
 											try {
 												if (
@@ -104,7 +117,18 @@ test(
 			);
 			assert.equal((await turn.wait(context)).status, "done");
 			await Promise.all(controls);
-			assert.equal(seen.size, 2);
+			assert.equal(
+				seen.size,
+				2,
+				"Session approval covers the bound workspace-tools ceiling",
+			);
+			const detached = await readFile(join(workspace, "detached"), "utf8");
+			await sleep(150);
+			assert.equal(
+				await readFile(join(workspace, "detached"), "utf8"),
+				detached,
+				"completed tool leaked a detached descendant",
+			);
 			assert.equal(
 				await readFile(join(workspace, "after-revoke"), "utf8"),
 				"fresh epoch",

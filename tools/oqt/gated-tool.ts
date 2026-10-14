@@ -15,6 +15,8 @@ export interface CodingGate {
 	prepare(operation: CodingOperation, context: Context): Promise<void>;
 	check(operation: CodingOperation, context: Context): Promise<void>;
 	finish(operation: CodingOperation): Promise<void>;
+	budget?(operation: CodingOperation): number;
+	drain?(operation: CodingOperation): Promise<void>;
 }
 
 /** Withhold ALL progress until delivery authorization, including failures.
@@ -30,13 +32,16 @@ export function gatedTool(
 	return {
 		...tool,
 		replay: "unsafe",
+		executionMode: "sequential",
 		async execute(args, api, context) {
 			const operation: CodingOperation = {
 				request_id: `${publicSession}:store:${api.conversationId}:${api.taskId}`,
 				target: { capability: "execute", resource_id: "workspace-tools" },
 				arguments: { tool: tool.name, input: structuredClone(args) },
 			};
-			let admitted = false;
+			let admitted = false,
+				drainAttempted = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
 				context.abortSignal?.throwIfAborted();
 				await gate.prepare(operation, context);
@@ -72,7 +77,20 @@ export function gatedTool(
 						return typeof value === "function" ? value.bind(target) : value;
 					},
 				}) as ToolExecutionApi;
-				const result = await tool.execute(args, buffered, context);
+				const budget = Math.min(30_000, gate.budget?.(operation) ?? 30_000);
+				if (budget <= 0) throw new Error("Invocation lease ended");
+				const result = await Promise.race([
+					tool.execute(args, buffered, context),
+					new Promise<never>((_resolve, reject) => {
+						timer = setTimeout(
+							() => reject(new Error("Invocation deadline")),
+							budget,
+						);
+					}),
+				]);
+				clearTimeout(timer);
+				drainAttempted = true;
+				await gate.drain?.(operation);
 				text += decoder.decode();
 				context.abortSignal?.throwIfAborted();
 				await gate.check(operation, context);
@@ -91,7 +109,14 @@ export function gatedTool(
 						: "Permission denied or unavailable; confined operation was not started.",
 				);
 			} finally {
-				if (admitted) await gate.finish(operation);
+				clearTimeout(timer);
+				if (admitted) {
+					try {
+						if (!drainAttempted) await gate.drain?.(operation);
+					} finally {
+						await gate.finish(operation);
+					}
+				}
 			}
 		},
 	};

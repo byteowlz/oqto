@@ -18,28 +18,39 @@ if not workdir.is_dir():
 if subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() != PIN:
     raise SystemExit("Wrong Pi source pin")
 subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--"], check=True)
-files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / "tools/oqt/worker.ts", repo / "tools/oqt/launcher.ts", *sorted((repo / "tools/oqt/plugin").rglob("*"))]
+mode = sys.argv[3] if len(sys.argv) > 3 else 'demo'
+if mode not in ['demo','coding']: raise SystemExit('Unsupported runtime mode')
+runtime_modules = [p for p in sorted((repo / 'tools/oqt').glob('*.ts')) if not p.name.endswith('.test.ts')]
+runtime_modules.append(repo / 'tools/oqt/hands-proxy.mjs')
+files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
 files = [file for file in files if file.is_file()]
 identity = hashlib.sha256(PIN.encode())
 for file in files:
     identity.update(str(file.relative_to(repo)).encode()); identity.update(file.read_bytes())
-binary_path = repo / "backend/target/debug/examples/permission_carrier"
-meta = binary_path.stat()
-binary_identity = [meta.st_ino,meta.st_size,meta.st_mtime_ns]
-digest_cache = repo / "backend/target/oqt-prepared/carrier-digest.json"
-saved_digest = json.loads(digest_cache.read_text()) if digest_cache.is_file() else {}
-if saved_digest.get("identity") == binary_identity:
-    binary_digest = saved_digest["digest"]
-else:
-    binary_hash = hashlib.sha256()
-    with binary_path.open("rb") as binary:
-        while chunk := binary.read(1024 * 1024):
-            binary_hash.update(chunk)
-    binary_digest = binary_hash.hexdigest()
-    temporary = digest_cache.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"identity":binary_identity,"digest":binary_digest}))
-    temporary.replace(digest_cache)
-identity.update(binary_digest.encode())
+assets = {
+    'carrier': repo/'backend/target/debug/examples/permission_carrier',
+    'hands': repo/'backend/target/debug/examples/oqt_hands',
+    'shim': repo/'backend/target/debug/examples/oqt_shim',
+    'daemon': repo/'backend/target/oqt-env/debug/pi-env',
+    'bpf': repo/'backend/target/oqt-prepared/bpf/default-x86_64.bpf',
+}
+digest_cache = repo/'backend/target/oqt-prepared/runtime-digests.json'
+saved_digests = json.loads(digest_cache.read_text()) if digest_cache.is_file() else {}
+digests = {}
+for name, path in assets.items():
+    meta = path.stat()
+    key = [meta.st_ino,meta.st_size,meta.st_mtime_ns]
+    saved = saved_digests.get(name,{})
+    if saved.get('identity') == key:
+        digest = saved['digest']
+    else:
+        sha = hashlib.sha256()
+        with path.open('rb') as file:
+            while chunk := file.read(1024*1024): sha.update(chunk)
+        digest = sha.hexdigest()
+    digests[name] = {'identity':key,'digest':digest}
+    identity.update(name.encode()); identity.update(digest.encode())
+temporary = digest_cache.with_suffix('.tmp'); temporary.write_text(json.dumps(digests)); temporary.replace(digest_cache)
 artifact = identity.hexdigest()[:20]
 # Keep Linux sockaddr_un paths below 108 bytes, including server UUID/nonces.
 base = Path("/var/tmp") / f"q{os.getuid()}-{artifact[:10]}"
@@ -58,7 +69,7 @@ manifest = base / "runtime.json"
 agent = base / "agent-profile"; private(agent)
 home = base / "home"; private(home)
 profiles = base / "p"; private(profiles)
-profile = profiles / hashlib.sha256(str(workdir).encode()).hexdigest()[:12]; private(profile)
+profile = profiles / hashlib.sha256((str(workdir)+':'+mode).encode()).hexdigest()[:12]; private(profile)
 if len(os.fsencode(profile / "control-00000000-0000-0000-0000-000000000000.sock")) >= 108:
     raise SystemExit("Profile exceeds Linux Unix-socket path limit")
 binding_file = profile / "work-directory.json"
@@ -93,9 +104,14 @@ if not manifest.exists():
     worker.write_text(text.replace(original, 'return import("./oqt-runtime-worker.ts").then(({createOqtHarness}) => runSessionWorkerWithHarness(args, createOqtHarness));'))
     shutil.copyfile(repo / "tools/oqt/worker.ts", experimental / "oqt-runtime-worker.ts")
     shutil.copyfile(repo / "tools/oqt/launcher.ts", experimental / "oqt-launcher.ts")
+    copied_modules = []
+    for module in runtime_modules:
+        if module.name in ['worker.ts','launcher.ts']: continue
+        target = experimental/module.name
+        shutil.copyfile(module,target); copied_modules.append(target)
     plugin = snapshot / "packages/coding-agent/examples/plugins/oq-permissions"
     shutil.copytree(repo / "tools/oqt/plugin", plugin)
-    tracked = [worker, experimental / "oqt-runtime-worker.ts", experimental / "oqt-launcher.ts", *[p for p in plugin.rglob("*") if p.is_file()]]
+    tracked = [worker, experimental / "oqt-runtime-worker.ts", experimental / "oqt-launcher.ts", *copied_modules, *[p for p in plugin.rglob("*") if p.is_file()]]
     hashes = {str(path.relative_to(snapshot)):hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
     manifest.write_text(json.dumps({"upstream_pin":PIN,"artifact":artifact,"files":hashes},indent=2))
 else:
@@ -105,4 +121,22 @@ else:
     for path, expected in saved["files"].items():
         if hashlib.sha256((snapshot/path).read_bytes()).hexdigest() != expected:
             raise SystemExit(f"Runtime source tampering: {path}")
-print(json.dumps({"source":str(snapshot),"profile":str(profile),"agent":str(agent),"home":str(home),"artifact":artifact}))
+# Stage trusted execution assets outside the workspace/private brain root.
+binroot = Path('/var/tmp')/f'oqbin-{os.getuid()}-{artifact[:10]}'; private(binroot)
+for name, original in assets.items():
+    target = binroot/name
+    if not target.exists():
+        pending = target.with_suffix('.tmp')
+        with original.open('rb') as file, pending.open('xb') as output:
+            shutil.copyfileobj(file,output)
+        sha = hashlib.sha256()
+        with pending.open('rb') as file:
+            while chunk := file.read(1024*1024): sha.update(chunk)
+        if sha.hexdigest()!=digests[name]['digest']: raise SystemExit('Staged binary identity mismatch')
+        pending.chmod(0o500); pending.replace(target)
+    meta = target.lstat()
+    if not stat.S_ISREG(meta.st_mode) or meta.st_uid!=os.getuid() or meta.st_mode & 0o077:
+        raise SystemExit('Unowned/non-private execution asset')
+if workdir == binroot or binroot.is_relative_to(workdir):
+    raise SystemExit('Workspace includes trusted execution assets; choose a narrower directory')
+print(json.dumps({"source":str(snapshot),"profile":str(profile),"agent":str(agent),"home":str(home),"artifact":artifact,'runtime_root':str(base),**{name:str(binroot/name) for name in assets}}))
