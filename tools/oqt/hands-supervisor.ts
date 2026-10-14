@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +84,7 @@ export class HandsSupervisor {
 		readPaths?: string[];
 		writePaths?: string[];
 		network?: boolean;
+		mask?: string[];
 	}) {
 		if (this.#active) throw new Error("Cannot change hands spec while active");
 		// The trusted base (daemon, policy, protected roots) is fixed at open;
@@ -104,9 +105,18 @@ export class HandsSupervisor {
 				read_paths: options.readPaths ?? [],
 				write_paths: options.writePaths ?? [],
 				network: options.network ?? false,
+				mask_paths: options.mask ?? [],
 			}),
 			{ mode: 0o600 },
 		);
+		// Keep the last spec for forensics (private dir, never brain-visible).
+		await copyFile(this.spec, join(this.directory, "hands-last.json")).catch(
+			() => {},
+		);
+		if (process.env.OQT_DEBUG)
+			console.error(
+				`oqt hands spec: +r${options.readPaths?.length ?? 0} +w${options.writePaths?.length ?? 0} mask${options.mask?.length ?? 0}`,
+			);
 	}
 	install() {
 		if (this.#closed || this.#active || this.children.size !== 0)
@@ -187,7 +197,13 @@ export class HandsSupervisor {
 					socket.destroy();
 				});
 				owned.stdin.on("error", () => socket.destroy());
-				owned.stderr.resume(); // untrusted executor diagnostics are not host/model logs
+				// Untrusted executor diagnostics are not host/model logs; only the
+				// OQT_DEBUG private log sees them.
+				if (process.env.OQT_DEBUG)
+					owned.stderr.on("data", (chunk: Buffer) =>
+						console.error(`oqt hands[${epoch.slice(0, 6)}]:`, String(chunk)),
+					);
+				else owned.stderr.resume();
 				owned.stdout.pipe(socket);
 				socket.pipe(owned.stdin);
 				const rest = header.subarray(newline + 1);

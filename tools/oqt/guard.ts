@@ -67,7 +67,15 @@ function summarize(input: unknown) {
 }
 
 /** Hands mounts compiled from active resource grants. */
-function handsSpec(grants: ResourceGrant[]) {
+function handsSpec(
+	grants: ResourceGrant[],
+	baseline?: {
+		readPaths: string[];
+		writePaths: string[];
+		network: boolean;
+		deniedPaths: string[];
+	},
+) {
 	const read = new Set<string>();
 	const write = new Set<string>();
 	let network = false;
@@ -80,10 +88,17 @@ function handsSpec(grants: ResourceGrant[]) {
 		else if (target.capability === "network") network = true;
 	}
 	for (const path of write) read.delete(path);
+	// Baseline pre-approvals are mounts as well (read-write: "always allow").
+	if (baseline) {
+		for (const path of baseline.readPaths) read.add(path);
+		for (const path of baseline.writePaths) write.add(path);
+		network = network || baseline.network;
+	}
 	return {
 		readPaths: [...read].sort(),
 		writePaths: [...write].sort(),
 		network,
+		mask: (baseline?.deniedPaths ?? []).sort(),
 	};
 }
 
@@ -208,7 +223,14 @@ export class GuardSession {
 	/** Host pid of the current brain's bwrap, as spawned by this guard. */
 	brainPid: number | undefined;
 	resources: ResourceGrant[] = [];
-	#resourceKey = JSON.stringify(handsSpec([]));
+	#resourceKey = JSON.stringify(
+		handsSpec([], {
+			readPaths: [],
+			writePaths: [],
+			network: false,
+			deniedPaths: [],
+		}),
+	);
 	readonly #live = new Map<Peer, Set<string>>();
 	#toolServer: Server | undefined;
 	#serial: Promise<unknown> = Promise.resolve();
@@ -430,16 +452,21 @@ export class GuardSession {
 	/** Replace hands with mounts compiled from currently active grants. Runs
 	 * inside an authority transition (frozen admission/delivery). */
 	async #applyResources() {
-		this.resources = await this.authority.resources();
-		const spec = handsSpec(this.resources);
+		const { grants, baseline } = await this.authority.resources();
+		if (process.env.OQT_DEBUG)
+			console.error(
+				`oqt resources: grants=${grants.length} allow=${baseline.readPaths.length} deny=${baseline.deniedPaths.length}`,
+			);
+		this.resources = grants;
+		const spec = handsSpec(grants, baseline);
 		await this.supervisor.replace(spec);
 		this.#resourceKey = JSON.stringify(spec);
 		this.guard.emit();
 	}
 	/** Apply grant changes (new, expired or revoked) before admitting work. */
 	async syncResources() {
-		const grants = await this.authority.resources();
-		if (JSON.stringify(handsSpec(grants)) === this.#resourceKey) {
+		const { grants, baseline } = await this.authority.resources();
+		if (JSON.stringify(handsSpec(grants, baseline)) === this.#resourceKey) {
 			this.resources = grants;
 			return;
 		}
@@ -505,6 +532,9 @@ export class GuardSession {
 	async close() {
 		// Init may still be creating the tool server; close it only afterwards.
 		await this.ready.catch(() => {});
+		// Let in-flight transitions (brain loss, revocation) finish before the
+		// carriers underneath them disappear.
+		await this.serial(() => Promise.resolve()).catch(() => {});
 		await new Promise<void>((resolve) =>
 			this.#toolServer ? this.#toolServer.close(() => resolve()) : resolve(),
 		);

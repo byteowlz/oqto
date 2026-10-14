@@ -121,12 +121,40 @@ export class CodingAuthority {
 		);
 		await previous.close();
 	}
-	/** Active Session overlays for external resources (paths, network). */
-	async resources(): Promise<ResourceGrant[]> {
+	/** Active Session overlays plus baseline pre-approvals (both need mounts). */
+	async resources(): Promise<{
+		grants: ResourceGrant[];
+		baseline: {
+			readPaths: string[];
+			writePaths: string[];
+			network: boolean;
+			deniedPaths: string[];
+		};
+	}> {
 		const result = await this.operator.call({ command: "resources" });
-		if (!object(result) || !Array.isArray(result.resources))
+		if (
+			!object(result) ||
+			!Array.isArray(result.resources) ||
+			!object(result.baseline)
+		)
 			throw new Error("Invalid resource response");
-		return result.resources as ResourceGrant[];
+		const baseline = result.baseline;
+		if (
+			!Array.isArray(baseline.read_paths) ||
+			!Array.isArray(baseline.write_paths) ||
+			!Array.isArray(baseline.denied_paths) ||
+			typeof baseline.network !== "boolean"
+		)
+			throw new Error("Invalid baseline resource response");
+		return {
+			grants: result.resources as ResourceGrant[],
+			baseline: {
+				readPaths: baseline.read_paths as string[],
+				writePaths: baseline.write_paths as string[],
+				network: baseline.network,
+				deniedPaths: baseline.denied_paths as string[],
+			},
+		};
 	}
 	async prepare(operation: Operation, signal: AbortSignal) {
 		if (!operation.request_id.startsWith(`${this.session}:store:`))

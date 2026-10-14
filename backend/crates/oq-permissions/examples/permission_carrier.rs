@@ -165,9 +165,9 @@ async fn main() -> Result<()> {
     // Only the owner's operator channel may adopt a changed ceiling (which
     // revokes every grant); the tool channel always opens strictly.
     let authority = if coding && role == "operator" {
-        Authority::open_replacing_policy(&ledger, binding, policy).await?
+        Authority::open_replacing_policy(&ledger, binding, policy.clone()).await?
     } else {
-        Authority::open(&ledger, binding, policy).await?
+        Authority::open(&ledger, binding, policy.clone()).await?
     };
     // Permits never cross the wire and cannot be reconstructed from tool input.
     // The bounded map holds only this process's live invocations.
@@ -319,10 +319,43 @@ async fn main() -> Result<()> {
                 }
                 Command::Resources if role == "operator" && coding => {
                     let grants = authority.active_resource_grants(now()?).await?;
-                    Ok(json!({"resources": grants
-                        .into_iter()
-                        .map(|(target, expires)| json!({"target":target, "expires_at":expires}))
-                        .collect::<Vec<_>>()}))
+                    // Baseline pre-approvals (global allow_paths / network) need
+                    // mounts too, although they never appear as grants.
+                    let mut read_paths = Vec::new();
+                    let mut write_paths = Vec::new();
+                    for layer in &policy.paths {
+                        write_paths.extend(layer.allow.iter().cloned());
+                        read_paths.extend(layer.allow.iter().cloned());
+                    }
+                    read_paths.sort();
+                    write_paths.sort();
+                    read_paths.dedup();
+                    write_paths.dedup();
+                    let network = policy.mode(&Target {
+                        capability: Capability::Network,
+                        resource_id: "egress".into(),
+                    }) == RuleMode::Allow;
+                    // Deny roots must be invisible to the tools themselves:
+                    // tool calls are admitted as opaque workspace-tools, so a
+                    // deny inside any mounted tree is a mount mask, not just
+                    // an admission answer.
+                    let mut denied_paths = Vec::new();
+                    for layer in &policy.paths {
+                        if layer.builtin {
+                            continue;
+                        }
+                        denied_paths.extend(layer.deny.iter().cloned());
+                    }
+                    denied_paths.sort();
+                    denied_paths.dedup();
+                    Ok(json!({
+                        "resources": grants
+                            .into_iter()
+                            .map(|(target, expires)| json!({"target":target, "expires_at":expires}))
+                            .collect::<Vec<_>>(),
+                        "baseline": {"read_paths":read_paths, "write_paths":write_paths, "network":network,
+                            "denied_paths":denied_paths}
+                    }))
                 }
                 Command::AcknowledgeInterrupted if role == "operator" => Ok(json!({
                     "acknowledged":authority.acknowledge_interrupted(&operator).await?

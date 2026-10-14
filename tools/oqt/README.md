@@ -70,18 +70,22 @@ agent-writable, so it **can only narrow**.
 
 ```toml
 workspace_tools = "ask"     # allow | ask | deny
-network = "ask"             # allow | ask | deny
+network = "allow"           # allow | ask | deny
 outside_paths = "ask"       # ask | deny ("allow" is rejected)
+allow_paths = ["~/Code/shared"]   # global file only: never prompted, mounted read-write
 ask_paths = ["~/Code"]      # still requestable when outside_paths = "deny"
-deny_paths = ["~/Code/secrets"]
+deny_paths = ["~/Code/secrets"]   # invisible to the tools, wins over allow/ask
 ```
 
 Built-in hard denies always apply: credential and config dirs (`~/.ssh`,
 `~/.config`, `~/.pi`, `~/.aws` and others), system roots (`/proc`, `/etc/shadow`
 and others), protected runtime roots, the workspace itself, and **anything
-containing these**, such as `$HOME` or `/`. Unknown keys or values fail closed. A
-changed ceiling takes effect when the Session's host starts. Adopting it revokes
-every grant.
+containing these**, such as `$HOME` or `/`. Unknown keys or values fail closed.
+`allow_paths` is honored only in the global file (the workspace file may deny
+or ask, never allow); an explicit deny beats an explicit allow, which beats
+everything else. Deny roots are mounted empty inside the hands, so masked
+content is invisible to the tools, not just unprompted. A changed ceiling takes
+effect when the Session's host starts. Adopting it revokes every grant.
 
 ## Crash recovery
 

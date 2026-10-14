@@ -9,7 +9,9 @@ mod ceiling;
 mod ledger;
 mod policy;
 
-pub use ceiling::{CeilingInput, NETWORK_EGRESS, PATH_PREFIX, WORKSPACE_TOOLS, compile_ceiling};
+pub use ceiling::{
+    CeilingInput, NETWORK_EGRESS, PATH_PREFIX, WORKSPACE_TOOLS, compile_ceiling, normalize_lexical,
+};
 pub use ledger::{Admission, Authority, GrantLifetime, Interrupted, Permit, Request, RequestState};
 pub use policy::{Binding, Capability, Operation, PathLayer, Policy, Rule, RuleMode, Target};
 

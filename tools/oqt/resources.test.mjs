@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
+import { mkdtemp } from "node:fs/promises";
 import {
 	call,
 	fauxAssistantMessage,
@@ -18,6 +19,8 @@ const decideAll = async (request, operator) =>
 		allow: true,
 		lifetime: request.kind === "resource" ? "session" : "once",
 	});
+// Created before the guard opens so the ceiling can name it.
+const ALLOW_ROOT = await mkdtemp("/var/tmp/oqt-allow-");
 const results = (entries) =>
 	Object.fromEntries(toolResults(entries).map((m) => [m.toolCallId, m]));
 const text = (message) => JSON.stringify(message?.content ?? "");
@@ -62,6 +65,7 @@ test(
 				assert.ok(entries["before-grant"].isError, "invisible before approval");
 				assert.ok(!text(entries["before-grant"]).includes("outside-data-4417"));
 				assert.ok(!entries["ask-read"].isError, text(entries["ask-read"]));
+				console.error("AFTER-GRANT:", text(entries["after-grant"]).slice(0, 300));
 				assert.ok(text(entries["after-grant"]).includes("outside-data-4417"));
 				assert.ok(
 					entries["write-ro"].isError,
@@ -213,6 +217,44 @@ test(
 				assert.equal(requests.length, 0);
 			},
 			{ decide: decideAll, workspaceCeiling: 'outside_paths = "deny"' },
+		);
+	},
+);
+
+test(
+	"global allow_paths pre-approves exact directories: no prompt, no grant, still denied per-path",
+	{ timeout: 30000 },
+	async () => {
+		assert(typeof ALLOW_ROOT === "string");
+		await withGuard(
+			async ({ faux, conversation, requests, guardSession }) => {
+				const outside = join(ALLOW_ROOT, "outside");
+				await mkdir(outside, { recursive: true });
+				await writeFile(join(outside, "data.txt"), "preapproved-3311");
+				await mkdir(join(outside, "secret"), { recursive: true });
+				await writeFile(join(outside, "secret", "key"), "denied-secret-88");
+				faux.setResponses([
+					call("read", { path: join(outside, "data.txt") }, "allowed"),
+					call("read", { path: join(outside, "secret/key") }, "denied"),
+					fauxAssistantMessage("done"),
+				]);
+				const entries = results(await turn(conversation, "allow-turn"));
+				assert.ok(!entries.allowed.isError, text(entries.allowed));
+				assert.ok(text(entries.allowed).includes("preapproved-3311"));
+				// The masked path fails closed; its content is never disclosed.
+				assert.ok(!text(entries.denied).includes("denied-secret-88"));
+				assert.deepEqual(
+					requests.filter((r) => r.kind === "resource"),
+					[],
+					"no access request needed for pre-approved paths",
+				);
+				assert.deepEqual(guardSession.state().resources, [], "no grant needed");
+			},
+			{
+				ceiling:
+					`allow_paths = ["${ALLOW_ROOT}"]\n` +
+					`deny_paths = ["${ALLOW_ROOT}/outside/secret"]`,
+			},
 		);
 	},
 );

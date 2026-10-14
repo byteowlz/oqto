@@ -62,7 +62,13 @@ export class Carrier {
 		}
 	}
 	call(command: object): Promise<unknown> {
-		if (this.child.exitCode !== null || this.child.signalCode !== null)
+		const stdin = this.child.stdin;
+		if (
+			this.child.exitCode !== null ||
+			this.child.signalCode !== null ||
+			stdin.destroyed ||
+			stdin.writableEnded
+		)
 			return Promise.reject(new Error("Permission carrier is closed"));
 		const frame = `${JSON.stringify(command)}\n`;
 		if (Buffer.byteLength(frame) > 16384)
@@ -73,7 +79,15 @@ export class Carrier {
 				this.child.kill();
 			}, 5000);
 			this.replies.push({ resolve, reject, timer });
-			this.child.stdin.write(frame);
+			stdin.write(frame, (error) => {
+				if (error) {
+					this.replies = this.replies.filter(
+						(entry) => entry.resolve !== resolve,
+					);
+					clearTimeout(timer);
+					reject(new Error("Permission carrier write failed"));
+				}
+			});
 		});
 	}
 	async close() {

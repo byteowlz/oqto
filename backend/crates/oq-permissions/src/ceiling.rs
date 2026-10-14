@@ -24,6 +24,9 @@ struct CeilingFile {
     deny_paths: Vec<String>,
     #[serde(default)]
     ask_paths: Vec<String>,
+    /// Owner pre-approval, honored only in the trusted global file.
+    #[serde(default)]
+    allow_paths: Vec<String>,
 }
 
 /// Trusted inputs. `home`/`workspace` come from the guard, never from a file.
@@ -100,6 +103,11 @@ pub fn normalize(path: &Path) -> Result<PathBuf> {
     Ok(out)
 }
 
+/// Lexical normalization for paths that may not exist yet.
+pub fn normalize_lexical(path: &Path) -> Result<PathBuf> {
+    normalize(path)
+}
+
 fn expand(raw: &str, home: &Path, base: &Path) -> Result<PathBuf> {
     ensure!(!raw.is_empty() && raw.len() <= 4096, "invalid ceiling path");
     let path = if raw == "~" {
@@ -141,9 +149,11 @@ fn layer(file: &CeilingFile, home: &Path, base: &Path, name: &str) -> Result<Pat
             .collect()
     };
     Ok(PathLayer {
+        builtin: false,
         default,
         deny: render(&file.deny_paths)?,
         ask: render(&file.ask_paths)?,
+        allow: render(&file.allow_paths)?,
     })
 }
 
@@ -176,13 +186,19 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
     hard.push(workspace.display().to_string());
     let mut layers = vec![
         PathLayer {
+            builtin: true,
             default: RuleMode::Allow,
             deny: hard,
             ask: vec![],
+            allow: vec![],
         },
         layer(&global, &home, &home, "global")?,
     ];
     if input.workspace_file.is_some() {
+        ensure!(
+            local.allow_paths.is_empty(),
+            "workspace ceiling: allow_paths is owner-only; the workspace may deny or ask, never allow"
+        );
         layers.push(layer(&local, &home, &workspace, "workspace")?);
     }
     let mut policy = Policy {

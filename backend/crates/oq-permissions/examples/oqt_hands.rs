@@ -23,6 +23,10 @@ struct HandsSpec {
     write_paths: Vec<PathBuf>,
     #[serde(default)]
     network: bool,
+    /// Ceiling deny roots: mounted empty so tools can never touch them, even
+    /// inside the workspace, an approved grant or a pre-approved tree.
+    #[serde(default)]
+    mask_paths: Vec<PathBuf>,
 }
 
 /// A grant may neither sit inside a protected root nor contain one.
@@ -117,6 +121,63 @@ fn main() -> Result<()> {
     // Through the policy allow lists so bwrap and Landlock agree on access.
     granted(&spec.read_paths, &mut config.allow_read)?;
     granted(&spec.write_paths, &mut config.allow_write)?;
+    ensure!(spec.mask_paths.len() <= 64, "too many masked paths");
+    for path in &spec.mask_paths {
+        let resolved = oq_permissions::normalize_lexical(path)?;
+        for protected in &protected_roots {
+            ensure!(
+                !overlaps(&resolved, protected),
+                "masked path {} overlaps protected root {}",
+                resolved.display(),
+                protected.display()
+            );
+        }
+        // A mask only means something where the tools could actually see
+        // content: inside the workspace or a granted tree. Elsewhere the path
+        // is invisible anyway. bwrap must be able to create the empty
+        // mountpoint, so a mask needs to exist already or sit in the
+        // (writable) workspace; a non-existent path under a read-only grant
+        // has nothing to hide and cannot be pre-empted.
+        let inside = |root: &std::path::Path| resolved.starts_with(root);
+        let in_workspace = inside(&workspace);
+        let in_grant = spec
+            .read_paths
+            .iter()
+            .chain(&spec.write_paths)
+            .any(|grant| inside(&resolved) || resolved.starts_with(grant));
+        if !in_workspace && !in_grant {
+            continue;
+        }
+        // Non-existent under a read-only grant: nothing to hide, and bwrap
+        // could not create the mountpoint anyway.
+        if !in_workspace && !resolved.exists() {
+            continue;
+        }
+        let masked = if resolved.exists() {
+            resolved
+                .canonicalize()
+                .with_context(|| format!("resolving masked path {}", resolved.display()))?
+        } else {
+            resolved
+        };
+        if !in_workspace && !masked.starts_with(workspace.as_path()) {
+            let granted = spec
+                .read_paths
+                .iter()
+                .chain(&spec.write_paths)
+                .any(|grant| {
+                    let grant = grant.canonicalize().unwrap_or_else(|_| grant.to_path_buf());
+                    masked.starts_with(&grant)
+                });
+            if !granted {
+                continue;
+            }
+        }
+        // Deny entries are mounted empty (tmpfs), so a masked subpath
+        // disappears from the workspace, grants and pre-approved trees alike.
+        config.deny_read.push(masked.display().to_string());
+        config.deny_write.push(masked.display().to_string());
+    }
     if spec.network {
         config.isolate_network = false;
         config.network = Some(NetworkConfig {

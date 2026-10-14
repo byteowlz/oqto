@@ -104,9 +104,11 @@ export function gatedTool(
 						? { output: [{ type: "text" as const, text }] }
 						: {}),
 				};
-			} catch {
+			} catch (error) {
 				// Provider exceptions may contain data. Never disclose those on a
 				// failed gate, timeout, cancellation, or uncertain effect.
+				if (process.env.OQT_DEBUG)
+					console.error("oqt tool failure:", error);
 				throw new Error(
 					admitted
 						? "Confined operation failed or authorization ended; effects may be uncertain. Inspect before retrying."

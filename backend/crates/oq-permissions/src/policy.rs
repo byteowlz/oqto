@@ -79,30 +79,54 @@ pub struct Policy {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathLayer {
+    /// The built-in layer's denies fence admission only; they are not handed
+    /// to executors as masks (system paths are invisible there anyway).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub builtin: bool,
     pub default: RuleMode,
     /// Denied: the path is inside one of these, or contains one of them.
     pub deny: Vec<String>,
     /// Requestable roots (inside); otherwise `default`.
     pub ask: Vec<String>,
+    /// Owner pre-approved roots (trusted global ceiling only; the workspace
+    /// layer can never add these). Still loses to `deny`.
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
 impl PathLayer {
     fn mode(&self, path: &std::path::Path) -> RuleMode {
-        let denied = self.deny.iter().any(|root| {
-            let root = std::path::Path::new(root);
-            path.starts_with(root) || root.starts_with(path)
-        });
-        if denied {
+        let contains = |roots: &[String]| {
+            roots
+                .iter()
+                .any(|root| path.starts_with(std::path::Path::new(root)))
+        };
+        // The deny list is explicit data on every layer, so layer mode and the
+        // explicit-denial check are the same predicate.
+        if self.explicitly_denies(path) {
             RuleMode::Deny
-        } else if self
-            .ask
-            .iter()
-            .any(|root| path.starts_with(std::path::Path::new(root)))
-        {
+        } else if contains(&self.allow) {
+            RuleMode::Allow
+        } else if contains(&self.ask) {
             RuleMode::Ask
         } else {
             self.default
         }
+    }
+    /// An explicit owner pre-approval; a layer default never counts.
+    fn explicitly_allows(&self, path: &std::path::Path) -> bool {
+        self.allow
+            .iter()
+            .any(|root| path.starts_with(std::path::Path::new(root)))
+    }
+    /// An explicit denial; a layer default never counts. A path is denied
+    /// when it is inside a denied root **or** contains one: reading a parent
+    /// must not expose a denied secret inside it.
+    fn explicitly_denies(&self, path: &std::path::Path) -> bool {
+        self.deny.iter().any(|root| {
+            let root = std::path::Path::new(root);
+            path.starts_with(root) || root.starts_with(path)
+        })
     }
 }
 
@@ -120,10 +144,16 @@ impl Policy {
         ensure!(self.paths.len() <= 8, "too many ceiling layers");
         for layer in &self.paths {
             ensure!(
-                layer.deny.len() <= 512 && layer.ask.len() <= 512,
+                layer.deny.len() <= 512 && layer.ask.len() <= 512 && layer.allow.len() <= 512,
                 "ceiling layer too large"
             );
-            for path in layer.deny.iter().chain(&layer.ask) {
+            for allowed in &layer.allow {
+                ensure!(
+                    !layer.ask.contains(allowed),
+                    "a ceiling path cannot be both allowed and ask"
+                );
+            }
+            for path in layer.deny.iter().chain(&layer.ask).chain(&layer.allow) {
                 ensure!(
                     crate::ceiling::normalize(std::path::Path::new(path))?.as_os_str()
                         == std::ffi::OsStr::new(path),
@@ -144,12 +174,28 @@ impl Policy {
             {
                 let path = std::path::Path::new(path);
                 // Unnormalized or relative resources never match a ceiling.
+                // Explicit owner allows (global ceiling only) win over every
+                // non-deny answer; any deny always wins.
                 match crate::ceiling::normalize(path) {
-                    Ok(normal) if normal.as_os_str() == path.as_os_str() => self
-                        .paths
-                        .iter()
-                        .map(|layer| layer.mode(path))
-                        .fold(RuleMode::Allow, crate::ceiling::narrower),
+                    Ok(normal) if normal.as_os_str() == path.as_os_str() => {
+                        let modes: Vec<RuleMode> =
+                            self.paths.iter().map(|layer| layer.mode(path)).collect();
+                        let explicit_deny =
+                            self.paths.iter().any(|layer| layer.explicitly_denies(path));
+                        let preapproved =
+                            self.paths.iter().any(|layer| layer.explicitly_allows(path));
+                        // Explicit decisions first (deny, then owner allow);
+                        // otherwise layers fold conservatively as before.
+                        if explicit_deny {
+                            RuleMode::Deny
+                        } else if preapproved {
+                            RuleMode::Allow
+                        } else {
+                            modes
+                                .into_iter()
+                                .fold(RuleMode::Allow, crate::ceiling::narrower)
+                        }
+                    }
                     _ => RuleMode::Deny,
                 }
             }

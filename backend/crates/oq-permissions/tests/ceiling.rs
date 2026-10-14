@@ -181,6 +181,42 @@ fn unsupported_ceiling_values_fail_closed() {
     }
 }
 
+#[test]
+fn global_allow_paths_preapprove_without_prompts_and_lose_only_to_denies() {
+    let p = compile_ceiling(&input(Some("allow_paths = [\"~/Code/library\"]"), None)).unwrap();
+    assert_eq!(
+        p.mode(&read("/home/tester/Code/library/data")),
+        RuleMode::Allow
+    );
+    // A workspace can still deny, but cannot re-ask or narrow an explicit allow.
+    let narrowed = compile_ceiling(&input(
+        Some("allow_paths = [\"~/Code/library\"]"),
+        Some("outside_paths = \"deny\"\ndeny_paths = [\"~/Code/library/private\"]"),
+    ))
+    .unwrap();
+    assert_eq!(
+        narrowed.mode(&read("/home/tester/Code/library/data")),
+        RuleMode::Allow
+    );
+    assert_eq!(
+        narrowed.mode(&read("/home/tester/Code/library/private/key")),
+        RuleMode::Deny
+    );
+    // The workspace file can never add allows.
+    let err = compile_ceiling(&input(None, Some("allow_paths = [\"/opt/data\"]")))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("owner-only"), "{err}");
+    // Allowed and ask overlap in one layer is rejected.
+    let err = compile_ceiling(&input(
+        Some("allow_paths = [\"/a\"]\nask_paths = [\"/a\"]"),
+        None,
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("allowed and ask"), "{err}");
+}
+
 fn binding() -> Binding {
     Binding {
         account_id: "owner".into(),
