@@ -4,16 +4,17 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source=${OQT_PI_SOURCE:-/tmp/oqto-pi-service-spike.PVTso2/source}
 workdir=$PWD
-mode=demo
+mode=coding
 owner=${OQT_OWNER_AGENT_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}
 args=()
 while (($#)); do
  case "$1" in
   --workdir) workdir=${2:?--workdir needs a directory}; shift 2;;
-  --coding) mode=coding; args+=("$1"); shift;;
+  --coding) args+=("$1"); shift;;
   --owner-profile) owner=${2:?--owner-profile needs a directory}; shift 2;;
-  --demo|--continue|-c|--smoke) args+=("$1"); shift;;
-  -h|--help) printf '%s\n' 'oqt: experimental Pi Durable workspace coding' 'Usage: ./oqt --coding [--continue] [--workdir DIR] [--owner-profile DIR]' 'Owning Pi defaults; credentials brokered by a guard (never copied). Confined brain and hands.' 'Every tool call needs approval; request_access asks for outside paths/network (Session, 1h).' 'Ceilings: ~/.config/oqt/policy.toml and <workspace>/.oqt/policy.toml (narrow only). --continue joins/reopens.' 'Local OS operator boundary, not Oqto Account authentication. --demo keeps the synthetic demo. Nothing is installed.'; exit 0;;
+  --demo) mode=demo; args+=("$1"); shift;;
+  --continue|-c|--smoke) args+=("$1"); shift;;
+  -h|--help) printf '%s\n' 'oqt: experimental Pi Durable workspace coding' 'Usage: ./oqt [--continue] [--workdir DIR] [--owner-profile DIR]' 'Default: real coding. Owning Pi defaults; credentials brokered by a guard (never copied). Confined brain and hands.' 'Every tool call needs approval; request_access asks for outside paths/network (Session, 1h).' 'Ceilings: ~/.config/oqt/policy.toml and <workspace>/.oqt/policy.toml (narrow only). --continue joins/reopens. --demo = synthetic fixture demo.' 'Local OS operator boundary, not Oqto Account authentication. --demo keeps the synthetic demo. Nothing is installed.'; exit 0;;
   *) echo "Unsupported oqt prototype option: $1" >&2; exit 2;;
  esac
 done

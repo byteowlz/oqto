@@ -18,7 +18,7 @@ if not workdir.is_dir():
 if subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() != PIN:
     raise SystemExit("Wrong Pi source pin")
 subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--"], check=True)
-mode = sys.argv[3] if len(sys.argv) > 3 else 'demo'
+mode = sys.argv[3] if len(sys.argv) > 3 else 'coding'
 if mode not in ['demo','coding']: raise SystemExit('Unsupported runtime mode')
 runtime_modules = [p for p in sorted((repo / 'tools/oqt').glob('*.ts')) if not p.name.endswith('.test.ts')]
 runtime_modules.append(repo / 'tools/oqt/hands-proxy.mjs')

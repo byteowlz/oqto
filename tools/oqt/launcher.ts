@@ -13,8 +13,9 @@ import { startServer } from "./server.ts";
 
 const args = process.argv.slice(2);
 const smoke = args.includes("--smoke");
-const coding = args.includes("--coding");
-if (coding && args.includes("--demo"))
+// Coding is the default; --demo selects the synthetic fixture demo.
+const coding = !args.includes("--demo");
+if (args.includes("--demo") && args.includes("--coding"))
 	throw new Error("Choose --coding or --demo, not both");
 if ((process.env.OQT_MODE === "coding") !== coding)
 	throw new Error("Launcher mode mismatch; refusing fallback");

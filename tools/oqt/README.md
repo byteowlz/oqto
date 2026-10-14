@@ -3,9 +3,12 @@
 Run it from a project directory **outside this launcher's own source tree**:
 
 ```sh
-/home/wismut/byteowlz/oqto-durable-support/oqt --coding --workdir /path/to/project
+/home/wismut/byteowlz/oqto-durable-support/oqt --workdir /path/to/project
 # Reopen (or join, from a second terminal) the latest Session for that workspace:
-/home/wismut/byteowlz/oqto-durable-support/oqt --coding --continue --workdir /path/to/project
+/home/wismut/byteowlz/oqto-durable-support/oqt --continue --workdir /path/to/project
+
+Real coding is the default. `--demo` runs the synthetic fixture demo instead
+(fake model/history, no credentials); the two modes never share Sessions.
 ```
 
 This opens upstream Pi's experimental Durable TUI. It uses your owning Pi
