@@ -859,6 +859,13 @@ export function getMaxMessageId(messages: DisplayMessage[]): number {
 export const getMaxPiMessageId = getMaxMessageId;
 
 /** Check if a message is frontend-ephemeral and may need preservation. */
+/** Message ids derived by oqto-log (backend oqto_log::ids), the history authority. */
+const DURABLE_HISTORY_ID_PREFIX = "msg:";
+
+function isDurableHistoryId(id: string): boolean {
+	return id.startsWith(DURABLE_HISTORY_ID_PREFIX);
+}
+
 export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
 	if (message.id.startsWith(TMP_MESSAGE_ID_PREFIX)) return true;
 	// Narrow legacy fallback while old caches/event payloads are phased out.
@@ -1170,6 +1177,11 @@ export function mergeServerMessages(
 	};
 	const preservedUserPrompts = previous.filter((msg) => {
 		if (msg.role !== "user") return false;
+		// An oqto-log id is issued by the authority itself. If the authoritative
+		// snapshot no longer contains it, the row was re-identified (history
+		// re-projection) or removed there; keeping the cached copy duplicated
+		// the prompt on every reload. Other ids keep the never-erase rule.
+		if (isDurableHistoryId(msg.id)) return false;
 		if (serverIds.has(msg.id)) return false;
 		if (msg.clientId && serverClientIds.has(msg.clientId)) return false;
 		if (shouldPreserveLocalMessage(msg) && hasNearbyPersistedMatch(msg)) {
