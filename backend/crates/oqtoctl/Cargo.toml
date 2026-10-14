@@ -27,6 +27,8 @@ nanoid.workspace = true
 oqto-eavs = { path = "../oqto-eavs" }
 oqto-host = { path = "../oqto-host" }
 oqto-placement = { path = "../oqto-placement" }
+oqto-protocol = { path = "../oqto-protocol" }
+rpassword = "7"
 oqto-provisioning = { path = "../oqto-provisioning" }
 oqto-runner = { path = "../oqto-runner" }
 reqwest.workspace = true

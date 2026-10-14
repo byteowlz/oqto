@@ -3,9 +3,8 @@
 /**
  * Request to transfer ownership of a shared workspace.
  */
-export type TransferOwnershipRequest = {
-	/**
-	 * The user ID of the new owner (must already be a member).
-	 */
-	new_owner_id: string;
-};
+export type TransferOwnershipRequest = { 
+/**
+ * The user ID of the new owner (must already be a member).
+ */
+new_owner_id: string, };

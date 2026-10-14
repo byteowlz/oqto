@@ -30,6 +30,13 @@ use oqto_pi::PiState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerRequest {
+    /// Protected host control only; never expose as an agent capability.
+    ManageCredentials(oqto_protocol::CredentialManageRequest),
+    /// Trusted controller only; not an agent/App capability.
+    RecordHostAction {
+        workspace_id: String,
+        record: oqto_history::oqto_log::host_actions::HostActionRecord,
+    },
     // ========================================================================
     // Process Management (original)
     // ========================================================================
@@ -330,6 +337,10 @@ pub enum RunnerRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerResponse {
+    CredentialsResult(oqto_protocol::CredentialManageResult),
+    HostActionRecorded {
+        recorded: bool,
+    },
     // ========================================================================
     // Process Management Responses
     // ========================================================================

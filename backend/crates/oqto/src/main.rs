@@ -39,6 +39,7 @@ mod apps;
 mod audit;
 mod auth;
 mod container;
+pub mod credentials;
 mod db;
 mod eavs;
 mod feedback;

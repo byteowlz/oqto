@@ -18,6 +18,7 @@ mod api_keys;
 mod apps;
 mod auth;
 mod chat;
+mod credentials;
 mod feedback;
 mod invites;
 mod misc;
@@ -30,6 +31,8 @@ pub mod trx;
 mod ui_config;
 
 // Re-export all public types and handlers
+
+pub use credentials::credential_routes;
 
 // API key handlers
 pub use api_keys::{create_api_key, delete_api_key, list_api_keys, revoke_api_key};

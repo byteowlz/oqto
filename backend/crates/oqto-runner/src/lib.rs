@@ -6,6 +6,7 @@
 
 pub mod agent_browser;
 pub mod client;
+pub mod credentials;
 pub mod daemon;
 pub mod endpoint_bridge;
 pub mod history_import;

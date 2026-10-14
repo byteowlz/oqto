@@ -23,6 +23,10 @@ pub const CAPABILITY_OPERATIONS: &str = "operations";
 pub const CAPABILITY_THEME: &str = "theme";
 pub const CAPABILITY_KV: &str = "kv";
 pub const CAPABILITY_AGENT_CONTEXT: &str = "agent_context";
+pub const CAPABILITY_CONNECTION: &str = "connection";
+/// The only mediated HTTP profile currently supported.
+pub const CONNECTION_PROFILE_HTTPS_GET_V1: &str = "https_get_v1";
+const MAX_CONNECTION_SLOTS: usize = 32;
 
 /// Package-relative root holding immutable, content-addressed operation files.
 pub const OPERATIONS_DIR: &str = "operations";
@@ -63,6 +67,7 @@ pub enum AppCapabilityKind {
     Theme,
     Kv,
     AgentContext,
+    Connection,
 }
 
 impl AppCapabilityKind {
@@ -74,6 +79,7 @@ impl AppCapabilityKind {
             CAPABILITY_THEME => Some(Self::Theme),
             CAPABILITY_KV => Some(Self::Kv),
             CAPABILITY_AGENT_CONTEXT => Some(Self::AgentContext),
+            CAPABILITY_CONNECTION => Some(Self::Connection),
             _ => None,
         }
     }
@@ -86,6 +92,7 @@ impl AppCapabilityKind {
             Self::Theme => CAPABILITY_THEME,
             Self::Kv => CAPABILITY_KV,
             Self::AgentContext => CAPABILITY_AGENT_CONTEXT,
+            Self::Connection => CAPABILITY_CONNECTION,
         }
     }
 
@@ -114,6 +121,7 @@ impl AppCapabilityKind {
             Self::AgentContext => Some(
                 "[capability.agent_context] with catalog = \"<package-relative catalog file>\"",
             ),
+            Self::Connection => Some("[capability.connection] with named connection slots"),
             Self::Theme | Self::Kv => None,
         }
     }
@@ -167,6 +175,22 @@ pub struct AppOperationsCapability {
     pub ids: Vec<String>,
 }
 
+/// One named connection request, matching the canonical protocol slot fields.
+/// This contains no credential, provider path, binding, or grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionSlot {
+    pub slot: String,
+    pub expected_origin: String,
+    pub profile: String,
+}
+
+/// Explicit bounded connection slots; configuration is never a grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppConnectionCapability {
+    pub slots: Vec<AppConnectionSlot>,
+}
+
 /// One validated capability request in canonical form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "capability")]
@@ -176,6 +200,7 @@ pub enum AppCapabilityRequest {
     Theme,
     Kv,
     AgentContext(AppAgentContextCapability),
+    Connection(AppConnectionCapability),
 }
 
 impl AppCapabilityRequest {
@@ -187,6 +212,7 @@ impl AppCapabilityRequest {
             Self::Theme => AppCapabilityKind::Theme,
             Self::Kv => AppCapabilityKind::Kv,
             Self::AgentContext(_) => AppCapabilityKind::AgentContext,
+            Self::Connection(_) => AppCapabilityKind::Connection,
         }
     }
 
@@ -219,6 +245,8 @@ pub struct RawCapabilityTable {
     pub kv: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_context: Option<RawAgentContextCapability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<RawConnectionCapability>,
     #[serde(flatten)]
     pub unknown: BTreeMap<String, toml::Value>,
 }
@@ -250,6 +278,12 @@ pub struct RawAgentContextCapability {
 pub struct RawOperationsCapability {
     pub table: String,
     pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawConnectionCapability {
+    pub slots: Vec<AppConnectionSlot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +342,10 @@ pub(crate) fn validate_capabilities(
             .agent_context
             .is_some()
             .then_some(AppCapabilityKind::AgentContext),
+        table
+            .connection
+            .is_some()
+            .then_some(AppCapabilityKind::Connection),
     ]
     .into_iter()
     .flatten()
@@ -361,6 +399,15 @@ pub(crate) fn validate_capabilities(
                     .as_ref()
                     .ok_or_else(missing_operations_table)?;
                 AppCapabilityRequest::Operations(validate_operations(raw)?)
+            }
+            AppCapabilityKind::Connection => {
+                let raw = table.connection.as_ref().ok_or_else(|| {
+                    AppPackageError::new(
+                        AppPackageErrorCode::MissingCapabilityTable,
+                        "[capability.connection] is required",
+                    )
+                })?;
+                AppCapabilityRequest::Connection(validate_connections(raw)?)
             }
             AppCapabilityKind::Theme => AppCapabilityRequest::Theme,
             AppCapabilityKind::Kv => AppCapabilityRequest::Kv,
@@ -551,6 +598,74 @@ fn validate_operations(
     })
 }
 
+fn validate_connections(
+    raw: &RawConnectionCapability,
+) -> Result<AppConnectionCapability, AppPackageError> {
+    let invalid =
+        |message| AppPackageError::new(AppPackageErrorCode::InvalidCapabilityRequest, message);
+    if raw.slots.is_empty() || raw.slots.len() > MAX_CONNECTION_SLOTS {
+        return Err(invalid(format!(
+            "capability.connection must declare 1-{MAX_CONNECTION_SLOTS} slots"
+        )));
+    }
+    let mut seen = BTreeSet::new();
+    let mut slots = Vec::with_capacity(raw.slots.len());
+    for entry in &raw.slots {
+        if !is_kebab_identifier(&entry.slot, MAX_ROLE_BYTES) || !seen.insert(&entry.slot) {
+            return Err(invalid(
+                "connection slots must be unique 1-64 lowercase kebab-case identifiers".to_owned(),
+            ));
+        }
+        if entry.profile != CONNECTION_PROFILE_HTTPS_GET_V1 {
+            return Err(invalid(
+                "connection profile must be https_get_v1".to_owned(),
+            ));
+        }
+        let expected_origin = canonical_connection_origin(&entry.expected_origin).ok_or_else(|| {
+            invalid("connection expected_origin must be an HTTPS DNS origin on port 443 without path, query, fragment, or userinfo".to_owned())
+        })?;
+        slots.push(AppConnectionSlot {
+            slot: entry.slot.clone(),
+            expected_origin,
+            profile: entry.profile.clone(),
+        });
+    }
+    slots.sort_by(|left, right| left.slot.cmp(&right.slot));
+    Ok(AppConnectionCapability { slots })
+}
+
+/// Strict ASCII DNS authority parsing, not URL parsing: URL parsers may silently
+/// normalize paths, userinfo, backslashes and nonstandard IP literals. Runtime
+/// mediation must additionally validate resolved addresses and deny redirects.
+fn canonical_connection_origin(value: &str) -> Option<String> {
+    if value.len() > 265 {
+        return None;
+    }
+    let authority = value.strip_prefix("https://")?;
+    let host = authority.strip_suffix(":443").unwrap_or(authority);
+    if host.len() > 253 || !host.contains('.') || host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    // Reject numeric terminal labels, including URL-style alternative IPv4
+    // forms (decimal, octal, and hexadecimal), rather than treating them as DNS.
+    let last = host.rsplit('.').next()?;
+    if last.bytes().all(|byte| byte.is_ascii_digit())
+        || last.to_ascii_lowercase().starts_with("0x")
+        || host.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || !label.as_bytes()[0].is_ascii_alphanumeric()
+                || !label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                || !label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return None;
+    }
+    Some(format!("https://{}", host.to_ascii_lowercase()))
+}
+
 fn is_valid_role(value: &str) -> bool {
     is_kebab_identifier(value, MAX_ROLE_BYTES)
 }
@@ -598,6 +713,210 @@ fn is_kebab_identifier(value: &str, max_bytes: usize) -> bool {
 mod tests {
     use super::*;
 
+    fn connection_slot(slot: &str, origin: &str) -> AppConnectionSlot {
+        AppConnectionSlot {
+            slot: slot.to_owned(),
+            expected_origin: origin.to_owned(),
+            profile: CONNECTION_PROFILE_HTTPS_GET_V1.to_owned(),
+        }
+    }
+
+    fn connection_table(slots: Vec<AppConnectionSlot>) -> RawCapabilityTable {
+        RawCapabilityTable {
+            connection: Some(RawConnectionCapability { slots }),
+            ..RawCapabilityTable::default()
+        }
+    }
+
+    #[test]
+    fn connection_slots_are_canonical_and_protocol_shaped() -> Result<(), AppPackageError> {
+        let table = connection_table(vec![
+            connection_slot("z-api", "https://API.Example.com:443"),
+            connection_slot("a-api", "https://api.example.com"),
+        ]);
+        let result = validate_capabilities(&requested(&["connection"]), &table)?;
+        let AppCapabilityRequest::Connection(connection) = &result[0] else {
+            panic!("expected connection request");
+        };
+        assert_eq!(connection.slots[0].slot, "a-api");
+        assert_eq!(
+            connection.slots[1].expected_origin,
+            "https://api.example.com"
+        );
+        assert_eq!(
+            serde_json::to_value(&connection.slots[0]).expect("serialize slot"),
+            serde_json::json!({"slot":"a-api", "expected_origin":"https://api.example.com", "profile":"https_get_v1"})
+        );
+        let reverse = connection_table(
+            table
+                .connection
+                .expect("connection")
+                .slots
+                .into_iter()
+                .rev()
+                .collect(),
+        );
+        assert_eq!(
+            result,
+            validate_capabilities(&requested(&["connection"]), &reverse)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn connection_requires_exact_declaration() {
+        for (names, table, code) in [
+            (
+                vec!["connection"],
+                RawCapabilityTable::default(),
+                AppPackageErrorCode::MissingCapabilityTable,
+            ),
+            (
+                vec!["theme"],
+                connection_table(vec![connection_slot("api", "https://api.example.com")]),
+                AppPackageErrorCode::OrphanCapabilityTable,
+            ),
+            (
+                vec!["connection", "connection"],
+                connection_table(vec![connection_slot("api", "https://api.example.com")]),
+                AppPackageErrorCode::InvalidCapabilityRequest,
+            ),
+        ] {
+            assert_eq!(
+                validate_capabilities(&requested(&names), &table)
+                    .expect_err("must fail")
+                    .code,
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn connection_slots_are_explicit_unique_and_bounded() {
+        let valid = connection_slot("api", "https://api.example.com");
+        let mut cases = vec![vec![], vec![valid.clone(), valid.clone()]];
+        for slot in [
+            "",
+            "API",
+            "api_key",
+            "-api",
+            "api-",
+            "api--key",
+            "*",
+            &"a".repeat(65),
+        ] {
+            cases.push(vec![connection_slot(slot, "https://api.example.com")]);
+        }
+        let boundary: Vec<_> = (0..MAX_CONNECTION_SLOTS)
+            .map(|i| connection_slot(&format!("api-{i}"), "https://api.example.com"))
+            .collect();
+        assert!(
+            validate_capabilities(
+                &requested(&["connection"]),
+                &connection_table(boundary.clone())
+            )
+            .is_ok()
+        );
+        let mut excess = boundary;
+        excess.push(connection_slot("another-api", "https://api.example.com"));
+        cases.push(excess);
+        let mut unsupported = valid;
+        unsupported.profile = "https_post_v1".to_owned();
+        cases.push(vec![unsupported]);
+        for slots in cases {
+            assert_eq!(
+                validate_capabilities(&requested(&["connection"]), &connection_table(slots))
+                    .expect_err("must fail")
+                    .code,
+                AppPackageErrorCode::InvalidCapabilityRequest
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_origin_urls_and_non_dns_hosts() {
+        for origin in [
+            "",
+            "http://api.example.com",
+            "HTTPS://api.example.com",
+            "https://api.example.com/",
+            "https://api.example.com/path",
+            "https://api.example.com/..",
+            "https://api.example.com?",
+            "https://api.example.com?q=x",
+            "https://api.example.com#",
+            "https://api.example.com:80",
+            "https://api.example.com:0443",
+            "https://user@api.example.com",
+            "https://@api.example.com",
+            "https://user:pass@api.example.com",
+            "https://127.0.0.1",
+            "https://[::1]",
+            "https://127.1",
+            "https://0x7f.1",
+            "https://localhost",
+            "https://*.example.com",
+            "https://api.example.com.",
+            "https://api..example.com",
+            "https://-api.example.com",
+            "https://api_.example.com",
+            "https://api.example.com\\evil",
+            "https://api.example.com\n",
+            "https://é.example.com",
+            "https://%61pi.example.com",
+            "https://api.example.0x7f",
+        ] {
+            assert!(
+                canonical_connection_origin(origin).is_none(),
+                "origin={origin:?}"
+            );
+        }
+        assert!(
+            canonical_connection_origin(&format!("https://{}.example.com", "a".repeat(64)))
+                .is_none()
+        );
+        assert!(
+            canonical_connection_origin(&format!(
+                "https://{}.{}.{}.com",
+                "a".repeat(63),
+                "b".repeat(63),
+                "c".repeat(63)
+            ))
+            .is_some()
+        );
+        assert!(
+            canonical_connection_origin(&format!(
+                "https://{}.{}.{}.{}.com",
+                "a".repeat(63),
+                "b".repeat(63),
+                "c".repeat(63),
+                "d".repeat(63)
+            ))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_connection_toml_and_rejects_implicit_or_extra_authority() {
+        let valid = "[[connection.slots]]\nslot = 'api'\nexpected_origin = 'https://api.example.com'\nprofile = 'https_get_v1'\n";
+        let table: RawCapabilityTable = toml::from_str(valid).expect("parse TOML");
+        assert!(validate_capabilities(&requested(&["connection"]), &table).is_ok());
+        for extra in [
+            "credential = 'secret'\n",
+            "provider = 'kyz'\n",
+            "origin = 'https://other.example.com'\n",
+        ] {
+            assert!(toml::from_str::<RawCapabilityTable>(&format!("{valid}{extra}")).is_err());
+        }
+        for invalid in [
+            "[connection]\n",
+            "[connection]\nslots = ['api']\n",
+            "[[connection.slots]]\nslot = 'api'\nexpected_origin = 'https://api.example.com'\n",
+        ] {
+            assert!(toml::from_str::<RawCapabilityTable>(invalid).is_err());
+        }
+    }
+
     fn files_table(resources: Vec<RawFileResource>) -> RawCapabilityTable {
         RawCapabilityTable {
             files: Some(RawFilesCapability { resources }),
@@ -643,6 +962,7 @@ mod tests {
             theme: None,
             kv: None,
             agent_context: None,
+            connection: None,
             unknown: BTreeMap::new(),
         };
         let validated =

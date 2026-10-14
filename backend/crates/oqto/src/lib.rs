@@ -10,6 +10,7 @@ pub mod audit;
 pub mod auth;
 pub mod canon;
 pub mod container;
+pub mod credentials;
 pub mod db;
 pub mod eavs;
 pub mod feedback;

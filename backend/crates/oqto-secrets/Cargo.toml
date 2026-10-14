@@ -1,0 +1,19 @@
+[package]
+name = "oqto-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+age = { version = "0.12.1", default-features = false }
+fs4 = { version = "0.13", default-features = false, features = ["sync"] }
+libc.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+zeroize = "1.8"
+
+[lints]
+workspace = true

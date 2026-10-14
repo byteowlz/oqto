@@ -182,6 +182,62 @@ impl AppRuntimeService {
         &self.artifacts
     }
 
+    /// Re-read the durable authority. The caller supplies an already authorized
+    /// work directory from apps::access, never an App-selected host path.
+    pub async fn live_connection_slot(
+        &self,
+        account_id: &str,
+        work_directory: &AuthorizedWorkDirectory,
+        instance_id: &str,
+        slot: &str,
+    ) -> Result<Option<crate::credentials::LiveConnectionSlot>> {
+        let owner_kind = match work_directory.owner_kind {
+            AppOwnerKind::Account if work_directory.owner_id == account_id => "account",
+            AppOwnerKind::Account => return Ok(None),
+            AppOwnerKind::Workspace => "workspace",
+            _ => return Ok(None),
+        };
+        let Some(root) = work_directory.root.to_str() else {
+            return Ok(None);
+        };
+        let row = sqlx::query_as::<_, (String, String, String, String)>(
+            crate::credentials::LIVE_APP_AUTHORITY_SQL,
+        )
+        .bind(instance_id)
+        .bind(account_id)
+        .bind(&work_directory.id)
+        .bind(owner_kind)
+        .bind(&work_directory.owner_id)
+        .bind(root)
+        .fetch_optional(self.repository.pool())
+        .await
+        .context("read live App Connection authority")?;
+        let Some((definition_id, content_digest, canonical_json, grant_json)) = row else {
+            return Ok(None);
+        };
+        let declared = stored_capabilities(&canonical_json)?;
+        if declared != stored_capabilities(&grant_json)? {
+            return Ok(None);
+        }
+        let requested = declared
+            .into_iter()
+            .find_map(|capability| match capability {
+                AppCapabilityRequest::Connections { slots } => {
+                    slots.into_iter().find(|request| request.slot == slot)
+                }
+                _ => None,
+            });
+        Ok(
+            requested.map(|request| crate::credentials::LiveConnectionSlot {
+                definition_id,
+                content_digest,
+                request,
+                canonical_json,
+                grant_json,
+            }),
+        )
+    }
+
     pub async fn list_candidates(
         &self,
         work_directory: &AuthorizedWorkDirectory,
@@ -1098,6 +1154,21 @@ fn capability_requests(
         .capabilities
         .iter()
         .filter_map(|capability| match capability {
+            oqto_apps::AppCapabilityRequest::Connection(connection) => {
+                Some(AppCapabilityRequest::Connections {
+                    slots: connection
+                        .slots
+                        .iter()
+                        .map(
+                            |slot| oqto_protocol::credential_connections::AppConnectionSlot {
+                                slot: slot.slot.clone(),
+                                expected_origin: slot.expected_origin.clone(),
+                                profile: slot.profile.clone(),
+                            },
+                        )
+                        .collect(),
+                })
+            }
             oqto_apps::AppCapabilityRequest::Files(files) => Some(AppCapabilityRequest::Files {
                 resources: files
                     .resources

@@ -1,5 +1,6 @@
 pub mod bindings;
 pub mod event_assembler;
+pub mod host_actions;
 pub mod ids;
 pub mod importer;
 pub mod index;

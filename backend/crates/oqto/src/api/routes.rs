@@ -95,6 +95,8 @@ fn create_router_with_config_and_auth(
                 .delete(proxy::proxy_sldr)
                 .patch(proxy::proxy_sldr),
         )
+        // Human-only credential administration; App/agent use has a separate gate.
+        .merge(handlers::credential_routes())
         // Project management
         .route("/oqto-ui/config", get(handlers::get_oqto_ui_config))
         .route("/projects", get(handlers::list_workspace_dirs))

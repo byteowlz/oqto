@@ -471,6 +471,36 @@ max_bytes = 100000
     }
 
     #[test]
+    fn parses_named_connection_slots_and_rejects_unsupported_profile()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = format!(
+            "{}\n[[capability.connection.slots]]\nslot = 'api'\nexpected_origin = 'https://API.Example.com:443'\nprofile = 'https_get_v1'\n",
+            VALID.replace(
+                "requested_capabilities = []",
+                "requested_capabilities = ['connection']"
+            )
+        );
+        let parsed = parse_manifest("hello-oqto.oqtoapp", input.as_bytes(), 65_536)?;
+        let AppCapabilityRequest::Connection(connection) = &parsed.capabilities[0] else {
+            panic!("expected connection");
+        };
+        assert_eq!(connection.slots[0].slot, "api");
+        assert_eq!(
+            connection.slots[0].expected_origin,
+            "https://api.example.com"
+        );
+        assert_eq!(connection.slots[0].profile, "https_get_v1");
+        let unsupported = input.replace("https_get_v1", "https_post_v1");
+        assert_eq!(
+            parse_manifest("hello-oqto.oqtoapp", unsupported.as_bytes(), 65_536)
+                .expect_err("unsupported profile")
+                .code,
+            AppPackageErrorCode::InvalidCapabilityRequest
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_capability_requested_without_its_table() {
         let input = VALID.replace(
             "requested_capabilities = []",

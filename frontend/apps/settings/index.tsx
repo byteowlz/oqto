@@ -2,6 +2,7 @@
 
 import { ApiKeysPanel } from "@/apps/settings/ApiKeysPanel";
 import { SettingsEditor } from "@/components/settings";
+import { CredentialSettings } from "@/components/settings/CredentialSettings";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
 import { changePassword } from "@/lib/api/auth";
@@ -365,8 +366,9 @@ export function SettingsApp() {
 							</div>
 						)}
 						{mobileView === "api-keys" && (
-							<div className="sm:max-w-3xl sm:mx-auto">
+							<div className="sm:max-w-3xl sm:mx-auto space-y-6">
 								<ApiKeysPanel />
+								<CredentialSettings />
 							</div>
 						)}
 						{mobileView === "help" && <SettingsHelpPanel locale={locale} />}
@@ -464,8 +466,9 @@ export function SettingsApp() {
 							</div>
 						)}
 						{mainTab === "api-keys" && (
-							<div className="w-full">
+							<div className="w-full space-y-6">
 								<ApiKeysPanel />
+								<CredentialSettings />
 							</div>
 						)}
 					</div>

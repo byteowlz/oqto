@@ -112,6 +112,14 @@ test: agent-check-on-change test-backend test-frontend
 test-backend:
     cd backend && cargo test
 
+# Encrypted provider foundation only; not credential broker/UI integration.
+# Optimize test dependencies so production-strength scrypt remains practical.
+test-credential-provider:
+    cd backend && cargo fmt -p oqto-secrets --check
+    cd backend && CARGO_PROFILE_TEST_OPT_LEVEL=1 cargo test --locked -p oqto-secrets
+    cd backend && cargo clippy --locked -p oqto-secrets --all-targets -- -D warnings
+    ./scripts/lint/backend-crate-boundaries.py
+
 # Regenerate sandbox.schema.json from the Rust types.
 schema-update:
     cd backend && cargo run -q -p oqto-sandbox --example emit_schema > crates/oqto/examples/sandbox.schema.json

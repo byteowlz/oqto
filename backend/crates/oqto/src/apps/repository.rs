@@ -30,6 +30,10 @@ impl AppRepository {
         Self { pool }
     }
 
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     pub async fn upsert_work_directory(
         &self,
         owner_kind: &str,

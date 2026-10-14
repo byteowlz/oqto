@@ -179,6 +179,15 @@ A transport carrying the Host contract across an isolation boundary, typically `
 The runner-side enforcement point deciding whether an App Instance may exercise a server-affecting granted capability for its binding and acting Account/Operator Identity; execution must additionally occur under the mapped target Principal. Host-local presentation capabilities are separately allowlisted by the client Host and cannot confer server authority. Enforced by authorization plus uid separation inside the Pod, never by network reachability — a Workspace Pod's shared netns is not a boundary.
 _Avoid_: permission check (the Gate is one place, not a scattered pattern)
 
+**Credential Provider**:
+A trusted host-side store/adapter for sensitive credential material, such as an encrypted local vault or optional kyz. Storage, unlock and internal resolution do not grant use or authorize a destination. Distinct from a list Provider or Context Provider; Apps and Agents never receive its raw values or private paths (ADR-0052).
+
+**Connection**:
+An explicitly configured, Account-owned integration identified by a stable opaque reference. It names reviewed destination/operation policy and credential bindings; its existence or human-readable name is not authorization. Standalone tool backends and Oqto host adapters implement the same semantic integration without sharing credentials through a portable App artifact (ADR-0052).
+
+**Credential Binding**:
+The host-owned selection of a Credential Provider entry for a named connection slot. Binding, action authorization, egress authorization and credential placement authorization are separate decisions. Apps request slots; authorized Accounts bind them. A binding is never copied by App publication/sharing or inferred from ambient environment (ADR-0052).
+
 **App Sidecar**:
 A server-side component of an App, running as a container in the Workspace Pod alongside the runner (ADR-0019). Carries an App's heavy or native compute; not required, and not available to every trust tier.
 _Avoid_: app server, service (a Sidecar is per-Workspace, not shared infra)

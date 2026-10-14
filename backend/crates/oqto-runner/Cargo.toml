@@ -33,6 +33,7 @@ tokio-rustls.workspace = true
 rustls-pemfile.workspace = true
 sha2.workspace = true
 hex.workspace = true
+rustix = { version = "1", features = ["process"] }
 toml.workspace = true
 tracing.workspace = true
 trx-core.workspace = true
@@ -45,6 +46,7 @@ oqto-apps = { path = "../oqto-apps" }
 serde_json.workspace = true
 sqlx.workspace = true
 oqto-protocol = { path = "../oqto-protocol" }
+oqto-secrets = { path = "../oqto-secrets" }
 oqto-pi = { path = "../oqto-pi" }
 oqto-sandbox = { path = "../oqto-sandbox" }
 

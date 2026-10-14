@@ -1965,6 +1965,38 @@ impl RunnerClient {
         }
     }
 
+    /// Authenticated host control channel only, never an agent tool.
+    pub async fn manage_credentials(
+        &self,
+        request: oqto_protocol::CredentialManageRequest,
+    ) -> Result<oqto_protocol::CredentialManageResult> {
+        match self
+            .request(&RunnerRequest::ManageCredentials(request))
+            .await?
+        {
+            RunnerResponse::CredentialsResult(response) => Ok(response),
+            _ => anyhow::bail!("credential management unavailable"),
+        }
+    }
+
+    /// Append metadata through the owning runner's canonical oqto-log authority.
+    pub async fn record_host_action(
+        &self,
+        workspace_id: String,
+        record: oqto_history::oqto_log::host_actions::HostActionRecord,
+    ) -> Result<()> {
+        match self
+            .request(&RunnerRequest::RecordHostAction {
+                workspace_id,
+                record,
+            })
+            .await?
+        {
+            RunnerResponse::HostActionRecorded { recorded: true } => Ok(()),
+            _ => anyhow::bail!("canonical host action audit unavailable"),
+        }
+    }
+
     pub async fn provider_login(
         &self,
         request: crate::provider_login::ProviderLoginRequest,
@@ -2229,6 +2261,41 @@ mod tests {
         fn endpoint_description(&self) -> String {
             "duplex:test".to_string()
         }
+    }
+
+    #[tokio::test]
+    async fn credential_management_real_rpc_fixture() -> Result<()> {
+        use oqto_protocol::credentials::*;
+        let root = tempfile::tempdir()?;
+        let manager = Arc::new(crate::credentials::CredentialManager::new(Some(
+            root.path().to_owned(),
+        )));
+        let (client_stream, server_stream) = tokio::io::duplex(4096);
+        let client = RunnerClient::with_connector(Arc::new(OneShotDuplexConnector {
+            stream: tokio::sync::Mutex::new(Some(client_stream)),
+        }));
+        let server_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_stream);
+            let request: RunnerRequest = read_json_frame(&mut reader)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("missing request"))?;
+            let RunnerRequest::ManageCredentials(request) = request else {
+                anyhow::bail!("wrong request variant");
+            };
+            let result = manager.manage(request).await;
+            write_json_frame(reader.get_mut(), &RunnerResponse::CredentialsResult(result)).await
+        });
+        let result = client
+            .manage_credentials(CredentialManageRequest {
+                account_id: "synthetic-account".into(),
+                command: CredentialCommand::Status,
+            })
+            .await?;
+        assert_eq!(result.status, CredentialProviderStatus::Uninitialized);
+        assert!(result.entries.is_empty());
+        assert!(result.code.is_none());
+        server_task.await??;
+        Ok(())
     }
 
     #[tokio::test]
