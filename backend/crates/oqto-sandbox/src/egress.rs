@@ -592,6 +592,14 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn namespace_egress_relay_fails_closed_off_linux() -> Result<()> {
+        let plan = EgressPlan::new(0, proxy(), vec![])?;
+        assert!(spawn_relay(&plan).is_err());
+        Ok(())
+    }
+
     #[test]
     fn subnet_indices_are_deterministic_and_distinct() {
         let (h0, g0) = subnet_for_index(0);
