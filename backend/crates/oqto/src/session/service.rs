@@ -178,6 +178,12 @@ async fn http_probe_ok(
         .unwrap_or(false)
 }
 
+/// The EXEC_ENV label Oqto injects for its container runtime. Grounded in the
+/// actual container implementation: the `deploy/docker/Dockerfile` base image
+/// is Ubuntu (a Linux OCI container run via docker/podman), and oqto-sandbox
+/// uses Linux-only namespace features. Oqto has no Windows-container runtime.
+const CONTAINER_EXEC_ENV: &str = "linux-container";
+
 /// Inject `AGENT_CTX_*` platform/identity metadata into an agent's environment.
 ///
 /// Schema: `schemas/agent-context-env`. Ownership split (ADR-0013): the
@@ -195,13 +201,6 @@ async fn http_probe_ok(
 ///   so it injects `linux-container`. On switch to Local it clears the stale
 ///   container value it previously produced, but never erases a value it did
 ///   not produce (an explicitly configured local profile).
-
-/// The EXEC_ENV label Oqto injects for its container runtime. Grounded in the
-/// actual container implementation: the `deploy/docker/Dockerfile` base image
-/// is Ubuntu (a Linux OCI container run via docker/podman), and oqto-sandbox
-/// uses Linux-only namespace features. Oqto has no Windows-container runtime.
-const CONTAINER_EXEC_ENV: &str = "linux-container";
-
 fn inject_agent_ctx(
     env: &mut std::collections::HashMap<String, String>,
     session: &Session,
@@ -3529,7 +3528,7 @@ delegated_fetch = true
             &agent_ctx_test_session(Some("pi")),
             RuntimeMode::Local,
         );
-        assert!(env.get("AGENT_CTX_EXEC_ENV").is_none());
+        assert!(!env.contains_key("AGENT_CTX_EXEC_ENV"));
         assert_eq!(
             env.get("AGENT_CTX_PLATFORM_SESSION_ID").map(String::as_str),
             Some("sess_abc")

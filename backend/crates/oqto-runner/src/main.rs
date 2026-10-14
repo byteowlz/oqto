@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, ensure};
 // Used only by the non-Linux guards below, which are compiled out on Linux.
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
@@ -6,6 +6,7 @@ use clap::Parser;
 use log::info;
 #[cfg(not(target_os = "linux"))]
 use log::warn;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +16,8 @@ use oqto_runner::daemon::bootstrap::{
     log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
-use oqto_runner::daemon::server::{Runner, SessionBinaries};
+use oqto_runner::daemon::scoped_files::ScopedFiles;
+use oqto_runner::daemon::server::{ConnectionAccess, Runner, SessionBinaries};
 use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
@@ -39,6 +41,29 @@ struct Args {
     tls_key: Option<PathBuf>,
     #[arg(long, requires = "listen_tls")]
     tls_client_ca: Option<PathBuf>,
+    /// Grant one canonical absolute Files root on the mTLS endpoint. Repeat
+    /// for additional roots. This is supervisor policy, never agent-editable
+    /// config.toml; omit to keep the network endpoint inventory-only.
+    #[arg(
+        long = "remote-file-root",
+        requires = "listen_tls",
+        value_name = "ABSOLUTE_PATH"
+    )]
+    remote_file_roots: Vec<PathBuf>,
+    /// SHA-256 of an enrolled client's DER leaf certificate (64 hex digits).
+    /// Repeat for independently enrolled clients. Required for any network
+    /// Files/Pi grant; a CA-valid but unpinned client gets inventory only.
+    #[arg(
+        long = "remote-client-cert-sha256",
+        requires = "listen_tls",
+        value_name = "64_HEX"
+    )]
+    remote_client_pins: Vec<String>,
+    /// Explicit personal Pi access as this runner's full OS principal. The
+    /// operator must also grant '/' to Files; narrower process roots are NOT
+    /// inferred from cwd and remain fail-closed.
+    #[arg(long, requires = "listen_tls")]
+    remote_full_principal_pi: bool,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -251,6 +276,45 @@ async fn main() -> Result<()> {
         linux_users_enabled: user_config.linux_users_enabled,
         terminal_enabled: user_config.terminal_enabled,
     };
+    validate_remote_pi_grant(args.remote_full_principal_pi, &args.remote_file_roots)?;
+    let client_pins =
+        parse_remote_client_pins(&args.remote_client_pins, !args.remote_file_roots.is_empty())?;
+    validate_personal_client_count(args.remote_full_principal_pi, client_pins.len())?;
+    let remote_access = if args.remote_file_roots.is_empty() {
+        ConnectionAccess::RemoteInventory
+    } else {
+        ensure!(
+            legacy_user_config.single_user && !legacy_user_config.linux_users_enabled,
+            "network Files roots require a dedicated single-user runner"
+        );
+        info!(
+            "Enforcing runner-owned network Files roots: {:?}",
+            args.remote_file_roots
+        );
+        if let Some(home) = dirs::home_dir()
+            && args
+                .remote_file_roots
+                .iter()
+                .any(|root| home.starts_with(root))
+        {
+            log::warn!(
+                "A configured runner Files root contains the entire home directory, including credentials; use narrower roots to exclude secrets"
+            );
+        }
+        let files = Arc::new(ScopedFiles::new(&args.remote_file_roots)?);
+        let grant = if args.remote_full_principal_pi {
+            log::warn!(
+                "Personal network Pi execution enabled with full OS-principal authority; every explicitly pinned mTLS client can control Pi Sessions and run PiBash. Sandbox policy, if present, still applies to Pi children."
+            );
+            ConnectionAccess::RemotePersonalPi(files)
+        } else {
+            ConnectionAccess::RemoteFiles(files)
+        };
+        ConnectionAccess::Pinned {
+            fingerprints: client_pins,
+            grant: Box::new(grant),
+        }
+    };
     let runner = Runner::new(
         sandbox_config,
         binaries,
@@ -280,8 +344,124 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
         let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
         let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
-        runner.run_transport(&listener).await
+        runner.run_transport(&listener, remote_access).await
     } else {
         runner.run(&socket_path).await
+    }
+}
+
+fn parse_remote_client_pins(pins: &[String], has_grant: bool) -> Result<Arc<HashSet<[u8; 32]>>> {
+    ensure!(
+        !has_grant || !pins.is_empty(),
+        "network Files/Pi grants require at least one --remote-client-cert-sha256 pin"
+    );
+    ensure!(
+        has_grant || pins.is_empty(),
+        "client certificate pins require a network Files/Pi grant"
+    );
+    let mut out = HashSet::new();
+    for pin in pins {
+        ensure!(
+            pin.len() == 64 && pin.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "client certificate pin must contain exactly 64 hex digits (SHA-256 of DER leaf)"
+        );
+        let bytes = hex::decode(pin)?;
+        let fingerprint: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid SHA-256 fingerprint size"))?;
+        ensure!(out.insert(fingerprint), "duplicate client certificate pin");
+    }
+    Ok(Arc::new(out))
+}
+
+fn validate_personal_client_count(full_principal: bool, pins: usize) -> Result<()> {
+    ensure!(
+        !full_principal || pins == 1,
+        "personal Pi requires exactly one pinned client identity until per-session ownership is implemented"
+    );
+    Ok(())
+}
+
+fn validate_remote_pi_grant(full_principal: bool, roots: &[PathBuf]) -> Result<()> {
+    ensure!(
+        !full_principal || roots.iter().any(|root| root == std::path::Path::new("/")),
+        "personal Pi execution requires an explicit --remote-file-root /; narrow-root process confinement is not implemented"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_editable_config_cannot_mint_network_files_roots() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config = temp.path().join("config.toml");
+        std::fs::write(
+            &config,
+            "[local]\nsingle_user = true\n[runner]\nremote_roots = ['/']",
+        )?;
+        let args = Args::try_parse_from(vec![
+            "oqto-runner".to_string(),
+            "--listen-tls".to_string(),
+            "127.0.0.1:39444".to_string(),
+            "--config".to_string(),
+            config.to_string_lossy().into_owned(),
+        ])?;
+        assert!(RunnerUserConfig::load_from_path(config).single_user);
+        assert!(args.remote_file_roots.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn network_files_roots_require_explicit_supervisor_arguments() -> Result<()> {
+        let inventory = Args::try_parse_from(["oqto-runner", "--listen-tls", "127.0.0.1:39444"])?;
+        assert!(inventory.remote_file_roots.is_empty());
+        assert!(!inventory.remote_full_principal_pi);
+        assert!(
+            Args::try_parse_from(["oqto-runner", "--remote-file-root", "/home/alice/projects",])
+                .is_err()
+        );
+        let scoped = Args::try_parse_from([
+            "oqto-runner",
+            "--listen-tls",
+            "127.0.0.1:39444",
+            "--remote-file-root",
+            "/home/alice/projects",
+            "--remote-file-root",
+            "/home/alice/shared",
+        ])?;
+        assert_eq!(
+            scoped.remote_file_roots,
+            vec![
+                PathBuf::from("/home/alice/projects"),
+                PathBuf::from("/home/alice/shared"),
+            ]
+        );
+        assert!(validate_remote_pi_grant(true, &scoped.remote_file_roots).is_err());
+        assert!(validate_remote_pi_grant(false, &scoped.remote_file_roots).is_ok());
+        let personal = Args::try_parse_from([
+            "oqto-runner",
+            "--listen-tls",
+            "127.0.0.1:39444",
+            "--remote-file-root",
+            "/",
+            "--remote-full-principal-pi",
+        ])?;
+        assert!(personal.remote_full_principal_pi);
+        assert!(validate_remote_pi_grant(true, &personal.remote_file_roots).is_ok());
+        assert!(parse_remote_client_pins(&personal.remote_client_pins, true).is_err());
+        assert!(parse_remote_client_pins(&["a".repeat(64)], false).is_err());
+        assert!(parse_remote_client_pins(&["g".repeat(64)], true).is_err());
+        assert!(parse_remote_client_pins(&["a".repeat(64), "A".repeat(64)], true).is_err());
+        let enrolled = parse_remote_client_pins(&["a".repeat(64)], true)?;
+        assert!(enrolled.contains(&[0xaa; 32]));
+        assert!(parse_remote_client_pins(&[], false)?.is_empty());
+        assert!(validate_personal_client_count(true, 0).is_err());
+        assert!(validate_personal_client_count(true, 1).is_ok());
+        assert!(validate_personal_client_count(true, 2).is_err());
+        assert!(validate_personal_client_count(false, 2).is_ok());
+        Ok(())
     }
 }

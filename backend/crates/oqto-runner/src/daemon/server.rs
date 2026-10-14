@@ -11,6 +11,7 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::daemon::config::RunnerUserConfig;
+use crate::daemon::scoped_files::ScopedFiles;
 use crate::daemon::state::{ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent};
 use crate::pi_manager::PiSessionManager;
 use crate::protocol::*;
@@ -19,6 +20,129 @@ use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
+
+/// Authority of the transport, not the TLS certificate alone. New remote
+/// request variants remain denied until a runner-owned grant authorizes them.
+#[derive(Clone)]
+pub enum ConnectionAccess {
+    /// Grant operations only after the transport has authenticated a pinned
+    /// client leaf certificate. An unlisted but CA-valid peer gets inventory.
+    Pinned {
+        fingerprints: Arc<std::collections::HashSet<[u8; 32]>>,
+        grant: Box<ConnectionAccess>,
+    },
+    /// Existing local socket behavior; OS socket access remains the boundary.
+    LocalSocket,
+    /// Network clients can probe inventory and use separately configured
+    /// history/provider-login features, but not Files, sessions or processes.
+    RemoteInventory,
+    /// Explicit, capability-confined Files roots. Session/process operations
+    /// stay denied until the runner can enforce their separate execution scope.
+    RemoteFiles(Arc<ScopedFiles>),
+    /// Explicit single-user full-OS-principal Pi authority. Requires an
+    /// operator-owned '/' Files root; narrower roots cannot confine Pi yet.
+    RemotePersonalPi(Arc<ScopedFiles>),
+}
+
+impl ConnectionAccess {
+    fn for_peer(&self, certificate: Option<[u8; 32]>) -> Self {
+        match self {
+            Self::Pinned {
+                fingerprints,
+                grant,
+            } => {
+                if certificate.is_some_and(|fingerprint| fingerprints.contains(&fingerprint)) {
+                    grant.as_ref().clone()
+                } else {
+                    Self::RemoteInventory
+                }
+            }
+            // Local socket permissions must not accidentally become TLS grants,
+            // and unpinned TLS peers cannot use a Files/Pi grant by mistake.
+            Self::LocalSocket | Self::RemoteFiles(_) | Self::RemotePersonalPi(_)
+                if certificate.is_some() =>
+            {
+                Self::RemoteInventory
+            }
+            _ => self.clone(),
+        }
+    }
+
+    fn is_files(request: &RunnerRequest) -> bool {
+        matches!(
+            request,
+            RunnerRequest::ReadFile(_)
+                | RunnerRequest::WriteFile(_)
+                | RunnerRequest::ListDirectory(_)
+                | RunnerRequest::Stat(_)
+                | RunnerRequest::DeletePath(_)
+                | RunnerRequest::CreateDirectory(_)
+        )
+    }
+
+    fn is_personal_pi(request: &RunnerRequest) -> bool {
+        matches!(
+            request,
+            RunnerRequest::PiCreateSession(_)
+                | RunnerRequest::PiCloseSession(_)
+                | RunnerRequest::PiDeleteSession(_)
+                | RunnerRequest::PiNewSession(_)
+                | RunnerRequest::PiSwitchSession(_)
+                | RunnerRequest::PiListSessions
+                | RunnerRequest::PiSubscribe(_)
+                | RunnerRequest::PiUnsubscribe(_)
+                | RunnerRequest::PiPrompt(_)
+                | RunnerRequest::PiSteer(_)
+                | RunnerRequest::PiFollowUp(_)
+                | RunnerRequest::PiAbort(_)
+                | RunnerRequest::PiGetState(_)
+                | RunnerRequest::PiGetMessages(_)
+                | RunnerRequest::PiGetSessionStats(_)
+                | RunnerRequest::PiGetLastAssistantText(_)
+                | RunnerRequest::PiSetModel(_)
+                | RunnerRequest::PiCycleModel(_)
+                | RunnerRequest::PiGetAvailableModels(_)
+                | RunnerRequest::PiSetThinkingLevel(_)
+                | RunnerRequest::PiCycleThinkingLevel(_)
+                | RunnerRequest::PiCompact(_)
+                | RunnerRequest::PiSetAutoCompaction(_)
+                | RunnerRequest::PiSetSteeringMode(_)
+                | RunnerRequest::PiSetFollowUpMode(_)
+                | RunnerRequest::PiSetAutoRetry(_)
+                | RunnerRequest::PiAbortRetry(_)
+                | RunnerRequest::PiFork(_)
+                | RunnerRequest::PiGetForkMessages(_)
+                | RunnerRequest::PiSetSessionName(_)
+                | RunnerRequest::PiExportHtml(_)
+                | RunnerRequest::AgentGetCommands(_)
+                | RunnerRequest::PiBash(_)
+                | RunnerRequest::PiAbortBash(_)
+                | RunnerRequest::PiExtensionUiResponse(_)
+                | RunnerRequest::GetWorkspaceChatMessages(_)
+                | RunnerRequest::ListWorkspaceChatSessions(_)
+                | RunnerRequest::GetWorkspaceChatSession(_)
+                | RunnerRequest::GetWorkspaceChatSessionMessages(_)
+        )
+    }
+
+    fn permits(&self, request: &RunnerRequest) -> bool {
+        match self {
+            Self::Pinned { .. } => false,
+            Self::LocalSocket => true,
+            Self::RemoteInventory | Self::RemoteFiles(_) | Self::RemotePersonalPi(_) => {
+                matches!(
+                    request,
+                    RunnerRequest::Ping
+                        | RunnerRequest::GetCapabilities
+                        | RunnerRequest::HistoryRead(_)
+                        | RunnerRequest::ProviderLogin(_)
+                ) || matches!(self, Self::RemoteFiles(_) | Self::RemotePersonalPi(_))
+                    && Self::is_files(request)
+                    || matches!(self, Self::RemotePersonalPi(_)) && Self::is_personal_pi(request)
+            }
+        }
+    }
+}
 
 /// Configuration for session service binaries.
 #[derive(Debug, Clone)]
@@ -3842,7 +3966,7 @@ impl Runner {
     }
 
     /// Handle a client connection over any established bidirectional stream.
-    async fn handle_connection<S>(&self, stream: S)
+    async fn handle_connection<S>(&self, stream: S, access: ConnectionAccess)
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -3867,6 +3991,85 @@ impl Runner {
                 }
                 Ok(Some(req)) => {
                     debug!("Received request: {:?}", req);
+
+                    // Authorize before special streaming paths, dispatch, or side effects.
+                    // A mutual-TLS certificate authenticates a peer; it does not
+                    // confer arbitrary filesystem or execution authority.
+                    if !access.permits(&req) {
+                        warn!("runner remote request denied: {}", Self::request_kind(&req));
+                        let resp = error_response(
+                            ErrorCode::PermissionDenied,
+                            "runner transport is limited to explicitly granted capabilities",
+                        );
+                        let Ok(line) = Self::serialize_response_line(&resp) else {
+                            break;
+                        };
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if let ConnectionAccess::RemoteFiles(files)
+                    | ConnectionAccess::RemotePersonalPi(files) = &access
+                        && ConnectionAccess::is_files(&req)
+                    {
+                        let files = Arc::clone(files);
+                        let resp = match files.acquire_slot().await {
+                            Ok(slot) => {
+                                match tokio::task::spawn_blocking(move || {
+                                    // A disconnected requester must not release the limit
+                                    // before its blocking filesystem operation finishes.
+                                    let _slot = slot;
+                                    files.execute(req)
+                                })
+                                .await
+                                {
+                                    Ok(resp) => resp,
+                                    Err(error) => error_response(
+                                        ErrorCode::Internal,
+                                        format!("scoped Files worker failed: {error}"),
+                                    ),
+                                }
+                            }
+                            Err(error) => error_response(
+                                ErrorCode::Internal,
+                                format!("scoped Files admission failed: {error}"),
+                            ),
+                        };
+                        let Ok(line) = Self::serialize_response_line(&resp) else {
+                            break;
+                        };
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if let ConnectionAccess::RemotePersonalPi(files) = &access
+                        && let RunnerRequest::PiCreateSession(create) = &req
+                    {
+                        let cwd = create.config.cwd.clone();
+                        let files = Arc::clone(files);
+                        let admitted = tokio::task::spawn_blocking(move || {
+                            files.authorize_work_directory(&cwd)
+                        })
+                        .await;
+                        if !matches!(admitted, Ok(Ok(()))) {
+                            warn!("network Pi work directory denied");
+                            let response = error_response(
+                                ErrorCode::PermissionDenied,
+                                "Pi work directory is not an authorized absolute directory",
+                            );
+                            let Ok(line) = Self::serialize_response_line(&response) else {
+                                break;
+                            };
+                            if writer.write_all(line.as_bytes()).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    }
 
                     // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
@@ -4069,7 +4272,7 @@ impl Runner {
         }
     }
 
-    async fn serve_listener<L>(&self, listener: &L)
+    async fn serve_listener<L>(&self, listener: &L, access: ConnectionAccess)
     where
         L: RunnerListener,
     {
@@ -4079,7 +4282,7 @@ impl Runner {
             tokio::select! {
                 result = listener.accept() => {
                     match result {
-                        Ok(stream) => {
+                        Ok(accepted) => {
                             debug!("New client connection on {}", listener.endpoint_description());
                             let runner = Runner {
                                 state: Arc::clone(&self.state),
@@ -4093,8 +4296,9 @@ impl Runner {
                                 expose_dir: self.expose_dir.clone(),
                                 exposed_ports: Arc::clone(&self.exposed_ports),
                             };
+                            let connection_access = access.for_peer(accepted.client_cert_sha256);
                             tokio::spawn(async move {
-                                runner.handle_connection(stream).await;
+                                runner.handle_connection(accepted.stream, connection_access).await;
                             });
                         }
                         Err(error) => {
@@ -4111,7 +4315,7 @@ impl Runner {
     }
 
     /// Serve any authenticated runner transport until shutdown.
-    pub async fn run_transport<L>(&self, listener: &L) -> Result<()>
+    pub async fn run_transport<L>(&self, listener: &L, access: ConnectionAccess) -> Result<()>
     where
         L: RunnerListener,
     {
@@ -4163,7 +4367,10 @@ impl Runner {
                 }
             });
         }
-        self.serve_listener(listener).await;
+        self.serve_listener(listener, access).await;
+        // Removing a supervisor-owned pin requires a runner restart. Do not
+        // leave previously admitted Pi processes running after that revoke.
+        self.pi_manager.shutdown().await;
         self.cleanup_managed_processes().await;
         Ok(())
     }
@@ -4188,7 +4395,8 @@ impl Runner {
         let listener = UnixListener::from_std(listener)
             .context("adopting inherited listener into the runtime")?;
         let listener = UnixRunnerListener::new(listener, "<inherited-fd-3>");
-        self.run_transport(&listener).await
+        self.run_transport(&listener, ConnectionAccess::LocalSocket)
+            .await
     }
 
     /// Run the daemon, listening on the given socket path.
@@ -4239,7 +4447,8 @@ impl Runner {
             .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
 
         let listener = UnixRunnerListener::new(listener, socket_path);
-        self.run_transport(&listener).await?;
+        self.run_transport(&listener, ConnectionAccess::LocalSocket)
+            .await?;
 
         // Drop unlinks only this incarnation's inode, never a replacement.
         drop(socket_lease);
@@ -4429,6 +4638,85 @@ async fn client_closed<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_inventory_rejects_file_and_execution_requests() {
+        let access = ConnectionAccess::RemoteInventory;
+        assert!(access.permits(&RunnerRequest::Ping));
+        assert!(access.permits(&RunnerRequest::GetCapabilities));
+        let read = RunnerRequest::ReadFile(ReadFileRequest {
+            path: PathBuf::from("/home/alice/.ssh/id_ed25519"),
+            offset: None,
+            limit: None,
+        });
+        for request in [read, RunnerRequest::PiListSessions, RunnerRequest::Shutdown] {
+            assert!(!access.permits(&request), "{request:?} must be denied");
+            assert!(ConnectionAccess::LocalSocket.permits(&request));
+        }
+    }
+
+    #[test]
+    fn remote_files_grants_only_mediated_file_operations() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = std::fs::canonicalize(temp.path())?;
+        let access =
+            ConnectionAccess::RemoteFiles(Arc::new(ScopedFiles::new(std::slice::from_ref(&root))?));
+        assert!(access.permits(&RunnerRequest::ReadFile(ReadFileRequest {
+            path: root.join("file"),
+            offset: None,
+            limit: None,
+        })));
+        assert!(!access.permits(&RunnerRequest::PiListSessions));
+        assert!(!access.permits(&RunnerRequest::Shutdown));
+        Ok(())
+    }
+
+    #[test]
+    fn only_explicit_full_principal_connection_allows_pi_commands() -> Result<()> {
+        let files = Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?);
+        let access = ConnectionAccess::RemotePersonalPi(files);
+        let create = RunnerRequest::PiCreateSession(PiCreateSessionRequest {
+            session_id: "personal".into(),
+            config: crate::protocol::PiSessionConfig {
+                cwd: PathBuf::from("/tmp"),
+                ..Default::default()
+            },
+        });
+        assert!(access.permits(&create));
+        assert!(access.permits(&RunnerRequest::PiBash(PiBashRequest {
+            session_id: "personal".into(),
+            command: "pwd".into(),
+        })));
+        for denied in [RunnerRequest::Shutdown, RunnerRequest::ListProcesses] {
+            assert!(!access.permits(&denied), "{denied:?} must be denied");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn network_grants_require_a_transport_authenticated_enrolled_peer() -> Result<()> {
+        let files = Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?);
+        let pinned = ConnectionAccess::Pinned {
+            fingerprints: Arc::new(std::collections::HashSet::from([[0x11; 32]])),
+            grant: Box::new(ConnectionAccess::RemotePersonalPi(files)),
+        };
+        let request = RunnerRequest::PiListSessions;
+        assert!(!pinned.permits(&request));
+        assert!(pinned.for_peer(Some([0x11; 32])).permits(&request));
+        assert!(!pinned.for_peer(Some([0x22; 32])).permits(&request));
+        assert!(!pinned.for_peer(None).permits(&request));
+        assert!(
+            !ConnectionAccess::LocalSocket
+                .for_peer(Some([0x11; 32]))
+                .permits(&request)
+        );
+        assert!(
+            !ConnectionAccess::RemotePersonalPi(Arc::new(ScopedFiles::new(&[PathBuf::from("/")])?))
+                .for_peer(Some([0x11; 32]))
+                .permits(&request)
+        );
+        Ok(())
+    }
 
     #[test]
     fn fork_copy_validation_matches_pi_position_before_semantics() -> Result<()> {

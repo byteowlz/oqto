@@ -63,6 +63,21 @@ async fn open_pool_for_workspace(user_home: &Path, workspace_id: &str) -> Result
     Ok(pool)
 }
 
+/// Pi persists the runner's optimistic identity as a final JSON suffix on
+/// user text. Only a syntactically valid *trailing* marker is metadata; text
+/// elsewhere, including a user-written lookalike, remains visible.
+fn user_text_client_id_suffix(text: &str) -> Option<(&str, String)> {
+    let body = text.strip_suffix("]]")?;
+    let start = body.rfind(" [[oqto_meta:")?;
+    let metadata: serde_json::Value =
+        serde_json::from_str(&body[start + " [[oqto_meta:".len()..]).ok()?;
+    let client_id = metadata.get("clientId")?.as_str()?.trim();
+    if client_id.is_empty() || client_id.len() > 256 || client_id.chars().any(char::is_control) {
+        return None;
+    }
+    Some((&body[..start], client_id.to_string()))
+}
+
 fn extract_client_id_from_payload_json(payload: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
     let obj = value.as_object()?;
@@ -105,6 +120,37 @@ async fn list_workspace_hash_dirs(user_home: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Resolve a request-facing ID to the store's session key before projecting
+/// turns. An alias collision must not silently return another session's chat.
+async fn projection_session_id(pool: &sqlx::SqlitePool, any_id: &str) -> Option<String> {
+    let candidates = sqlx::query_scalar::<_, String>(
+        "SELECT session_id FROM oqto_log_sessions \
+         WHERE session_id = ? OR platform_id = ? OR external_id = ? LIMIT 2",
+    )
+    .bind(any_id)
+    .bind(any_id)
+    .bind(any_id)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    if candidates.len() == 1 {
+        candidates.into_iter().next()
+    } else {
+        None
+    }
+}
+
+/// Keep Pi-native shell records and aborted assistant turns in raw
+/// oqto-log for provenance, but never misrepresent them as chat answers.
+/// Apply before pagination so cursors/has_more describe visible chat only.
+fn visible_chat_payload_sql() -> &'static str {
+    r#"NOT (t.role = 'assistant' AND CASE
+        WHEN json_valid(m.json_payload) THEN
+            COALESCE(json_extract(m.json_payload, '$.role'), '') = 'bashExecution'
+            OR COALESCE(json_extract(m.json_payload, '$.stopReason'), '') = 'aborted'
+        ELSE 0 END)"#
+}
+
 async fn project_session_messages_in_db(
     db_path: &Path,
     session_id: &str,
@@ -119,16 +165,8 @@ async fn project_session_messages_in_db(
         .await
         .ok()?;
 
-    let exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
-            .bind(session_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-    if exists <= 0 {
-        return None;
-    }
+    let canonical_id = projection_session_id(&pool, session_id).await?;
+    let session_id = canonical_id.as_str();
 
     let query = format!(
         r#"
@@ -141,10 +179,11 @@ async fn project_session_messages_in_db(
               {} AS created_at_ms
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ?
+            WHERE t.session_id = ? AND {}
             ORDER BY t.turn_version ASC, m.seq ASC
             "#,
         projected_created_at_ms_sql(),
+        visible_chat_payload_sql(),
     );
     let mut rows = sqlx::query(&query)
         .bind(session_id)
@@ -198,16 +237,8 @@ async fn project_session_messages_page_in_db(
         .await
         .ok()?;
 
-    let exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oqto_log_sessions WHERE session_id = ?")
-            .bind(session_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-
-    if exists <= 0 {
-        return None;
-    }
+    let canonical_id = projection_session_id(&pool, session_id).await?;
+    let session_id = canonical_id.as_str();
 
     let cursor_filter = if before.is_some() {
         "AND (t.turn_version < ? OR (t.turn_version = ? AND m.seq < ?))"
@@ -227,12 +258,13 @@ async fn project_session_messages_page_in_db(
               m.seq AS seq
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ?
+            WHERE t.session_id = ? AND {}
             {}
             ORDER BY t.turn_version DESC, m.seq DESC
             LIMIT ?
             "#,
         projected_created_at_ms_sql(),
+        visible_chat_payload_sql(),
         cursor_filter,
     );
 
@@ -715,13 +747,22 @@ fn row_to_projected_message(
     let created_at: i64 = row.try_get("created_at_ms").unwrap_or(0);
     let fallback_content: Option<String> = row.try_get("content").ok();
     let json_payload: Option<String> = row.try_get("json_payload").ok();
-    let fallback_client_id = json_payload
+    let mut client_id = json_payload
         .as_deref()
         .and_then(extract_client_id_from_payload_json);
     let role: String = row.get("role");
 
-    let parts =
+    let mut parts =
         projected_parts_from_payload(&msg_id, &role, fallback_content, json_payload.as_deref());
+    if role == "user"
+        && let Some(part) = parts.iter_mut().rev().find(|part| part.part_type == "text")
+        && let Some((visible_text, suffix_client_id)) =
+            part.text.as_deref().and_then(user_text_client_id_suffix)
+    {
+        part.text = Some(visible_text.to_string());
+        // A structured oqto-log client ID, if present, takes precedence.
+        client_id.get_or_insert(suffix_client_id);
+    }
 
     ProjectedChatMessage {
         id: msg_id.clone(),
@@ -738,7 +779,7 @@ fn row_to_projected_message(
         tokens_output: None,
         tokens_reasoning: None,
         cost: None,
-        client_id: fallback_client_id,
+        client_id,
         parts,
     }
 }
@@ -752,7 +793,11 @@ mod tests {
 
     use oqto_protocol::projection::ProjectedChatMessagePage;
 
-    use super::{extract_client_id_from_payload_json, project_session_messages_for_workspace};
+    use super::{
+        extract_client_id_from_payload_json, project_session_messages_auto,
+        project_session_messages_for_workspace, project_session_messages_page_auto,
+        user_text_client_id_suffix,
+    };
     use crate::oqto_log::store::{PiJsonlMessageRecord, replace_session_with_pi_jsonl_records};
 
     fn test_message(role: &str, content: &str, timestamp: Option<u64>) -> AgentMessage {
@@ -793,6 +838,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_suffix_only_removes_valid_final_runner_metadata() {
+        let text =
+            "user [[oqto_meta:{\"clientId\":\"spoof\"}]] [[oqto_meta:{\"clientId\":\"real\"}]]";
+        let (visible, client_id) = user_text_client_id_suffix(text).expect("valid final marker");
+        assert_eq!(visible, "user [[oqto_meta:{\"clientId\":\"spoof\"}]]");
+        assert_eq!(client_id, "real");
+        assert!(user_text_client_id_suffix("message [[oqto_meta:not-json]]").is_none());
+        assert!(user_text_client_id_suffix("message [[oqto_meta:{\"clientId\":\"\"}]]").is_none());
+    }
+
     #[tokio::test]
     async fn projection_uses_pi_jsonl_source_timestamps() {
         let temp = tempfile::tempdir().expect("create temp home");
@@ -804,7 +860,11 @@ mod tests {
                 source_entry_id: "entry-user".to_string(),
                 parent_source_entry_id: None,
                 source_sequence: 0,
-                message: test_message("user", "hi", Some(1_779_363_330_601)),
+                message: test_message(
+                    "user",
+                    "hi [[oqto_meta:{\"clientId\":\"cid-proof\",\"intent\":\"default\"}]]",
+                    Some(1_779_363_330_601),
+                ),
             },
             PiJsonlMessageRecord {
                 source_entry_id: "entry-assistant".to_string(),
@@ -833,9 +893,93 @@ mod tests {
                 .expect("project session messages");
 
         assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].client_id.as_deref(), Some("cid-proof"));
+        assert_eq!(projected[0].parts[0].text.as_deref(), Some("hi"));
         assert_eq!(projected[0].created_at, 1_779_363_330_601);
         assert_eq!(projected[1].created_at, 1_779_363_330_656);
         assert!(projected[0].created_at < projected[1].created_at);
+
+        // Runner Pi uses a request-facing external ID while oqto-log records
+        // a distinct canonical session ID. Both must resolve to the same
+        // durable messages, including when the Desktop asks for a page.
+        for alias in [session_id, "oqto-platform-1", "external-1"] {
+            let automatic = project_session_messages_auto(user_home, alias, None)
+                .await
+                .expect("auto project")
+                .expect("session resolved");
+            assert_eq!(automatic.len(), 2, "alias {alias}");
+            assert_eq!(automatic[0].session_id, session_id);
+            let page = project_session_messages_page_auto(user_home, alias, 2, None)
+                .await
+                .expect("page project")
+                .expect("paged session resolved");
+            assert_eq!(page.messages.len(), 2, "paged alias {alias}");
+            assert_eq!(page.messages[0].session_id, session_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_projection_excludes_bash_and_aborted_empty_assistant_records() {
+        let temp = tempfile::tempdir().expect("create temp home");
+        let home = temp.path();
+        let workspace = "/tmp/oqto-chat-only-projection-test";
+        let session = "session-chat-only";
+        let mut aborted = test_message("assistant", "", Some(4));
+        aborted.content = serde_json::json!([]);
+        aborted.stop_reason = Some("aborted".to_string());
+        let messages = [
+            test_message("bashExecution", "", Some(1)),
+            test_message("user", "hi", Some(2)),
+            aborted,
+            test_message("assistant", "answer", Some(5)),
+        ];
+        let records = messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| PiJsonlMessageRecord {
+                source_entry_id: format!("entry-{index}"),
+                parent_source_entry_id: (index > 0).then(|| format!("entry-{}", index - 1)),
+                source_sequence: index as i64,
+                message,
+            })
+            .collect::<Vec<_>>();
+        replace_session_with_pi_jsonl_records(
+            home,
+            "user-1",
+            workspace,
+            session,
+            "oqto-chat-only",
+            Some("external-chat"),
+            "external-chat",
+            &records,
+        )
+        .await
+        .expect("replace session from Pi-authored records");
+        let full = project_session_messages_auto(home, "oqto-chat-only", None)
+            .await
+            .expect("full projection")
+            .expect("session present");
+        assert_eq!(
+            full.iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>(),
+            ["user", "assistant"]
+        );
+        assert_eq!(full[1].parts[0].text.as_deref(), Some("answer"));
+        let page = project_session_messages_page_auto(home, "external-chat", 2, None)
+            .await
+            .expect("paged projection")
+            .expect("session present");
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            full.iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(!page.has_more);
     }
 
     #[tokio::test]

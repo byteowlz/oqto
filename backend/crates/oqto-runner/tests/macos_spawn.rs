@@ -55,7 +55,10 @@ async fn mac_runner_spawns_generic_and_pi_processes_through_seatbelt() -> Result
     // PiManager supplies RPC argv and inherits the same file policy as spawn.
     std::fs::write(
         &harness,
-        "#!/bin/sh\n{ printf '%s\\n' \"$@\"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\\nDONE\\n'; } > pi-proof\nwhile read -r line; do :; done\n",
+        format!(
+            "#!/bin/sh\nif test \"$1\" = --version; then printf 'pi 0.85.1\\n'; exit 0; fi\nif test \"$(pwd -P)\" != {:?}; then exit 0; fi\nprintf '%s\\n' \"$$\" > pi-pid\n( printf '%s\\n' \"$@\"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\\nDONE\\n' ) > pi-proof\nwhile :; do sleep 1; done\n",
+            workspace.canonicalize()?.to_string_lossy()
+        ),
     )?;
     std::fs::set_permissions(&harness, std::fs::Permissions::from_mode(0o700))?;
     let config = format!(
@@ -142,5 +145,19 @@ async fn mac_runner_spawns_generic_and_pi_processes_through_seatbelt() -> Result
     }
     result?;
     stopped.context("runner shutdown timeout")??;
+    let pi_pid: i32 = std::fs::read_to_string(workspace.join("pi-pid"))?
+        .trim()
+        .parse()?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            // SAFETY: probing a positive PID's existence does not signal it.
+            if unsafe { libc::kill(pi_pid, 0) } == -1 {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("Pi process survived runner shutdown/revocation")??;
     Ok(())
 }

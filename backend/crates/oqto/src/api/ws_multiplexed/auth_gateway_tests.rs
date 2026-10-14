@@ -340,7 +340,14 @@ async fn authenticated_real_selection_gateway() -> Result<()> {
     .await?;
     let tls_address = tls_listener.local_addr();
     let running = runner.clone();
-    let tls_task = tokio::spawn(async move { running.run_transport(&tls_listener).await });
+    let tls_task = tokio::spawn(async move {
+        running
+            .run_transport(
+                &tls_listener,
+                oqto_runner::daemon::server::ConnectionAccess::RemoteInventory,
+            )
+            .await
+    });
     let (mut state, accounts, tokens) = fixture_state(&root, &socket).await?;
     let principal_output = std::process::Command::new("/usr/bin/id")
         .arg("-un")
