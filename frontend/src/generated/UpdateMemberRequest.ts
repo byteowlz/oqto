@@ -4,4 +4,4 @@ import type { MemberRole } from "./MemberRole";
 /**
  * Request to update a member's role.
  */
-export type UpdateMemberRequest = { role: MemberRole, };
+export type UpdateMemberRequest = { role: MemberRole };

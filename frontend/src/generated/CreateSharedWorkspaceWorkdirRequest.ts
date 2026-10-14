@@ -3,12 +3,13 @@
 /**
  * Request to add a workdir to an existing shared workspace.
  */
-export type CreateSharedWorkspaceWorkdirRequest = { 
-/**
- * Path to the personal project directory to copy into the shared workspace.
- */
-source_path: string, 
-/**
- * Optional name for the new workdir (defaults to source directory name).
- */
-name: string | null, };
+export type CreateSharedWorkspaceWorkdirRequest = {
+	/**
+	 * Path to the personal project directory to copy into the shared workspace.
+	 */
+	source_path: string;
+	/**
+	 * Optional name for the new workdir (defaults to source directory name).
+	 */
+	name: string | null;
+};
