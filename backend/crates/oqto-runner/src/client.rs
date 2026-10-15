@@ -1979,6 +1979,35 @@ impl RunnerClient {
         }
     }
 
+    pub async fn describe_credential(
+        &self,
+        account_id: String,
+        credential_id: String,
+    ) -> Result<oqto_protocol::credential_connections::CredentialDescriptor> {
+        match self
+            .request(&RunnerRequest::DescribeCredential {
+                account_id,
+                credential_id,
+            })
+            .await?
+        {
+            RunnerResponse::CredentialDescribed(value) => Ok(value),
+            _ => anyhow::bail!("credential unavailable"),
+        }
+    }
+    pub async fn credential_http(
+        &self,
+        request: oqto_protocol::credential_connections::CredentialHttpDispatch,
+    ) -> Result<serde_json::Value> {
+        match self
+            .request(&RunnerRequest::CredentialHttp(request))
+            .await?
+        {
+            RunnerResponse::CredentialHttpResult { json } => Ok(json),
+            _ => anyhow::bail!("credential request unavailable"),
+        }
+    }
+
     /// Append metadata through the owning runner's canonical oqto-log authority.
     pub async fn record_host_action(
         &self,

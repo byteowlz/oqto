@@ -263,6 +263,7 @@ async fn main() -> Result<()> {
     });
 
     let legacy_user_config = oqto_runner::daemon::config::RunnerUserConfig {
+        credentials: user_config.credentials.clone(),
         provider_login: user_config.provider_login.clone(),
         history_read: user_config.history_read.clone(),
         fileserver_binary: user_config.fileserver_binary.clone(),

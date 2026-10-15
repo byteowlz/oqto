@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kyz-core = { git = "https://github.com/byteowlz/kyz", rev = "014a53c5d8478190af3e5b9dc7d31bd0f790fd8d" }
+secrecy = "0.10"
 age = { version = "0.12.1", default-features = false }
 fs4 = { version = "0.13", default-features = false, features = ["sync"] }
 libc.workspace = true
@@ -14,6 +16,9 @@ serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 zeroize = "1.8"
+
+[dev-dependencies]
+anyhow.workspace = true
 
 [lints]
 workspace = true

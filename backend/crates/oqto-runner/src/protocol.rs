@@ -32,6 +32,11 @@ use oqto_pi::PiState;
 pub enum RunnerRequest {
     /// Protected host control only; never expose as an agent capability.
     ManageCredentials(oqto_protocol::CredentialManageRequest),
+    DescribeCredential {
+        account_id: String,
+        credential_id: String,
+    },
+    CredentialHttp(oqto_protocol::credential_connections::CredentialHttpDispatch),
     /// Trusted controller only; not an agent/App capability.
     RecordHostAction {
         workspace_id: String,
@@ -338,6 +343,10 @@ pub enum RunnerRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunnerResponse {
     CredentialsResult(oqto_protocol::CredentialManageResult),
+    CredentialDescribed(oqto_protocol::credential_connections::CredentialDescriptor),
+    CredentialHttpResult {
+        json: serde_json::Value,
+    },
     HostActionRecorded {
         recorded: bool,
     },

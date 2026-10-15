@@ -16,6 +16,7 @@ integration-tests = []
 iroh-transport = ["dep:iroh"]
 
 [dependencies]
+oqto-credential-http = { path = "../oqto-credential-http" }
 rand = { workspace = true }
 anyhow.workspace = true
 base64.workspace = true

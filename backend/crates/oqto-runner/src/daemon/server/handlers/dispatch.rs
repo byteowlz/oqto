@@ -5,6 +5,11 @@ mod credentials;
 pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> RunnerResponse {
     match req {
         RunnerRequest::Ping => RunnerResponse::Pong,
+        RunnerRequest::DescribeCredential {
+            account_id,
+            credential_id,
+        } => credentials::describe(runner, account_id, credential_id).await,
+        RunnerRequest::CredentialHttp(request) => credentials::http(runner, request).await,
         RunnerRequest::ManageCredentials(request) => credentials::manage(runner, request).await,
         RunnerRequest::RecordHostAction {
             workspace_id,

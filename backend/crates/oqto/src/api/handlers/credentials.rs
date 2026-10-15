@@ -53,7 +53,7 @@ async fn manage(
     dispatch(&state, user.id(), command).await.map(Json)
 }
 
-fn require_real_auth(state: &AppState) -> ApiResult<()> {
+pub(super) fn require_real_auth(state: &AppState) -> ApiResult<()> {
     if state.auth.is_dev_mode() {
         return Err(ApiError::forbidden(
             "Credential administration requires authenticated mode, not development authentication bypass",
@@ -87,7 +87,7 @@ async fn dispatch(
 /// Forwarded headers are deliberately not authentication evidence. Browser
 /// requests require an exact configured trusted HTTPS/loopback Origin; CLI
 /// requests require explicit header auth (and the CLI verifies its TLS URL).
-fn validate_submission_channel(
+pub(super) fn validate_submission_channel(
     peer: Option<SocketAddr>,
     headers: &HeaderMap,
     allowed_origins: &[String],

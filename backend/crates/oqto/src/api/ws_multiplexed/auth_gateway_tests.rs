@@ -298,6 +298,7 @@ async fn authenticated_real_selection_gateway() -> Result<()> {
             ttyd: "/bin/false".into(),
         },
         RunnerUserConfig {
+            credentials: Default::default(),
             provider_login: None,
             history_read: None,
             fileserver_binary: "/bin/false".into(),

@@ -3,7 +3,9 @@
 //! Callers must authenticate provisioning and independently authorize credential use.
 //! No method in this crate creates a grant or permits handing values to a workload.
 
+mod kyz;
 mod local;
+pub use kyz::KyzProvider;
 mod storage;
 
 pub use age::secrecy::SecretString;
@@ -80,6 +82,20 @@ pub trait SecretProvider {
         expected_revision: u64,
     ) -> Result<(), ProviderError>;
     fn resolve_for_mediator(&self, account: &str, id: &str) -> Result<SecretValue, ProviderError>;
+    /// Trusted callers serialize local-provider access. Providers permitting
+    /// external writers must override this with a single atomic snapshot read.
+    fn snapshot_for_mediator(
+        &self,
+        account: &str,
+        id: &str,
+    ) -> Result<(SecretValue, u64), ProviderError> {
+        let metadata = self
+            .list(account)?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .ok_or(ProviderError::NotFound)?;
+        Ok((self.resolve_for_mediator(account, id)?, metadata.revision))
+    }
 }
 
 /// Stable sanitized failures: underlying parser/I/O/provider diagnostics may

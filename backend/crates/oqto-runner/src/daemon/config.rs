@@ -9,6 +9,7 @@ use std::{
 
 #[derive(Debug, Clone, Default)]
 pub struct RunnerUserConfig {
+    pub credentials: crate::credentials::CredentialConfig,
     pub provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     pub history_read: Option<crate::history_read::HistoryReadConfig>,
     pub fileserver_binary: String,
@@ -78,6 +79,7 @@ struct LinuxUsersSection {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerSection {
+    credentials: crate::credentials::CredentialConfig,
     provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     history_read: Option<crate::history_read::HistoryReadConfig>,
     runner_id: Option<String>,
@@ -142,6 +144,7 @@ impl RunnerUserConfig {
         info!("Runner ID: {}", runner_id);
 
         Self {
+            credentials: config_file.runner.credentials,
             provider_login: config_file.runner.provider_login,
             history_read: config_file.runner.history_read,
             fileserver_binary: config_file.local.fileserver_binary,

@@ -697,6 +697,9 @@ impl Runner {
         expose_dir: Option<PathBuf>,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
+        let credentials = Arc::new(crate::credentials::CredentialManager::with_config(
+            user_config.credentials.clone(),
+        ));
         Self {
             state: Arc::new(RwLock::new(RunnerState::new())),
             shutdown_tx,
@@ -704,7 +707,7 @@ impl Runner {
             binaries,
             user_config,
             provider_login: Arc::new(crate::provider_login::ProviderLoginManager::default()),
-            credentials: Arc::new(crate::credentials::CredentialManager::default()),
+            credentials,
             pi_manager,
             jsonl_ingest: super::jsonl_ingest::spawn(),
             expose_dir,
@@ -783,6 +786,9 @@ impl Runner {
             // Scanning and repairing JSONL chat metadata can be expensive for
             // users with large session histories.
             RunnerRequest::RepairWorkspaceChatHistory(_) | RunnerRequest::ManageCredentials(_) => {
+                std::time::Duration::from_secs(120)
+            }
+            RunnerRequest::CredentialHttp(_) | RunnerRequest::DescribeCredential { .. } => {
                 std::time::Duration::from_secs(120)
             }
             RunnerRequest::RunAppOperation(_) => std::time::Duration::from_secs(305),

@@ -112,3 +112,64 @@ mod tests {
         );
     }
 }
+
+/// Trusted host-to-runner credential identity, not an App-supplied credential selector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialDescriptor {
+    pub provider_id: String,
+    pub credential_id: String,
+    pub revision: String,
+}
+/// Host-authorized, single-dispatch intent. Contains no credential bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialHttpDispatch {
+    pub account_id: String,
+    pub workspace_id: String,
+    pub credential: CredentialDescriptor,
+    pub connection_id: String,
+    pub connection_revision: u32,
+    pub instance_id: String,
+    pub content_digest: String,
+    pub slot: String,
+    pub audit_event_id: String,
+    pub path: String,
+    pub policy: ConnectionPolicy,
+}
+/// Workloads may select only a manifest-declared slot and relative operation;
+/// Account, runner, credential, destination and grants come from host authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppConnectionInvokeRequest {
+    pub workspace_path: String,
+    pub slot: String,
+    pub path: String,
+}
+
+#[cfg(test)]
+mod dispatch_contract_tests {
+    use super::*;
+    #[test]
+    fn workload_cannot_supply_host_authority() {
+        let base = serde_json::json!({"workspace_path":"/work","slot":"api","path":"/v1/list"});
+        assert!(serde_json::from_value::<AppConnectionInvokeRequest>(base.clone()).is_ok());
+        for field in [
+            "account_id",
+            "credential_id",
+            "provider_id",
+            "policy",
+            "host",
+            "header",
+            "audit_event_id",
+            "runner",
+        ] {
+            let mut value = base.clone();
+            value[field] = "forged".into();
+            assert!(
+                serde_json::from_value::<AppConnectionInvokeRequest>(value).is_err(),
+                "{field}"
+            );
+        }
+    }
+}

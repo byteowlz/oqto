@@ -1,7 +1,8 @@
 //! Trusted control-plane management only; not an agent capability or resolver.
 use oqto_protocol::credentials::*;
 use oqto_secrets::{
-    LocalProvider, ProviderError, ProviderStatus, SecretProvider, SecretString, SecretValue,
+    KyzProvider, LocalProvider, ProviderError, ProviderStatus, SecretProvider, SecretString,
+    SecretValue,
 };
 use std::{
     collections::HashMap,
@@ -9,10 +10,58 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-type AccountProvider = Arc<Mutex<Option<LocalProvider>>>;
-/// Local is the only supported provider. No environment-value or kyz fallback.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CredentialConfig {
+    #[default]
+    Local,
+    // Operator-selected mapping; never accepted in an HTTP/App/agent payload.
+    Kyz {
+        vaults: HashMap<String, PathBuf>,
+    },
+}
+
+enum Provider {
+    Local(LocalProvider),
+    Kyz(KyzProvider),
+}
+impl Provider {
+    fn as_provider(&self) -> &dyn SecretProvider {
+        match self {
+            Self::Local(v) => v,
+            Self::Kyz(v) => v,
+        }
+    }
+    fn as_provider_mut(&mut self) -> &mut dyn SecretProvider {
+        match self {
+            Self::Local(v) => v,
+            Self::Kyz(v) => v,
+        }
+    }
+    fn initialize(&mut self, account: &str, passphrase: SecretString) -> Result<(), ProviderError> {
+        match self {
+            Self::Local(v) => v.initialize(account, passphrase),
+            Self::Kyz(v) => v.initialize(account, passphrase),
+        }
+    }
+    fn unlock(&mut self, account: &str, passphrase: SecretString) -> Result<(), ProviderError> {
+        match self {
+            Self::Local(v) => v.unlock(account, passphrase),
+            Self::Kyz(v) => v.unlock(account, passphrase),
+        }
+    }
+    fn lock(&mut self) {
+        match self {
+            Self::Local(v) => v.lock(),
+            Self::Kyz(v) => v.lock(),
+        }
+    }
+}
+type AccountProvider = Arc<Mutex<Option<Provider>>>;
+/// Explicit provider selection; never falls back to another provider.
 pub struct CredentialManager {
     data_home: Option<PathBuf>,
+    config: CredentialConfig,
     accounts: Mutex<HashMap<String, AccountProvider>>,
     work: Arc<tokio::sync::Semaphore>,
 }
@@ -40,8 +89,15 @@ impl CredentialManager {
     pub fn new(data_home: Option<PathBuf>) -> Self {
         Self {
             data_home,
+            config: CredentialConfig::Local,
             accounts: Mutex::new(HashMap::new()),
             work: Arc::new(tokio::sync::Semaphore::new(4)),
+        }
+    }
+    pub fn with_config(config: CredentialConfig) -> Self {
+        Self {
+            config,
+            ..Self::default()
         }
     }
     pub async fn manage(
@@ -63,23 +119,108 @@ impl CredentialManager {
             Err(_) => failure(CredentialProviderStatus::Unavailable, "unavailable"),
         }
     }
+    fn account_slot(&self, account: &str) -> Result<AccountProvider, ProviderError> {
+        if !valid_account(account) {
+            return Err(ProviderError::InvalidInput);
+        }
+        let mut accounts = self.accounts.lock().map_err(|_| ProviderError::Storage)?;
+        if accounts.len() >= 256 && !accounts.contains_key(account) {
+            return Err(ProviderError::Busy);
+        }
+        Ok(Arc::clone(
+            accounts
+                .entry(account.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(None))),
+        ))
+    }
+    fn with_provider<T>(
+        &self,
+        account: &str,
+        operation: impl FnOnce(&Provider) -> Result<T, ProviderError>,
+    ) -> Result<T, ProviderError> {
+        let slot = self.account_slot(account)?;
+        let mut guard = slot.lock().map_err(|_| ProviderError::Storage)?;
+        if guard.is_none() {
+            *guard = Some(self.open(account)?);
+        }
+        operation(guard.as_ref().ok_or(ProviderError::Storage)?)
+    }
+    async fn blocking<T: Send + 'static>(
+        self: &Arc<Self>,
+        operation: impl FnOnce(&Self) -> Result<T, ProviderError> + Send + 'static,
+    ) -> Result<T, ProviderError> {
+        let permit = Arc::clone(&self.work)
+            .try_acquire_owned()
+            .map_err(|_| ProviderError::Busy)?;
+        let manager = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            operation(&manager)
+        })
+        .await
+        .map_err(|_| ProviderError::Storage)?
+    }
+    pub async fn describe(
+        self: &Arc<Self>,
+        account: String,
+        id: String,
+    ) -> Result<oqto_protocol::credential_connections::CredentialDescriptor, ProviderError> {
+        self.blocking(move |manager| {
+            manager.with_provider(&account, |provider| {
+                let entry = provider
+                    .as_provider()
+                    .list(&account)?
+                    .into_iter()
+                    .find(|entry| entry.id == id)
+                    .ok_or(ProviderError::NotFound)?;
+                Ok(
+                    oqto_protocol::credential_connections::CredentialDescriptor {
+                        provider_id: match provider {
+                            Provider::Local(_) => "local",
+                            Provider::Kyz(_) => "kyz",
+                        }
+                        .to_owned(),
+                        credential_id: id,
+                        revision: entry.revision.to_string(),
+                    },
+                )
+            })
+        })
+        .await
+    }
+    pub async fn resolve_dispatch(
+        self: &Arc<Self>,
+        account: String,
+        expected: oqto_protocol::credential_connections::CredentialDescriptor,
+    ) -> Result<SecretValue, ProviderError> {
+        self.blocking(move |manager| {
+            manager.with_provider(&account, |provider| {
+                let provider_id = match provider {
+                    Provider::Local(_) => "local",
+                    Provider::Kyz(_) => "kyz",
+                };
+                if expected.provider_id != provider_id {
+                    return Err(ProviderError::Conflict);
+                }
+                let (value, revision) = provider
+                    .as_provider()
+                    .snapshot_for_mediator(&account, &expected.credential_id)?;
+                if expected.revision != revision.to_string() {
+                    return Err(ProviderError::Conflict);
+                }
+                Ok(value)
+            })
+        })
+        .await
+    }
     fn manage_blocking(&self, request: CredentialManageRequest) -> CredentialManageResult {
         let account = &request.account_id;
         if !valid_account(account) {
             return failure(CredentialProviderStatus::Unavailable, "invalid_input");
         }
-        let slot = match self.accounts.lock() {
-            Ok(mut accounts) => {
-                if accounts.len() >= 256 && !accounts.contains_key(account) {
-                    return failure(CredentialProviderStatus::Unavailable, "busy");
-                }
-                Arc::clone(
-                    accounts
-                        .entry(account.clone())
-                        .or_insert_with(|| Arc::new(Mutex::new(None))),
-                )
-            }
-            Err(_) => return failure(CredentialProviderStatus::Unavailable, "unavailable"),
+        let slot = match self.account_slot(account) {
+            Ok(slot) => slot,
+            Err(error) => return failure(CredentialProviderStatus::Unavailable, code(&error)),
         };
         let mut guard = match slot.lock() {
             Ok(guard) => guard,
@@ -97,7 +238,7 @@ impl CredentialManager {
         };
         let operation = match request.command {
             CredentialCommand::Status => Ok(()),
-            CredentialCommand::List => provider.list(account).map(|_| ()),
+            CredentialCommand::List => provider.as_provider().list(account).map(|_| ()),
             CredentialCommand::Initialize { passphrase } => provider.initialize(
                 account,
                 SecretString::from(passphrase.expose_for_protected_transport().to_owned()),
@@ -117,6 +258,7 @@ impl CredentialManager {
             } => SecretValue::new(value.expose_for_protected_transport().to_owned()).and_then(
                 |value| {
                     provider
+                        .as_provider_mut()
                         .put(account, &id, value, expected_revision)
                         .map(|_| ())
                 },
@@ -124,14 +266,16 @@ impl CredentialManager {
             CredentialCommand::Delete {
                 id,
                 expected_revision,
-            } => provider.delete(account, &id, expected_revision),
+            } => provider
+                .as_provider_mut()
+                .delete(account, &id, expected_revision),
         };
-        let status = status(provider.status());
+        let status = status(provider.as_provider().status());
         if let Err(error) = operation {
             return failure(status, code(&error));
         }
         let entries = if status == CredentialProviderStatus::Ready {
-            match provider.list(account) {
+            match provider.as_provider().list(account) {
                 Ok(entries) => entries
                     .into_iter()
                     .map(|entry| CredentialEntryMetadata {
@@ -150,7 +294,20 @@ impl CredentialManager {
             code: None,
         }
     }
-    fn open(&self, account: &str) -> Result<LocalProvider, ProviderError> {
+    fn open(&self, account: &str) -> Result<Provider, ProviderError> {
+        if let CredentialConfig::Kyz { vaults } = &self.config {
+            let path = vaults.get(account).ok_or(ProviderError::WrongOwner)?;
+            // One configured vault must not be shared by different Accounts.
+            let selected = std::fs::canonicalize(path).map_err(|_| ProviderError::Storage)?;
+            for (other, other_path) in vaults {
+                if other != account
+                    && std::fs::canonicalize(other_path).ok().as_ref() == Some(&selected)
+                {
+                    return Err(ProviderError::WrongOwner);
+                }
+            }
+            return KyzProvider::open(path.clone(), account).map(Provider::Kyz);
+        }
         let data_home = self
             .data_home
             .as_ref()
@@ -169,7 +326,7 @@ impl CredentialManager {
             root.push(component);
             private_directory(&root)?;
         }
-        LocalProvider::open(&root.join(account), account)
+        LocalProvider::open(&root.join(account), account).map(Provider::Local)
     }
 }
 #[cfg(unix)]
@@ -290,6 +447,91 @@ mod tests {
     fn input(value: &str) -> CredentialSecretInput {
         CredentialSecretInput::new(value.into())
     }
+    #[tokio::test]
+    async fn dispatch_pins_owner_provider_rotation_and_lock() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let manager = Arc::new(CredentialManager::new(Some(root.path().to_owned())));
+        assert!(
+            run(
+                &manager,
+                "alice",
+                CredentialCommand::Initialize {
+                    passphrase: input("synthetic-dispatch-passphrase-123456")
+                }
+            )
+            .await
+            .code
+            .is_none()
+        );
+        assert!(
+            run(
+                &manager,
+                "alice",
+                CredentialCommand::Put {
+                    id: "api".into(),
+                    value: input("synthetic-dispatch-token"),
+                    expected_revision: None
+                }
+            )
+            .await
+            .code
+            .is_none()
+        );
+        let described = manager.describe("alice".into(), "api".into()).await?;
+        let secret = manager
+            .resolve_dispatch("alice".into(), described.clone())
+            .await?;
+        assert_eq!(secret.expose_to_mediator(), "synthetic-dispatch-token");
+        assert!(
+            manager
+                .resolve_dispatch("bob".into(), described.clone())
+                .await
+                .is_err()
+        );
+        let mut wrong_provider = described.clone();
+        wrong_provider.provider_id = "kyz".into();
+        assert!(
+            manager
+                .resolve_dispatch("alice".into(), wrong_provider)
+                .await
+                .is_err()
+        );
+        assert!(
+            run(
+                &manager,
+                "alice",
+                CredentialCommand::Put {
+                    id: "api".into(),
+                    value: input("synthetic-rotated-token"),
+                    expected_revision: Some(described.revision.parse()?)
+                }
+            )
+            .await
+            .code
+            .is_none()
+        );
+        assert!(
+            manager
+                .resolve_dispatch("alice".into(), described)
+                .await
+                .is_err()
+        );
+        let latest = manager.describe("alice".into(), "api".into()).await?;
+        assert!(
+            run(&manager, "alice", CredentialCommand::Lock)
+                .await
+                .code
+                .is_none()
+        );
+        assert!(
+            manager
+                .resolve_dispatch("alice".into(), latest)
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn synthetic_lifecycle_owner_restart_and_sanitization() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
