@@ -6,6 +6,36 @@ Keep this list small; every entry is a candidate upstream fix.
 
 PATCHES = [
     {
+        "id": "client-tui-bang-commands",
+        "why": "Classic Pi runs `!cmd` (and `!!cmd`, kept out of context) as the user's own "
+               "command. Route it to the oqt-shell plugin command, which runs it in the confined "
+               "hands via the operator socket; pending `!cmd` output is prepended to the next prompt.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """		if (prompt.length === 0) return;
+		if (prompt.startsWith("/")) {""",
+        "new": """		if (prompt.length === 0) return;
+		if (prompt.startsWith("!") && this.#sessionId !== undefined) {
+			await this.#executeSlashCommand("oqt-shell", `${this.#sessionId}\\n${prompt}`);
+			return;
+		}
+		if (prompt.startsWith("/")) {""",
+    },
+    {
+        "id": "client-tui-bang-context",
+        "why": "Prepend pending `!cmd` outputs to the next prompt (see client-tui-bang-commands).",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	async #submitPrompt(prompt: string): Promise<void> {
+		const controller = this.#selectedController();
+		if (controller === undefined) throw new Error("No Session AgentController service is available");""",
+        "new": """	async #submitPrompt(prompt: string): Promise<void> {
+		const controller = this.#selectedController();
+		if (controller === undefined) throw new Error("No Session AgentController service is available");
+		const shellContext = (globalThis as unknown as Record<symbol, string[] | undefined>)[
+			Symbol.for("oqt.shell-context")
+		];
+		if (shellContext?.length) prompt = `${shellContext.splice(0).join("\\n\\n")}\\n\\n${prompt}`;""",
+    },
+    {
         "id": "server-idle-grace-option",
         "why": "An auto server retired 1 s after its last client left, so every oqt launch "
                "paid a cold host + Session worker start. Let the host keep a warm idle grace.",

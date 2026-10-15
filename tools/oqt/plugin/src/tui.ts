@@ -15,6 +15,16 @@ import { installModelCommands } from "./models.ts";
 
 type Choice = "once" | "session" | "always" | "deny";
 
+/** `!cmd` outputs waiting for the next prompt. Shared with the patched client
+ * (source patch client-tui-bang-commands), which prepends them like classic
+ * Pi's bash-execution messages. Same process, so a well-known global symbol. */
+function shellContext(): string[] {
+	const key = Symbol.for("oqt.shell-context");
+	const holder = globalThis as unknown as Record<symbol, string[] | undefined>;
+	holder[key] ??= [];
+	return holder[key];
+}
+
 const HEADERS: Record<string, string> = {
 	shell: "Bash command",
 	edit: "File change",
@@ -322,6 +332,54 @@ export default defineFacet({
 					},
 				}),
 			);
+			if (guard)
+				env.own(
+					commands.replace({
+						name: "oqt-shell",
+						description:
+							"Run your own command in the confined tools (typed as !cmd or !!cmd)",
+						argumentHint: "<session>\n!command",
+						async run(args, context) {
+							const newline = args.indexOf("\n");
+							const session = args.slice(0, newline);
+							const typed = args.slice(newline + 1);
+							// !!cmd stays out of the model's context, like classic Pi.
+							const silent = typed.startsWith("!!");
+							const command = typed.slice(silent ? 2 : 1).trim();
+							if (newline < 0 || !session || !command) {
+								ui.showStatus("Usage: !command or !!command", context);
+								return undefined;
+							}
+							ui.showStatus(
+								`$ ${command}  (running in the confined tools…)`,
+								context,
+							);
+							try {
+								const result = await guard.shell(session, command, context);
+								const lines = result.output.replace(/\n$/, "").split("\n");
+								const shown = lines.slice(-40);
+								const status =
+									result.exitCode === 0 ? "" : `  [exit ${result.exitCode}]`;
+								ui.showStatus(
+									`$ ${command}${status}${silent ? "" : "  · added to your next message"}\n${
+										lines.length > shown.length || result.truncated ? "…\n" : ""
+									}${shown.join("\n")}`,
+									context,
+								);
+								if (!silent)
+									shellContext().push(
+										`Ran \`${command}\`${status}\n\`\`\`\n${result.output.replace(/\n$/, "")}\n\`\`\``,
+									);
+							} catch (error) {
+								ui.showStatus(
+									`$ ${command}\n${error instanceof Error ? error.message : String(error)}`,
+									context,
+								);
+							}
+							return undefined;
+						},
+					}),
+				);
 			env.own(
 				commands.replace({
 					name: "reload",

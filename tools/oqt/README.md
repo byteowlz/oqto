@@ -63,6 +63,12 @@ Shell commands are classified by the trusted guard, never by the agent.
 Wrappers that run other commands (`bash`, `env`, `sudo`, `xargs`, …) never get
 prefix rules. `request_access` (outside paths/network) offers Session (1 h) or No.
 
+Your own commands: `!cmd` runs a command you type in the confined tools
+without a prompt and without the model (you typed it). The model sees its
+output only as part of your next message. `!!cmd` keeps the output out of the
+model's context. Built-in denies and masks still apply. Limits: 120 s, the last
+64 KiB of output, and the tools are replaced afterwards so nothing keeps running.
+
 Commands:
 - `/permissions` reopens a dismissed dialog.
 - `/permissions revoke` freezes the authority, revokes every grant, confirms the

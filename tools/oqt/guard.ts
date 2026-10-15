@@ -23,6 +23,7 @@ import type { Server } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { classify } from "./classify.ts";
 import {
 	CodingAuthority,
@@ -32,6 +33,7 @@ import {
 	type ResourceGrant,
 } from "./coding-authority.ts";
 import { type Peer, serve } from "./guard-wire.ts";
+import { HandsClient } from "./hands-client.ts";
 import { HandsSupervisor } from "./hands-supervisor.ts";
 import type { OwnerBroker } from "./owner-broker.ts";
 import { mark } from "./trace.ts";
@@ -326,6 +328,47 @@ export class GuardSession {
 		this.ready.catch((error) =>
 			console.error(`oqt guard: session ${id} failed to start:`, error),
 		);
+	}
+	/** The operator's own `!command`: typed by the human at the TUI, so it
+	 * needs no approval, but it still runs only inside the confined hands
+	 * (built-in denies and masks apply). Serialized with the brain's calls;
+	 * the executor is retired afterwards so nothing it started lingers. */
+	operatorShell(
+		command: string,
+	): Promise<{ exitCode: number; output: string; truncated: boolean }> {
+		return this.serial(async () => {
+			await this.ready;
+			const hands = new HandsClient(this.handsPath, this.workspace);
+			const limit = 64 * 1024;
+			let output = "";
+			let truncated = false;
+			try {
+				const result = await hands.use(this.supervisor.epoch).exec(
+					command,
+					{
+						timeout: 120,
+						onOutput: (text) => {
+							output += text;
+							if (output.length > limit) {
+								output = output.slice(-limit);
+								truncated = true;
+							}
+						},
+					},
+					BACKGROUND_CONTEXT,
+				);
+				if (!result.ok)
+					return {
+						exitCode: -1,
+						output: `${output}${result.error.message}\n`,
+						truncated,
+					};
+				return { exitCode: result.value.exitCode, output, truncated };
+			} finally {
+				hands.close();
+				await this.supervisor.replace();
+			}
+		});
 	}
 	/** One protected state transition at a time. */
 	serial<T>(step: () => Promise<T>): Promise<T> {
@@ -761,6 +804,16 @@ export class Guard {
 				}
 				this.emit();
 				return { forgotten: true };
+			}
+			case "shell": {
+				const session = this.#find(params);
+				if (
+					typeof params.command !== "string" ||
+					params.command.trim() === "" ||
+					params.command.length > 8192
+				)
+					throw new Error("Invalid command");
+				return session.operatorShell(params.command);
 			}
 			case "acknowledge": {
 				const session = this.#find(params);

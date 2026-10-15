@@ -45,6 +45,12 @@ export interface PermissionsPort {
 	revokeAll(context: Context): Promise<void>;
 	acknowledge(context: Context): Promise<void>;
 	forgetRules(context: Context): Promise<void>;
+	/** Run the operator's own `!command` in the session's confined hands. */
+	shell(
+		session: string,
+		command: string,
+		context: Context,
+	): Promise<{ exitCode: number; output: string; truncated: boolean }>;
 	close(): void;
 }
 
@@ -184,6 +190,14 @@ export function guardPermissions(path: string): PermissionsPort {
 		async forgetRules(context) {
 			context.abortSignal?.throwIfAborted();
 			await call("forget_rules", {});
+		},
+		async shell(session, command, context) {
+			context.abortSignal?.throwIfAborted();
+			return (await call("shell", { session, command })) as {
+				exitCode: number;
+				output: string;
+				truncated: boolean;
+			};
 		},
 		close() {
 			closed = true;
