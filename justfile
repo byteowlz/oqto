@@ -147,6 +147,19 @@ test-oqt-access:
 test-oqt-multi:
     timeout --kill-after=5s 200s python3 tools/oqt/multiclient_tui_test.py
 
+# Put `oqt` on your PATH (user-local symlink; nothing else is installed).
+# The pinned Pi source is expected at ~/.local/share/oqt/pi-source; if it is
+# missing, copy the qualified checkout there:
+#   cp -a /tmp/oqto-pi-service-spike.PVTso2/source ~/.local/share/oqt/pi-source
+install-oqt:
+    mkdir -p ~/.local/bin
+    ln -sfn "$(pwd)/oqt" ~/.local/bin/oqt
+    @command -v oqt
+    @echo "installed: oqt -> $(readlink -f ~/.local/bin/oqt)"
+
+uninstall-oqt:
+    rm -f ~/.local/bin/oqt
+
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:
     ./scripts/sandbox/tests/run-all.sh {{ARGS}}

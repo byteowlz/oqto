@@ -108,6 +108,19 @@ entry is rewritten, so other entries and owning Pi keep working. Brains receive
 access tokens and account metadata only; refresh secrets never leave the guard.
 A failed renewal fails closed.
 
+## Install
+
+```sh
+cp -a /tmp/oqto-pi-service-spike.PVTso2/source ~/.local/share/oqt/pi-source  # once, durable pin
+cd /home/wismut/byteowlz/oqto-durable-support && just install-oqt            # symlink ~/.local/bin/oqt
+```
+
+`oqt` on PATH is a symlink to this checkout and still runs everything from
+here (builds, private distributions, assets). The pinned Pi source defaults to
+`~/.local/share/oqt/pi-source` (override with `OQT_PI_SOURCE`); the checkout
+under /tmp keeps working until it is cleaned. `just uninstall-oqt` removes the
+symlink. Nothing else is installed: no services, no global files.
+
 ## Look and feel
 
 The TUI is upstream Pi's client TUI with classic-Pi chrome: your owning theme,
