@@ -910,6 +910,12 @@ test-deploy-mode:
 test-install-matrix:
     ./scripts/e2e/tests/test-install-update-matrix.sh
 
+# Synthetic external-TUI transport proof; never scans or attaches to real sessions
+test-pi-tui-rpc:
+    cd backend && cargo fmt --all --check
+    cd backend && cargo test --locked -p oqto-runner --lib tui_rpc
+    cd backend && cargo clippy --locked -p oqto-runner --all-targets -- -D warnings
+
 # Runner-only manifest is a fail-closed candidate, not an install-ready artifact
 test-runner-only-manifest:
     python3 -B scripts/lint/test_runner_only_manifest.py

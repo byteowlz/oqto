@@ -26,4 +26,6 @@ mod socket_lease;
 pub mod ssh_agent_proxy;
 pub mod tls;
 pub mod transport;
+#[cfg(unix)]
+pub mod tui_rpc;
 pub mod wire;
