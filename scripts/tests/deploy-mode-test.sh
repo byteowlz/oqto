@@ -85,7 +85,8 @@ done
 checkout="$tmpdir/checkout"
 mkdir -p "$checkout/scripts/dist" "$checkout/deploy" "$checkout/backend"
 cp "$DEPLOY" "$checkout/scripts/deploy.sh"
-cp "$ROOT_DIR/scripts/dist/verify-immutable-migrations.py" "$ROOT_DIR/scripts/dist/deploy-sudo.sh" "$checkout/scripts/dist/"
+cp "$ROOT_DIR/scripts/dist/verify-immutable-migrations.py" "$ROOT_DIR/scripts/dist/deploy-sudo.sh" \
+  "$ROOT_DIR/scripts/dist/deploy-privilege-channel.py" "$checkout/scripts/dist/"
 cp "$ROOT_DIR/dependencies.toml" "$checkout/"
 printf '[workspace.package]\nversion = "0.0.1"\n' > "$checkout/backend/Cargo.toml"
 cp "$tmpdir/hosts.toml" "$checkout/deploy/hosts.toml"

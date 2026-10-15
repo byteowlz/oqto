@@ -4,17 +4,38 @@
 SUDO_REFRESH_SECONDS=30
 SUDO_LEASE_DIR=""
 declare -a SUDO_REFRESH_PIDS=()
+declare -A SUDO_REMOTE_CHANNELS=()
 
 sudo_refresh_host() (
-    local i="$1"
-    if [[ "${H_LOCAL[$i]}" == true ]]; then
-        exec sudo -n -v
-    else
-        # Use the driver's SSH options (the refresh process must be reaped).
-        exec ssh "${OQTO_SSH_OPTIONS[@]}" -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
-            "${H_SSH[$i]}" 'sudo -n -v'
-    fi
+    # Only local tickets are refreshed. Remote hosts retain one sudo process;
+    # an unrelated SSH session cannot refresh its tty/PPID-scoped ticket.
+    exec sudo -n -v
 )
+
+start_remote_privilege_channel() {
+    local i="$1" path="$SUDO_LEASE_DIR/remote-$1.sock" ready="$SUDO_LEASE_DIR/remote-$1.ready" pid option
+    local -a options=()
+    for option in "${OQTO_SSH_OPTIONS[@]}"; do options+=("--ssh-option=$option"); done
+    python3 "$ROOT_DIR/scripts/dist/deploy-privilege-channel.py" serve \
+        --host "${H_SSH[$i]}" --socket "$path" --ready "$ready" "${options[@]}" &
+    pid=$!
+    SUDO_REFRESH_PIDS+=("$pid")
+    while [[ ! -f "$ready" ]]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            err "[${H_NAME[$i]}] remote sudo session failed before build"
+            return 1
+        fi
+        sleep 0.1
+    done
+    SUDO_REMOTE_CHANNELS["${H_SSH[$i]}"]="$path"
+}
+
+remote_privileged_exec() {
+    local target="$1" script="$2" path="${SUDO_REMOTE_CHANNELS[$1]:-}"
+    [[ -n "$path" ]] || { err "No authenticated privilege channel for $target"; return 1; }
+    printf '%s' "$script" | python3 "$ROOT_DIR/scripts/dist/deploy-privilege-channel.py" run --socket "$path"
+}
 
 require_sudo_leases() {
     [[ "$DRY_RUN" == true ]] && return 0
@@ -36,6 +57,7 @@ stop_sudo_leases() {
     for pid in "${SUDO_REFRESH_PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
     for pid in "${SUDO_REFRESH_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
     SUDO_REFRESH_PIDS=()
+    SUDO_REMOTE_CHANNELS=()
     if [[ -n "$SUDO_LEASE_DIR" ]]; then rm -rf -- "$SUDO_LEASE_DIR"; SUDO_LEASE_DIR=""; fi
 }
 
@@ -64,13 +86,13 @@ start_sudo_leases() {
     SUDO_LEASE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/oqto-deploy-auth.XXXXXXXX")" || return 1
     for i in "$@"; do
         log "[${H_NAME[$i]}] authorizing deployment before build"
-        if [[ "${H_LOCAL[$i]}" == true ]]; then
-            sudo -v || return 1
-        elif ! sudo_refresh_host "$i" </dev/null >/dev/null 2>&1; then
-            ssh -tt "${H_SSH[$i]}" 'sudo -v' </dev/tty || return 1
+        if [[ "${H_LOCAL[$i]}" != true ]]; then
+            start_remote_privilege_channel "$i" || return 1
+            remote_privileged_exec "${H_SSH[$i]}" true || return 1
+            continue
         fi
-        # Probe the actual noninteractive execution lane, not merely the tty
-        # used for authentication. Tty/PPID-only remote tickets may not apply.
+        sudo -v || return 1
+        # Probe both local command and refresh scopes before the long build.
         host_exec "${H_LOCAL[$i]}" "${H_SSH[$i]}" 'sudo -n true' || {
             err "[${H_NAME[$i]}] sudo authorization does not cover noninteractive deployment commands; refusing before build. Check the host sudo timestamp policy."
             return 1

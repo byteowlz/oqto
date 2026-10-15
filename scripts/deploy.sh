@@ -239,7 +239,11 @@ host_exec() {
 
 host_exec_sudo() {
     require_sudo_leases || return 1
-    host_exec "$1" "$2" "sudo -n bash -c $(printf '%q' "$3")"
+    if [[ "$DRY_RUN" != true && "$1" != true ]]; then
+        remote_privileged_exec "$2" "$3"
+    else
+        host_exec "$1" "$2" "sudo -n bash -c $(printf '%q' "$3")"
+    fi
 }
 
 # --- release artifact -------------------------------------------------------
@@ -580,7 +584,7 @@ sync_extensions_host() {
     scp -- "$sync" "$list" "$DEPENDENCY_POLICY_FILE" "$ssh_target:$dir/" >/dev/null || return 1
     local q
     q="$(printf '%q' "$dir")"
-    ssh "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi --non-interactive; rc=\$?; rm -rf -- $q; exit \$rc"
+    host_exec_sudo "$is_local" "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi --non-interactive; rc=\$?; rm -rf -- $q; exit \$rc"
 }
 
 print_status_host() {
