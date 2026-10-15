@@ -83,6 +83,7 @@ else:
     with binding_file.open("x") as output:
         json.dump({"work_directory":str(workdir)},output)
 if not manifest.exists():
+    print('oqt: preparing a private runtime for this version…', file=sys.stderr, flush=True)
     if snapshot.exists():
         raise SystemExit("Incomplete source snapshot; inspect it rather than overwriting")
     snapshot.mkdir(mode=0o700)

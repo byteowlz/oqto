@@ -103,6 +103,7 @@ async function ensureHost(): Promise<Host> {
 	try {
 		const existing = await readHost();
 		if (existing) return existing;
+		process.stderr.write("oqt: starting session host…\n");
 		const log = openSync(join(directory as string, "host.log"), "a", 0o600);
 		try {
 			const child = spawn(

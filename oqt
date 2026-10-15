@@ -39,7 +39,7 @@ export CARGO_BUILD_JOBS=1
 export CARGO_TARGET_DIR="$root/backend/target"
 bounded() { timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 "$@"; }
 cd "$root"
-bpf=$(bounded python3 tools/oqt/build-assets.py "$source")
+bpf=$(timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source")
 runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir" "$mode")
 value() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$runtime" "$1"; }
 snapshot=$(value source); profile=$(value profile); home=$(value home); agent=$(value agent)
