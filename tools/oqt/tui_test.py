@@ -68,7 +68,7 @@ def scenario(prompt, choice, result, label, revoke=False):
         marker = len(terminal.raw)
         terminal.send(prompt + "\r")
         terminal.expect("DEMO permission", marker)
-        terminal.expect("→ Deny", marker)
+        terminal.expect("→ 3. Deny", marker)
         # Safest default is Deny. Once is two Up presses; Session is one.
         terminal.send({"once":"\x1b[A\x1b[A\r", "session":"\x1b[A\r", "deny":"\r"}[choice])
         terminal.expect(result, marker)
@@ -77,11 +77,11 @@ def scenario(prompt, choice, result, label, revoke=False):
         if revoke:
             marker = len(terminal.raw)
             terminal.send("/permissions revoke\r")
-            terminal.expect("Approved overlays revoked", marker)
+            terminal.expect("Session grants revoked", marker)
             marker = len(terminal.raw)
             terminal.send(prompt + "\r")
             terminal.expect("DEMO permission", marker)
-            terminal.expect("→ Deny", marker)
+            terminal.expect("→ 3. Deny", marker)
             terminal.send("\r")
             terminal.expect("Permission denied", marker)
         print(f"PASS {label}: real TUI + in-turn {choice}" + (" + live revoke/re-request" if revoke else ""))

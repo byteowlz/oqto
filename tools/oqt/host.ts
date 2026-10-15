@@ -124,6 +124,7 @@ const guard = await Guard.open({
 		bpf,
 	},
 	broker: new OwnerBroker(owner, ownerRefresh(owner)),
+	rulesPath: join(directory, "permission-rules.json"),
 	// Same chain as classic pi: owner global AGENTS.md, then ancestors to the workspace.
 	contextFiles: (workspace) =>
 		loadProjectContextFiles({ cwd: workspace, agentDir: owner }),

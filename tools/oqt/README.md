@@ -48,10 +48,20 @@ launcher (TUI) ──unix──▶ host (upstream server + guard) ──spawns�
 
 ## Permissions
 
-| Request | Dialog choices | Effect |
-|---|---|---|
-| Workspace tool call | Allow once · Allow workspace tools for this Session (60 s) · **Deny** | Exact arguments (once) or the fixed workspace-tools capability (Session) |
-| `request_access` path/network | Allow for this Session (1 h) · **Deny** | Exact canonical path (read or write) or host network, mounted on fresh hands; tool calls are still approved one by one |
+Reads inside the workspace never prompt. Edits and shell commands show a
+menu (Enter = Yes, `1`-`4` pick directly, Esc = No):
+
+1. **Yes** (this call)
+2. **Yes, and don't ask again this session** — for shell this covers the
+   command prefix (`npm test …`); compound commands (`&&`, `|`, `$(…)`,
+   redirects) can only be covered by "all shell commands"
+3. **Yes, and always allow in this repo** — remembered by the guard in the
+   private profile (never agent-writable); can't override a deny
+4. **No** — the agent is told
+
+Shell commands are classified by the trusted guard, never by the agent.
+Wrappers that run other commands (`bash`, `env`, `sudo`, `xargs`, …) never get
+prefix rules. `request_access` (outside paths/network) offers Session (1 h) or No.
 
 Commands:
 - `/permissions` reopens a dismissed dialog.
@@ -69,8 +79,11 @@ workspace file `<workspace>/.oqt/policy.toml` is also optional. It is
 agent-writable, so it **can only narrow**.
 
 ```toml
-workspace_tools = "ask"     # allow | ask | deny
+read = "allow"              # workspace reads (default allow)
+edit = "ask"                # write/edit in the workspace (default ask)
+shell = "ask"               # shell commands (default ask)
 network = "allow"           # allow | ask | deny
+allow_shell = ["cargo test", "npm test"]   # global file only: these never prompt
 outside_paths = "ask"       # ask | deny ("allow" is rejected)
 allow_paths = ["~/Code/shared"]   # global file only: never prompted, mounted read-write
 ask_paths = ["~/Code"]      # still requestable when outside_paths = "deny"

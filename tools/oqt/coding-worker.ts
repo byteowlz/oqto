@@ -111,7 +111,7 @@ export async function createCodingHarness(
 			write: writeToolSystemPromptContribution,
 		};
 		const promptSections = (input: {
-			agent: { tools: { name: string }[] };
+			agent: { tools: readonly { name: string }[] };
 		}) => {
 			const selectedTools = input.agent.tools.map((tool) => tool.name);
 			const toolSnippets: Record<string, string> = {};

@@ -60,7 +60,8 @@ export async function withGuard(
 		broker: new OwnerBroker(owner),
 		ceiling: {
 			global:
-				ceiling ?? (policy === "deny" ? 'workspace_tools = "deny"' : null),
+				ceiling ??
+					(policy === "deny" ? 'read = "deny"\nedit = "deny"\nshell = "deny"' : null),
 			home: root,
 			hardDeny: [],
 		},

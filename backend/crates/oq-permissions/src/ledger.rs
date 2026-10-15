@@ -629,8 +629,22 @@ async fn matching_grant(
     now: u64,
     pinned: Option<&str>,
 ) -> Result<Option<(String, u64)>> {
-    let row = sqlx::query("SELECT id, expires FROM grants WHERE target=? AND revoked=0 AND expires>? AND (operation IS NULL OR operation=?) AND (? IS NULL OR id=?) ORDER BY expires DESC, id LIMIT 1")
-        .bind(digest(&operation.target)?).bind(i64::try_from(now)?)
+    // A Session grant on the generic shell also covers simple prefixed commands.
+    let parent = if operation.target.capability == Capability::Execute
+        && operation
+            .target
+            .resource_id
+            .starts_with(crate::ceiling::SHELL_PREFIX)
+    {
+        digest(&Target {
+            capability: Capability::Execute,
+            resource_id: crate::ceiling::WORKSPACE_SHELL.into(),
+        })?
+    } else {
+        digest(&operation.target)?
+    };
+    let row = sqlx::query("SELECT id, expires FROM grants WHERE target IN (?, ?) AND revoked=0 AND expires>? AND (operation IS NULL OR operation=?) AND (? IS NULL OR id=?) ORDER BY expires DESC, id LIMIT 1")
+        .bind(digest(&operation.target)?).bind(parent).bind(i64::try_from(now)?)
         .bind(&operation.request_id).bind(pinned).bind(pinned).fetch_optional(&mut **tx).await?;
     row.map(|row| {
         Ok((

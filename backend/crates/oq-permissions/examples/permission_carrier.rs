@@ -295,7 +295,9 @@ async fn main() -> Result<()> {
                         !(resource && allow && matches!(lifetime, GrantLifetime::Once)),
                         "resource access is granted per Session, not once"
                     );
-                    let ttl = if resource { 3_600_000 } else { 60_000 };
+                    // Session grants for workspace work last the working day; the
+                    // ledger caps every grant at 24 h and revocation is immediate.
+                    let ttl = if resource { 3_600_000 } else { 8 * 3_600_000 };
                     let request = authority
                         .decide(
                             &operator,
@@ -339,7 +341,7 @@ async fn main() -> Result<()> {
                         resource_id: "egress".into(),
                     }) == RuleMode::Allow;
                     // Deny roots must be invisible to the tools themselves:
-                    // tool calls are admitted as opaque workspace-tools, so a
+                    // tool calls are admitted by kind (read/edit/shell), not path, so a
                     // deny inside any mounted tree is a mount mask, not just
                     // an admission answer.
                     let mut denied_paths = Vec::new();

@@ -37,21 +37,19 @@ with coding_world(script, 'oqt-access-') as (provider, owner, work):
         terminal.expect('oqt coding')
         marker = len(terminal.raw)
         terminal.send('Compare with the shared library.\r')
-        terminal.expect(f'Access request · read {outside}', marker)
+        terminal.expect('Access outside the workspace', marker)
+        terminal.expect(f'read {outside}', marker)
         terminal.expect('Reason: compare with the shared library', marker)
-        terminal.expect('→ Deny', marker)
+        terminal.expect('→ 1. Yes, for this session', marker)
         screen = terminal.raw[marker:].decode('utf8', 'replace')
-        assert 'Allow once' not in screen, 'resource grants are Session-scoped only'
-        terminal.send('\x1b[A\r')  # Allow for this Session (1 hour)
-        marker = terminal.expect('Permission applied', marker)
-        terminal.expect('Coding permission · read', marker)
-        terminal.expect('→ Deny', marker)
-        terminal.send('\x1b[A\x1b[A\r')  # Allow once
-        marker = terminal.expect('Permission applied', marker)
+        assert 'always' not in screen.lower(), 'resource grants are Session-scoped only'
+        terminal.send('1')  # Yes, for this session (1 hour)
+        marker = terminal.expect('Allowing', marker)
+        # The follow-up read needs no prompt: reads are seamless.
         terminal.expect('access-complete', marker)
         assert 'outside-data-5513' in json.dumps(tool_results(provider.calls[-1]))
         assert snapshot(owner) == original
         print('PASS access TUI: operator-approved outside path mounted read-only on fresh hands; '
-              'follow-up tool call approved separately', flush=True)
+              'follow-up read ran without a prompt', flush=True)
     finally:
         terminal.close('coding-access')

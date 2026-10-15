@@ -12,10 +12,24 @@ export interface InterruptedCall {
 	readonly argumentsText: string;
 	readonly startedAt: number;
 }
+export interface RememberedRules {
+	readonly read: boolean;
+	readonly edit: boolean;
+	readonly shell: boolean;
+	readonly shell_prefixes: readonly string[];
+}
+export interface ActiveResource {
+	readonly session: string;
+	readonly capability: string;
+	readonly resource: string;
+	readonly expiresAt: number;
+}
 export interface OperatorState {
 	readonly mode: "coding";
 	readonly pending: readonly PendingPermission[];
 	readonly interrupted: readonly InterruptedCall[];
+	readonly resources: readonly ActiveResource[];
+	readonly rules?: RememberedRules;
 }
 type Listener = (state: OperatorState, context: Context) => void;
 
@@ -30,6 +44,7 @@ export interface PermissionsPort {
 	): Promise<void>;
 	revokeAll(context: Context): Promise<void>;
 	acknowledge(context: Context): Promise<void>;
+	forgetRules(context: Context): Promise<void>;
 	close(): void;
 }
 
@@ -85,7 +100,9 @@ export function guardPermissions(path: string): PermissionsPort {
 							id: string;
 							pending: PendingPermission[];
 							interrupted: Omit<InterruptedCall, "session">[];
+							resources?: Omit<ActiveResource, "session">[];
 						}[];
+						rules?: RememberedRules;
 					};
 					for (const session of data.sessions) known.add(session.id);
 					value = {
@@ -97,6 +114,13 @@ export function guardPermissions(path: string): PermissionsPort {
 								session: session.id,
 							})),
 						),
+						resources: data.sessions.flatMap((session) =>
+							(session.resources ?? []).map((row) => ({
+								...row,
+								session: session.id,
+							})),
+						),
+						...(data.rules ? { rules: data.rules } : {}),
 					};
 					for (const listener of listeners) listener(value, BACKGROUND_CONTEXT);
 					continue;
@@ -156,6 +180,10 @@ export function guardPermissions(path: string): PermissionsPort {
 				(value?.interrupted ?? []).map((row) => row.session),
 			))
 				await call("acknowledge", { session });
+		},
+		async forgetRules(context) {
+			context.abortSignal?.throwIfAborted();
+			await call("forget_rules", {});
 		},
 		close() {
 			closed = true;

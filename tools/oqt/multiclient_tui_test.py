@@ -34,19 +34,19 @@ with coding_world(script, 'oqt-multi-') as (provider, owner, work):
         first.expect('oqt coding')
         marker_a = len(first.raw)
         first.send('Write the shared file.\r')
-        first.expect('Coding permission', marker_a)
+        first.expect('Do you want to proceed?', marker_a)
         assert len(hosts(owner)) == 1
         second = Terminal(['--coding', '--continue', '--owner-profile', str(owner), '--workdir', str(work)])
         second.deadline = time.monotonic() + 90
         second.expect('oqt coding')
         assert len(hosts(owner)) == 1, 'second client must reuse the host and guard'
         marker_b = len(second.raw)
-        second.expect('Coding permission', 0)
-        second.expect('→ Deny', 0)
-        second.send('\x1b[A\x1b[A\r')  # approve once from the second client
-        second.expect('Permission applied', marker_b)
+        second.expect('Do you want to proceed?', 0)
+        second.expect('→ 1. Yes', 0)
+        second.send('1')  # approve once from the second client
+        second.expect('Approved', marker_b)
         # The first client's still-open dialog is now stale: its decision loses.
-        first.send('\x1b[A\x1b[A\r')
+        first.send('1')
         first.expect('Permission decision failed', marker_a)
         first.expect('multi-complete', marker_a)
         second.expect('multi-complete', marker_b)

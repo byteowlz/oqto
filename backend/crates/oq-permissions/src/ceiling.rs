@@ -10,15 +10,28 @@ use serde::Deserialize;
 
 use crate::{Capability, PathLayer, Policy, Rule, RuleMode, Target, policy::digest};
 
-pub const WORKSPACE_TOOLS: &str = "workspace-tools";
+/// Reads of workspace files (and granted resources) through the read tool.
+pub const WORKSPACE_READ: &str = "workspace-read";
+/// Writes and edits of workspace files.
+pub const WORKSPACE_WRITE: &str = "workspace-write";
+/// Shell commands that could not be classified to a simple prefix.
+pub const WORKSPACE_SHELL: &str = "workspace-shell";
+/// Simple shell commands are `shell:<prefix>` (e.g. `shell:npm test`); without
+/// an explicit rule they inherit the generic shell mode.
+pub const SHELL_PREFIX: &str = "shell:";
 pub const NETWORK_EGRESS: &str = "egress";
 pub const PATH_PREFIX: &str = "path:";
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct CeilingFile {
-    workspace_tools: Option<RuleMode>,
+    read: Option<RuleMode>,
+    edit: Option<RuleMode>,
+    shell: Option<RuleMode>,
     network: Option<RuleMode>,
+    /// Owner pre-approved simple shell commands (global file only).
+    #[serde(default)]
+    allow_shell: Vec<String>,
     outside_paths: Option<RuleMode>,
     #[serde(default)]
     deny_paths: Vec<String>,
@@ -41,6 +54,37 @@ pub struct CeilingInput {
     pub workspace: PathBuf,
     /// Protected runtime roots (owner profile, authority, sources, guard).
     pub hard_deny: Vec<PathBuf>,
+    /// Operator "always in this workspace" decisions, stored by the guard
+    /// outside the agent's reach. They lift `ask` to `allow`, never `deny`.
+    #[serde(default)]
+    pub remembered: Remembered,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Remembered {
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub edit: bool,
+    #[serde(default)]
+    pub shell: bool,
+    #[serde(default)]
+    pub shell_prefixes: Vec<String>,
+}
+
+/// A remembered or configured shell prefix: a few plain words, no shell syntax.
+pub fn valid_shell_prefix(prefix: &str) -> bool {
+    !prefix.is_empty()
+        && prefix.len() <= 128
+        && prefix.split(' ').count() <= 3
+        && prefix.split(' ').all(|word| {
+            !word.is_empty()
+                && word.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || matches!(c, '-' | '_' | '.' | ':' | '/' | '@' | '+')
+                })
+        })
 }
 
 /// Paths no grant may touch, relative to home where applicable.
@@ -163,9 +207,32 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
     let workspace = normalize(&input.workspace)?;
     let global = parse(input.global.as_deref(), "global")?;
     let local = parse(input.workspace_file.as_deref(), "workspace")?;
-    let tools = narrower(
-        global.workspace_tools.unwrap_or(RuleMode::Ask),
-        local.workspace_tools.unwrap_or(RuleMode::Allow),
+    // The workspace layer can only narrow: an unset workspace key is `allow`
+    // (no further restriction) and the narrower answer wins.
+    let mode = |global: Option<RuleMode>, default: RuleMode, local: Option<RuleMode>| {
+        narrower(global.unwrap_or(default), local.unwrap_or(RuleMode::Allow))
+    };
+    let lift = |mode: RuleMode, remembered: bool| {
+        if remembered && mode == RuleMode::Ask {
+            RuleMode::Allow
+        } else {
+            mode
+        }
+    };
+    let remembered = &input.remembered;
+    let read = lift(
+        mode(global.read, RuleMode::Allow, local.read),
+        remembered.read,
+    );
+    let edit = lift(
+        mode(global.edit, RuleMode::Ask, local.edit),
+        remembered.edit,
+    );
+    let shell_base = mode(global.shell, RuleMode::Ask, local.shell);
+    let shell = lift(shell_base, remembered.shell);
+    ensure!(
+        local.allow_shell.is_empty(),
+        "workspace ceiling: allow_shell is owner-only; the workspace may deny or ask, never allow"
     );
     let network = narrower(
         global.network.unwrap_or(RuleMode::Ask),
@@ -207,9 +274,23 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
             Rule {
                 target: Target {
                     capability: Capability::Execute,
-                    resource_id: WORKSPACE_TOOLS.into(),
+                    resource_id: WORKSPACE_READ.into(),
                 },
-                mode: tools,
+                mode: read,
+            },
+            Rule {
+                target: Target {
+                    capability: Capability::Execute,
+                    resource_id: WORKSPACE_WRITE.into(),
+                },
+                mode: edit,
+            },
+            Rule {
+                target: Target {
+                    capability: Capability::Execute,
+                    resource_id: WORKSPACE_SHELL.into(),
+                },
+                mode: shell,
             },
             Rule {
                 target: Target {
@@ -221,6 +302,30 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
         ],
         paths: layers,
     };
+    // Pre-approved simple commands lift `ask` (never `deny`) for their prefix.
+    if shell_base == RuleMode::Ask {
+        let mut prefixes: Vec<&String> = global
+            .allow_shell
+            .iter()
+            .chain(&remembered.shell_prefixes)
+            .collect();
+        prefixes.sort();
+        prefixes.dedup();
+        ensure!(prefixes.len() <= 256, "too many allowed shell prefixes");
+        for prefix in prefixes {
+            ensure!(
+                valid_shell_prefix(prefix),
+                "invalid allowed shell prefix: {prefix:?}"
+            );
+            policy.rules.push(Rule {
+                target: Target {
+                    capability: Capability::Execute,
+                    resource_id: format!("{SHELL_PREFIX}{prefix}"),
+                },
+                mode: RuleMode::Allow,
+            });
+        }
+    }
     policy.revision = format!("ceiling-{}", &digest(&policy)?[..16]);
     policy.validate()?;
     Ok(policy)

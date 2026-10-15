@@ -24,6 +24,12 @@ export interface ResourceGrant {
 /** Trusted ceiling inputs; the carrier compiles them deterministically. */
 export interface CeilingInput {
 	global: string | null;
+	remembered: {
+		read: boolean;
+		edit: boolean;
+		shell: boolean;
+		shell_prefixes: string[];
+	};
 	workspace_file: string | null;
 	home: string;
 	workspace: string;

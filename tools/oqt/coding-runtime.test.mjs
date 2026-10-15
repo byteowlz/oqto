@@ -52,10 +52,10 @@ test(
 				);
 				assert.equal((await turn.wait(context)).status, "done");
 				await Promise.all(controls);
-				assert.equal(
-					requests.length,
-					2,
-					"Session approval covers the bound workspace-tools ceiling",
+				// Shell (session) -> revoked -> edit asks -> shell asks again.
+				assert.deepEqual(
+					requests.map((request) => request.category),
+					["shell", "edit", "shell"],
 				);
 				const detached = await readFile(join(workspace, "detached"), "utf8");
 				await sleep(150);

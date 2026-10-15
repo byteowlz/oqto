@@ -29,11 +29,16 @@ test(
 					fauxAssistantMessage("done"),
 				]);
 				const entries = await turn(conversation);
-				assert.equal(requests.length, 4);
+				// Reads inside the workspace are seamless; edits and shell ask.
 				assert.deepEqual(
-					requests.map((request) => request.capability),
-					["write", "edit", "read", "bash"],
+					requests.map((request) => [request.capability, request.category]),
+					[
+						["write", "edit"],
+						["edit", "edit"],
+						["bash", "shell"],
+					],
 				);
+				assert.equal(requests[2].prefix, "cat");
 				assert.equal(
 					await readFile(join(workspace, "code.txt"), "utf8"),
 					"after\n",

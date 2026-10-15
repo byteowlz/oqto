@@ -15,7 +15,7 @@ from tui_test import Terminal
 def script(request):
     done = len(tool_results(request))
     if done < 2:
-        return ('tool', 'bash', {'command': f'echo step{done}'})
+        return ('tool', 'bash', {'command': ['echo step0', 'printf step1'][done]})
     return ('text', 'dialog-done')
 
 
@@ -26,8 +26,8 @@ with coding_world(script, 'oqt-dialog-') as (provider, owner, work):
         t.expect('oqt coding')
         m = len(t.raw)
         t.send('go\r')
-        t.expect('→ Deny', m)
-        t.send('\x1b[A\x1b[A')  # move to "Allow once" (two up from Deny)
+        t.expect('→ 1. Yes', m)
+        t.send('\x1b[B')  # move to "2. Yes, and don't ask again" (session)
         # Force redraw churn while the dialog is open: the window resizes and
         # the permission facet posts status updates.
         for _ in range(4):
@@ -35,12 +35,12 @@ with coding_world(script, 'oqt-dialog-') as (provider, owner, work):
             time.sleep(0.4)
         m = len(t.raw)
         t.send('\r')
-        t.expect('Permission applied', m)
-        # Number keys: second dialog, press 1 (Allow once) directly.
-        t.expect('→ Deny', m)
+        t.expect('Allowing `echo`', m)
+        # Number keys: a different command asks again; 1 = Yes directly.
+        t.expect('→ 1. Yes', m)
         m = len(t.raw)
         t.send('1')
-        t.expect('Permission applied', m)
+        t.expect('Approved', m)
         t.expect('dialog-done', m)
         print('PASS dialog: selection survives redraws; number keys select directly', flush=True)
     finally:

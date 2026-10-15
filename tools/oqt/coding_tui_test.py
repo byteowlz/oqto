@@ -57,12 +57,14 @@ with tempfile.TemporaryDirectory(prefix='oqt-coding-ui-',dir='/var/tmp') as root
         terminal.send('Perform the coding proof.\r')
         marker = len(terminal.raw)
         for name, _ in sequence:
-            terminal.expect('Coding permission',marker)
-            terminal.expect('→ Deny',marker)
+            if name == 'read':
+                continue  # reads inside the workspace never ask
+            terminal.expect('Do you want to proceed?',marker)
+            terminal.expect('→ 1. Yes',marker)
             # Effects cannot begin before explicit approval.
             if name == 'write': assert not (work/'proof.txt').exists()
-            terminal.send('\x1b[A\x1b[A\r')
-            marker = terminal.expect('Permission applied',marker)
+            terminal.send('1')
+            marker = terminal.expect('Approved',marker)
         terminal.expect('coding-proof-complete',marker)
         assert (work/'proof.txt').read_text() == 'after\n'
         assert (work/'shell-proof.txt').read_text() == 'after\n'

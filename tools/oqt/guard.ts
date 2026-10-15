@@ -9,10 +9,13 @@ import {
 	chmodSync,
 	closeSync,
 	constants,
+	existsSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	openSync,
+	readFileSync,
+	renameSync,
 	writeFileSync,
 } from "node:fs";
 import { open, realpath, rm } from "node:fs/promises";
@@ -20,6 +23,7 @@ import type { Server } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { classify } from "./classify.ts";
 import {
 	CodingAuthority,
 	type CodingRequest,
@@ -27,7 +31,6 @@ import {
 	type Operation,
 	type ResourceGrant,
 } from "./coding-authority.ts";
-import type { CodingOperation } from "./gated-tool.ts";
 import { type Peer, serve } from "./guard-wire.ts";
 import { HandsSupervisor } from "./hands-supervisor.ts";
 import type { OwnerBroker } from "./owner-broker.ts";
@@ -36,18 +39,22 @@ function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function codingOperation(value: unknown): CodingOperation {
+/** Validate the brain's call and replace its target with the guard's own
+ * classification: what a call may do is decided here, not by the brain. */
+function codingOperation(value: unknown): Operation {
 	if (
 		!object(value) ||
 		typeof value.request_id !== "string" ||
-		!object(value.target) ||
-		value.target.capability !== "execute" ||
-		value.target.resource_id !== "workspace-tools" ||
 		!object(value.arguments) ||
 		typeof value.arguments.tool !== "string"
 	)
 		throw new Error("Invalid coding operation");
-	return value as unknown as CodingOperation;
+	const { resource } = classify(value.arguments.tool, value.arguments.input);
+	return {
+		request_id: value.request_id,
+		target: { capability: "execute", resource_id: resource },
+		arguments: { tool: value.arguments.tool, input: value.arguments.input },
+	};
 }
 
 function privateDirectory(path: string) {
@@ -105,15 +112,21 @@ function handsSpec(
 function describe(operation: Operation) {
 	const { capability, resource_id } = operation.target;
 	const args = operation.arguments;
-	if (capability === "execute")
+	if (capability === "execute") {
+		const classified = classify(String(args.tool), args.input);
 		return {
 			kind: "tool" as const,
+			category: classified.category,
+			...(classified.prefix ? { prefix: classified.prefix } : {}),
 			capability: String(args.tool),
 			resource: "confined workspace",
 			argumentsText: summarize(args.input),
+			preview: classified.preview,
 		};
+	}
 	return {
 		kind: "resource" as const,
+		category: "resource" as const,
 		capability:
 			capability === "file_write"
 				? "write"
@@ -124,6 +137,7 @@ function describe(operation: Operation) {
 			? resource_id.slice(5)
 			: "host network (all destinations, including localhost)",
 		argumentsText: typeof args.reason === "string" ? args.reason : "",
+		preview: typeof args.reason === "string" ? args.reason : "",
 	};
 }
 
@@ -149,6 +163,63 @@ async function readWorkspaceCeiling(workspace: string) {
 		return await handle.readFile("utf8");
 	} finally {
 		await handle.close();
+	}
+}
+
+export interface Remembered {
+	read: boolean;
+	edit: boolean;
+	shell: boolean;
+	shell_prefixes: string[];
+}
+
+/** Workspace rules the operator chose to keep ("always here"). */
+export class RulesStore {
+	readonly path: string | undefined;
+	constructor(path: string | undefined) {
+		this.path = path;
+	}
+	load(): Remembered {
+		const empty = {
+			read: false,
+			edit: false,
+			shell: false,
+			shell_prefixes: [],
+		};
+		if (!this.path || !existsSync(this.path)) return empty;
+		const value: unknown = JSON.parse(readFileSync(this.path, "utf8"));
+		if (!object(value)) return empty;
+		return {
+			read: value.read === true,
+			edit: value.edit === true,
+			shell: value.shell === true,
+			shell_prefixes: Array.isArray(value.shell_prefixes)
+				? value.shell_prefixes.filter((p): p is string => typeof p === "string")
+				: [],
+		};
+	}
+	save(rules: Remembered) {
+		if (!this.path) throw new Error("No rules store configured");
+		const pending = `${this.path}.tmp`;
+		writeFileSync(pending, JSON.stringify(rules, null, 2), { mode: 0o600 });
+		chmodSync(pending, 0o600);
+		renameSync(pending, this.path);
+	}
+	remember(category: string, prefix: string | undefined) {
+		const rules = this.load();
+		if (category === "read") rules.read = true;
+		else if (category === "edit") rules.edit = true;
+		else if (category === "shell" && prefix) {
+			if (!rules.shell_prefixes.includes(prefix))
+				rules.shell_prefixes.push(prefix);
+		} else if (category === "shell") rules.shell = true;
+		else throw new Error("Nothing to remember for this request");
+		this.save(rules);
+		return rules;
+	}
+	forget() {
+		if (this.path && existsSync(this.path))
+			this.save({ read: false, edit: false, shell: false, shell_prefixes: [] });
 	}
 }
 
@@ -184,6 +255,9 @@ export interface GuardOptions {
 	ceiling?: { global: string | null; home: string; hardDeny: string[] };
 	/** Parent for the private guard directory; defaults to /var/tmp. */
 	parent?: string;
+	/** Guard-owned "always in this workspace" decisions (private, outside
+	 * every brain bind). Absent: nothing is remembered across sessions. */
+	rulesPath?: string;
 	/** Project context files (AGENTS.md chain) read by the trusted host for
 	 * the brain's system prompt. Content is untrusted prompt data. */
 	contextFiles?: (workspace: string) => { path: string; content: string }[];
@@ -251,6 +325,7 @@ export class GuardSession {
 		}),
 	);
 	readonly #live = new Map<Peer, Set<string>>();
+	readonly #admitted = new Map<string, Operation>();
 	#toolServer: Server | undefined;
 	#serial: Promise<unknown> = Promise.resolve();
 	constructor(guard: Guard, id: string, workspace: string, index: number) {
@@ -270,7 +345,10 @@ export class GuardSession {
 		this.toolPath = join(this.socketsDir, "tool.sock");
 		this.handsPath = join(this.socketsDir, "hands.sock");
 		this.ready = this.#init();
-		this.ready.catch(() => {});
+		// Never swallow: a failed session leaves its brain without a tool socket.
+		this.ready.catch((error) =>
+			console.error(`oqt guard: session ${id} failed to start:`, error),
+		);
 	}
 	/** One protected state transition at a time. */
 	serial<T>(step: () => Promise<T>): Promise<T> {
@@ -321,6 +399,7 @@ export class GuardSession {
 			},
 			{
 				global: ceiling.global,
+				remembered: this.guard.rules.load(),
 				workspace_file: await readWorkspaceCeiling(this.workspace),
 				home: ceiling.home,
 				workspace: this.workspace,
@@ -365,11 +444,9 @@ export class GuardSession {
 		switch (method) {
 			case "prepare": {
 				const operation = codingOperation(params.operation);
-				const { expiresAt } = await this.authority.prepare(
-					operation as unknown as Operation,
-					signal,
-				);
+				const { expiresAt } = await this.authority.prepare(operation, signal);
 				live.add(operation.request_id);
+				this.#admitted.set(operation.request_id, operation);
 				// Expired/revoked resource grants leave the mounts before this call runs.
 				await this.syncResources();
 				await this.authority.ready(signal);
@@ -394,9 +471,12 @@ export class GuardSession {
 			}
 			case "check": {
 				const operation = codingOperation(params.operation);
-				if (!live.has(operation.request_id))
+				const admitted = this.#admitted.get(operation.request_id);
+				if (!live.has(operation.request_id) || !admitted)
 					throw new Error("No live invocation on this brain connection");
-				await this.authority.check(operation as unknown as Operation);
+				if (JSON.stringify(admitted) !== JSON.stringify(operation))
+					throw new Error("Invocation changed after admission");
+				await this.authority.check(admitted);
 				return { checked: true };
 			}
 			case "finish": {
@@ -404,6 +484,7 @@ export class GuardSession {
 					throw new Error("No live invocation on this brain connection");
 				await this.authority.finish(params.id);
 				live.delete(params.id);
+				this.#admitted.delete(params.id);
 				return { finished: true };
 			}
 			case "drain": {
@@ -577,6 +658,7 @@ export class Guard {
 	readonly sessions = new Map<string, GuardSession>();
 	readonly #subscribers = new Set<Peer>();
 	readonly #roots = new Set<string>();
+	readonly rules: RulesStore;
 	#operator: Server | undefined;
 	#index = 0;
 	private constructor(options: GuardOptions) {
@@ -584,6 +666,7 @@ export class Guard {
 		this.directory = mkdtempSync(join(options.parent ?? "/var/tmp", "oqg-"));
 		chmodSync(this.directory, 0o700);
 		this.operatorPath = join(this.directory, "operator.sock");
+		this.rules = new RulesStore(options.rulesPath);
 	}
 	static async open(options: GuardOptions) {
 		privateDirectory(options.authorityRoot);
@@ -620,7 +703,14 @@ export class Guard {
 		return session;
 	}
 	state() {
-		return { sessions: [...this.sessions.values()].map((s) => s.state()) };
+		let rules: Remembered | undefined;
+		try {
+			rules = this.rules.load();
+		} catch {}
+		return {
+			sessions: [...this.sessions.values()].map((s) => s.state()),
+			...(rules ? { rules } : {}),
+		};
 	}
 	emit() {
 		const state = this.state();
@@ -653,11 +743,27 @@ export class Guard {
 					(params.lifetime !== "once" && params.lifetime !== "session")
 				)
 					throw new Error("Invalid decision");
+				// "Always here": remember the rule (applies from the next session
+				// start via the ceiling) and grant it for this session now.
+				if (params.allow && params.remember === true) {
+					const request = session.pending.find((row) => row.id === params.id);
+					if (!request) throw new Error("Request is no longer pending");
+					const described = describe(request.operation);
+					if (described.kind !== "tool")
+						throw new Error(
+							"Resource access is granted per session, never always",
+						);
+					this.rules.remember(
+						described.category,
+						"prefix" in described ? described.prefix : undefined,
+					);
+				}
 				await session.authority.decide(
 					{ id: params.id, digest: params.digest, revision: params.revision },
 					params.allow,
-					params.lifetime,
+					params.remember === true ? "session" : params.lifetime,
 				);
+				this.emit();
 				return { decided: true };
 			}
 			case "revoke_all": {
@@ -665,6 +771,16 @@ export class Guard {
 				await session.ready;
 				await session.revokeAll();
 				return { revoked: true };
+			}
+			case "forget_rules": {
+				this.rules.forget();
+				// Grants issued from remembered rules end now, not at next start.
+				for (const session of this.sessions.values()) {
+					await session.ready;
+					await session.revokeAll();
+				}
+				this.emit();
+				return { forgotten: true };
 			}
 			case "acknowledge": {
 				const session = this.#find(params);

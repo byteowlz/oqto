@@ -41,11 +41,11 @@ with coding_world(script, 'oqt-recovery-') as (provider, owner, work):
         terminal.expect('oqt coding')
         marker = len(terminal.raw)
         terminal.send('Start the long loop.\r')
-        terminal.expect('Coding permission', marker)
-        terminal.expect('→ Deny', marker)
+        terminal.expect('Do you want to proceed?', marker)
+        terminal.expect('→ 1. Yes', marker)
         # Session approval: the retry after a crash must still ask again.
-        terminal.send('\x1b[A\r')
-        marker = terminal.expect('Permission applied', marker)
+        terminal.send('2')
+        marker = terminal.expect('Allowing', marker)
         heartbeat = work / 'heartbeat'
         for _ in range(200):
             if size(heartbeat) > 20:
@@ -65,15 +65,15 @@ with coding_world(script, 'oqt-recovery-') as (provider, owner, work):
         print('PASS brain SIGKILL: guard stopped confined shell and descendants', flush=True)
 
         terminal.expect('Interrupted', marker)
-        terminal.expect('Coding permission', marker)
+        terminal.expect('Do you want to proceed?', marker)
         terminal.expect('retried', marker)
-        terminal.expect('→ Deny', marker)
+        terminal.expect('→ 1. Yes', marker)
         assert not (work / 'retried').exists(), 'retry ran before fresh approval'
         recovered = json.dumps(tool_results(provider.calls[-1]))
         assert 'interrupted' in recovered and 'may have partially run' in recovered, recovered
         loops = sum(1 for call in provider.calls if json.dumps(call).count(LOOP) and 'interrupted' not in json.dumps(tool_results(call)))
-        terminal.send('\x1b[A\x1b[A\r')
-        marker = terminal.expect('Permission applied', marker)
+        terminal.send('1')
+        marker = terminal.expect('Approved', marker)
         terminal.expect('recovery-complete', marker)
         assert (work / 'retried').read_text() == 'retried\n'
         executed = [c for c in provider.calls if 'heartbeat' in json.dumps(c)]
@@ -110,10 +110,10 @@ with coding_world(script, 'oqt-host-crash-') as (provider, owner, work):
         terminal.expect('oqt coding')
         marker = len(terminal.raw)
         terminal.send('Start the long loop.\r')
-        terminal.expect('Coding permission', marker)
-        terminal.expect('→ Deny', marker)
-        terminal.send('\x1b[A\r')  # Session grant
-        terminal.expect('Permission applied', marker)
+        terminal.expect('Do you want to proceed?', marker)
+        terminal.expect('→ 1. Yes', marker)
+        terminal.send('2')  # Session grant
+        terminal.expect('Allowing', marker)
         heartbeat = work / 'heartbeat'
         for _ in range(200):
             if size(heartbeat) > 20:
@@ -140,13 +140,13 @@ with coding_world(script, 'oqt-host-crash-') as (provider, owner, work):
     try:
         reopened.expect('oqt coding')
         reopened.expect('Interrupted', 0)
-        reopened.expect('Coding permission', 0)
+        reopened.expect('Do you want to proceed?', 0)
         reopened.expect('retried', 0)
-        reopened.expect('→ Deny', 0)
+        reopened.expect('→ 1. Yes', 0)
         assert not (work / 'retried').exists(), 'retry ran before fresh approval'
         assert not any(d.exists() for d in dead_dirs), 'dead host state was not swept'
         marker = len(reopened.raw)
-        reopened.send('\x1b[A\x1b[A\r')
+        reopened.send('1')
         reopened.expect('recovery-complete', marker)
         assert (work / 'retried').read_text() == 'retried\n'
         print('PASS host recovery: journal reported the call interrupted on restart, Session grant '

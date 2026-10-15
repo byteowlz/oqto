@@ -168,6 +168,21 @@ impl Policy {
         if let Some(rule) = self.rules.iter().find(|rule| rule.target == *target) {
             return rule.mode;
         }
+        // Simple shell commands without their own rule inherit the generic
+        // shell mode (unless the prefix itself is malformed).
+        if target.capability == Capability::Execute
+            && let Some(prefix) = target
+                .resource_id
+                .strip_prefix(crate::ceiling::SHELL_PREFIX)
+        {
+            if !crate::ceiling::valid_shell_prefix(prefix) {
+                return RuleMode::Deny;
+            }
+            return self.mode(&Target {
+                capability: Capability::Execute,
+                resource_id: crate::ceiling::WORKSPACE_SHELL.into(),
+            });
+        }
         match (target.capability, target.resource_id.strip_prefix("path:")) {
             (Capability::FileRead | Capability::FileWrite, Some(path))
                 if !self.paths.is_empty() =>

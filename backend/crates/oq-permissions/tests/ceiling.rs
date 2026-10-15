@@ -18,6 +18,13 @@ fn input(global: Option<&str>, workspace: Option<&str>) -> CeilingInput {
             PathBuf::from("/var/tmp/runtime"),
             PathBuf::from("/home/tester/.pi/agent"),
         ],
+        remembered: Remembered::default(),
+    }
+}
+fn exec(resource: &str) -> Target {
+    Target {
+        capability: Capability::Execute,
+        resource_id: resource.into(),
     }
 }
 fn path(capability: Capability, path: &str) -> Target {
@@ -30,10 +37,7 @@ fn read(path_: &str) -> Target {
     path(Capability::FileRead, path_)
 }
 fn tools() -> Target {
-    Target {
-        capability: Capability::Execute,
-        resource_id: WORKSPACE_TOOLS.into(),
-    }
+    exec(WORKSPACE_WRITE)
 }
 fn network() -> Target {
     Target {
@@ -45,7 +49,23 @@ fn network() -> Target {
 #[test]
 fn defaults_ask_outside_and_hard_deny_secrets_roots_and_containers() {
     let p = compile_ceiling(&input(None, None)).unwrap();
-    assert_eq!(p.mode(&tools()), RuleMode::Ask);
+    assert_eq!(
+        p.mode(&exec(WORKSPACE_READ)),
+        RuleMode::Allow,
+        "reads are seamless"
+    );
+    assert_eq!(p.mode(&exec(WORKSPACE_WRITE)), RuleMode::Ask);
+    assert_eq!(p.mode(&exec(WORKSPACE_SHELL)), RuleMode::Ask);
+    assert_eq!(
+        p.mode(&exec("shell:npm test")),
+        RuleMode::Ask,
+        "inherits shell"
+    );
+    assert_eq!(
+        p.mode(&exec("shell:rm -rf;x")),
+        RuleMode::Deny,
+        "malformed prefix"
+    );
     assert_eq!(p.mode(&network()), RuleMode::Ask);
     assert_eq!(p.mode(&read("/home/tester/Code/library")), RuleMode::Ask);
     assert_eq!(
@@ -86,7 +106,7 @@ fn global_ceiling_shapes_requestable_paths() {
     let p = compile_ceiling(&input(
         Some(
             r#"
-workspace_tools = "allow"
+edit = "allow"
 network = "deny"
 outside_paths = "deny"
 ask_paths = ["~/Code", "/opt/data"]
@@ -110,7 +130,7 @@ deny_paths = ["~/Code/secrets"]
 #[test]
 fn workspace_file_can_only_narrow() {
     let global = r#"
-workspace_tools = "ask"
+edit = "ask"
 outside_paths = "deny"
 ask_paths = ["~/Code"]
 "#;
@@ -119,7 +139,7 @@ ask_paths = ["~/Code"]
         Some(global),
         Some(
             r#"
-workspace_tools = "allow"
+edit = "allow"
 network = "allow"
 outside_paths = "ask"
 ask_paths = ["~/Documents"]
@@ -138,7 +158,7 @@ ask_paths = ["~/Documents"]
         Some(global),
         Some(
             r#"
-workspace_tools = "deny"
+edit = "deny"
 network = "deny"
 deny_paths = ["../shared-secrets", "~/Code/library/private"]
 "#,
@@ -150,7 +170,7 @@ deny_paths = ["../shared-secrets", "~/Code/library/private"]
         Some(global),
         Some(
             r#"
-workspace_tools = "deny"
+edit = "deny"
 network = "deny"
 outside_paths = "deny"
 deny_paths = ["~/Code/library/private"]
@@ -172,7 +192,8 @@ fn unsupported_ceiling_values_fail_closed() {
     for bad in [
         "outside_paths = \"allow\"",
         "unknown_key = 1",
-        "workspace_tools = \"sometimes\"",
+        "edit = \"sometimes\"",
+        "workspace_tools = \"ask\"",
         "deny_paths = [\"\"]",
         "this is not toml",
     ] {
@@ -356,4 +377,88 @@ async fn changed_ceiling_needs_explicit_owner_replacement_which_revokes_everythi
     b.close().await;
     // Replacement is idempotent; strict reopen now matches.
     Authority::open(&file, binding(), changed).await.unwrap();
+}
+
+#[test]
+fn remembered_and_owner_rules_lift_ask_but_never_deny() {
+    let mut remembering = input(Some("allow_shell = [\"cargo test\"]"), None);
+    remembering.remembered = Remembered {
+        read: false,
+        edit: true,
+        shell: false,
+        shell_prefixes: vec!["npm test".into()],
+    };
+    let p = compile_ceiling(&remembering).unwrap();
+    assert_eq!(p.mode(&exec(WORKSPACE_WRITE)), RuleMode::Allow);
+    assert_eq!(p.mode(&exec("shell:npm test")), RuleMode::Allow);
+    assert_eq!(p.mode(&exec("shell:cargo test")), RuleMode::Allow);
+    assert_eq!(p.mode(&exec("shell:npm publish")), RuleMode::Ask);
+    assert_eq!(p.mode(&exec(WORKSPACE_SHELL)), RuleMode::Ask);
+    // A workspace deny beats remembered and owner rules.
+    let mut denied = input(
+        Some("allow_shell = [\"cargo test\"]"),
+        Some("edit = \"deny\"\nshell = \"deny\""),
+    );
+    denied.remembered = Remembered {
+        read: true,
+        edit: true,
+        shell: true,
+        shell_prefixes: vec!["npm test".into()],
+    };
+    let p = compile_ceiling(&denied).unwrap();
+    assert_eq!(p.mode(&exec(WORKSPACE_WRITE)), RuleMode::Deny);
+    assert_eq!(p.mode(&exec("shell:npm test")), RuleMode::Deny);
+    assert_eq!(p.mode(&exec("shell:cargo test")), RuleMode::Deny);
+    // Only the owner may pre-approve shell commands; prefixes are plain words.
+    assert!(compile_ceiling(&input(None, Some("allow_shell = [\"npm test\"]"))).is_err());
+    assert!(compile_ceiling(&input(Some("allow_shell = [\"rm -rf / ; x\"]"), None)).is_err());
+}
+
+#[tokio::test]
+async fn generic_shell_session_grant_covers_prefixed_commands_but_not_vice_versa() {
+    let dir = private_dir();
+    let policy = compile_ceiling(&input(None, None)).unwrap();
+    let a = Authority::open(&dir.path().join("p.sqlite"), binding(), policy)
+        .await
+        .unwrap();
+    // A prefix grant covers only that prefix.
+    approve(
+        &a,
+        &op("s:store:1", exec("shell:npm test")),
+        GrantLifetime::Session,
+        5000,
+    )
+    .await;
+    assert!(matches!(
+        a.admit(op("s:store:2", exec("shell:npm test")), 200)
+            .await
+            .unwrap(),
+        Admission::Allowed(_)
+    ));
+    assert!(matches!(
+        a.admit(op("s:store:3", exec("shell:git push")), 200)
+            .await
+            .unwrap(),
+        Admission::Pending(_)
+    ));
+    assert!(matches!(
+        a.admit(op("s:store:4", exec(WORKSPACE_SHELL)), 200)
+            .await
+            .unwrap(),
+        Admission::Pending(_)
+    ));
+    // A generic shell grant covers every shell command.
+    approve(
+        &a,
+        &op("s:store:5", exec(WORKSPACE_SHELL)),
+        GrantLifetime::Session,
+        5000,
+    )
+    .await;
+    assert!(matches!(
+        a.admit(op("s:store:6", exec("shell:git push")), 300)
+            .await
+            .unwrap(),
+        Admission::Allowed(_)
+    ));
 }
