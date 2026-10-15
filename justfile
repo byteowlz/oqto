@@ -158,11 +158,15 @@ test-oqt-dialog:
 test-oqt-models:
     timeout --kill-after=5s 180s python3 tools/oqt/models_tui_test.py
 
+# /new and /resume switch Sessions with their own transcript and context.
+test-oqt-sessions:
+    timeout --kill-after=5s 180s python3 tools/oqt/sessions_tui_test.py
+
 # All oqt gates (needs the pinned Pi source and built daemon/BPF).
 test-oqt-all:
     tools/oqt/typecheck.sh
     bash tools/oqt/test-hands.sh ~/.local/share/oqt/pi-source /tmp/oqto-pi-env-qualified-target/debug/pi-env backend/target/oqt-prepared/bpf/default-x86_64.bpf
-    just test-oqt-ui test-oqt-coding test-oqt-dialog test-oqt-models test-oqt-prompt test-oqt-access test-oqt-recovery test-oqt-multi
+    just test-oqt-ui test-oqt-coding test-oqt-dialog test-oqt-models test-oqt-sessions test-oqt-prompt test-oqt-access test-oqt-recovery test-oqt-multi
 
 # Put `oqt` on your PATH (user-local symlink; nothing else is installed).
 # The pinned Pi source is expected at ~/.local/share/oqt/pi-source; if it is

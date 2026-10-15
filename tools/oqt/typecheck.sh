@@ -29,7 +29,7 @@ paths.update({
 })
 experimental = snap / 'packages/coding-agent/src/experimental'
 files = [str(experimental / m) for m in ['oqt-runtime-worker.ts', 'oqt-launcher.ts', 'coding-worker.ts', 'host.ts', 'guard.ts',
-         'spawn-hook.ts', 'owner-refresh.ts', 'owner-refresh-core.ts', 'classify.ts', 'session-worker-manager.ts',
+         'spawn-hook.ts', 'session-commands.ts', 'owner-refresh.ts', 'owner-refresh-core.ts', 'classify.ts', 'session-worker-manager.ts',
          'client-tui.ts', 'server.ts', 'session-worker.ts']]
 files += [str(snap / 'packages/coding-agent/examples/plugins/oq-permissions/src/tui.ts'),
           str(snap / 'packages/coding-agent/examples/plugins/oq-permissions/src/models.ts'),

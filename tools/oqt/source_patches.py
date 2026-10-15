@@ -340,6 +340,76 @@ import { resolve } from "node:path";""",
 				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),
 				...this.#sharedFacets.facets,""",
     },
+    {
+        "id": "client-tui-session-commands-facet",
+        "why": "Classic-pi /new and /resume: an oqt client facet with a switcher bound to this TUI.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """				...presentationFacets.facets,
+				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),""",
+        "new": """				...presentationFacets.facets,
+				createOqtSessionFacet({
+					currentSessionId: () => this.#sessionId,
+					switchTo: (sessionId, management) => this.#switchSession(sessionId, management),
+				}),
+				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),""",
+    },
+    {
+        "id": "client-tui-switch-session",
+        "why": "Switch the displayed Session: adopt the target id first (so the attachment and "
+               "reattach handlers follow it), attach, wait for hydration, reopen the lane. "
+               "Serialized with reconnect recovery.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	#reattachAfterWorkerLoss(feature: SessionFeature, management: SessionManagement): void {""",
+        "new": """	#switchSession(sessionId: string, management: SessionManagement): Promise<void> {
+		const feature = this.#session;
+		if (feature === undefined) return Promise.reject(new Error("No Session service is available"));
+		return new Promise<void>((resolve, reject) => {
+			this.#queueRecovery(async () => {
+				try {
+					this.#busy = true;
+					this.#status = "Switching session…";
+					this.#rebuild();
+					this.#sessionId = sessionId;
+					await this.#closeLane();
+					await management.attach(sessionId, BACKGROUND_CONTEXT);
+					await feature.session.whenAttached(sessionId, BACKGROUND_CONTEXT);
+					await this.#openLane(feature);
+					this.#busy = false;
+					this.#status = "";
+					this.#rebuild();
+					resolve();
+				} catch (error) {
+					reject(error);
+					throw error;
+				}
+			});
+		});
+	}
+
+	#reattachAfterWorkerLoss(feature: SessionFeature, management: SessionManagement): void {""",
+    },
+    {
+        "id": "client-tui-session-commands-import",
+        "why": "Import the oqt session commands facet.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """import { appendFileSync } from "node:fs";""",
+        "new": """import { appendFileSync } from "node:fs";
+import { createOqtSessionFacet } from "./session-commands.ts";""",
+    },
+    {
+        "id": "client-tui-attached-keeps-status",
+        "why": "Attachment recovery cleared every status line, hiding e.g. the session-switch "
+               "confirmation. Only clear the recovery's own messages.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """				if (this.#laneUnsubscribe === undefined) await this.#openLane(feature);
+				this.#busy = false;
+				this.#status = "";
+				this.#rebuild();""",
+        "new": """				if (this.#laneUnsubscribe === undefined) await this.#openLane(feature);
+				this.#busy = false;
+				if (/Reattaching|Reconnect|Session worker lost|Switching session/.test(this.#status)) this.#status = "";
+				this.#rebuild();""",
+    },
 ]
 
 
