@@ -94,7 +94,16 @@ def coding_world(script, prefix):
             write_owner(owner, provider.port)
             work = root / 'workspace'
             work.mkdir()
-            yield provider, owner, work
+            # Hermetic: never read the developer's ~/.config/oqto/sandbox.toml.
+            previous = os.environ.get('OQT_SANDBOX_CONFIG')
+            os.environ['OQT_SANDBOX_CONFIG'] = str(root / 'sandbox.toml')
+            try:
+                yield provider, owner, work
+            finally:
+                if previous is None:
+                    os.environ.pop('OQT_SANDBOX_CONFIG', None)
+                else:
+                    os.environ['OQT_SANDBOX_CONFIG'] = previous
         finally:
             provider.close()
 

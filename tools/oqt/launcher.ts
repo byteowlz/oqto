@@ -199,16 +199,39 @@ if (coding) {
 		pluginPackages: [plugin],
 		...(continuing ? { continue: true } : {}),
 	};
-	if (smoke) {
-		const result = await runClient({
-			...command,
-			prompt: "Do not use tools. Reply exactly oqt-coding-ready.",
-		});
-		if (result.kind !== "prompted" || !result.text.includes("oqt-coding-ready"))
-			throw new Error(`Coding smoke failed: ${JSON.stringify(result)}`);
-		console.log(`oqt coding smoke PASS: ${result.text}`);
-	} else {
-		await runClientTui(command, { directory });
+	try {
+		if (smoke) {
+			const result = await runClient({
+				...command,
+				prompt: "Do not use tools. Reply exactly oqt-coding-ready.",
+			});
+			if (
+				result.kind !== "prompted" ||
+				!result.text.includes("oqt-coding-ready")
+			)
+				throw new Error(`Coding smoke failed: ${JSON.stringify(result)}`);
+			console.log(`oqt coding smoke PASS: ${result.text}`);
+		} else {
+			await runClientTui(command, { directory });
+		}
+	} catch (error) {
+		// The server only reports "Internal server error"; the cause (e.g. an
+		// invalid .oqto/sandbox.toml) is in the private host log.
+		const log = await readFile(join(directory, "host.log"), "utf8").catch(
+			() => "",
+		);
+		const causes = log
+			.split("\n")
+			.filter((line) =>
+				/failed to start|Session worker failed|^Error:|^\s+workspace guard|invalid guard|unknown profile/.test(
+					line,
+				),
+			)
+			.slice(-4);
+		process.stderr.write(
+			`oqt: the session could not start: ${error instanceof Error ? error.message : String(error)}\n${causes.map((line) => `  ${line.trim()}`).join("\n")}\n  (full log: ${join(directory, "host.log")})\n`,
+		);
+		process.exit(1);
 	}
 } else {
 	const runtime = await startServer({

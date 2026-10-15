@@ -105,14 +105,14 @@ async function sweepDeadGuards() {
 }
 await sweepDeadGuards();
 
-// Owner's global ceiling (read-only). Workspace .oqt/policy.toml may only narrow it.
+// One sandbox config (ADR-0054): the owner's ~/.config/oqto/sandbox.toml and
+// the workspace's .oqto/sandbox.toml, loaded by the carrier via oqto-sandbox.
 const home = userInfo().homedir;
-const globalCeiling = join(home, ".config", "oqt", "policy.toml");
 const guard = await Guard.open({
 	ceiling: {
-		global: existsSync(globalCeiling)
-			? await readFile(globalCeiling, "utf8")
-			: null,
+		userConfig:
+			process.env.OQT_SANDBOX_CONFIG ||
+			join(home, ".config", "oqto", "sandbox.toml"),
 		home,
 		hardDeny: [agent],
 	},

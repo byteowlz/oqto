@@ -371,8 +371,23 @@ import { resolve } from "node:path";""",
 					this.#rebuild();
 					this.#sessionId = sessionId;
 					await this.#closeLane();
-					await management.attach(sessionId, BACKGROUND_CONTEXT);
-					await feature.session.whenAttached(sessionId, BACKGROUND_CONTEXT);
+					// A Session left moments ago may still have a retiring worker that
+					// rejects the attachment; retry until the server starts a fresh one.
+					for (let attempt = 1; ; attempt++) {
+						try {
+							await management.attach(sessionId, BACKGROUND_CONTEXT);
+							await Promise.race([
+								feature.session.whenAttached(sessionId, BACKGROUND_CONTEXT),
+								new Promise((_, timeout) =>
+									setTimeout(() => timeout(new Error("Session did not attach in time")), 5_000),
+								),
+							]);
+							break;
+						} catch (error) {
+							if (attempt >= 6) throw error;
+							await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+						}
+					}
 					await this.#openLane(feature);
 					this.#busy = false;
 					this.#status = "";

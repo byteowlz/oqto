@@ -22,15 +22,17 @@ export interface ResourceGrant {
 	expires_at: number;
 }
 /** Trusted ceiling inputs; the carrier compiles them deterministically. */
+/** Where the carrier loads the ceiling from: the one sandbox config
+ * (ADR-0054). The carrier reads both files itself through oqto-sandbox. */
 export interface CeilingInput {
-	global: string | null;
+	/** The owner's sandbox.toml (an absent file means defaults). */
+	user_config: string;
 	remembered: {
 		read: boolean;
 		edit: boolean;
 		shell: boolean;
 		shell_prefixes: string[];
 	};
-	workspace_file: string | null;
 	home: string;
 	workspace: string;
 	hard_deny: string[];
@@ -108,7 +110,9 @@ export class CodingAuthority {
 	/** Owner-only: live journal rows from a dead owner become interrupted and
 	 * every overlay is revoked. Call before admitting work. */
 	async recover(): Promise<InterruptedInvocation[]> {
-		const result = await this.operator.call({ command: "recover" });
+		// The first call also covers carrier start, config load and ledger
+		// migration, which can be slow on a loaded single CPU.
+		const result = await this.operator.call({ command: "recover" }, 30_000);
 		if (!object(result) || !Array.isArray(result.interrupted))
 			throw new Error("Invalid recovery response");
 		return result.interrupted as InterruptedInvocation[];

@@ -13,7 +13,8 @@ export class Carrier {
 		role: "tools" | "operator",
 		directory: string,
 		binding: object,
-		/** Coding ceiling inputs (compiled by the carrier); absent for the demo. */
+		/** Coding ceiling source: the carrier loads the one sandbox config
+		 * itself (ADR-0054); absent for the demo. */
 		ceiling?: object,
 	) {
 		const binary = process.env.OQT_CARRIER;
@@ -26,7 +27,7 @@ export class Carrier {
 				OQ_ADAPTIVE_SECCOMP_BPF: process.env.OQT_SECCOMP_BPF,
 				OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
 				OQ_DEMO_BINDING: JSON.stringify(binding),
-				...(ceiling ? { OQT_POLICY_INPUT: JSON.stringify(ceiling) } : {}),
+				...(ceiling ? { OQT_CEILING_SOURCE: JSON.stringify(ceiling) } : {}),
 			},
 		});
 		const lines = createInterface({ input: this.child.stdout });
@@ -61,7 +62,8 @@ export class Carrier {
 			call.reject(error);
 		}
 	}
-	call(command: object): Promise<unknown> {
+	/** `deadlineMs`: per-call budget; startup calls (open + recovery) get more. */
+	call(command: object, deadlineMs = 5000): Promise<unknown> {
 		const stdin = this.child.stdin;
 		if (
 			this.child.exitCode !== null ||
@@ -77,7 +79,7 @@ export class Carrier {
 			const timer = setTimeout(() => {
 				this.rejectAll(new Error("Carrier deadline"));
 				this.child.kill();
-			}, 5000);
+			}, deadlineMs);
 			this.replies.push({ resolve, reject, timer });
 			stdin.write(frame, (error) => {
 				if (error) {

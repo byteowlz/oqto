@@ -8,10 +8,21 @@ use tempfile::TempDir;
 const HOME: &str = "/home/tester";
 const WORKSPACE: &str = "/home/tester/Code/project";
 
+/// Parse a `[guard]` body with oqto-sandbox's own sandbox.toml parser.
+fn guard(body: &str) -> anyhow::Result<oqto_sandbox::GuardConfig> {
+    let file: oqto_sandbox::SandboxConfigFile = toml::from_str(&format!("[guard]\n{body}"))?;
+    Ok(file.guard.unwrap_or_default())
+}
+fn try_compile(global: Option<&str>, workspace: Option<&str>) -> anyhow::Result<Policy> {
+    let mut input = input(None, None);
+    input.owner = global.map(guard).transpose()?;
+    input.workspace_guard = workspace.map(guard).transpose()?;
+    compile_ceiling(&input)
+}
 fn input(global: Option<&str>, workspace: Option<&str>) -> CeilingInput {
     CeilingInput {
-        global: global.map(str::to_string),
-        workspace_file: workspace.map(str::to_string),
+        owner: global.map(|body| guard(body).unwrap()),
+        workspace_guard: workspace.map(|body| guard(body).unwrap()),
         home: PathBuf::from(HOME),
         workspace: PathBuf::from(WORKSPACE),
         hard_deny: vec![
@@ -106,11 +117,11 @@ fn global_ceiling_shapes_requestable_paths() {
     let p = compile_ceiling(&input(
         Some(
             r#"
-edit = "allow"
+edit = "auto"
 network = "deny"
-outside_paths = "deny"
-ask_paths = ["~/Code", "/opt/data"]
-deny_paths = ["~/Code/secrets"]
+outside = "deny"
+paths = ["~/Code", "/opt/data"]
+policy = { "~/Code/secrets/**" = "deny" }
 "#,
         ),
         None,
@@ -130,19 +141,20 @@ deny_paths = ["~/Code/secrets"]
 #[test]
 fn workspace_file_can_only_narrow() {
     let global = r#"
-edit = "ask"
-outside_paths = "deny"
-ask_paths = ["~/Code"]
+edit = "prompt"
+outside = "deny"
+paths = ["~/Code"]
 "#;
-    // Attempts to widen are ineffective.
+    // Attempts to pre-approve from the workspace fail closed.
+    assert!(try_compile(Some(global), Some("edit = \"auto\"")).is_err());
+    assert!(try_compile(Some(global), Some("network = \"auto\"")).is_err());
+    // Asking for more from the workspace is ineffective.
     let widen = compile_ceiling(&input(
         Some(global),
         Some(
             r#"
-edit = "allow"
-network = "allow"
-outside_paths = "ask"
-ask_paths = ["~/Documents"]
+outside = "prompt"
+paths = ["~/Documents"]
 "#,
         ),
     ))
@@ -160,7 +172,7 @@ ask_paths = ["~/Documents"]
             r#"
 edit = "deny"
 network = "deny"
-deny_paths = ["../shared-secrets", "~/Code/library/private"]
+policy = { "../shared-secrets" = "deny" }
 "#,
         ),
     ));
@@ -172,8 +184,8 @@ deny_paths = ["../shared-secrets", "~/Code/library/private"]
             r#"
 edit = "deny"
 network = "deny"
-outside_paths = "deny"
-deny_paths = ["~/Code/library/private"]
+outside = "deny"
+policy = { "~/Code/library/private" = "deny" }
 "#,
         ),
     ))
@@ -190,29 +202,33 @@ deny_paths = ["~/Code/library/private"]
 #[test]
 fn unsupported_ceiling_values_fail_closed() {
     for bad in [
-        "outside_paths = \"allow\"",
+        "outside = \"auto\"",
         "unknown_key = 1",
         "edit = \"sometimes\"",
-        "workspace_tools = \"ask\"",
-        "deny_paths = [\"\"]",
+        "policy = { \"\" = \"deny\" }",
+        "policy = { \"~/Code/*.rs\" = \"deny\" }",
         "this is not toml",
     ] {
-        assert!(compile_ceiling(&input(Some(bad), None)).is_err(), "{bad}");
-        assert!(compile_ceiling(&input(None, Some(bad))).is_err(), "{bad}");
+        assert!(try_compile(Some(bad), None).is_err(), "{bad}");
+        assert!(try_compile(None, Some(bad)).is_err(), "{bad}");
     }
 }
 
 #[test]
 fn global_allow_paths_preapprove_without_prompts_and_lose_only_to_denies() {
-    let p = compile_ceiling(&input(Some("allow_paths = [\"~/Code/library\"]"), None)).unwrap();
+    let p = compile_ceiling(&input(
+        Some("policy = { \"~/Code/library\" = \"auto\" }"),
+        None,
+    ))
+    .unwrap();
     assert_eq!(
         p.mode(&read("/home/tester/Code/library/data")),
         RuleMode::Allow
     );
     // A workspace can still deny, but cannot re-ask or narrow an explicit allow.
     let narrowed = compile_ceiling(&input(
-        Some("allow_paths = [\"~/Code/library\"]"),
-        Some("outside_paths = \"deny\"\ndeny_paths = [\"~/Code/library/private\"]"),
+        Some("policy = { \"~/Code/library/**\" = \"auto\" }"),
+        Some("outside = \"deny\"\npolicy = { \"~/Code/library/private\" = \"deny\" }"),
     ))
     .unwrap();
     assert_eq!(
@@ -224,15 +240,15 @@ fn global_allow_paths_preapprove_without_prompts_and_lose_only_to_denies() {
         RuleMode::Deny
     );
     // The workspace file can never add allows.
-    let err = compile_ceiling(&input(None, Some("allow_paths = [\"/opt/data\"]")))
+    let err = try_compile(None, Some("policy = { \"/opt/data\" = \"auto\" }"))
         .unwrap_err()
         .to_string();
     assert!(err.contains("owner-only"), "{err}");
     // Allowed and ask overlap in one layer is rejected.
-    let err = compile_ceiling(&input(
-        Some("allow_paths = [\"/a\"]\nask_paths = [\"/a\"]"),
+    let err = try_compile(
+        Some("paths = [\"/a\"]\npolicy = { \"/a\" = \"auto\" }"),
         None,
-    ))
+    )
     .unwrap_err()
     .to_string();
     assert!(err.contains("allowed and ask"), "{err}");
@@ -381,7 +397,7 @@ async fn changed_ceiling_needs_explicit_owner_replacement_which_revokes_everythi
 
 #[test]
 fn remembered_and_owner_rules_lift_ask_but_never_deny() {
-    let mut remembering = input(Some("allow_shell = [\"cargo test\"]"), None);
+    let mut remembering = input(Some("auto_shell = [\"cargo test\"]"), None);
     remembering.remembered = Remembered {
         read: false,
         edit: true,
@@ -396,7 +412,7 @@ fn remembered_and_owner_rules_lift_ask_but_never_deny() {
     assert_eq!(p.mode(&exec(WORKSPACE_SHELL)), RuleMode::Ask);
     // A workspace deny beats remembered and owner rules.
     let mut denied = input(
-        Some("allow_shell = [\"cargo test\"]"),
+        Some("auto_shell = [\"cargo test\"]"),
         Some("edit = \"deny\"\nshell = \"deny\""),
     );
     denied.remembered = Remembered {
@@ -410,8 +426,8 @@ fn remembered_and_owner_rules_lift_ask_but_never_deny() {
     assert_eq!(p.mode(&exec("shell:npm test")), RuleMode::Deny);
     assert_eq!(p.mode(&exec("shell:cargo test")), RuleMode::Deny);
     // Only the owner may pre-approve shell commands; prefixes are plain words.
-    assert!(compile_ceiling(&input(None, Some("allow_shell = [\"npm test\"]"))).is_err());
-    assert!(compile_ceiling(&input(Some("allow_shell = [\"rm -rf / ; x\"]"), None)).is_err());
+    assert!(try_compile(None, Some("auto_shell = [\"npm test\"]")).is_err());
+    assert!(try_compile(Some("auto_shell = [\"rm -rf / ; x\"]"), None).is_err());
 }
 
 #[tokio::test]

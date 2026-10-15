@@ -1,12 +1,16 @@
-//! Global/workspace ceiling compiler. The workspace file lives in an
-//! agent-writable directory, so it may only ever narrow: every path request is
+//! Ceiling compiler over oqto-sandbox's guard layer (ADR-0054): the owner's
+//! resolved `guard` (profile + user/admin sandbox.toml) and the workspace
+//! file's `guard`. The workspace file lives in an agent-writable directory,
+//! so it may only ever narrow: every path request is
 //! evaluated against each layer independently and the most restrictive answer
 //! wins. Built-in hard denies (credentials, system roots, protected runtime
 //! roots and anything containing them) sit above every configuration.
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
+
+use oqto_sandbox::{GuardConfig, GuardPolicy};
 
 use crate::{Capability, PathLayer, Policy, Rule, RuleMode, Target, policy::digest};
 
@@ -22,41 +26,35 @@ pub const SHELL_PREFIX: &str = "shell:";
 pub const NETWORK_EGRESS: &str = "egress";
 pub const PATH_PREFIX: &str = "path:";
 
-#[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+/// One ceiling layer in compiler terms, derived from a `GuardConfig`.
+#[derive(Default)]
 struct CeilingFile {
     read: Option<RuleMode>,
     edit: Option<RuleMode>,
     shell: Option<RuleMode>,
     network: Option<RuleMode>,
     /// Owner pre-approved simple shell commands (global file only).
-    #[serde(default)]
     allow_shell: Vec<String>,
     outside_paths: Option<RuleMode>,
-    #[serde(default)]
     deny_paths: Vec<String>,
-    #[serde(default)]
     ask_paths: Vec<String>,
     /// Owner pre-approval, honored only in the trusted global file.
-    #[serde(default)]
     allow_paths: Vec<String>,
 }
 
 /// Trusted inputs. `home`/`workspace` come from the guard, never from a file.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct CeilingInput {
-    /// Raw TOML text of the owner's global ceiling, if any.
-    pub global: Option<String>,
-    /// Raw TOML text of the workspace's ceiling, if any.
-    pub workspace_file: Option<String>,
+    /// The owner's resolved guard (sandbox profile + user/admin sandbox.toml).
+    pub owner: Option<GuardConfig>,
+    /// The workspace file's guard (`.oqto/sandbox.toml`), a narrowing layer.
+    pub workspace_guard: Option<GuardConfig>,
     pub home: PathBuf,
     pub workspace: PathBuf,
     /// Protected runtime roots (owner profile, authority, sources, guard).
     pub hard_deny: Vec<PathBuf>,
     /// Operator "always in this workspace" decisions, stored by the guard
     /// outside the agent's reach. They lift `ask` to `allow`, never `deny`.
-    #[serde(default)]
     pub remembered: Remembered,
 }
 
@@ -166,21 +164,66 @@ fn expand(raw: &str, home: &Path, base: &Path) -> Result<PathBuf> {
     normalize(&path)
 }
 
-fn parse(text: Option<&str>, name: &str) -> Result<CeilingFile> {
-    match text {
-        None => Ok(CeilingFile::default()),
-        Some(text) => {
-            ensure!(text.len() <= 64 * 1024, "{name} ceiling too large");
-            toml::from_str(text).with_context(|| format!("invalid {name} ceiling"))
+fn mode(policy: &GuardPolicy) -> RuleMode {
+    match policy {
+        GuardPolicy::Auto => RuleMode::Allow,
+        GuardPolicy::Prompt => RuleMode::Ask,
+        GuardPolicy::Deny => RuleMode::Deny,
+    }
+}
+
+/// `~/Code`, `~/Code/*` and `~/Code/**` name the same subtree; any other glob
+/// syntax is not supported and fails closed.
+fn subtree(pattern: &str) -> Result<String> {
+    let trimmed = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+        .unwrap_or(pattern);
+    ensure!(
+        !trimmed.is_empty() && !trimmed.contains(['*', '?', '[', ']', '{', '}']),
+        "guard path {pattern:?}: only plain paths with an optional /* or /** suffix are supported"
+    );
+    Ok(trimmed.to_string())
+}
+
+fn from_guard(guard: Option<&GuardConfig>, name: &str) -> Result<CeilingFile> {
+    let Some(guard) = guard else {
+        return Ok(CeilingFile::default());
+    };
+    ensure!(
+        guard.paths.len() + guard.policy.len() <= 512,
+        "{name} guard: too many paths"
+    );
+    let mut layer = CeilingFile {
+        read: guard.read.as_ref().map(mode),
+        edit: guard.edit.as_ref().map(mode),
+        shell: guard.shell.as_ref().map(mode),
+        network: guard.network.as_ref().map(mode),
+        allow_shell: guard.auto_shell.clone(),
+        outside_paths: guard.outside.as_ref().map(mode),
+        ..CeilingFile::default()
+    };
+    for path in &guard.paths {
+        layer.ask_paths.push(subtree(path)?);
+    }
+    let mut entries: Vec<_> = guard.policy.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (path, policy) in entries {
+        let path = subtree(path)?;
+        match policy {
+            GuardPolicy::Auto => layer.allow_paths.push(path),
+            GuardPolicy::Prompt => layer.ask_paths.push(path),
+            GuardPolicy::Deny => layer.deny_paths.push(path),
         }
     }
+    Ok(layer)
 }
 
 fn layer(file: &CeilingFile, home: &Path, base: &Path, name: &str) -> Result<PathLayer> {
     let default = file.outside_paths.unwrap_or(RuleMode::Ask);
     ensure!(
         default != RuleMode::Allow,
-        "{name} ceiling: outside_paths may be \"ask\" or \"deny\"; unapproved access is never allowed"
+        "{name} guard: outside may be \"prompt\" or \"deny\"; unapproved outside access never happens"
     );
     ensure!(
         file.deny_paths.len() <= 256 && file.ask_paths.len() <= 256,
@@ -205,8 +248,8 @@ fn layer(file: &CeilingFile, home: &Path, base: &Path, name: &str) -> Result<Pat
 pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
     let home = normalize(&input.home)?;
     let workspace = normalize(&input.workspace)?;
-    let global = parse(input.global.as_deref(), "global")?;
-    let local = parse(input.workspace_file.as_deref(), "workspace")?;
+    let global = from_guard(input.owner.as_ref(), "owner")?;
+    let local = from_guard(input.workspace_guard.as_ref(), "workspace")?;
     // The workspace layer can only narrow: an unset workspace key is `allow`
     // (no further restriction) and the narrower answer wins.
     let mode = |global: Option<RuleMode>, default: RuleMode, local: Option<RuleMode>| {
@@ -232,7 +275,7 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
     let shell = lift(shell_base, remembered.shell);
     ensure!(
         local.allow_shell.is_empty(),
-        "workspace ceiling: allow_shell is owner-only; the workspace may deny or ask, never allow"
+        "workspace guard: auto_shell is owner-only; the workspace may only prompt or deny"
     );
     let network = narrower(
         global.network.unwrap_or(RuleMode::Ask),
@@ -261,10 +304,18 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
         },
         layer(&global, &home, &home, "global")?,
     ];
-    if input.workspace_file.is_some() {
+    if input.workspace_guard.is_some() {
+        ensure!(
+            local.allow_paths.is_empty()
+                && !matches!(local.read, Some(RuleMode::Allow))
+                && !matches!(local.edit, Some(RuleMode::Allow))
+                && !matches!(local.shell, Some(RuleMode::Allow))
+                && !matches!(local.network, Some(RuleMode::Allow)),
+            "workspace guard: auto is owner-only (it would widen approvals); the workspace may only prompt or deny"
+        );
         ensure!(
             local.allow_paths.is_empty(),
-            "workspace ceiling: allow_paths is owner-only; the workspace may deny or ask, never allow"
+            "workspace guard: auto paths are owner-only; the workspace may only prompt or deny"
         );
         layers.push(layer(&local, &home, &workspace, "workspace")?);
     }

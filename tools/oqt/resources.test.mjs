@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
-import { mkdtemp } from "node:fs/promises";
 import {
 	call,
 	fauxAssistantMessage,
@@ -65,7 +64,10 @@ test(
 				assert.ok(entries["before-grant"].isError, "invisible before approval");
 				assert.ok(!text(entries["before-grant"]).includes("outside-data-4417"));
 				assert.ok(!entries["ask-read"].isError, text(entries["ask-read"]));
-				console.error("AFTER-GRANT:", text(entries["after-grant"]).slice(0, 300));
+				console.error(
+					"AFTER-GRANT:",
+					text(entries["after-grant"]).slice(0, 300),
+				);
 				assert.ok(text(entries["after-grant"]).includes("outside-data-4417"));
 				assert.ok(
 					entries["write-ro"].isError,
@@ -160,10 +162,9 @@ test(
 	{ timeout: 30000 },
 	async () => {
 		await withGuard(
-			async ({ root, faux, conversation, requests, workspace }) => {
+			async ({ root, faux, conversation, requests }) => {
 				const outside = join(root, "outside");
 				await mkdir(outside);
-				await mkdir(join(workspace, ".oqt"));
 				faux.setResponses([
 					call(
 						"request_access",
@@ -216,7 +217,7 @@ test(
 				assert.ok(entries.narrowed.isError);
 				assert.equal(requests.length, 0);
 			},
-			{ decide: decideAll, workspaceCeiling: 'outside_paths = "deny"' },
+			{ decide: decideAll, workspaceCeiling: 'outside = "deny"' },
 		);
 	},
 );
@@ -251,9 +252,7 @@ test(
 				assert.deepEqual(guardSession.state().resources, [], "no grant needed");
 			},
 			{
-				ceiling:
-					`allow_paths = ["${ALLOW_ROOT}"]\n` +
-					`deny_paths = ["${ALLOW_ROOT}/outside/secret"]`,
+				ceiling: `policy = { "${ALLOW_ROOT}/**" = "auto", "${ALLOW_ROOT}/outside/secret" = "deny" }`,
 			},
 		);
 	},

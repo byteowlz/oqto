@@ -43,10 +43,21 @@ export async function withGuard(
 	const owner = join(root, "owner");
 	await mkdir(workspace);
 	await mkdir(owner, { mode: 0o700 });
+	// One sandbox config (ADR-0054): `ceiling` and `workspaceCeiling` are
+	// `[guard]` bodies of the owner's and the workspace's sandbox.toml.
 	if (workspaceCeiling) {
-		await mkdir(join(workspace, ".oqt"));
-		await writeFile(join(workspace, ".oqt", "policy.toml"), workspaceCeiling);
+		await mkdir(join(workspace, ".oqto"));
+		await writeFile(
+			join(workspace, ".oqto", "sandbox.toml"),
+			`[guard]\n${workspaceCeiling}\n`,
+		);
 	}
+	const userConfig = join(root, "sandbox.toml");
+	const ownerGuard =
+		ceiling ??
+		(policy === "deny" ? 'read = "deny"\nedit = "deny"\nshell = "deny"' : null);
+	if (ownerGuard !== null)
+		await writeFile(userConfig, `[guard]\n${ownerGuard}\n`);
 	const daemon = join(root, "pi-env");
 	await copyFile(process.env.OQT_ENV_DAEMON, daemon);
 	const guard = await Guard.open({
@@ -58,13 +69,7 @@ export async function withGuard(
 			bpf: process.env.OQT_SECCOMP_BPF,
 		},
 		broker: new OwnerBroker(owner),
-		ceiling: {
-			global:
-				ceiling ??
-					(policy === "deny" ? 'read = "deny"\nedit = "deny"\nshell = "deny"' : null),
-			home: root,
-			hardDeny: [],
-		},
+		ceiling: { userConfig, home: root, hardDeny: [] },
 		parent: root,
 	});
 	const session = "coding-public-session";

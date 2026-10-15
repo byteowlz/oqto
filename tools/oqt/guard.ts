@@ -8,7 +8,6 @@ import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	closeSync,
-	constants,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -18,7 +17,7 @@ import {
 	renameSync,
 	writeFileSync,
 } from "node:fs";
-import { open, realpath, rm } from "node:fs/promises";
+import { realpath, rm } from "node:fs/promises";
 import type { Server } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -141,31 +140,6 @@ function describe(operation: Operation) {
 	};
 }
 
-/** The workspace ceiling is agent-writable data: bounded, regular, never followed. */
-async function readWorkspaceCeiling(workspace: string) {
-	let handle: Awaited<ReturnType<typeof open>> | undefined;
-	try {
-		handle = await open(
-			join(workspace, ".oqt", "policy.toml"),
-			constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-		);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT")
-			return null;
-		throw new Error(
-			"Workspace ceiling .oqt/policy.toml is unreadable or a symlink",
-		);
-	}
-	try {
-		const info = await handle.stat();
-		if (!info.isFile() || info.size > 64 * 1024)
-			throw new Error("Workspace ceiling must be a regular file under 64 KiB");
-		return await handle.readFile("utf8");
-	} finally {
-		await handle.close();
-	}
-}
-
 export interface Remembered {
 	read: boolean;
 	edit: boolean;
@@ -250,9 +224,10 @@ export interface GuardOptions {
 	hands: { launcher: string; daemon: string; bpf: string };
 	broker: OwnerBroker;
 	brain?: BrainConfig;
-	/** Owner ceiling inputs. The workspace's own .oqt/policy.toml is read per
-	 * session and may only narrow. Built-in hard denies always apply. */
-	ceiling?: { global: string | null; home: string; hardDeny: string[] };
+	/** Ceiling source (ADR-0054): the owner's sandbox.toml; the carrier also
+	 * reads the workspace's .oqto/sandbox.toml, which may only narrow.
+	 * Built-in hard denies always apply. */
+	ceiling?: { userConfig: string; home: string; hardDeny: string[] };
 	/** Parent for the private guard directory; defaults to /var/tmp. */
 	parent?: string;
 	/** Guard-owned "always in this workspace" decisions (private, outside
@@ -378,7 +353,7 @@ export class GuardSession {
 		});
 		const hash = createHash("sha256").update(this.workspace).digest("hex");
 		const ceiling = options.ceiling ?? {
-			global: null,
+			userConfig: join(userInfo().homedir, ".config", "oqto", "sandbox.toml"),
 			home: userInfo().homedir,
 			hardDeny: [],
 		};
@@ -398,9 +373,8 @@ export class GuardSession {
 				this.guard.emit();
 			},
 			{
-				global: ceiling.global,
+				user_config: ceiling.userConfig,
 				remembered: this.guard.rules.load(),
-				workspace_file: await readWorkspaceCeiling(this.workspace),
 				home: ceiling.home,
 				workspace: this.workspace,
 				hard_deny: [

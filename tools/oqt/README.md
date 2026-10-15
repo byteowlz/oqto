@@ -74,28 +74,33 @@ Completed effects and disclosures cannot be undone.
 
 ### Ceilings
 
-The global file `~/.config/oqt/policy.toml` is optional and only read. The
-workspace file `<workspace>/.oqt/policy.toml` is also optional. It is
-agent-writable, so it **can only narrow**.
+oqt has no config of its own (ADR-0054). Approval rules live in the `[guard]`
+section of the same sandbox config Oqto uses: `~/.config/oqto/sandbox.toml`
+(yours, may loosen or tighten) and `<workspace>/.oqto/sandbox.toml`
+(agent-writable, so it **can only narrow**: any `auto` fails the session
+closed with the reason shown). `OQT_SANDBOX_CONFIG` overrides the user file.
+oqt always confines; `enabled` is the Oqto runner's switch only.
 
 ```toml
-read = "allow"              # workspace reads (default allow)
-edit = "ask"                # write/edit in the workspace (default ask)
-shell = "ask"               # shell commands (default ask)
-network = "allow"           # allow | ask | deny
-allow_shell = ["cargo test", "npm test"]   # global file only: these never prompt
-outside_paths = "ask"       # ask | deny ("allow" is rejected)
-allow_paths = ["~/Code/shared"]   # global file only: never prompted, mounted read-write
-ask_paths = ["~/Code"]      # still requestable when outside_paths = "deny"
-deny_paths = ["~/Code/secrets"]   # invisible to the tools, wins over allow/ask
+[guard]
+read = "auto"               # workspace reads (default auto)
+edit = "prompt"             # write/edit in the workspace (default prompt)
+shell = "prompt"            # shell commands (default prompt)
+network = "prompt"          # auto | prompt | deny
+auto_shell = ["cargo test", "npm test"]   # user file only: these never prompt
+outside = "prompt"          # prompt | deny ("auto" is rejected)
+paths = ["~/Code"]          # still requestable when outside = "deny"
+policy = { "~/Code/shared/**" = "auto", "~/Code/secrets" = "deny" }
 ```
 
+Path keys are plain paths, optionally ending in `/*` or `/**` (same subtree);
+other globs fail closed. `auto` paths are never prompted and are mounted
+read-write; `deny` paths are invisible to the tools.
 Built-in hard denies always apply: credential and config dirs (`~/.ssh`,
 `~/.config`, `~/.pi`, `~/.aws` and others), system roots (`/proc`, `/etc/shadow`
 and others), protected runtime roots, the workspace itself, and **anything
 containing these**, such as `$HOME` or `/`. Unknown keys or values fail closed.
-`allow_paths` is honored only in the global file (the workspace file may deny
-or ask, never allow); an explicit deny beats an explicit allow, which beats
+An explicit deny beats an explicit allow, which beats
 everything else. Deny roots are mounted empty inside the hands, so masked
 content is invisible to the tools, not just unprompted. A changed ceiling takes
 effect when the Session's host starts. Adopting it revokes every grant.

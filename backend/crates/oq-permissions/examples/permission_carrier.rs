@@ -49,6 +49,31 @@ enum Command {
     AcknowledgeInterrupted,
     Resources,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CeilingSource {
+    /// The owner's sandbox.toml (absent file: defaults).
+    user_config: PathBuf,
+    home: PathBuf,
+    workspace: PathBuf,
+    hard_deny: Vec<PathBuf>,
+    #[serde(default)]
+    remembered: Remembered,
+}
+
+fn load_ceiling(source: CeilingSource) -> Result<Policy> {
+    let config = SandboxConfig::load_user_config_at(&source.user_config)?;
+    let workspace = SandboxConfig::try_load_from_workspace(&source.workspace, &config.profiles)?;
+    compile_ceiling(&CeilingInput {
+        owner: config.guard.clone(),
+        workspace_guard: workspace.and_then(|workspace| workspace.workspace_guard),
+        home: source.home,
+        workspace: source.workspace,
+        hard_deny: source.hard_deny,
+        remembered: source.remembered,
+    })
+}
+
 fn now() -> Result<u64> {
     Ok(u64::try_from(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
@@ -124,12 +149,12 @@ async fn main() -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     let operator = binding.account_id.clone();
-    // Coding mode: the trusted guard supplies the ceiling inputs (global and
-    // workspace TOML text plus protected roots); unsupported values fail closed.
-    let ceiling = match std::env::var("OQT_POLICY_INPUT") {
-        Ok(encoded) => Some(compile_ceiling(&serde_json::from_str::<CeilingInput>(
-            &encoded,
-        )?)?),
+    // Coding mode: the ceiling comes from the one sandbox config (ADR-0054):
+    // the owner's sandbox.toml (profile + [guard]) and the workspace's
+    // .oqto/sandbox.toml [guard], both loaded strictly through oqto-sandbox.
+    // The trusted guard supplies only locations and protected roots.
+    let ceiling = match std::env::var("OQT_CEILING_SOURCE") {
+        Ok(encoded) => Some(load_ceiling(serde_json::from_str(&encoded)?)?),
         Err(std::env::VarError::NotPresent) => None,
         Err(error) => return Err(error.into()),
     };
