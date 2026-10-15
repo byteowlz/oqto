@@ -184,6 +184,25 @@ export interface GuardOptions {
 	ceiling?: { global: string | null; home: string; hardDeny: string[] };
 	/** Parent for the private guard directory; defaults to /var/tmp. */
 	parent?: string;
+	/** Project context files (AGENTS.md chain) read by the trusted host for
+	 * the brain's system prompt. Content is untrusted prompt data. */
+	contextFiles?: (workspace: string) => { path: string; content: string }[];
+}
+
+const CONTEXT_FILE_LIMIT = 256 * 1024;
+const CONTEXT_TOTAL_LIMIT = 1024 * 1024;
+function boundedContext(files: { path: string; content: string }[]) {
+	let total = 0;
+	const out: { path: string; content: string }[] = [];
+	for (const file of files) {
+		let content = file.content;
+		if (content.length > CONTEXT_FILE_LIMIT)
+			content = `${content.slice(0, CONTEXT_FILE_LIMIT)}\n[truncated by oqt: file exceeds ${CONTEXT_FILE_LIMIT} bytes]`;
+		if (total + content.length > CONTEXT_TOTAL_LIMIT) break;
+		total += content.length;
+		out.push({ path: file.path, content });
+	}
+	return out;
 }
 
 export interface SessionState {
@@ -400,6 +419,10 @@ export class GuardSession {
 				// The worker must report the host pid the manager spawned and will signal.
 				if (this.brainPid === undefined) throw new Error("No spawned brain");
 				return { pid: this.brainPid };
+			case "context":
+				return boundedContext(
+					this.guard.options.contextFiles?.(this.workspace) ?? [],
+				);
 			case "credential":
 				if (typeof params.provider !== "string")
 					throw new Error("Provider required");

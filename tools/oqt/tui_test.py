@@ -26,6 +26,10 @@ class Terminal:
         self.raw = bytearray()
         self.deadline = time.monotonic() + 45
 
+    def resize(self, rows, cols):
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        os.killpg(self.process.pid, signal.SIGWINCH)
+
     def send(self, text):
         os.write(self.master, text.encode())
 

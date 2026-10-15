@@ -6,6 +6,7 @@ import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import lockfile from "proper-lockfile";
+import { loadProjectContextFiles } from "../core/resource-loader.ts";
 import { Guard } from "./guard.ts";
 import { OwnerBroker } from "./owner-broker.ts";
 import { ownerModelDefaults } from "./owner-models.ts";
@@ -123,6 +124,9 @@ const guard = await Guard.open({
 		bpf,
 	},
 	broker: new OwnerBroker(owner, ownerRefresh(owner)),
+	// Same chain as classic pi: owner global AGENTS.md, then ancestors to the workspace.
+	contextFiles: (workspace) =>
+		loadProjectContextFiles({ cwd: workspace, agentDir: owner }),
 	brain: {
 		launcher: required("OQT_BRAIN"),
 		node: process.execPath,

@@ -77,6 +77,9 @@ fn main() -> Result<()> {
     config.extra_ro_bind = vec![daemon.display().to_string()];
     config.extra_rw_bind.clear();
     config.workspace_cache_enabled = false;
+    // oqt executors are not Pi/Claude harness sessions: never create or bind
+    // history shards inside the owner's ~/.pi or ~/.claude (preserve-first).
+    config.scoped_paths.clear();
     config.isolate_network = true;
     config.seccomp_mode = SeccompMode::Enforce;
     config.seccomp_bpf_path = Some(spec.bpf.canonicalize()?.display().to_string());

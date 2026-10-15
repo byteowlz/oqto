@@ -147,6 +147,13 @@ test-oqt-access:
 test-oqt-multi:
     timeout --kill-after=5s 200s python3 tools/oqt/multiclient_tui_test.py
 
+# Pi system prompt incl. AGENTS.md chain; dialog input survives redraws.
+test-oqt-prompt:
+    timeout --kill-after=5s 230s python3 tools/oqt/prompt_test.py
+
+test-oqt-dialog:
+    timeout --kill-after=5s 150s python3 tools/oqt/dialog_tui_test.py
+
 # Put `oqt` on your PATH (user-local symlink; nothing else is installed).
 # The pinned Pi source is expected at ~/.local/share/oqt/pi-source; if it is
 # missing, copy the qualified checkout there:

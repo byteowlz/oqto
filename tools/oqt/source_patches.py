@@ -177,6 +177,92 @@ PATCHES = [
         "new": """import { formatTokens } from "../modes/interactive/components/footer.ts";
 import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
     },
+    {
+        "id": "client-tui-stable-selector",
+        "why": "The selector was rebuilt on every redraw (any transcript/status update) and "
+               "reset to its default item, so arrow keys and Ctrl+C appeared dead in dialogs. "
+               "Build it once per selection and keep it across redraws.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """		if (this.#screen === "select" && this.#selection !== undefined) {
+			this.#chatInput.focused = false;
+			const selector = new Container();
+			selector.addChild(new Text(theme.bold(this.#selection.title), 1, 1));
+			const items = [...this.#selection.items];
+			this.#selectList = new SelectList(items, Math.min(Math.max(items.length, 1), 12), selectTheme);
+			const selectedIndex = items.findIndex((item) => item.value === this.#selection?.selectedValue);
+			if (selectedIndex >= 0) this.#selectList.setSelectedIndex(selectedIndex);
+			this.#selectList.onSelect = (item) => this.#completeSelection(item.value);
+			this.#selectList.onCancel = () => this.#completeSelection(undefined);
+			selector.addChild(this.#selectList);
+			this.#editorContainer.addChild(selector);
+		} else {""",
+        "new": """		if (this.#screen === "select" && this.#selection !== undefined) {
+			this.#chatInput.focused = false;
+			if (this.#selectorFor !== this.#selection || this.#selector === undefined) {
+				const selector = new Container();
+				selector.addChild(new Text(theme.bold(this.#selection.title), 1, 1));
+				const items = [...this.#selection.items];
+				this.#selectList = new SelectList(items, Math.min(Math.max(items.length, 1), 12), selectTheme);
+				const selectedIndex = items.findIndex((item) => item.value === this.#selection?.selectedValue);
+				if (selectedIndex >= 0) this.#selectList.setSelectedIndex(selectedIndex);
+				this.#selectList.onSelect = (item) => this.#completeSelection(item.value);
+				this.#selectList.onCancel = () => this.#completeSelection(undefined);
+				selector.addChild(this.#selectList);
+				this.#selector = selector;
+				this.#selectorFor = this.#selection;
+			}
+			this.#editorContainer.addChild(this.#selector);
+		} else {
+			this.#selector = undefined;
+			this.#selectorFor = undefined;""",
+    },
+    {
+        "id": "client-tui-stable-selector-fields",
+        "why": "State for the stable selector.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	readonly #sessionHeading = new Text("", 1, 0);""",
+        "new": """	readonly #sessionHeading = new Text("", 1, 0);
+	#selector: Container | undefined;
+	#selectorFor: unknown;""",
+    },
+    {
+        "id": "client-tui-select-number-keys",
+        "why": "Number keys pick a selector item directly (1-9).",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """		this.#selectList?.handleInput(data);
+	}""",
+        "new": """		const digit = /^[1-9]$/.test(data) ? Number(data) - 1 : -1;
+		const item = digit >= 0 ? this.#selection?.items[digit] : undefined;
+		if (item !== undefined) {
+			this.#completeSelection(item.value);
+			return;
+		}
+		this.#selectList?.handleInput(data);
+	}""",
+    },
+    {
+        "id": "client-tui-input-trace",
+        "why": "OQT_DEBUG=1 records every input event with TUI state (busy, screen, selector) to a "
+               "private log, to diagnose input that appears to be dropped in a user's terminal.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	handleInput(data: string): void {
+		if (this.#busy) {""",
+        "new": """	handleInput(data: string): void {
+		if (process.env.OQT_DEBUG && process.env.OQT_INPUT_TRACE)
+			appendFileSync(
+				process.env.OQT_INPUT_TRACE,
+				`${new Date().toISOString()} busy=${this.#busy} screen=${this.#screen} select=${this.#selectList !== undefined} status=${JSON.stringify(this.#status)} data=${Buffer.from(data).toString("hex")}\n`,
+			);
+		if (this.#busy) {""",
+    },
+    {
+        "id": "client-tui-input-trace-import",
+        "why": "Import for the debug input trace.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """import { resolve } from "node:path";""",
+        "new": """import { appendFileSync } from "node:fs";
+import { resolve } from "node:path";""",
+    },
 ]
 
 

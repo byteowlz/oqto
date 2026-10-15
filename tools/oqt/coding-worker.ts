@@ -4,8 +4,13 @@
 // guard, reached through the per-session tool socket.
 import { createStaticFacetLoader } from "@earendil-works/chord";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import { buildSystemPromptSections } from "../core/system-prompt.ts";
+import { bashToolSystemPromptContribution } from "../core/tools/bash.ts";
+import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
+import { readToolSystemPromptContribution } from "../core/tools/read.ts";
+import { writeToolSystemPromptContribution } from "../core/tools/write.ts";
 import { GuardGate, guardCredentials } from "./brain-client.ts";
-import { openCodingHarness } from "./coding-runtime.ts";
+import { OQT_RULES, openCodingHarness } from "./coding-runtime.ts";
 import { WireClient } from "./guard-wire.ts";
 import { HandsClient } from "./hands-client.ts";
 import { ownerModelsStore } from "./owner-models.ts";
@@ -14,8 +19,10 @@ import type { runSessionWorkerWithHarness } from "./session-worker.ts";
 
 type Options = Parameters<Parameters<typeof runSessionWorkerWithHarness>[1]>[1];
 // OQT_DEBUG=1 records startup phases in the private brain log.
+const started = Date.now();
 const debug = process.env.OQT_DEBUG
-	? (phase: string) => console.error(`oqt brain: ${phase}`)
+	? (phase: string) =>
+			console.error(`oqt brain +${Date.now() - started}ms: ${phase}`)
 	: () => {};
 function required(name: string) {
 	const value = process.env[name];
@@ -92,6 +99,39 @@ export async function createCodingHarness(
 		const thinking = levels.find((level) => level === requested);
 		if (requested !== undefined && thinking === undefined)
 			throw new Error("Unsupported owning thinking level");
+		// pi's own system prompt; the trusted host supplies the context files.
+		const contextFiles = await guard.call("context");
+		if (!Array.isArray(contextFiles))
+			throw new Error("Guard returned invalid context files");
+		debug(`context files: ${contextFiles.length}`);
+		const contributions = {
+			read: readToolSystemPromptContribution,
+			bash: bashToolSystemPromptContribution,
+			edit: editToolSystemPromptContribution,
+			write: writeToolSystemPromptContribution,
+		};
+		const promptSections = (input: {
+			agent: { tools: { name: string }[] };
+		}) => {
+			const selectedTools = input.agent.tools.map((tool) => tool.name);
+			const toolSnippets: Record<string, string> = {};
+			const toolGuidelines: Record<string, string[]> = {};
+			for (const name of selectedTools) {
+				const contribution = contributions[name as keyof typeof contributions];
+				if (!contribution) continue;
+				toolSnippets[name] = contribution.snippet;
+				toolGuidelines[name] = [...contribution.guidelines];
+			}
+			return buildSystemPromptSections({
+				cwd: options.metadata.cwd,
+				selectedTools,
+				toolSnippets,
+				toolGuidelines,
+				appendSystemPrompt: OQT_RULES,
+				contextFiles: contextFiles as { path: string; content: string }[],
+				skills: [],
+			}) as Record<string, string>;
+		};
 		const gate = new GuardGate(guard, hands);
 		const runtime = await openCodingHarness({
 			databasePath,
@@ -104,6 +144,7 @@ export async function createCodingHarness(
 			hands,
 			refresh: () => gate.refresh(),
 			requestAccess: (params, signal) => gate.requestAccess(params, signal),
+			promptSections,
 		});
 		debug("harness open");
 		return {

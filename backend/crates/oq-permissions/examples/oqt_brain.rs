@@ -128,6 +128,9 @@ fn main() -> Result<()> {
     config.extra_ro_bind.clear();
     config.extra_rw_bind.clear();
     config.workspace_cache_enabled = false;
+    // oqt executors are not Pi/Claude harness sessions: never create or bind
+    // history shards inside the owner's ~/.pi or ~/.claude (preserve-first).
+    config.scoped_paths.clear();
     // The brain calls model providers; it holds no owner secrets or authority.
     config.isolate_network = false;
     config.network = Some(NetworkConfig {
