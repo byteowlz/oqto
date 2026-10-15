@@ -160,6 +160,13 @@ gauge, and the client loads only the permission plugin.
   logging. A patch fails closed if upstream changes its text.
 - **Staged assets:** the exact-source carrier, hands, brain launcher, Landlock
   shim, daemon and BPF are staged privately outside any workspace.
+- **Startup:** the session host stays warm for 10 minutes after the last
+  client leaves (`OQT_HOST_IDLE_SECONDS`, 0–86400), so the next launch skips
+  host start. The runtime runs at normal priority on all CPUs; only first-launch
+  builds are bounded. Node's compile cache lives in the runtime root (the
+  confined brain gets none: a brain-writable cache could poison other code).
+  `OQT_DEBUG=1` writes `<profile>/startup-trace.log` (epoch-ms marks from
+  shell, launcher, host and guard; brain marks are in `brain.log`).
 - **Logs:** `OQT_DEBUG=1` records brain startup phases. The host log and brain
   log live in the private profile.
 - **Network:** `PI_OFFLINE=1` disables upstream's Radius relay, so a session is

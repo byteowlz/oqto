@@ -95,6 +95,8 @@ def coding_world(script, prefix):
             work = root / 'workspace'
             work.mkdir()
             # Hermetic: never read the developer's ~/.config/oqto/sandbox.toml.
+            # Tests keep the old 1 s host linger unless they opt in.
+            os.environ.setdefault('OQT_HOST_IDLE_SECONDS', '1')
             previous = os.environ.get('OQT_SANDBOX_CONFIG')
             os.environ['OQT_SANDBOX_CONFIG'] = str(root / 'sandbox.toml')
             try:

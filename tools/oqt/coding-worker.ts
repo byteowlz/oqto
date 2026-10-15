@@ -22,7 +22,9 @@ type Options = Parameters<Parameters<typeof runSessionWorkerWithHarness>[1]>[1];
 const started = Date.now();
 const debug = process.env.OQT_DEBUG
 	? (phase: string) =>
-			console.error(`oqt brain +${Date.now() - started}ms: ${phase}`)
+			console.error(
+				`oqt brain +${Date.now() - started}ms @${Date.now()} (origin @${Math.round(performance.timeOrigin)}): ${phase}`,
+			)
 	: () => {};
 function required(name: string) {
 	const value = process.env[name];

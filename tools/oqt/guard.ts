@@ -3,6 +3,7 @@
 // A brain reaches only its own per-session tool socket; operators reach the
 // operator socket, which no brain can see. Local OS ownership is the operator
 // boundary here; this is not production Account authentication.
+
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -33,6 +34,7 @@ import {
 import { type Peer, serve } from "./guard-wire.ts";
 import { HandsSupervisor } from "./hands-supervisor.ts";
 import type { OwnerBroker } from "./owner-broker.ts";
+import { mark } from "./trace.ts";
 
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -338,6 +340,7 @@ export class GuardSession {
 			createHash("sha256").update(this.id).digest("hex").slice(0, 32),
 		);
 		privateDirectory(authorityDir);
+		mark("guard: session init");
 		this.supervisor = await HandsSupervisor.open({
 			launcher: options.hands.launcher,
 			workspace: this.workspace,
@@ -351,6 +354,7 @@ export class GuardSession {
 			parent: this.privateDir,
 			socketPath: this.handsPath,
 		});
+		mark("guard: hands ready");
 		const hash = createHash("sha256").update(this.workspace).digest("hex");
 		const ceiling = options.ceiling ?? {
 			userConfig: join(userInfo().homedir, ".config", "oqto", "sandbox.toml"),
@@ -387,6 +391,8 @@ export class GuardSession {
 			},
 			() => this.#applyResources(),
 		);
+		mark("guard: authority open");
+
 		this.authority = opened.authority;
 		// A previous guard/host may have died mid-invocation.
 		this.interrupted = opened.interrupted;
@@ -814,6 +820,7 @@ export class Guard {
 				JSON.stringify(options),
 			],
 		};
+		mark("guard: spawn brain");
 		const specPath = join(session.privateDir, "brain.json");
 		writeFileSync(specPath, JSON.stringify(spec), { mode: 0o600 });
 		chmodSync(specPath, 0o600);

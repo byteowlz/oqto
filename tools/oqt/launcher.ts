@@ -1,4 +1,5 @@
 // Private source-only composition. Stock Pi/default local tools are never selected.
+
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import {
@@ -17,6 +18,7 @@ import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
 import { readOwnedJson } from "./readonly-profile.ts";
 import { startServer } from "./server.ts";
+import { mark } from "./trace.ts";
 
 const args = process.argv.slice(2);
 const smoke = args.includes("--smoke");
@@ -186,7 +188,12 @@ async function mirrorAppearance(owner: string, agentDir: string) {
 }
 
 if (coding) {
+	if (process.env.OQT_SHELL_START)
+		mark("shell: start", Number(process.env.OQT_SHELL_START) * 1000);
+	mark("launcher: process start", performance.timeOrigin);
+	mark("launcher: modules loaded");
 	const host = await ensureHost();
+	mark("launcher: host ready");
 	await mirrorAppearance(
 		process.env.OQT_OWNER_AGENT_DIR ?? "",
 		process.env.PI_CODING_AGENT_DIR ?? "",
@@ -212,6 +219,7 @@ if (coding) {
 				throw new Error(`Coding smoke failed: ${JSON.stringify(result)}`);
 			console.log(`oqt coding smoke PASS: ${result.text}`);
 		} else {
+			mark("launcher: client tui start");
 			await runClientTui(command, { directory });
 		}
 	} catch (error) {

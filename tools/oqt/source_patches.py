@@ -6,6 +6,52 @@ Keep this list small; every entry is a candidate upstream fix.
 
 PATCHES = [
     {
+        "id": "server-idle-grace-option",
+        "why": "An auto server retired 1 s after its last client left, so every oqt launch "
+               "paid a cold host + Session worker start. Let the host keep a warm idle grace.",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": """	constructor(keepAlive: boolean) {
+		this.#keepAlive = keepAlive;
+		this.#startupHeld = !keepAlive;
+	}""",
+        "new": """	readonly #idleGraceMs: number;
+
+	constructor(keepAlive: boolean, idleGraceMs = AUTO_SERVER_IDLE_GRACE_MS) {
+		this.#keepAlive = keepAlive;
+		this.#startupHeld = !keepAlive;
+		this.#idleGraceMs = idleGraceMs;
+	}""",
+    },
+    {
+        "id": "server-idle-grace-use",
+        "why": "Use the configured idle grace (see server-idle-grace-option).",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": """				retire();
+			}
+		}, AUTO_SERVER_IDLE_GRACE_MS);""",
+        "new": """				retire();
+			}
+		}, this.#idleGraceMs);""",
+    },
+    {
+        "id": "server-idle-grace-field",
+        "why": "Expose the idle grace on StartServerOptions (see server-idle-grace-option).",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": """	readonly keepAlive?: boolean;
+	/** Optional explicit Radius credential.""",
+        "new": """	readonly keepAlive?: boolean;
+	/** How long an auto server lingers without clients or workers (default 1 s). */
+	readonly idleGraceMs?: number;
+	/** Optional explicit Radius credential.""",
+    },
+    {
+        "id": "server-idle-grace-pass",
+        "why": "Pass the idle grace to the lifetime (see server-idle-grace-option).",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": """	const lifetime = new ServerLifetime(options.keepAlive ?? true);""",
+        "new": """	const lifetime = new ServerLifetime(options.keepAlive ?? true, options.idleGraceMs);""",
+    },
+    {
         "id": "client-tui-reattach-after-worker-loss",
         "why": "Over Unix transport the TUI ignored attachment loss: after a session worker "
                "crash it spun forever on the dead turn. Reattach the same Session so the server "

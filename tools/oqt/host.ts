@@ -1,5 +1,6 @@
 // Detached oqt coding host: upstream server + guard for one workspace profile.
 // Launchers attach to it; it retires when no client or worker remains.
+
 import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
@@ -14,6 +15,7 @@ import { ownerRefresh } from "./owner-refresh.ts";
 import { readOwnedJson } from "./readonly-profile.ts";
 import { startServer } from "./server.ts";
 import { installGuard } from "./spawn-hook.ts";
+import { mark } from "./trace.ts";
 
 function required(name: string) {
 	const value = process.env[name];
@@ -165,6 +167,18 @@ const releaseAlive = await lockfile.lock(join(guard.directory, "alive"), {
 	stale: 15_000,
 	update: 5_000,
 });
+function idleGraceMs(): number {
+	const raw = process.env.OQT_HOST_IDLE_SECONDS;
+	if (raw === undefined || raw === "") return 10 * 60_000;
+	const seconds = Number(raw);
+	if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 3600)
+		throw new Error(
+			`OQT_HOST_IDLE_SECONDS must be 0..86400, got ${JSON.stringify(raw)}`,
+		);
+	return Math.max(1_000, seconds * 1_000);
+}
+
+mark("host: guard open");
 let runtime: Awaited<ReturnType<typeof startServer>> | undefined;
 try {
 	runtime = await startServer({
@@ -172,7 +186,12 @@ try {
 		sessionDir,
 		pluginPackages: [plugin],
 		keepAlive: false,
+		// Stay warm after the last client leaves so the next launch attaches
+		// instantly. Grants are unaffected: they live in the ledger with their
+		// own expiry, and the brain/hands still retire with their workers.
+		idleGraceMs: idleGraceMs(),
 	});
+	mark("host: server listening");
 	const active = runtime;
 	for (const signal of ["SIGTERM", "SIGINT"] as const)
 		process.once(signal, () => void active.close());

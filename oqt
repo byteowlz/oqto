@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Source-only local DEMO. No installation, ordinary Pi profiles, or stock-tools fallback.
 set -euo pipefail
+oqt_t0=$EPOCHREALTIME
 # Resolve through symlinks so an installed `oqt` on PATH finds this checkout.
 self=$(readlink -f "${BASH_SOURCE[0]}")
 root=$(cd "$(dirname "$self")" && pwd)
@@ -41,19 +42,25 @@ bounded() { timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 "$@"; }
 cd "$root"
 bpf=$(timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source")
 runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir" "$mode")
-value() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$runtime" "$1"; }
+# One parse: prepare.py's JSON -> an associative array (keys are fixed, values are paths).
+declare -A rt
+while IFS=$'\t' read -r key val; do rt[$key]=$val; done < <(python3 -c 'import json,sys
+for k, v in json.loads(sys.argv[1]).items(): print(f"{k}\t{v}")' "$runtime")
+value() { printf '%s' "${rt[$1]:?missing runtime key $1}"; }
 snapshot=$(value source); profile=$(value profile); home=$(value home); agent=$(value agent)
 if [[ "$mode" == coding ]]; then
  owner=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=True))' "$owner")
 fi
 cd "$workdir"
-exec taskset -c "$cpu" nice -n 19 env -i PATH="$PATH" HOME="$home" LANG="${LANG:-C.UTF-8}" \
+# The interactive runtime runs at normal priority on all CPUs; only builds
+# above are bounded (one CPU, nice 19).
+exec env -i PATH="$PATH" HOME="$home" LANG="${LANG:-C.UTF-8}" \
  TERM="${TERM:-xterm-256color}" COLORTERM="${COLORTERM:-}" \
  NODE_OPTIONS=--max-old-space-size=512 PI_EXPERIMENTAL=1 PI_CODING_AGENT_DIR="$agent" \
  OQT_MODE="$mode" OQT_OWNER_AGENT_DIR="$owner" OQT_RUNTIME_ROOT="$(value runtime_root)" \
  OQT_TRUSTED_SOURCE_ROOT="$root" OQT_SOURCE_CHECKOUT="$source" \
  OQT_SERVER_DIR="$profile" OQT_CARRIER="$(value carrier)" \
  OQT_HANDS="$(value hands)" OQT_BRAIN="$(value brain)" PI_OFFLINE=1 OQT_ENV_DAEMON="$(value daemon)" OQT_SANDBOX_SHIM="$(value shim)" \
- OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" OQT_SANDBOX_CONFIG="${OQT_SANDBOX_CONFIG:-$HOME/.config/oqto/sandbox.toml}" OQT_INPUT_TRACE="$profile/input-trace.log" \
+ OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" OQT_HOST_IDLE_SECONDS="${OQT_HOST_IDLE_SECONDS:-}" OQT_SANDBOX_CONFIG="${OQT_SANDBOX_CONFIG:-$HOME/.config/oqto/sandbox.toml}" OQT_INPUT_TRACE="$profile/input-trace.log" OQT_STARTUP_TRACE="$profile/startup-trace.log" OQT_SHELL_START="$oqt_t0" NODE_COMPILE_CACHE="$(value runtime_root)/node-compile-cache" \
  node --import "$snapshot/packages/coding-agent/src/experimental/source-resolver.ts" \
  "$snapshot/packages/coding-agent/src/experimental/oqt-launcher.ts" "${args[@]}"
