@@ -198,10 +198,22 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
 		} else {""",
         "new": """		if (this.#screen === "select" && this.#selection !== undefined) {
 			this.#chatInput.focused = false;
-			if (this.#selectorFor !== this.#selection || this.#selector === undefined) {
+			if (
+				this.#selectorFor !== this.#selection ||
+				this.#selectorQuery !== this.#selectQuery ||
+				this.#selector === undefined
+			) {
 				const selector = new Container();
-				selector.addChild(new Text(theme.bold(this.#selection.title), 1, 1));
-				const items = [...this.#selection.items];
+				const all = [...this.#selection.items];
+				const searchable = all.length > 9 || this.#selectQuery !== "";
+				const query = this.#selectQuery;
+				const items = query
+					? fuzzyFilter(all, query, (item) => `${item.label} ${item.description ?? ""} ${item.value}`)
+					: all;
+				const hint = searchable
+					? theme.fg("dim", query ? `  search: ${query}  (${items.length}/${all.length})` : "  type to search")
+					: "";
+				selector.addChild(new Text(`${theme.bold(this.#selection.title)}${hint ? `\n${hint}` : ""}`, 1, 1));
 				this.#selectList = new SelectList(items, Math.min(Math.max(items.length, 1), 12), selectTheme);
 				const selectedIndex = items.findIndex((item) => item.value === this.#selection?.selectedValue);
 				if (selectedIndex >= 0) this.#selectList.setSelectedIndex(selectedIndex);
@@ -210,11 +222,13 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
 				selector.addChild(this.#selectList);
 				this.#selector = selector;
 				this.#selectorFor = this.#selection;
+				this.#selectorQuery = this.#selectQuery;
 			}
 			this.#editorContainer.addChild(this.#selector);
 		} else {
 			this.#selector = undefined;
-			this.#selectorFor = undefined;""",
+			this.#selectorFor = undefined;
+			this.#selectQuery = "";""",
     },
     {
         "id": "client-tui-stable-selector-fields",
@@ -223,7 +237,9 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
         "old": """	readonly #sessionHeading = new Text("", 1, 0);""",
         "new": """	readonly #sessionHeading = new Text("", 1, 0);
 	#selector: Container | undefined;
-	#selectorFor: unknown;""",
+	#selectorFor: unknown;
+	#selectorQuery = "";
+	#selectQuery = "";""",
     },
     {
         "id": "client-tui-select-number-keys",
@@ -231,11 +247,33 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
         "file": "packages/coding-agent/src/experimental/client-tui.ts",
         "old": """		this.#selectList?.handleInput(data);
 	}""",
-        "new": """		const digit = /^[1-9]$/.test(data) ? Number(data) - 1 : -1;
-		const item = digit >= 0 ? this.#selection?.items[digit] : undefined;
-		if (item !== undefined) {
-			this.#completeSelection(item.value);
-			return;
+        "new": """		const selection = this.#selection;
+		if (selection !== undefined && selection.items.length <= 9 && !this.#selectQuery) {
+			const digit = /^[1-9]$/.test(data) ? Number(data) - 1 : -1;
+			const item = digit >= 0 ? selection.items[digit] : undefined;
+			if (item !== undefined) {
+				this.#completeSelection(item.value);
+				return;
+			}
+		}
+		if (selection !== undefined) {
+			// Printable keys search (digits pick in short menus); Backspace edits; Esc clears first.
+			const printable = data.length === 1 && data >= " " && data !== "\x7f" ? data : decodeKittyPrintable(data);
+			if (printable !== undefined && printable !== " " ) {
+				this.#selectQuery += printable;
+				this.#rebuild();
+				return;
+			}
+			if ((data === "\x7f" || data === "\b") && this.#selectQuery) {
+				this.#selectQuery = this.#selectQuery.slice(0, -1);
+				this.#rebuild();
+				return;
+			}
+			if (data === "\x1b" && this.#selectQuery) {
+				this.#selectQuery = "";
+				this.#rebuild();
+				return;
+			}
 		}
 		this.#selectList?.handleInput(data);
 	}""",
@@ -262,6 +300,45 @@ import { createInteractiveTui } from "../modes/interactive/tui-renderer.ts";""",
         "old": """import { resolve } from "node:path";""",
         "new": """import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";""",
+    },
+    {
+        "id": "client-tui-search-imports",
+        "why": "fuzzyFilter and printable-key decoding for searchable selects.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """	CombinedAutocompleteProvider,
+	type Component,
+	Container,""",
+        "new": """	CombinedAutocompleteProvider,
+	type Component,
+	Container,
+	decodeKittyPrintable,
+	fuzzyFilter,""",
+    },
+    {
+        "id": "client-tui-model-cycle-keys",
+        "why": "Classic pi model cycling: Ctrl+P / Shift+Ctrl+P run the oqt model-next/model-prev commands (scoped models first).",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """		this.#chatInput.onAction("app.model.select", () => void this.#executeSlashCommand("model", ""));""",
+        "new": """		this.#chatInput.onAction("app.model.select", () => void this.#executeSlashCommand("model", ""));
+		this.#chatInput.onAction("app.model.cycleForward", () => void this.#executeSlashCommand("model-next", ""));
+		this.#chatInput.onAction("app.model.cycleBackward", () => void this.#executeSlashCommand("model-prev", ""));""",
+    },
+    {
+        "id": "client-tui-plugin-commands-first",
+        "why": "Slash command registration is first-wins. oqt's single reviewed plugin must be able "
+               "to provide /model (scoped, searchable) and /reload, so its facets register before "
+               "pi's built-ins; the built-ins remain as fallbacks for everything else.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": """				createSlashCommandsRuntimeFacet(),
+				presentationBridgeFacet,
+				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),
+				...this.#sharedFacets.facets,
+				...presentationFacets.facets,""",
+        "new": """				createSlashCommandsRuntimeFacet(),
+				presentationBridgeFacet,
+				...presentationFacets.facets,
+				createBuiltInSlashCommandsFacet({ reloadPresentationPlugins }),
+				...this.#sharedFacets.facets,""",
     },
 ]
 

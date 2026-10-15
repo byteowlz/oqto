@@ -32,6 +32,7 @@ files = [str(experimental / m) for m in ['oqt-runtime-worker.ts', 'oqt-launcher.
          'spawn-hook.ts', 'owner-refresh.ts', 'owner-refresh-core.ts', 'classify.ts', 'session-worker-manager.ts',
          'client-tui.ts', 'server.ts', 'session-worker.ts']]
 files += [str(snap / 'packages/coding-agent/examples/plugins/oq-permissions/src/tui.ts'),
+          str(snap / 'packages/coding-agent/examples/plugins/oq-permissions/src/models.ts'),
           str(snap / 'packages/coding-agent/src/utils/highlight-js.d.ts')]
 out.write_text(json.dumps({'extends': str(source / 'tsconfig.base.json'), 'compilerOptions': {
     'module': 'ESNext', 'moduleResolution': 'Bundler', 'noEmit': True, 'declaration': False, 'declarationMap': False,

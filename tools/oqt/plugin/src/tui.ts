@@ -4,12 +4,14 @@ import {
 	PresentationUI,
 	SlashCommands,
 } from "@earendil-works/pi-coding-agent/experimental/plugin";
+import { Models } from "../../../../src/experimental/services/models.ts";
 import {
 	type PendingPermission,
 	type PermissionDecision,
 	Permissions,
 } from "./contract.ts";
 import { guardPermissions, type OperatorState } from "./guard-client.ts";
+import { installModelCommands } from "./models.ts";
 
 type Choice = "once" | "session" | "always" | "deny";
 
@@ -84,6 +86,7 @@ export default defineFacet({
 				: (demo?.state.value as OperatorState | undefined);
 		const commands = env.use(SlashCommands);
 		const ui = env.use(PresentationUI);
+		const models = env.use(Models);
 		const shown = new Set<string>();
 		let reportedInterrupted = 0;
 		let selecting = false;
@@ -254,6 +257,12 @@ export default defineFacet({
 			);
 		};
 		env.onActivate(() => {
+			installModelCommands({
+				commands,
+				ui,
+				models,
+				own: (dispose) => env.own(dispose),
+			});
 			const banner = coding
 				? "oqt coding · confined brain and tools · reads allowed, edits and shell ask · /permissions"
 				: "oqt DEMO · synthetic model/history · confined fixture files · no credentials/local tools. Try: own history, global history, read file";
