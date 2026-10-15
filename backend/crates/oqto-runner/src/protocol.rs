@@ -1977,6 +1977,12 @@ fn decode_agent_message_parts(
         }];
     }
 
+    // Structured absence is not authored JSON prose. Tool-result raw content
+    // was handled above; error messages must retain their error fallback below.
+    if !is_assistant_error && msg.content.is_null() {
+        return Vec::new();
+    }
+
     // Assistant / user messages: decode the content array into structured
     // parts. Fall back to a single text part for plain strings or unknown
     // shapes.
@@ -2099,7 +2105,7 @@ fn decode_agent_message_parts(
                 _ => {}
             }
         }
-        if !parts.is_empty() {
+        if !parts.is_empty() || (blocks.is_empty() && !is_assistant_error) {
             return parts;
         }
     }
@@ -2789,6 +2795,77 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("streaming"));
         assert!(json.contains("subscriber_count"));
+    }
+
+    #[test]
+    fn empty_structured_history_content_does_not_become_json_prose() {
+        for role in ["assistant", "user"] {
+            for content in [serde_json::json!([]), Value::Null] {
+                let msg: oqto_pi::AgentMessage = serde_json::from_value(serde_json::json!({
+                    "role": role, "content": content, "clientId": "synthetic-client"
+                }))
+                .unwrap();
+                let projected = agent_msg_to_chat_proto(&msg, 7, "synthetic-session");
+                assert!(
+                    projected.parts.is_empty(),
+                    "empty structured content is not authored JSON text"
+                );
+                assert_eq!(projected.id, "pi_msg_7");
+                assert_eq!(projected.client_id.as_deref(), Some("synthetic-client"));
+            }
+        }
+        let missing: oqto_pi::AgentMessage =
+            serde_json::from_value(serde_json::json!({"role": "assistant"})).unwrap();
+        assert!(
+            agent_msg_to_chat_proto(&missing, 7, "synthetic-session")
+                .parts
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn authored_json_and_unknown_history_content_remain_visible() {
+        for text in ["[]", "```json\n[]\n```", "null"] {
+            let msg: oqto_pi::AgentMessage =
+                serde_json::from_value(serde_json::json!({"role": "assistant", "content": text}))
+                    .unwrap();
+            let projected = agent_msg_to_chat_proto(&msg, 7, "synthetic-session");
+            assert_eq!(projected.parts.len(), 1);
+            assert_eq!(projected.parts[0].id, "part_7_0");
+            assert_eq!(projected.parts[0].text.as_deref(), Some(text));
+        }
+        let content = serde_json::json!([{"type": "future-block", "payload": []}]);
+        let msg: oqto_pi::AgentMessage =
+            serde_json::from_value(serde_json::json!({"role": "assistant", "content": content}))
+                .unwrap();
+        let projected = agent_msg_to_chat_proto(&msg, 7, "synthetic-session");
+        assert_eq!(
+            projected.parts[0].text.as_deref(),
+            Some(content.to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn empty_history_tool_results_and_errors_are_not_discarded() {
+        let tool: oqto_pi::AgentMessage = serde_json::from_value(serde_json::json!({
+            "role": "toolResult", "content": [], "toolCallId": "synthetic-call", "toolName": "read"
+        }))
+        .unwrap();
+        let projected = agent_msg_to_chat_proto(&tool, 7, "synthetic-session");
+        assert_eq!(projected.parts[0].part_type, "tool_result");
+        assert_eq!(
+            projected.parts[0].tool_output,
+            Some(serde_json::json!("[]"))
+        );
+        let error: oqto_pi::AgentMessage = serde_json::from_value(serde_json::json!({
+            "role": "assistant", "content": [], "stopReason": "error", "errorMessage": "synthetic failure"
+        })).unwrap();
+        let projected = agent_msg_to_chat_proto(&error, 7, "synthetic-session");
+        assert_eq!(projected.parts[0].part_type, "error");
+        assert_eq!(
+            projected.parts[0].text.as_deref(),
+            Some("synthetic failure")
+        );
     }
 
     #[test]
