@@ -65,6 +65,9 @@ fi
 ssh() { command ssh "${OQTO_SSH_OPTIONS[@]}" "$@"; }
 scp() { command scp "${OQTO_SSH_OPTIONS[@]}" "$@"; }
 
+# shellcheck source=scripts/dist/deploy-sudo.sh
+source "$ROOT_DIR/scripts/dist/deploy-sudo.sh"
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -235,6 +238,7 @@ host_exec() {
 }
 
 host_exec_sudo() {
+    require_sudo_leases || return 1
     host_exec "$1" "$2" "sudo -n bash -c $(printf '%q' "$3")"
 }
 
@@ -260,6 +264,8 @@ require_clean_source() {
 # release directory name); empty when the host has no readable release.
 host_release_version() {
     local is_local="$1" ssh_target="$2"
+    # This literal script expands variables on the target, never on this host.
+    # shellcheck disable=SC2016
     local probe='m=/var/lib/oqto/releases/current/manifest.toml; v=$(sed -n "s/^version = \"\(.*\)\"/\1/p" "$m" 2>/dev/null | head -1); [ -n "$v" ] || v=$(basename "$(readlink -f /var/lib/oqto/releases/current 2>/dev/null)" | sed -n "s/^oqto-v\{0,1\}\([0-9][0-9.]*\)-.*/\1/p"); printf %s "$v"'
     if [[ "$is_local" == true ]]; then
         bash -c "$probe" 2>/dev/null
@@ -558,13 +564,14 @@ sync_extensions_host() {
     local i="$1" is_local="${H_LOCAL[$1]}" ssh_target="${H_SSH[$1]}"
     local sync="$ROOT_DIR/scripts/dist/sync-agent-runtime.sh" list="$ROOT_DIR/scripts/dist/pi-default-extensions.txt"
     [[ "$SYNC_EXTENSIONS" == true ]] || return 0
+    require_sudo_leases || return 1
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}  [dry-run]${NC} sync pinned Pi extensions (preserve-first, owner-correct) on ${H_NAME[$i]}"
         return 0
     fi
     log "[${H_NAME[$i]}] syncing pinned Pi extensions (runtime comes from the release)"
     if [[ "$is_local" == true ]]; then
-        bash "$sync" --manifest "$DEPENDENCY_POLICY_FILE" --skip-pi
+        bash "$sync" --manifest "$DEPENDENCY_POLICY_FILE" --skip-pi --non-interactive
         return
     fi
     local dir
@@ -573,7 +580,7 @@ sync_extensions_host() {
     scp -- "$sync" "$list" "$DEPENDENCY_POLICY_FILE" "$ssh_target:$dir/" >/dev/null || return 1
     local q
     q="$(printf '%q' "$dir")"
-    ssh "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi; rc=\$?; rm -rf -- $q; exit \$rc"
+    ssh "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi --non-interactive; rc=\$?; rm -rf -- $q; exit \$rc"
 }
 
 print_status_host() {
@@ -588,7 +595,7 @@ deploy_host() {
     log "=========================================="
     log "${BOLD}$name${NC} ($(profile_for "${H_MODE[$i]}"))"
     log "=========================================="
-    prime_sudo "$i" || return 1
+    require_sudo_leases || return 1
     preflight_host "$i" || return 1
     if [[ "$STATUS_ONLY" == true ]]; then
         print_status_host "$i"
@@ -613,18 +620,6 @@ run_targets() {
     done
 }
 
-# Validated per host right before its transaction, so a long earlier host can
-# never leave a later one running with an expired credential mid-way.
-prime_sudo() {
-    local i="$1"
-    [[ "$DRY_RUN" == true ]] && return 0
-    if [[ "${H_LOCAL[$i]}" == true ]]; then
-        sudo -v || { err "sudo authentication failed on ${H_NAME[$i]}"; return 1; }
-    elif ! ssh "${H_SSH[$i]}" "sudo -n true" >/dev/null 2>&1; then
-        ssh -tt "${H_SSH[$i]}" "sudo -v" </dev/tty || { err "sudo authentication failed on ${H_NAME[$i]}"; return 1; }
-    fi
-}
-
 # --- main ----------------------------------------------------------------------
 
 parse_hosts
@@ -647,9 +642,17 @@ if [[ "$DEV" == true ]]; then
     done
 fi
 
+# Authenticate every selected host before a potentially long build or canary.
+# Later calls are noninteractive, including refresh failures and fleet hosts.
+trap stop_sudo_leases EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+start_sudo_leases "${selected[@]}" || fail "initial deployment authorization failed"
+
 if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" ]]; then
     build_artifact
 fi
+require_sudo_leases || fail "deployment authorization expired during build"
 
 if [[ "$CANARY_THEN_FLEET" == true ]]; then
     declare -a canary=() fleet=()

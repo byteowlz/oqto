@@ -9,6 +9,7 @@
 #
 # Usage: sync-agent-runtime.sh [--manifest PATH] [--pi-version V] [--ext-ref R]
 #                              [--ext-repo URL] [--skip-pi] [--skip-extensions]
+#                              [--non-interactive (requires --skip-pi)]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,8 @@ EXT_REF=""
 EXT_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 DO_PI=true
 DO_EXT=true
+NON_INTERACTIVE=false
+SUDO=(sudo)
 
 # Extensions installed by default. oqto-usermgr embeds this same file for
 # new-principal provisioning; this script handles setup/deploy backfills.
@@ -56,12 +59,18 @@ while [[ $# -gt 0 ]]; do
     --ext-ref) EXT_REF="$2"; shift 2 ;;
     --ext-repo) EXT_REPO="$2"; shift 2 ;;
     --skip-pi) DO_PI=false; shift ;;
+    --non-interactive) NON_INTERACTIVE=true; SUDO=(sudo -n); shift ;;
     --skip-extensions) DO_EXT=false; shift ;;
     --list-extensions) printf '%s\n' "${PI_DEFAULT_EXTENSIONS[@]}"; exit 0 ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ "$NON_INTERACTIVE" == true && "$DO_PI" == true ]]; then
+  echo 'error: --non-interactive requires --skip-pi; deploy uses the release-owned Pi runtime' >&2
+  exit 2
+fi
 
 log() { printf '[agent-sync] %s\n' "$*"; }
 # One timestamp per run names every preserved backup.
@@ -139,9 +148,9 @@ install_ext_for_home() {
 
   as_owner() {
     if [[ "$owner" == root ]]; then
-      sudo -- "$@"
+      "${SUDO[@]}" -- "$@"
     else
-      sudo -H -u "$owner" -- "$@"
+      "${SUDO[@]}" -H -u "$owner" -- "$@"
     fi
   }
 
@@ -150,7 +159,7 @@ install_ext_for_home() {
   if [[ "$owner" != root ]]; then
     for parent in "$home/.pi" "$home/.pi/agent" "$dir"; do
       if [[ -d "$parent" && "$(stat -c '%U' "$parent")" == root ]]; then
-        sudo chown "$owner:$group" "$parent" || return 1
+        "${SUDO[@]}" chown "$owner:$group" "$parent" || return 1
       fi
     done
   fi
@@ -164,7 +173,7 @@ install_ext_for_home() {
   preserve() {
     local path="$1"
     if [[ "$owner" != root && ! -L "$path" ]]; then
-      sudo chown -hR "$owner:$group" "$path" || return 1
+      "${SUDO[@]}" chown -hR "$owner:$group" "$path" || return 1
     fi
     local dest="$backups/${path##*/}"
     [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$$.$RANDOM"
@@ -214,8 +223,8 @@ sync_extensions() {
   [[ "$missing" -eq 0 ]] || return 1
 
   log "syncing extensions to /usr/share/oqto/pi-agent-extensions (new-user source)"
-  sudo mkdir -p /usr/share/oqto/pi-agent-extensions || return 1
-  sudo rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/ || return 1
+  "${SUDO[@]}" mkdir -p /usr/share/oqto/pi-agent-extensions || return 1
+  "${SUDO[@]}" rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/ || return 1
 
   # Every existing platform user + the invoking user + /etc/skel (new users).
   local home count=0
@@ -248,7 +257,11 @@ sync_agent_runtime_main() {
   $DO_PI && { sync_pi "$PI_VERSION" || rc=1; }
   $DO_PI && { verify_managed_pi_selection || rc=1; }
   $DO_EXT && { sync_extensions || rc=1; }
-  [[ "$rc" -eq 0 ]] && log "agent runtime sync complete" || err "agent runtime sync had failures"
+  if [[ "$rc" -eq 0 ]]; then
+    log "agent runtime sync complete"
+  else
+    err "agent runtime sync had failures"
+  fi
   return "$rc"
 }
 

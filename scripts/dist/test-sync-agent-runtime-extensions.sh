@@ -6,7 +6,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 printf 'pi-history-search\n' > "$tmp/defaults"
 export PI_DEFAULT_EXTENSIONS_FILE="$tmp/defaults"
-# shellcheck source=sync-agent-runtime.sh
+# shellcheck source=scripts/dist/sync-agent-runtime.sh
 source "$SCRIPT_DIR/sync-agent-runtime.sh"
 
 home="$tmp/home"
@@ -19,6 +19,10 @@ printf 'new\n' > "$src/pi-history-search/index.ts"
 # Test double: record the requested user identity and execute as this test user.
 sudo() {
   printf '%s\n' "$*" >> "$tmp/calls"
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    [[ "${1:-}" == -n ]] || { echo 'interactive sudo attempted' >&2; return 1; }
+  fi
+  [[ "${1:-}" != -n ]] || shift
   if [[ -f "$tmp/fail-copy" && " $* " == *' cp -r '* ]]; then
     return 42
   fi

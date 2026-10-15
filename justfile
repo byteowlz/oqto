@@ -895,6 +895,9 @@ test-release-assets:
 
 # Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
 test-deploy-mode:
+    python3 -B scripts/tests/test-deploy-sudo.py
+    bash scripts/dist/test-sync-agent-runtime-extensions.sh
+    bash scripts/dist/test-sync-agent-runtime-extensions.sh --skip-pi --non-interactive
     ./scripts/tests/deploy-mode-test.sh
     ./scripts/tests/test-deploy-private-staging.sh
     ./scripts/tests/test-deploy-bootstrap-invocation.sh
