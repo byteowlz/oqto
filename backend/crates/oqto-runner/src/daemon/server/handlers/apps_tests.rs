@@ -25,6 +25,9 @@ async fn bounded_streams_and_deadline_reap() {
     }
 }
 
+// This fixture proves Linux bwrap enforcement; native Seatbelt is qualified by
+// oqto-sandbox/tests/macos_launch.rs, not by weakening this Linux proof.
+#[cfg(target_os = "linux")]
 #[test]
 fn enforced_fixture() {
     let root = tempfile::tempdir_in("/var/tmp").expect("synthetic root outside private /tmp");
@@ -66,6 +69,7 @@ fn enforced_fixture() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 #[ignore = "invoked by enforced_fixture in a synthetic environment"]
 fn enforced_fixture_child() {

@@ -2292,6 +2292,8 @@ mod tests {
         }
     }
 
+    // Exercises the Linux-only inode-pinned local credential store.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn credential_management_real_rpc_fixture() -> Result<()> {
         use oqto_protocol::credentials::*;

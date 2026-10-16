@@ -429,7 +429,8 @@ fn code(error: &ProviderError) -> &'static str {
     }
 }
 
-#[cfg(test)]
+// The local credential store is intentionally Linux-only (inode-pinned proc-fd I/O).
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     async fn run(
@@ -756,6 +757,34 @@ mod tests {
             ),
             Some(PathBuf::from("relative-explicit"))
         );
+        Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_credentials_refuse_unsupported_platform_without_vault() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let manager = Arc::new(CredentialManager::new(Some(root.path().to_owned())));
+        for command in [
+            CredentialCommand::Status,
+            CredentialCommand::Initialize {
+                passphrase: CredentialSecretInput::new("synthetic-macos-passphrase".into()),
+            },
+        ] {
+            let result = manager
+                .manage(CredentialManageRequest {
+                    account_id: "alice".into(),
+                    command,
+                })
+                .await;
+            assert_eq!(result.status, CredentialProviderStatus::Unavailable);
+            assert_eq!(result.code.as_deref(), Some("unsupported_platform"));
+            assert!(!root.path().join("oqto/credentials/secrets/alice").exists());
+        }
         Ok(())
     }
 }
