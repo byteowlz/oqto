@@ -53,7 +53,46 @@ startup, not at the first sign-in. Supported flows: discoverable passkey sign-in
 Account settings, and re-authentication (step-up) for sensitive Account and
 admin actions. Removing the last strong factor requires a recent step-up.
 
-### 3. External providers are optional, configured, and off by default
+### 3. Multi-factor authentication
+
+A sign-in is multi-factor when it combines two independent factors: password
+plus passkey, password plus TOTP, or a passkey with user verification (device
+PIN/biometric) on its own. A recovery code completes a sign-in once but is
+recorded as recovery, not MFA.
+
+**Policy** (deployment configuration, fail-closed on unknown values):
+
+```toml
+[auth.mfa]
+require = "admins"            # off | admins | everyone
+allowed = ["passkey", "totp"] # TOTP can be removed for phishing-resistant-only installs
+enrollment_grace_days = 7     # sign-ins allowed while enrolling; 0 = enrol before first use
+```
+
+- `require = "admins"` is the default for new installs: admin capability is
+  unusable without MFA, matching ADR-0029's Administer class. `everyone` is the
+  institutional setting.
+- When MFA is required and an Account has no second factor, sign-in leads straight
+  to enrolment; after the grace period, the Account can only enrol, nothing else.
+- **Sign-in flow:** first factor, then a short-lived pending challenge (no session
+  yet) that a second factor completes. The pending challenge is bound to the
+  Account and client, single-use, and expires in minutes.
+- **Provider sign-ins** satisfy MFA only when the provider's `acr`/`amr` are
+  mapped as MFA in configuration (e.g. Entra conditional access); otherwise Oqto
+  asks for its own second factor after the provider callback.
+- **Step-up:** admin and security-sensitive actions (credential changes, invite
+  issuance, policy changes) require a factor confirmed within a recent window,
+  independent of how long the session has existed.
+- **Recovery:** 10 one-time codes shown once at enrolment, stored hashed,
+  regenerable after step-up. An admin can reset another Account's factors only
+  with their own step-up, never their own; the reset is audited and signs the
+  Account out everywhere. Losing every admin factor falls back to ADR-0029's local
+  break-glass, which still requires enrolling a new factor.
+- **Abuse limits:** failed first and second factors are rate-limited per Account
+  and per client, with exponential backoff rather than permanent lockout (so an
+  attacker cannot lock someone out); TOTP rejects reused codes within the window.
+
+### 4. External providers are optional, configured, and off by default
 
 ```toml
 [[auth.providers]]
@@ -79,7 +118,7 @@ allowed_domains = []
   configuration (ADR-0029 §4); otherwise a provider sign-in counts as single
   factor.
 
-### 4. Linking never matches by email alone
+### 5. Linking never matches by email alone
 
 An external identity is bound to an Account by `(issuer, subject)`:
 
@@ -91,7 +130,7 @@ An external identity is bound to an Account by `(issuer, subject)`:
   never automatic merge, even when the provider says the email is verified.
 - Unlinking requires another remaining sign-in credential.
 
-### 5. Server-side sessions
+### 6. Server-side sessions
 
 Sign-in creates a session record (ID, Account, credential used, assurance, created,
 last seen, coarse client description). The cookie/bearer token references it and
@@ -101,7 +140,7 @@ password change, credential removal and admin disable revoke sessions. Cookies a
 `HttpOnly; Secure; SameSite=Lax` (Lax so provider callbacks return); state-changing
 endpoints additionally require CSRF protection.
 
-### 6. Oqto as an identity provider is out of scope here
+### 7. Oqto as an identity provider is out of scope here
 
 Running Oqto itself as an OIDC provider (one login for Web/Desktop/Mobile/Apps,
 device flow for `oqtoctl`) is a later, separate ADR, compared against embedding a
@@ -112,7 +151,8 @@ the session and credential stores above are what such a provider would issue fro
 
 1. Session store, revocation and session list (prerequisite for everything below).
 2. Passkeys: register, sign in, second factor, step-up, settings UI.
-3. TOTP and recovery codes.
+3. MFA policy and flow: pending second-factor challenge, enrolment enforcement,
+   step-up, TOTP, recovery codes, admin reset, rate limits.
 4. Generic OIDC providers with linking and signup policy; Microsoft Entra and
    Google verified.
 5. GitHub OAuth2 adapter.
@@ -127,6 +167,12 @@ it never asks to paste a token).
   authenticator (counter regression) and unknown credential all fail closed.
 - OIDC: wrong issuer/audience/signature, missing or replayed `state`/`nonce`,
   missing PKCE verifier and expired tokens fail; tests against a local mock IdP.
+- MFA: with `require` set, no session is issued after only the first factor;
+  a pending challenge is single-use, expires, and cannot be completed by another
+  Account or client; an Account without a factor can only enrol after the grace
+  period; stale step-up blocks admin actions; recovery codes work once; an admin
+  cannot reset their own factors; backoff applies without permanent lockout;
+  unmapped provider MFA claims do not count as MFA.
 - Linking: an unlinked identity whose email matches an existing Account never
   signs into it; unlink of the last credential is refused.
 - Sessions: revoked or expired sessions are rejected on HTTP and closed on
