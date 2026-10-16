@@ -916,6 +916,16 @@ test-pi-tui-rpc:
     cd backend && cargo test --locked -p oqto-runner --lib tui_rpc
     cd backend && cargo clippy --locked -p oqto-runner --all-targets -- -D warnings
 
+test-rust-ai-guardrail-scope:
+    uv run --no-project --python 3.12 scripts/lint/test_rust_ai_guardrails_scope.py
+
+test-pi-tui-rpc-launcher: test-rust-ai-guardrail-scope
+    uv run --no-project --python 3.12 scripts/verify/test_native_pi_tui_smoke.py
+
+# Explicit, disposable offline Pi terminal; no operator profile or inference.
+test-pi-tui-rpc-native extension: test-pi-tui-rpc-launcher
+    uv run --no-project --python 3.12 scripts/verify/native-pi-tui-smoke.py --extension "{{extension}}"
+
 # Runner-only manifest is a fail-closed candidate, not an install-ready artifact
 test-runner-only-manifest:
     python3 -B scripts/lint/test_runner_only_manifest.py

@@ -16,22 +16,22 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from functools import lru_cache
-from typing import Iterable, List
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CFG = ROOT / ".ast-grep" / "sgconfig.yml"
 
 
-def _run(cmd: List[str]) -> str:
+def _run(cmd: list[str]) -> str:
     return subprocess.check_output(cmd, text=True, cwd=ROOT).strip()
 
 
-def _get_changed_rs() -> List[str]:
+def _get_changed_rs() -> list[str]:
     try:
         _run(["git", "rev-parse", "--verify", "origin/main"])
         base = _run(["git", "merge-base", "origin/main", "HEAD"])
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         base = "HEAD~1"
 
     out = _run(
@@ -55,12 +55,12 @@ def _first_cfg_test_line(rel_path: str) -> int | None:
     path = ROOT / rel_path
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeError):
         return None
 
     for idx, line in enumerate(text.splitlines()):
         stripped = line.strip()
-        if stripped.startswith("#[cfg(test)]"):
+        if stripped.startswith(("#[cfg(test)]", "#![cfg(test)]")):
             return idx
     return None
 
@@ -103,7 +103,11 @@ def _scan(paths: Iterable[str], exclude_cfg_test: bool):
 
         rel_path = obj.get("file", "<unknown>")
         start_line = obj.get("range", {}).get("start", {}).get("line", -1)
-        if exclude_cfg_test and isinstance(start_line, int) and _is_test_context(rel_path, start_line):
+        if (
+            exclude_cfg_test
+            and isinstance(start_line, int)
+            and _is_test_context(rel_path, start_line)
+        ):
             continue
 
         total += 1
@@ -125,8 +129,14 @@ def _scan(paths: Iterable[str], exclude_cfg_test: bool):
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--paths", nargs="*", default=["backend/crates"], help="paths to scan")
-    p.add_argument("--changed", action="store_true", help="scan only changed Rust files vs origin/main")
+    p.add_argument(
+        "--paths", nargs="*", default=["backend/crates"], help="paths to scan"
+    )
+    p.add_argument(
+        "--changed",
+        action="store_true",
+        help="scan only changed Rust files vs origin/main",
+    )
     p.add_argument("--top", type=int, default=20, help="top files to print")
     p.add_argument(
         "--exclude-cfg-test",

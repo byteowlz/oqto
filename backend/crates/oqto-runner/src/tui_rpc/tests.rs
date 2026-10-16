@@ -1,7 +1,11 @@
+#![cfg(test)]
+
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::net::UnixListener;
+
+mod native;
 
 struct Authority {
     binding: ObservationBinding,
@@ -43,7 +47,11 @@ impl Drop for Fixture {
 }
 impl Fixture {
     fn new() -> Result<Self> {
-        let temp = tempfile::tempdir()?;
+        // macOS's default per-user TMPDIR can exhaust sockaddr_un.sun_path
+        // once the supported uid/pid directory layout is appended.
+        let temp = tempfile::Builder::new()
+            .prefix("oqto-tui-")
+            .tempdir_in("/tmp")?;
         let root = temp.path().canonicalize()?;
         for name in ["sessions", "work", "sockets"] {
             std::fs::create_dir(root.join(name))?;
