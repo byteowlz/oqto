@@ -42,6 +42,18 @@ pub(super) async fn handle_agent_command(
             agent_response_with_runner(&runner_id, session_id, id, response_cmd, result)
         };
 
+    if machine_intent::validate(state, user_id, &cmd)
+        .await
+        .is_err()
+    {
+        return Some(agent_response(
+            &session_id,
+            id,
+            "error",
+            Err("Machine Session target unavailable or access denied; no execution started".into()),
+        ));
+    }
+
     // Resolve the effective runner for this command.
     // Durable Session binding is authoritative and reauthorized per command.
     // New sessions resolve their requested workspace; failures never select

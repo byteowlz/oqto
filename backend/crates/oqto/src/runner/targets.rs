@@ -60,6 +60,8 @@ impl RunnerTargetConfig {
     fn validate(&self) -> Result<()> {
         ensure!(
             !self.id.is_empty()
+                && self.id != "local"
+                && self.id != "_system"
                 && self.id.len() <= 64
                 && self
                     .id
@@ -154,6 +156,9 @@ pub struct RunnerTargetStatus {
     pub checked_at: String,
     /// Inventory is not admission: placement/session routing is a separate step.
     pub session_creation: bool,
+    /// Compatibility fact only: explicit machine intent is checked before any
+    /// transport resolution. Not a grant, containment fact or TUI control lease.
+    pub session_route_pinning: bool,
     pub provider_login: bool,
     pub history_read: bool,
 }
@@ -335,6 +340,7 @@ impl Target {
             connection,
             checked_at: chrono::Utc::now().to_rfc3339(),
             session_creation: self.config.execution.is_some(),
+            session_route_pinning: true,
             provider_login: self.config.provider_login,
             history_read: self.config.history_read,
         };
@@ -371,6 +377,15 @@ mod tests {
                 certificate: "/missing/client.pem".into(),
                 key: "/missing/key.pem".into(),
             },
+        }
+    }
+
+    #[test]
+    fn reserved_runner_names_cannot_alias_default_or_system_routes() {
+        for id in ["local", "_system"] {
+            let mut cfg = config();
+            cfg.id = id.into();
+            assert!(RunnerTargets::new(vec![cfg]).is_err());
         }
     }
 
