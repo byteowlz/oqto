@@ -1,0 +1,28 @@
+[package]
+name = "oqto-personal-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Host-neutral personal pairing QR and device proof wire contract"
+
+[features]
+default = []
+qr = ["dep:qrcode"]
+tls = ["dep:tokio-rustls"]
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# Parsing host IDs must not pull a random-number backend into thin/WASM clients.
+uuid = { version = "1.19", default-features = false, features = ["std"] }
+url = "2.5"
+xlatch-wire-auth.workspace = true
+tokio-rustls = { workspace = true, optional = true }
+qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
+
+[lints]
+workspace = true
