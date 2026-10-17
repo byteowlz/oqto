@@ -1,0 +1,30 @@
+[package]
+name = "oqto-personal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Local paired-device authorization for backendless personal hosts"
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+log.workspace = true
+libc.workspace = true
+rand.workspace = true
+rustix = { version = "1", features = ["process", "fs"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+xlatch-wire-auth = { git = "https://github.com/byteowlz/xlatch", rev = "d3494fc17353da63abdd1b16282ec882c2c723bf" }
+
+[dev-dependencies]
+base64.workspace = true
+ed25519-dalek = "2.2"
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -23,6 +23,12 @@ _Avoid_: event bus (transport, not truth), monitoring (observation, not authorit
 A platform identity in Oqto — who a person is to the product (roles, auth, API keys, ownership). Distinct from the OS principal they run as.
 _Avoid_: user (ambiguous — collides with the OS principal)
 
+**Paired Device**:
+A client installation identified by possession of a key enrolled directly with a personal Runner. Separate local grants authorize sessions, Files roots and full-Principal terminals. It is not an Account, Operator Identity or OS Principal, and pairing does not imply tool approval, terminal handoff or confinement.
+
+**Personal Pairing**:
+Owner-approved, single-use, identity-pinned enrollment of a Paired Device with a Runner, without a Control Plane or centralized Account/MFA prerequisite. Distinct from Operator Identity Enrollment and from an existing mTLS Files grant (ADR-0062).
+
 **Deployment Target**:
 A named destination for operator actions: one Oqto Control Plane and its managed placements. The CLI's `--host` value names a Deployment Target, not a placement machine or SSH host.
 _Avoid_: host (reserved for the App capability contract), server (ambiguous)
@@ -44,7 +50,7 @@ A single-use, time-bounded delegation that lets a new Operator Identity bind its
 _Avoid_: invite (ambiguous with Workspace membership invitation), bootstrap token
 
 **Principal**:
-The OS-level identity an agent's processes run as (a Linux uid). Created at provisioning time, never the same thing as an Account; one Account maps to one Principal in multi-user deployments.
+The OS-level identity an agent's processes run as (a Unix uid on Linux/macOS). Created at provisioning time or selected by the personal host owner, never the same thing as an Account; one Account maps to one Principal in multi-user deployments.
 _Avoid_: user, linux user (use Principal when the OS identity is meant)
 
 **Workspace**:
