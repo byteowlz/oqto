@@ -8,6 +8,9 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::PiNewSession(r) => runner.pi_new_session(r).await,
         RunnerRequest::PiSwitchSession(r) => runner.pi_switch_session(r).await,
         RunnerRequest::PiListSessions => runner.pi_list_sessions().await,
+        RunnerRequest::PiActivitySnapshot => {
+            RunnerResponse::PiActivitySnapshot(runner.pi_manager.activity_snapshot().await)
+        }
         RunnerRequest::PiSubscribe(_) => error_response(
             ErrorCode::Internal,
             "PiSubscribe must be handled via streaming",

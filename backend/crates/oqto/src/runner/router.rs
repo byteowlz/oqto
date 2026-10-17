@@ -257,6 +257,55 @@ pub async fn resolve_runner_for_target(
     }
 }
 
+/// Read-only observation resolves ONLY an existing placement/endpoint. It never
+/// provisions, heals, starts a runner, opens a Session or borrows execution grants.
+pub async fn resolve_existing_runner_for_observation(
+    state: &AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+) -> Result<RunnerClient> {
+    anyhow::ensure!(
+        !matches!(target, ExecutionTarget::RemoteMachine { .. }),
+        "machine activity observation is not supported"
+    );
+    authorize_target(state, user_id, target).await?;
+    let workspace_id = match target {
+        ExecutionTarget::Personal => user_id,
+        ExecutionTarget::SharedWorkspace { workspace_id } => workspace_id,
+        ExecutionTarget::RemoteMachine { .. } => unreachable!("rejected before authorization"),
+    };
+    if let Some(store) = &state.placement_store {
+        if let Some(endpoint) = store.resolve_workspace(workspace_id).await? {
+            return RunnerClient::from_endpoint(&endpoint);
+        }
+        anyhow::ensure!(
+            state.placement_manager.is_none(),
+            "activity placement is unavailable; no provisioning performed"
+        );
+    }
+    let linux_user = match target {
+        ExecutionTarget::Personal => state.effective_linux_username(user_id),
+        ExecutionTarget::SharedWorkspace { workspace_id } => state
+            .shared_workspaces
+            .as_ref()
+            .context("shared workspaces unavailable")?
+            .linux_user_for_id(workspace_id)
+            .await?
+            .context("shared workspace unavailable")?,
+        ExecutionTarget::RemoteMachine { .. } => unreachable!("rejected above"),
+    };
+    match state.runner_socket_pattern.as_deref() {
+        Some(pattern) => RunnerClient::for_user_with_pattern(&linux_user, pattern),
+        None => {
+            anyhow::ensure!(
+                !state.user_isolation_enabled(),
+                "isolated runner endpoint unavailable"
+            );
+            RunnerClient::for_user(&linux_user)
+        }
+    }
+}
+
 /// Container starts take a few seconds; poll readiness with a bounded budget.
 async fn wait_for_runner_ready(client: &RunnerClient, workspace_id: &str) -> Result<()> {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {

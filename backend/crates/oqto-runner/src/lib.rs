@@ -19,6 +19,7 @@ pub mod protocol;
 pub mod provider_login;
 mod recovery_child;
 pub mod reverse_bridge;
+pub mod runtime_activity;
 pub mod runtime_guard;
 pub mod session_resume;
 #[cfg(unix)]

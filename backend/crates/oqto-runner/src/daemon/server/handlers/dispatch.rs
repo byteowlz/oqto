@@ -132,6 +132,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::PiNewSession(_)
         | RunnerRequest::PiSwitchSession(_)
         | RunnerRequest::PiListSessions
+        | RunnerRequest::PiActivitySnapshot
         | RunnerRequest::PiSubscribe(_)
         | RunnerRequest::PiUnsubscribe(_)
         | RunnerRequest::PiPrompt(_)

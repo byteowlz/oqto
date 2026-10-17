@@ -211,6 +211,8 @@ pub enum RunnerRequest {
 
     /// List all active Pi sessions.
     PiListSessions,
+    /// Retained managed-agent activity; memory-only, never starts/resumes/subscribes.
+    PiActivitySnapshot,
 
     /// Subscribe to events from a Pi session.
     PiSubscribe(PiSubscribeRequest),
@@ -498,6 +500,7 @@ pub enum RunnerResponse {
 
     /// List of Pi sessions.
     PiSessionList(PiSessionListResponse),
+    PiActivitySnapshot(crate::runtime_activity::ActivitySnapshot),
 
     /// Pi session state.
     PiState(PiStateResponse),

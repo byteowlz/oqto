@@ -446,6 +446,7 @@ fn create_router_with_config_and_auth(
             delete(handlers::admin_remove_shared_workspace_member),
         )
         // Chat history routes (reads from disk, reads from oqto-log)
+        .route("/session-activity", get(super::project_activity::read))
         .route("/chat-history", get(handlers::list_chat_history))
         .route(
             "/chat-history/backfill",

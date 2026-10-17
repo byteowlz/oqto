@@ -1572,6 +1572,17 @@ impl RunnerClient {
         }
     }
 
+    /// One read-only attempt, deliberately bypassing automatic daemon recovery/start.
+    pub async fn pi_activity_snapshot(&self) -> Result<crate::runtime_activity::ActivitySnapshot> {
+        match self
+            .request_once(&RunnerRequest::PiActivitySnapshot)
+            .await?
+        {
+            RunnerResponse::PiActivitySnapshot(snapshot) => Ok(snapshot),
+            _ => anyhow::bail!("managed-agent activity snapshot is unsupported"),
+        }
+    }
+
     /// Get the state of a Pi session.
     pub async fn pi_get_state(&self, session_id: &str) -> Result<PiStateResponse> {
         let req = RunnerRequest::PiGetState(PiGetStateRequest {
@@ -2290,6 +2301,59 @@ mod tests {
         fn endpoint_description(&self) -> String {
             "duplex:test".to_string()
         }
+    }
+
+    #[derive(Debug, Default)]
+    struct ActivityRefusedConnector(std::sync::atomic::AtomicUsize);
+    impl RunnerConnector for ActivityRefusedConnector {
+        fn connect(&self) -> ConnectFuture<'_> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async {
+                Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+            })
+        }
+        fn endpoint_description(&self) -> String {
+            "synthetic:activity-refused".into()
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_unavailable_is_one_attempt_without_retry_or_recovery() {
+        let connector = Arc::new(ActivityRefusedConnector::default());
+        let client = RunnerClient::with_connector(connector.clone());
+        assert!(client.pi_activity_snapshot().await.is_err());
+        assert_eq!(connector.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn activity_read_emits_only_snapshot_and_does_not_subscribe_or_resume() -> Result<()> {
+        let (client_stream, server_stream) = tokio::io::duplex(4096);
+        let client = RunnerClient::with_connector(Arc::new(OneShotDuplexConnector {
+            stream: tokio::sync::Mutex::new(Some(client_stream)),
+        }));
+        let server = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_stream);
+            let request: RunnerRequest = read_json_frame(&mut reader).await?.unwrap();
+            assert!(matches!(request, RunnerRequest::PiActivitySnapshot));
+            write_json_frame(
+                reader.get_mut(),
+                &RunnerResponse::PiActivitySnapshot(crate::runtime_activity::ActivitySnapshot {
+                    version: crate::runtime_activity::ACTIVITY_VERSION,
+                    complete: true,
+                    sessions: vec![],
+                }),
+            )
+            .await?;
+            assert!(
+                read_json_frame::<_, RunnerRequest>(&mut reader)
+                    .await?
+                    .is_none()
+            );
+            anyhow::Ok(())
+        });
+        assert!(client.pi_activity_snapshot().await?.complete);
+        server.await??;
+        Ok(())
     }
 
     #[tokio::test]

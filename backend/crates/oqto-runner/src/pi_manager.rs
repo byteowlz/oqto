@@ -823,6 +823,8 @@ struct PiSession {
     _ssh_agent_proxy: Option<crate::ssh_agent_proxy::SshAgentProxy>,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
+    /// Retained activity metadata, independent of UI subscribers; never prompt content.
+    activity: Arc<RwLock<crate::runtime_activity::PendingInputs>>,
     /// The Pi external_id for this session.
     /// Empty until Pi's native session ID is known via `get_state`.
     session_external_id: SessionExternalId,
@@ -1212,6 +1214,7 @@ impl PiSessionManager {
 
         // Shared state for the session
         let state = Arc::new(RwLock::new(PiSessionState::Starting));
+        let activity = Arc::new(RwLock::new(crate::runtime_activity::PendingInputs::new()));
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
         let active_provider = Arc::new(RwLock::new(config.provider.clone()));
@@ -1259,6 +1262,7 @@ impl PiSessionManager {
             let msg_buf = Arc::clone(&message_buffer);
             let active_provider_for_reader = Arc::clone(&active_provider);
             let active_model_for_reader = Arc::clone(&active_model);
+            let activity = Arc::clone(&activity);
 
             let runner_id = self.config.runner_id.clone();
             tokio::spawn(async move {
@@ -1279,6 +1283,7 @@ impl PiSessionManager {
                     msg_buf,
                     active_provider_for_reader,
                     active_model_for_reader,
+                    activity,
                 )
                 .await;
             })
@@ -1287,6 +1292,7 @@ impl PiSessionManager {
         // Spawn command processor task
         let cmd_handle = {
             let session_id = session_id.clone();
+            let activity = Arc::clone(&activity);
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
             let pending_client_id = Arc::clone(&pending_client_id);
@@ -1304,6 +1310,7 @@ impl PiSessionManager {
                     last_activity,
                     pending_client_id,
                     control_runtime,
+                    activity,
                 )
                 .await;
             })
@@ -1321,6 +1328,7 @@ impl PiSessionManager {
             _egress_guard: egress_guard,
             _ssh_agent_proxy: ssh_agent_proxy,
             state: Arc::clone(&state),
+            activity,
             session_external_id,
             active_provider,
             active_model,
@@ -1654,6 +1662,66 @@ impl PiSessionManager {
         }
 
         infos
+    }
+
+    /// Retained in-memory facts only: no spawn, subscription, RPC, filesystem read or recovery.
+    pub async fn activity_snapshot(&self) -> crate::runtime_activity::ActivitySnapshot {
+        use crate::runtime_activity::{
+            ACTIVITY_VERSION, ActivitySnapshot, MAX_ACTIVITY_SESSIONS, SessionActivity,
+        };
+        let (entries, complete) = {
+            let sessions = self.sessions.read().await;
+            let mut ids: Vec<_> = sessions.keys().collect();
+            ids.sort();
+            let complete = ids.len() <= MAX_ACTIVITY_SESSIONS;
+            let entries = ids
+                .into_iter()
+                .take(MAX_ACTIVITY_SESSIONS)
+                .map(|id| {
+                    let s = &sessions[id];
+                    (
+                        s.id.clone(),
+                        s.config.cwd.clone(),
+                        Arc::clone(&s.state),
+                        Arc::clone(&s.activity),
+                        Arc::clone(&s.session_external_id),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (entries, complete)
+        };
+        let mut snapshot = ActivitySnapshot {
+            version: ACTIVITY_VERSION,
+            complete,
+            sessions: Vec::new(),
+        };
+        for (id, workspace_path, state, inputs, external) in entries {
+            let state = *state.read().await;
+            let (execution_id, revision, attention_count, complete) = {
+                let inputs = inputs.read().await;
+                let (revision, count, complete) = inputs.counts(Instant::now());
+                (inputs.execution_id.clone(), revision, count, complete)
+            }; // Never hold an activity lock while awaiting another session lock.
+            let external = external.read().await.clone();
+            let complete = complete && !matches!(state, PiSessionState::Starting);
+            snapshot.complete &= complete;
+            snapshot.sessions.push(SessionActivity {
+                external_history_id: (!external.is_empty() && external != id).then_some(external),
+                session_id: id,
+                workspace_path,
+                execution_id,
+                revision,
+                running: matches!(
+                    state,
+                    PiSessionState::Streaming
+                        | PiSessionState::Compacting
+                        | PiSessionState::Aborting
+                ),
+                attention_count,
+                complete,
+            });
+        }
+        snapshot
     }
 
     /// Resolve the session external_id for a session.
@@ -3671,6 +3739,7 @@ impl PiSessionManager {
         message_buffer: MessageBuffer,
         active_provider: Arc<RwLock<Option<String>>>,
         active_model: Arc<RwLock<Option<String>>>,
+        activity: Arc<RwLock<crate::runtime_activity::PendingInputs>>,
     ) {
         // Read stderr in a separate task, keeping last N lines in a ring buffer
         // so we can include them in the crash error event.
@@ -4329,6 +4398,7 @@ impl PiSessionManager {
                 let canonical_payloads = translator.translate(&pi_event);
                 let ts = chrono::Utc::now().timestamp_millis();
                 for payload in &canonical_payloads {
+                    activity.write().await.observe(payload, Instant::now());
                     let mut enriched_payload = payload.clone();
 
                     // Persist only terminal (non-recoverable) errors here.
@@ -4579,6 +4649,7 @@ impl PiSessionManager {
         };
 
         let exit_event = translator.state.on_process_exit(error_msg);
+        activity.write().await.clear();
         let canonical_event = CanonicalEvent {
             session_id: session_id.clone(),
             runner_id,
@@ -4598,11 +4669,20 @@ impl PiSessionManager {
         last_activity: Arc<RwLock<Instant>>,
         pending_client_id: PendingClientId,
         control_runtime: control::Runtime,
+        activity: Arc<RwLock<crate::runtime_activity::PendingInputs>>,
     ) {
         // Registry/session replacement invalidates discovery safety for this process.
         // Reattach through a newly mapped process rather than dispatching against an ambiguous runtime.
         let mut control_ready = true;
         while let Some(cmd) = cmd_rx.recv().await {
+            if matches!(
+                &cmd,
+                PiSessionCommand::NewSession(_)
+                    | PiSessionCommand::SwitchSession(_)
+                    | PiSessionCommand::Fork { .. }
+            ) {
+                activity.write().await.replace_execution();
+            }
             if matches!(
                 &cmd,
                 PiSessionCommand::NewSession(_)
@@ -4922,12 +5002,16 @@ impl PiSessionManager {
                     cancelled,
                 } => {
                     let pi_cmd = PiCommand::ExtensionUiResponse {
-                        id,
+                        id: id.clone(),
                         value,
                         confirmed,
                         cancelled,
                     };
-                    Self::write_command(&mut stdin, &pi_cmd).await
+                    let result = Self::write_command(&mut stdin, &pi_cmd).await;
+                    if result.is_ok() {
+                        activity.write().await.resolved(&id);
+                    }
+                    result
                 }
                 // Lifecycle
                 PiSessionCommand::Close => {

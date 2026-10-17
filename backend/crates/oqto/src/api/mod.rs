@@ -8,6 +8,7 @@ mod delegate;
 mod error;
 pub mod handlers;
 mod onboarding_handlers;
+mod project_activity;
 pub(crate) mod provisioning;
 pub mod proxy;
 mod rate_limit;

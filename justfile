@@ -24,6 +24,13 @@ build-frontend:
 # Lint & Format
 # =============================================================================
 
+# Retained managed-agent facts and observation-only transport/scope proofs; no live runner.
+project-activity-test:
+    cd backend && cargo test -p oqto-runner --lib runtime_activity
+    cd backend && cargo test -p oqto-runner --lib activity_
+    cd backend && cargo test -p oqto-runner --lib control::tests
+    cd backend && cargo test -p oqto --lib project_activity
+
 # Run all linters
 lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority
 

@@ -224,6 +224,9 @@ async fn command_processor_control_never_touches_prompt_bookkeeping_or_session_s
             pending: pending.clone(),
             external_id: Arc::new(RwLock::new("pi-native".into())),
         },
+        Arc::new(RwLock::new(
+            crate::runtime_activity::PendingInputs::default(),
+        )),
     ));
     let mut catalogs = Vec::new();
     for request_id in ["catalog-first", "catalog-second"] {
@@ -335,6 +338,9 @@ async fn session_replacement_invalidates_control_before_discovery_or_dispatch() 
             pending: pending.clone(),
             external_id: Arc::new(RwLock::new("pi-native".into())),
         },
+        Arc::new(RwLock::new(
+            crate::runtime_activity::PendingInputs::default(),
+        )),
     ));
     tx.send(PiSessionCommand::NewSession(None))
         .await
