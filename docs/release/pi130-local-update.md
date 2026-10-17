@@ -1,6 +1,6 @@
 # Pi 1.3.0 Linux runtime qualification (2026-10-17)
 
-Status: qualified candidate; **local activation blocked awaiting privileged authorization**. The installed shared and Oqto-bundled Pi remains 1.1.0. Mac Studio was checked read-only and reports 1.3.0; no Mac/Azure rollout occurred.
+Status: **activated locally** through the guarded canonical transaction on 2026-10-17. Shared Pi and the Oqto-bundled runtime report 1.3.0. Mac Studio was checked read-only and reports 1.3.0; no Mac/Azure rollout occurred.
 
 The exact official npm closure is pinned with SHA512 integrity and package-lock SHA256, alongside unchanged checksum-pinned Node 24.14.1. All seven `@earendil-works/pi-*` packages in the staged closure report 1.3.0. Default deployment consumes the synchronized dependency, package/lock and release-manifest pins; never edit a live immutable runtime or run npm inside it.
 
@@ -17,4 +17,4 @@ Receipts and the prepared artifact are under `~/byteowlz/oqto-release-artifacts/
 
 A probe of every directory in the old immutable payload failed because it also contains undeclared stale `pi-oqto-todos`, conflicting with declared `pi-todolist`. Failure is retained in `shipped-extensions.log`; the new candidate contains exactly the manifest's 14 directories. No user-owned extension was removed or changed.
 
-The sudo tool's password prompt timed out before activation. Use the canonical deployment transaction without a busy-session override and with pruning disabled. It must capture rollback/config state, refuse busy sessions, restart/check the local services, verify the new runtime and preserve user state. Do not claim live update, original authenticated UI/provider acceptance, fleet acceptance or publication from these candidate tests.
+The first privilege prompt timed out without changes. The authorized retry activated `0.5.11-dev.20261017192436.gcf4deda7`; protected receipt `/root/oqto-deploy-20261017T210313Z-3dadea01` records configuration preservation, health `ok` (Oqto 0.5.11), and runner PID 2890298 executing from the new release. `/usr/local/bin/pi` resolves to that release and reports 1.3.0; `oqtoctl status` is healthy. Activation used no busy-session override and disabled pruning. This establishes local activation, not original authenticated UI/provider acceptance, fleet acceptance or publication.
