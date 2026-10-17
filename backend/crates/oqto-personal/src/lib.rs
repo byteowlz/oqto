@@ -7,6 +7,8 @@ mod grants;
 mod private;
 use anyhow::{Context, Result, ensure};
 pub use grants::{Access, FileGrant, Grants, SessionAccess};
+use oqto_personal_wire::OQTO_PERSONAL_V1;
+pub use oqto_personal_wire::{Enrollment, PairingQr, SignedRequest};
 use rand::TryRngCore;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -20,8 +22,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
-use xlatch_wire_auth::OQTO_PERSONAL_V1;
-pub use xlatch_wire_auth::{Enrollment, SignedRequest};
 
 /// Sensitive one-time material, intentionally not Debug. Emit only as an explicit pairing QR/output.
 #[derive(Serialize)]
@@ -58,6 +58,7 @@ impl AuthorizedAction {
 pub struct PairingAuthority {
     pool: SqlitePool,
     root: PathBuf,
+    host_id: String,
     dispatch: Arc<tokio::sync::RwLock<()>>,
     _instance: std::fs::File,
 }
@@ -77,6 +78,16 @@ impl PairingAuthority {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO personal_host_identity (singleton, public_id) VALUES (1, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await?;
+        let host_id =
+            sqlx::query_scalar("SELECT public_id FROM personal_host_identity WHERE singleton=1")
+                .fetch_one(&pool)
+                .await?;
         let checkpoint = sqlx::query("PRAGMA wal_checkpoint(FULL)")
             .fetch_one(&pool)
             .await?;
@@ -87,9 +98,44 @@ impl PairingAuthority {
         Ok(Self {
             pool,
             root,
+            host_id,
             dispatch: Arc::new(tokio::sync::RwLock::new(())),
             _instance: instance,
         })
+    }
+
+    pub fn host_id(&self) -> &str {
+        &self.host_id
+    }
+
+    /// Local-owner-only QR output using the configured HTTPS leaf certificate.
+    /// This neither starts a listener nor proves its reachability.
+    pub async fn issue_pairing_qr(
+        &self,
+        grants: &Grants,
+        origin: &str,
+        leaf_der: &[u8],
+    ) -> Result<PairingQr> {
+        oqto_personal_wire::validate_origin(origin)?;
+        ensure!(
+            !leaf_der.is_empty() && leaf_der.len() <= 65536,
+            "invalid server certificate bounds"
+        );
+        let ticket = self.issue_ticket(grants).await?;
+        PairingQr::new(
+            &self.host_id,
+            origin,
+            leaf_der,
+            ticket.token,
+            ticket.expires_at,
+            now()?,
+        )
+    }
+
+    /// Untrusted transport input: bound and decode before proof/ticket admission.
+    pub async fn enroll_json(&self, bytes: &[u8]) -> Result<String> {
+        self.enroll(&oqto_personal_wire::decode_enrollment(bytes)?)
+            .await
     }
 
     /// Local-owner-only issuance. Client enrollment input never supplies grants.
@@ -108,7 +154,9 @@ impl PairingAuthority {
         let token = hex::encode(entropy);
         let mut tx = self.pool.begin().await?;
         let now = clock(&mut tx, now()?).await?;
-        let expires_at = now.checked_add(300).context("pairing expiry overflow")?;
+        let expires_at = now
+            .checked_add(oqto_personal_wire::PAIRING_TTL_SECONDS)
+            .context("pairing expiry overflow")?;
         sqlx::query("INSERT INTO personal_pairing_tickets (token_hash, grants_json, expires_at) VALUES (?, ?, ?)")
             .bind(token_hash(&token)).bind(serde_json::to_string(grants)?).bind(expires_at).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -226,5 +274,7 @@ fn token_hash(token: &str) -> String {
 
 #[cfg(test)]
 mod dispatch_tests;
+#[cfg(test)]
+mod qr_tests;
 #[cfg(test)]
 mod tests;

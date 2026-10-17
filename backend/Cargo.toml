@@ -113,6 +113,9 @@ axum-test = "17"
 tonic = "0.14"
 prost = "0.14"
 
+# Shared device proofs are store-independent; no xlatch CLI/core runtime dependency.
+xlatch-wire-auth = { git = "https://github.com/byteowlz/xlatch", rev = "d3494fc17353da63abdd1b16282ec882c2c723bf" }
+
 # External crates
 trx-core = { git = "https://github.com/byteowlz/trx", rev = "a97cf289d7b70a04c01025cdaed0cf8d100df9fd" }
 # default-features off: oqto only uses the embedded MemoryFile (jsonl) +

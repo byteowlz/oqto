@@ -178,9 +178,11 @@ async fn canonical_store_survives_reopen_with_nonce_and_grants_intact() -> Resul
     let id = authority.enroll(&proof).await?;
     let request = request(&id, 1, now()?);
     let device = authority.authenticate(&request).await?;
+    let host_id = authority.host_id().to_owned();
     authority.pool.close().await;
     drop(authority);
     let reopened = PairingAuthority::open_private(&dir.path().join("authority")).await?;
+    assert_eq!(reopened.host_id(), host_id);
     assert!(reopened.enroll(&proof).await.is_err());
     assert!(reopened.authenticate(&request).await.is_err());
     reopened

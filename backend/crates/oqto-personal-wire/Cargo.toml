@@ -1,0 +1,25 @@
+[package]
+name = "oqto-personal-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Host-neutral personal pairing QR and device proof wire contract"
+
+[features]
+default = []
+qr = ["dep:qrcode"]
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+url = "2.5"
+xlatch-wire-auth.workspace = true
+qrcode = { version = "0.14", default-features = false, features = ["svg"], optional = true }
+
+[lints]
+workspace = true

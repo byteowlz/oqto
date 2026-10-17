@@ -19,7 +19,7 @@ sha2.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true
-xlatch-wire-auth = { git = "https://github.com/byteowlz/xlatch", rev = "d3494fc17353da63abdd1b16282ec882c2c723bf" }
+oqto-personal-wire = { path = "../oqto-personal-wire" }
 
 [dev-dependencies]
 base64.workspace = true

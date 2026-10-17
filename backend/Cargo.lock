@@ -5094,6 +5094,7 @@ dependencies = [
  "hex",
  "libc",
  "log",
+ "oqto-personal-wire",
  "rand 0.9.2",
  "rustix",
  "serde",
@@ -5102,6 +5103,20 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid 1.21.0",
+]
+
+[[package]]
+name = "oqto-personal-wire"
+version = "0.5.11"
+dependencies = [
+ "anyhow",
+ "hex",
+ "qrcode",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
  "uuid 1.21.0",
  "xlatch-wire-auth",
 ]
@@ -5887,6 +5902,12 @@ name = "pxfm"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5a041e753da8b807c9255f28de81879c78c876392ff2469cde94799b2896b9d"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

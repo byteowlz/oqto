@@ -979,9 +979,9 @@ update-pi: update-pi-local
 
 # Component proof only: not pinned TLS, native Pi, Files/PTY operations or phone acceptance.
 test-personal-authority:
-    cd backend && cargo fmt -p oqto-personal -- --check
-    cd backend && cargo test --locked -p oqto-personal
-    cd backend && cargo clippy --locked -p oqto-personal --all-targets -- -D warnings
+    cd backend && cargo fmt -p oqto-personal -p oqto-personal-wire -- --check
+    cd backend && cargo test --locked -p oqto-personal -p oqto-personal-wire --all-features
+    cd backend && cargo clippy --locked -p oqto-personal -p oqto-personal-wire --all-targets --all-features -- -D warnings
 
 # =============================================================================
 # Agent Quality Gate
