@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 mod grants;
+pub mod http;
 mod private;
 use anyhow::{Context, Result, ensure};
 pub use grants::{Access, FileGrant, Grants, SessionAccess};
@@ -274,6 +275,8 @@ fn token_hash(token: &str) -> String {
 
 #[cfg(test)]
 mod dispatch_tests;
+#[cfg(test)]
+mod https_tests;
 #[cfg(test)]
 mod qr_tests;
 #[cfg(test)]

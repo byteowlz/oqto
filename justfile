@@ -977,7 +977,7 @@ admin-sync-all *ARGS:
 # Alias for the rootless local update channel
 update-pi: update-pi-local
 
-# Component proof only: not pinned TLS, native Pi, Files/PTY operations or phone acceptance.
+# Component enrollment TLS proof only: not a running host service, Pi, Files/PTY or phone acceptance.
 test-personal-authority:
     cd backend && cargo fmt -p oqto-personal -p oqto-personal-wire -- --check
     cd backend && cargo test --locked -p oqto-personal -p oqto-personal-wire --all-features

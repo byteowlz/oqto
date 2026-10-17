@@ -8,6 +8,11 @@ description = "Local paired-device authorization for backendless personal hosts"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tower.workspace = true
+tokio-rustls.workspace = true
 hex.workspace = true
 log.workspace = true
 libc.workspace = true
@@ -22,6 +27,8 @@ uuid.workspace = true
 oqto-personal-wire = { path = "../oqto-personal-wire" }
 
 [dev-dependencies]
+oqto-personal-wire = { path = "../oqto-personal-wire", features = ["tls"] }
+rcgen = "0.13"
 base64.workspace = true
 ed25519-dalek = "2.2"
 tempfile.workspace = true

@@ -7,6 +7,19 @@ use url::Url;
 use uuid::Uuid;
 pub use xlatch_wire_auth::{Enrollment, OQTO_PERSONAL_V1, SignedRequest};
 
+#[cfg(feature = "tls")]
+pub mod tls;
+
+pub const ENROLL_PATH: &str = "/personal/v1/enroll";
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnrollmentReply {
+    pub version: u8,
+    pub host_id: String,
+    pub device_id: String,
+}
+
 pub const PURPOSE: &str = "oqto.personal-host.v1";
 pub const MAX_QR_BYTES: usize = 2048;
 pub const MAX_ENROLLMENT_BYTES: usize = 4096;

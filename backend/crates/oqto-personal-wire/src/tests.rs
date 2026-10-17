@@ -95,6 +95,18 @@ fn enrollment_input_is_bounded_and_rejects_client_grants() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "tls")]
+#[test]
+fn tls_pin_configuration_has_no_early_data_or_invalid_pin_fallback() -> Result<()> {
+    for invalid in ["", "not-a-pin", &"A".repeat(64)] {
+        assert!(crate::tls::pinned_client_config(invalid).is_err());
+    }
+    let config = crate::tls::pinned_client_config(&"a".repeat(64))?;
+    assert!(!config.enable_early_data);
+    assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
+    Ok(())
+}
+
 #[cfg(feature = "qr")]
 #[test]
 fn renders_terminal_and_svg_without_image_dependencies() -> Result<()> {

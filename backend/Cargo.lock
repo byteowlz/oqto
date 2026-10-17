@@ -5089,13 +5089,17 @@ name = "oqto-personal"
 version = "0.5.11"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
  "hex",
+ "hyper",
+ "hyper-util",
  "libc",
  "log",
  "oqto-personal-wire",
  "rand 0.9.2",
+ "rcgen 0.13.2",
  "rustix",
  "serde",
  "serde_json",
@@ -5103,6 +5107,8 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tower",
  "uuid 1.21.0",
 ]
 
@@ -5116,6 +5122,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio-rustls",
  "url",
  "uuid 1.21.0",
  "xlatch-wire-auth",

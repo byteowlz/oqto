@@ -1,6 +1,6 @@
 # Personal host pairing wire
 
-Implementation: `oqto-personal-wire` (host-neutral client/CLI types) and `oqto-personal` (local owner authorization store). Decision: [ADR-0062](../adr/0062-backendless-personal-host-device-pairing.md). This is not yet a runnable CLI/network service or phone acceptance; listener/client TLS, Files, PTY and session integration remain under `oqto-8x3p.10.7`.
+Implementation: `oqto-personal-wire` (host-neutral client/CLI types) and `oqto-personal` (local owner authorization store). Decision: [ADR-0062](../adr/0062-backendless-personal-host-device-pairing.md). An enrollment-only HTTPS adapter and optional exact-pin TLS client are implemented for Runner composition and fixtures. No runnable CLI pairing flow or phone acceptance exists yet; Runner mounting, Files, PTY and session integration remain under `oqto-8x3p.10.7`.
 
 ## QR v1
 
@@ -20,8 +20,14 @@ The QR deliberately contains no grants, host filesystem paths or private keys. O
 
 `decode_enrollment` bounds input to 4096 bytes and rejects unknown fields, including client-supplied grants. The exact Ed25519 enrollment shape and signing bytes are provided by immutable `xlatch-wire-auth`; Oqto uses the compiled `oqto.personal.pair.v1` context, not `xlatch.pair.v1`. `PairingAuthority::enroll_json` performs bounded decoding, possession proof and transactional ticket consumption, returning a new device identity with only the ticket's grants. Device identity and host identity must not be interchanged.
 
-Transport must verify the pinned TLS peer **before sending the ticket**, and verify TLS handshake signatures. `matches_leaf` alone is not a TLS verifier, and QR creation from a DER byte slice does not establish certificate validity or endpoint reachability. No HTTP endpoint is published by this component yet; consumers must not guess one. Signed RPC uses the separate `oqto.personal.rpc.v1` context and exact payload string; signatures still do not grant capabilities.
+Transport must verify the pinned TLS peer **before sending the ticket**, and verify TLS handshake signatures. `matches_leaf` alone is not a TLS verifier, and QR creation from a DER byte slice does not establish certificate validity or endpoint reachability. The enrollment-only adapter serves `POST /personal/v1/enroll`, returning `{version:1,host_id,device_id}` on success. Clients must correlate the host identity with the QR. It does not expose grant issuance or execution routes. Refusals return a generic 401 without proof/token/error details; oversized bodies return 413. An uncertain enrollment outcome must not cause automatic replay or privilege widening. Signed RPC uses the separate `oqto.personal.rpc.v1` context and exact payload string; signatures still do not grant capabilities.
+
+## TLS trust and lifecycle
+
+The optional wire `tls` feature builds an exact-leaf, owner-pinned TLS 1.3 client. It verifies CertificateVerify through rustls's crypto provider: a copied public certificate without its private key fails. There is no CA fallback, accept-any mode, early data or resumption. Pin trust is explicit and **does not assert public PKIX CA, DNS-name or certificate-lifetime validation**; the validated QR origin and exact pinned leaf identify the owner-selected endpoint. Certificate renewal/rotation requires explicit trust handling, not fallback to an arbitrary certificate.
+
+The enrollment server accepts a caller-owned listener/config and shutdown future, so it can be composed into the Runner rather than supervising sessions separately. It bounds active connections to 64, TLS handshakes and HTTP headers to five seconds, enrollment bodies to 4096 bytes, and HTTP connection lifetime to 30 seconds. Those are enrollment bounds, not a long-lived session/PTTY lifecycle. No service is installed or started by constructing the adapter.
 
 ## Gates
 
-`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These are component tests, not a camera scanner test, pinned TLS service proof, native Pi control or file/terminal operation acceptance. Bootstrap crash/recovery and existing-device upgrade qualification remain required before deployment.
+`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not a camera scanner test, running-host/phone acceptance, native Pi control or file/terminal operation acceptance. Bootstrap crash/recovery and existing-device upgrade qualification remain required before deployment.
