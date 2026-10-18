@@ -1,0 +1,7 @@
+# Native Session Tree convergence preserves provenance and requires head evidence
+
+Personal Runner observation needs native Branch changes to converge even when message counts and file size do not change. Retain ADR-0025's single background ingest writer and read-only chat paths, but use actual native entry ids, parent links and a head reported by the attached native runtime—not counts, text, last-line position or a reading bookmark.
+
+The native graph projection is a separately identified source/Branch inside the existing oqto-log store. Retain legacy turns, messages and Fork provenance; never destructively replace them to adopt a native graph. Raw native envelopes preserve all entry types. Repeated source ids must retain identical payload and parent facts; mismatches fail closed. Canonical reads select the explicitly evidenced native head and its ancestor path, retaining sibling branches durably. A missing/unsupported head is unavailable, not permission to guess. Observation and reconnect may nudge the serialized writer, but must never synchronously import, select a native Branch, replay input or start another Pi.
+
+This deliberately costs a distinct provenance-preserving projection for legacy Sessions rather than rewriting committed canonical identities. Qualification must cover equal-count head switches, non-message ancestors, repeated content with distinct source ids, immutable-source mismatches, partial source tails, read-only reload and no duplicate Pi.

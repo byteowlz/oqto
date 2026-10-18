@@ -962,7 +962,6 @@ impl RunnerClient {
     }
 
     /// Add a new memory to a workspace.
-    #[allow(clippy::too_many_arguments)]
     pub async fn add_memory(
         &self,
         workspace_path: impl Into<PathBuf>,
@@ -989,7 +988,6 @@ impl RunnerClient {
     }
 
     /// Update (deprecate + re-add) a memory in a workspace.
-    #[allow(clippy::too_many_arguments)]
     pub async fn update_memory(
         &self,
         workspace_path: impl Into<PathBuf>,

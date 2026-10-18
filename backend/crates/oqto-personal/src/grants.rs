@@ -92,6 +92,8 @@ pub struct Grants {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Access<'a> {
+    /// Paired-device inventory only; never an execution or observation grant.
+    Inventory,
     SessionObserve,
     SessionControl,
     FileRead(&'a str),
@@ -114,6 +116,7 @@ impl Grants {
     }
     pub(crate) fn allows(&self, access: Access<'_>) -> bool {
         match access {
+            Access::Inventory => true,
             Access::SessionObserve => self.sessions != SessionAccess::None,
             Access::SessionControl => self.sessions == SessionAccess::Control,
             Access::FullUserTerminal => self.full_user_terminal,

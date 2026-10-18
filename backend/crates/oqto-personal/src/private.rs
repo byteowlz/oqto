@@ -81,16 +81,74 @@ pub(crate) fn open_state(path: &Path) -> Result<(PathBuf, PathBuf, fs::File)> {
             Err(error) => return Err(error.into()),
         }
     }
-    // Read only the SQLite header before opening a writable connection. Never
-    // migrate an unrelated user database merely because its filename matches.
-    if database.metadata()?.len() > 0 {
+    // Establish durable ownership BEFORE the first SQLite write. A process can
+    // die after SQLite makes its header but before migration sets application_id.
+    // Only the exact inode recorded by this private marker may recover that state.
+    let marker = root.join("store-owner.json");
+    let metadata = database.metadata()?;
+    let ownership = format!(
+        "{{\"purpose\":\"oqto.personal-store.v1\",\"dev\":{},\"ino\":{}}}\n",
+        metadata.dev(),
+        metadata.ino()
+    );
+    let mut recognized_header = metadata.len() == 0;
+    if metadata.len() > 0 {
         use std::io::Read;
         let mut header = [0u8; 100];
         fs::File::open(&database)?.read_exact(&mut header)?;
         ensure!(
-            &header[..16] == b"SQLite format 3\0" && header[68..72] == [0x4f, 0x51, 0x50, 0x50],
+            &header[..16] == b"SQLite format 3\0",
             "unrecognized personal store; refusing to modify it"
         );
+        recognized_header = header[68..72] == [0x4f, 0x51, 0x50, 0x50];
+        ensure!(
+            recognized_header || header[68..72] == [0, 0, 0, 0],
+            "foreign personal store application identity"
+        );
+    }
+    match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&marker)
+    {
+        Ok(mut file) => {
+            use std::io::Read;
+            let meta = file.metadata()?;
+            ensure!(
+                meta.is_file()
+                    && meta.uid() == uid
+                    && meta.mode() & 0o077 == 0
+                    && meta.len() <= 256,
+                "invalid store ownership marker"
+            );
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)?;
+            ensure!(
+                contents == ownership,
+                "store ownership marker does not match database inode"
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            use std::io::Write;
+            ensure!(
+                recognized_header,
+                "unrecognized personal store; refusing to claim interrupted state"
+            );
+            // An interrupted write must never leave a half-valid final marker.
+            // Link the fully synced private staging inode without clobbering.
+            let staged = root.join(format!("store-owner-{}.new", uuid::Uuid::new_v4()));
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&staged)?;
+            file.write_all(ownership.as_bytes())?;
+            file.sync_all()?;
+            fs::hard_link(&staged, &marker)?;
+            fs::File::open(&root)?.sync_all()?;
+            fs::remove_file(staged)?;
+        }
+        Err(error) => return Err(error.into()),
     }
     Ok((root, database, lock))
 }

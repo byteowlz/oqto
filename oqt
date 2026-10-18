@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Source-only local DEMO. No installation, ordinary Pi profiles, or stock-tools fallback.
+set -euo pipefail
+oqt_t0=$EPOCHREALTIME
+# Resolve through symlinks so an installed `oqt` on PATH finds this checkout.
+self=$(readlink -f "${BASH_SOURCE[0]}")
+root=$(cd "$(dirname "$self")" && pwd)
+# Explicit qualified source only; never select an ambient /tmp checkout.
+source=${OQT_PI_SOURCE:-$HOME/.local/share/oqt/pi-source}
+workdir=$PWD
+mode=coding
+owner=${OQT_OWNER_AGENT_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}
+args=()
+while (($#)); do
+ case "$1" in
+  --workdir) workdir=${2:?--workdir needs a directory}; shift 2;;
+  --coding) args+=("$1"); shift;;
+  --owner-profile) owner=${2:?--owner-profile needs a directory}; shift 2;;
+  --demo) mode=demo; args+=("$1"); shift;;
+  --continue|-c|--smoke) args+=("$1"); shift;;
+  -h|--help) printf '%s\n' 'oqt: experimental Pi Durable workspace coding' 'Usage: oqt [--continue] [--workdir DIR] [--owner-profile DIR]' 'Default: real coding. Owning Pi defaults; credentials brokered by a guard (never copied). Confined brain and hands.' 'Every tool call needs approval; request_access asks for outside paths/network (Session, 1h).' 'Ceilings: ~/.config/oqto/sandbox.toml and <workspace>/.oqto/sandbox.toml (narrow only). --continue joins/reopens. --demo = synthetic fixture demo.' 'Local OS operator boundary, not Oqto Account authentication. --demo keeps the synthetic demo. Nothing is installed.'; exit 0;;
+  *) echo "Unsupported oqt prototype option: $1" >&2; exit 2;;
+ esac
+done
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Prototype requires Linux x86_64' >&2; exit 2; }
+workdir=$(cd "$workdir" 2>/dev/null && pwd) || { echo "Work directory does not exist: $workdir" >&2; exit 2; }
+if [[ "$mode" == coding ]]; then
+ case "$workdir" in
+  "$root"|"$root"/*) echo "Refusing: $workdir is inside oqt's own source tree, which coding workspaces may never be (the agent could reach oqt's own approval machinery). Run from your project directory or pass --workdir /path/to/project." >&2; exit 2;;
+ esac
+fi
+for command in node python3 cargo bwrap taskset nice timeout; do command -v "$command" >/dev/null; done
+cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+export CARGO_BUILD_JOBS=1
+# Runtime artifacts are local to this worktree, never installed globally.
+export CARGO_TARGET_DIR="$root/backend/target"
+bounded() { timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 "$@"; }
+cd "$root"
+bpf=$(timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source")
+runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir" "$mode")
+# One parse: prepare.py's JSON -> an associative array (keys are fixed, values are paths).
+declare -A rt
+while IFS=$'\t' read -r key val; do rt[$key]=$val; done < <(python3 -c 'import json,sys
+for k, v in json.loads(sys.argv[1]).items(): print(f"{k}\t{v}")' "$runtime")
+value() { printf '%s' "${rt[$1]:?missing runtime key $1}"; }
+snapshot=$(value source); profile=$(value profile); home=$(value home); agent=$(value agent)
+if [[ "$mode" == coding ]]; then
+ owner=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=True))' "$owner")
+fi
+cd "$workdir"
+# The interactive runtime runs at normal priority on all CPUs; only builds
+# above are bounded (one CPU, nice 19).
+exec env -i PATH="$PATH" HOME="$home" LANG="${LANG:-C.UTF-8}" \
+ TERM="${TERM:-xterm-256color}" COLORTERM="${COLORTERM:-}" \
+ NODE_OPTIONS=--max-old-space-size=512 PI_EXPERIMENTAL=1 PI_CODING_AGENT_DIR="$agent" \
+ OQT_MODE="$mode" OQT_OWNER_AGENT_DIR="$owner" OQT_RUNTIME_ROOT="$(value runtime_root)" \
+ OQT_TRUSTED_SOURCE_ROOT="$root" OQT_SOURCE_CHECKOUT="$source" \
+ OQT_SERVER_DIR="$profile" OQT_CARRIER="$(value carrier)" \
+ OQT_HANDS="$(value hands)" OQT_BRAIN="$(value brain)" PI_OFFLINE=1 OQT_ENV_DAEMON="$(value daemon)" OQT_SANDBOX_SHIM="$(value shim)" \
+ OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" OQT_HOST_IDLE_SECONDS="${OQT_HOST_IDLE_SECONDS:-}" OQT_SANDBOX_CONFIG="${OQT_SANDBOX_CONFIG:-$HOME/.config/oqto/sandbox.toml}" OQT_INPUT_TRACE="$profile/input-trace.log" OQT_STARTUP_TRACE="$profile/startup-trace.log" OQT_SHELL_START="$oqt_t0" NODE_COMPILE_CACHE="$(value runtime_root)/node-compile-cache" \
+ node --import "$snapshot/packages/coding-agent/src/experimental/source-resolver.ts" \
+ "$snapshot/packages/coding-agent/src/experimental/oqt-launcher.ts" "${args[@]}"

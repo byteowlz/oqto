@@ -20,6 +20,8 @@ use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
+mod personal;
+pub use personal::PersonalBackend;
 
 /// Authority of the transport, not the TLS certificate alone. New remote
 /// request variants remain denied until a runner-owned grant authorizes them.
@@ -802,34 +804,29 @@ impl Runner {
     }
 
     /// Get stdout broadcast receiver for a process.
-    // The error is the wire RunnerResponse returned directly to the client;
-    // boxing it here would only add an allocation before serialization.
-    #[allow(clippy::result_large_err)]
+    // Keep errors semantic and small; construct the wire response at the boundary.
     async fn get_stdout_receiver(
         &self,
         process_id: &str,
-    ) -> Result<(broadcast::Receiver<StdoutEvent>, Vec<String>), RunnerResponse> {
+    ) -> Result<(broadcast::Receiver<StdoutEvent>, Vec<String>), (ErrorCode, String)> {
         let state = self.state.read().await;
 
         let Some(proc) = state.processes.get(process_id) else {
-            return Err(error_response(
+            return Err((
                 ErrorCode::ProcessNotFound,
                 format!("Process '{}' not found", process_id),
             ));
         };
 
         if !proc.is_rpc {
-            return Err(error_response(
+            return Err((
                 ErrorCode::NotRpcProcess,
                 format!("Process '{}' is not an RPC process", process_id),
             ));
         }
 
         let Some(ref tx) = proc.stdout_tx else {
-            return Err(error_response(
-                ErrorCode::IoError,
-                "stdout channel not available",
-            ));
+            return Err((ErrorCode::IoError, "stdout channel not available".into()));
         };
 
         // Get any buffered lines first
@@ -4233,7 +4230,8 @@ impl Runner {
                                 // (client can send more requests)
                                 continue;
                             }
-                            Err(resp) => {
+                            Err((code, message)) => {
+                                let resp = error_response(code, message);
                                 let line = match Self::serialize_response_line(&resp) {
                                     Ok(line) => line,
                                     Err(err) => {
@@ -4331,17 +4329,8 @@ impl Runner {
         }
     }
 
-    /// Serve any authenticated runner transport until shutdown.
-    pub async fn run_transport<L>(&self, listener: &L, access: ConnectionAccess) -> Result<()>
-    where
-        L: RunnerListener,
-    {
-        info!("Runner listening on {}", listener.endpoint_description());
-        sd_notify_ready();
-
-        // Container-entrypoint correctness: SIGTERM/SIGINT trigger the same
-        // graceful shutdown as an explicit request, so `podman stop` cleans
-        // up sessions instead of timing out into SIGKILL.
+    fn install_shutdown_signals(&self) {
+        // All entry points use the same Runner lifecycle and owned-child cleanup.
         {
             let shutdown = self.shutdown_tx.clone();
             match (
@@ -4366,7 +4355,9 @@ impl Runner {
                 }
             }
         }
+    }
 
+    fn bootstrap_history_index(&self) {
         // One-time index bootstrap: session lookups are O(1) via the oqto-log
         // session index; build it in the background if this home predates it.
         if let Some(home) = dirs::home_dir()
@@ -4384,6 +4375,17 @@ impl Runner {
                 }
             });
         }
+    }
+
+    /// Serve any authenticated runner transport until shutdown.
+    pub async fn run_transport<L>(&self, listener: &L, access: ConnectionAccess) -> Result<()>
+    where
+        L: RunnerListener,
+    {
+        info!("Runner listening on {}", listener.endpoint_description());
+        sd_notify_ready();
+        self.install_shutdown_signals();
+        self.bootstrap_history_index();
         self.serve_listener(listener, access).await;
         // Removing a supervisor-owned pin requires a runner restart. Do not
         // leave previously admitted Pi processes running after that revoke.

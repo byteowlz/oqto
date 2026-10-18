@@ -76,6 +76,57 @@ pub fn find_session_file_in(base: &Path, session_id: &str, cwd: Option<&Path>) -
     find_in_all_directories(base, &suffix)
 }
 
+/// Strict adoption lookup: one bound native id in its designated Workspace,
+/// never a cross-directory fallback or a first-of-many selection. The caller
+/// still validates the native header/cwd, peer and current host grant.
+pub fn find_unique_session_file_in(
+    base: &Path,
+    session_id: &str,
+    cwd: &Path,
+) -> std::io::Result<Option<PathBuf>> {
+    if session_id.is_empty()
+        || session_id.len() > 256
+        || !session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Invalid native id",
+        ));
+    }
+    let directory = base.join(cwd_to_safe_dirname(cwd));
+    let metadata = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::other("Unsafe native Workspace directory"));
+    }
+    let suffix = format!("_{session_id}.jsonl");
+    let mut found = None;
+    for (count, entry) in std::fs::read_dir(directory)?.enumerate() {
+        if count >= 32768 {
+            return Err(std::io::Error::other(
+                "Native Workspace directory exceeds adoption bound",
+            ));
+        }
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.ends_with(&suffix))
+        {
+            if !entry.file_type()?.is_file() || found.is_some() {
+                return Err(std::io::Error::other("Ambiguous or unsafe native source"));
+            }
+            found = Some(entry.path());
+        }
+    }
+    Ok(found)
+}
+
 /// Search a specific directory for a session file with the given suffix.
 fn find_in_directory(dir: &Path, suffix: &str) -> Option<PathBuf> {
     if !dir.is_dir() {
@@ -136,6 +187,45 @@ pub async fn find_session_file_async(session_id: String, cwd: Option<PathBuf>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_adoption_rejects_ambiguity_and_never_falls_back_to_other_workspace()
+    -> std::io::Result<()> {
+        // A private std-only fixture keeps this wire/helper crate dependency-light.
+        let base = std::env::temp_dir().join(format!(
+            "oqto-pi-unique-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(std::io::Error::other)?
+                .as_nanos()
+        ));
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        std::fs::create_dir(&base)?;
+        let _cleanup = Cleanup(base.clone());
+        let workspace = Path::new("/synthetic/work");
+        let other = base.join(cwd_to_safe_dirname(Path::new("/other/work")));
+        std::fs::create_dir(&other)?;
+        std::fs::write(other.join("first_native-a.jsonl"), b"{}\n")?;
+        assert!(find_unique_session_file_in(&base, "native-a", workspace)?.is_none());
+        let directory = base.join(cwd_to_safe_dirname(workspace));
+        std::fs::create_dir(&directory)?;
+        let first = directory.join("first_native-a.jsonl");
+        std::fs::write(&first, b"{}\n")?;
+        assert_eq!(
+            find_unique_session_file_in(&base, "native-a", workspace)?,
+            Some(first)
+        );
+        std::fs::write(directory.join("second_native-a.jsonl"), b"{}\n")?;
+        assert!(find_unique_session_file_in(&base, "native-a", workspace).is_err());
+        assert!(find_unique_session_file_in(&base, "../native-a", workspace).is_err());
+        Ok(())
+    }
 
     #[test]
     fn test_cwd_to_safe_dirname() {

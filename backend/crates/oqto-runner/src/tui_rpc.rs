@@ -1,11 +1,14 @@
-//! Read-only attachment to an externally owned Pi TUI (protocol v1).
+//! Runner-owned attachment to an externally owned Pi TUI (protocol v1).
 //!
 //! Protocol/discovery reference: oqto-desktop b788b2fd, live.rs/transport.rs,
 //! ADR-0005. Unlike Desktop discovery, source access requires an explicit host
 //! authority binding first. This is an adapter, NOT network admission or a grant
 //! issuer. Raw events are private translator input, never canonical replay.
-//! No lease, prompt, session switch, bulk-history request, spawn or kill exists.
+//! Input additionally requires host control authority and a terminal-confirmed,
+//! connection-scoped lease. No session switch, bulk history, spawn or kill exists.
+mod control;
 use anyhow::{Context, Result, bail, ensure};
+pub use control::{ControlAuthority, ControlPermit, InputAction, InputReceipt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -31,7 +34,8 @@ const DISCOVERY_DEADLINE: Duration = Duration::from_secs(5);
 /// binding and designated roots. Deliberately not deserializable from a request.
 #[derive(Clone)]
 pub struct ObservationBinding {
-    pub account_id: String,
+    /// Verified Account namespace or local personal-host namespace; never an invented Account.
+    pub authority_id: String,
     pub public_session_id: String,
     pub external_session_id: String,
     pub session_file: PathBuf,
@@ -51,10 +55,44 @@ pub trait ObservationAuthority: Send + Sync {
     fn revalidate(&self, binding: &ObservationBinding) -> Result<()>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum NativeHead {
+    #[default]
+    Unavailable,
+    Empty,
+    Entry(String),
+}
+impl NativeHead {
+    pub fn leaf_id(&self) -> Result<Option<&str>> {
+        match self {
+            Self::Unavailable => bail!("Native head evidence unsupported"),
+            Self::Empty => Ok(None),
+            Self::Entry(id) => Ok(Some(id)),
+        }
+    }
+}
+fn deserialize_head<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<NativeHead, D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::Null => Ok(NativeHead::Empty),
+        Value::String(id)
+            if !id.is_empty()
+                && id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
+        {
+            Ok(NativeHead::Entry(id))
+        }
+        _ => Err(serde::de::Error::custom("Invalid native head")),
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedState {
     pub streaming: bool,
     pub compacting: bool,
+    pub head: NativeHead,
 }
 
 /// Native input for the runner's translator; contains private session data.
@@ -76,6 +114,8 @@ struct NativeState {
     #[serde(rename = "sessionFile")]
     session_file: PathBuf,
     cwd: PathBuf,
+    #[serde(default, rename = "leafId", deserialize_with = "deserialize_head")]
+    head: NativeHead,
     #[serde(default, rename = "isStreaming")]
     streaming: bool,
     #[serde(default, rename = "isCompacting")]
@@ -91,6 +131,9 @@ pub struct TuiObserver {
     reader: Option<BufReader<UnixStream>>,
     pending: VecDeque<ObservedEvent>,
     state: ObservedState,
+    connection_leases: bool,
+    snapshot_only: bool,
+    input_lease: Option<control::InputLease>,
 }
 impl TuiObserver {
     pub fn public_session_id(&self) -> &str {
@@ -98,7 +141,7 @@ impl TuiObserver {
     }
     /// Admission-time snapshot, not a continuously updated state projection.
     pub fn initial_state(&self) -> ObservedState {
-        self.state
+        self.state.clone()
     }
     /// The runner did not launch this process: containment is ALWAYS unverified.
     pub fn containment_verified(&self) -> bool {
@@ -110,22 +153,42 @@ impl TuiObserver {
         account: &str,
         public_session: &str,
     ) -> Result<Self> {
+        Self::attach_mode(authority, account, public_session, false).await
+    }
+    /// Canonical chat is supplied by oqto-log, never by a native event buffer.
+    pub async fn attach_snapshots(
+        authority: Arc<dyn ObservationAuthority>,
+        authority_id: &str,
+        public_session: &str,
+    ) -> Result<Self> {
+        Self::attach_mode(authority, authority_id, public_session, true).await
+    }
+    async fn attach_mode(
+        authority: Arc<dyn ObservationAuthority>,
+        account: &str,
+        public_session: &str,
+        snapshot_only: bool,
+    ) -> Result<Self> {
         // This precedes every filesystem read, directory scan and connection.
         let binding = authority.resolve(account, public_session)?;
         ensure!(
-            binding.account_id == account && binding.public_session_id == public_session,
+            binding.authority_id == account && binding.public_session_id == public_session,
             "Observation identity denied"
         );
         validate_ids(&binding)?;
         authority.revalidate(&binding)?;
-        tokio::time::timeout(DISCOVERY_DEADLINE, Self::discover(authority, binding))
-            .await
-            .context("TUI discovery deadline exceeded")?
+        tokio::time::timeout(
+            DISCOVERY_DEADLINE,
+            Self::discover(authority, binding, snapshot_only),
+        )
+        .await
+        .context("TUI discovery deadline exceeded")?
     }
 
     async fn discover(
         authority: Arc<dyn ObservationAuthority>,
         binding: ObservationBinding,
+        snapshot_only: bool,
     ) -> Result<Self> {
         validate_source(&binding).await?;
         let uid = rustix::process::geteuid().as_raw();
@@ -153,7 +216,13 @@ impl TuiObserver {
             authority.revalidate(&binding)?;
             let candidate = tokio::time::timeout(
                 RPC_DEADLINE,
-                Self::probe(authority.clone(), binding.clone(), pid, &path),
+                Self::probe(
+                    authority.clone(),
+                    binding.clone(),
+                    pid,
+                    &path,
+                    snapshot_only,
+                ),
             )
             .await;
             if let Ok(Ok(observer)) = candidate {
@@ -170,6 +239,7 @@ impl TuiObserver {
         binding: ObservationBinding,
         pid: u32,
         path: &Path,
+        snapshot_only: bool,
     ) -> Result<Self> {
         let uid = rustix::process::geteuid().as_raw();
         let pid_value = rustix::process::Pid::from_raw(pid as i32).context("Invalid TUI PID")?;
@@ -211,6 +281,14 @@ impl TuiObserver {
                 .is_some_and(|commands| commands.iter().any(|c| c == "get_state")),
             "TUI state observation unsupported"
         );
+        let connection_leases = hello["capabilities"]
+            .as_array()
+            .is_some_and(|caps| caps.iter().any(|c| c == "connection_leases_v1"))
+            && ["lease", "prompt", "steer", "abort"].iter().all(|kind| {
+                hello["commands"]
+                    .as_array()
+                    .is_some_and(|commands| commands.iter().any(|c| c == kind))
+            });
         let id = uuid::Uuid::new_v4().to_string();
         let request = serde_json::to_vec(&json!({"id":id,"type":"get_state"}))?;
         reader.get_mut().write_all(&request).await?;
@@ -225,7 +303,10 @@ impl TuiObserver {
                         pending.len() < MAX_PENDING,
                         "TUI event gap; canonical resnapshot required"
                     );
-                    pending.push_back(event(frame)?);
+                    let native = event(frame)?;
+                    if !snapshot_only {
+                        pending.push_back(native);
+                    }
                 }
                 Some("response") => {
                     ensure!(
@@ -245,6 +326,7 @@ impl TuiObserver {
                     break ObservedState {
                         streaming: state.streaming,
                         compacting: state.compacting,
+                        head: state.head,
                     };
                 }
                 _ => bail!("Unexpected TUI frame"),
@@ -257,20 +339,103 @@ impl TuiObserver {
             reader: Some(reader),
             pending,
             state,
+            connection_leases,
+            snapshot_only,
+            input_lease: None,
         })
+    }
+
+    /// Snapshot-mode adapter: drain private native notifications and verify a
+    /// fresh state binding. Chat content must be read from oqto-log, not these
+    /// discarded native frames. This is not an incremental/replay event API.
+    pub async fn snapshot_state(&mut self) -> Result<ObservedState> {
+        self.authority.revalidate(&self.binding)?;
+        validate_source(&self.binding).await?;
+        let mut reader = self.reader.take().context("TUI attachment disconnected")?;
+        let lease = self.input_lease.take();
+        let id = uuid::Uuid::new_v4().to_string();
+        let result = tokio::time::timeout(RPC_DEADLINE, async {
+            let request = serde_json::to_vec(&json!({"id":id,"type":"get_state"}))?;
+            reader.get_mut().write_all(&request).await?;
+            reader.get_mut().write_all(b"\n").await?;
+            self.pending.clear();
+            for _ in 0..1024 {
+                self.authority.revalidate(&self.binding)?;
+                let frame = read_frame(&mut reader).await?;
+                match frame["type"].as_str() {
+                    Some("lease") => {
+                        if frame["owner"] == "tui" && lease.is_some() {
+                            bail!("Terminal reclaimed input; reattach from canonical history");
+                        }
+                    }
+                    Some("event") => {
+                        let _ = event(frame)?;
+                    }
+                    Some("response") => {
+                        ensure!(
+                            frame["id"] == id
+                                && frame["command"] == "get_state"
+                                && frame["success"] == true,
+                            "TUI state response rejected"
+                        );
+                        let state: NativeState = serde_json::from_value(frame["data"].clone())?;
+                        ensure!(
+                            state.session_id == self.binding.external_session_id
+                                && state.session_file == self.binding.session_file
+                                && state.cwd == self.binding.work_directory,
+                            "TUI Session binding changed"
+                        );
+                        self.authority.revalidate(&self.binding)?;
+                        return Ok(ObservedState {
+                            streaming: state.streaming,
+                            compacting: state.compacting,
+                            head: state.head,
+                        });
+                    }
+                    _ => bail!("Unexpected TUI state frame"),
+                }
+            }
+            bail!("TUI state gap; canonical resnapshot required")
+        })
+        .await
+        .context("TUI state deadline; canonical resnapshot required")?;
+        match result {
+            Ok(state) => {
+                self.reader = Some(reader);
+                self.input_lease = lease;
+                self.state = state.clone();
+                Ok(state)
+            }
+            Err(error) => {
+                self.pending.clear();
+                Err(error)
+            }
+        }
+    }
+    pub fn input_held(&self) -> bool {
+        self.input_lease
+            .as_ref()
+            .is_some_and(|lease| lease.active().load(std::sync::atomic::Ordering::SeqCst))
     }
 
     /// No replay promise: EOF/timeout/overflow/session switch requires the host
     /// to rebuild from oqto-log, never text-based deduplication or another Pi.
     pub async fn next_event(&mut self, wait: Duration) -> Result<ObservedEvent> {
+        ensure!(
+            !self.snapshot_only,
+            "Snapshot-only attachment has no native replay API"
+        );
         // Own the socket inside this future. Cancellation drops it instead of
         // leaving a half-consumed JSON frame available to a later subscriber.
         let mut reader = self.reader.take().context("TUI attachment disconnected")?;
+        let input_lease = self.input_lease.take();
+        let active = input_lease.as_ref().map(control::InputLease::active);
         let result = self
-            .next_checked(&mut reader, wait.min(Duration::from_secs(30)))
+            .next_checked(&mut reader, wait.min(Duration::from_secs(30)), active)
             .await;
         if result.is_ok() {
             self.reader = Some(reader);
+            self.input_lease = input_lease;
         } else {
             self.pending.clear();
         }
@@ -280,6 +445,7 @@ impl TuiObserver {
         &mut self,
         reader: &mut BufReader<UnixStream>,
         wait: Duration,
+        input_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<ObservedEvent> {
         self.authority.revalidate(&self.binding)?;
         if let Some(value) = self.pending.pop_front() {
@@ -291,7 +457,14 @@ impl TuiObserver {
             loop {
                 let frame = read_frame(reader).await?;
                 match frame["type"].as_str() {
-                    Some("lease") => {}
+                    Some("lease") => {
+                        if frame["owner"] == "tui"
+                            && let Some(active) = &input_active
+                        {
+                            active.store(false, std::sync::atomic::Ordering::SeqCst);
+                            bail!("Terminal reclaimed input");
+                        }
+                    }
                     Some("event") => return event(frame),
                     _ => bail!("Unexpected TUI observation frame"),
                 }
@@ -313,7 +486,7 @@ impl TuiObserver {
 
 fn validate_ids(binding: &ObservationBinding) -> Result<()> {
     for id in [
-        &binding.account_id,
+        &binding.authority_id,
         &binding.public_session_id,
         &binding.external_session_id,
         &binding.grant_generation,
@@ -333,7 +506,7 @@ fn validate_ids(binding: &ObservationBinding) -> Result<()> {
     Ok(())
 }
 
-async fn validate_source(binding: &ObservationBinding) -> Result<()> {
+pub(crate) async fn validate_source(binding: &ObservationBinding) -> Result<()> {
     for path in [
         &binding.session_root,
         &binding.workspace_root,

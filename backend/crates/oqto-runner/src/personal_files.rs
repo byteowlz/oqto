@@ -1,0 +1,228 @@
+//! Personal Files effects, invoked only by the Runner after device admission.
+//! All resolution uses the selected, inode-validated directory descriptor.
+use base64::Engine;
+use cap_std::fs::{Dir, OpenOptions, OpenOptionsExt};
+use oqto_personal::{AuthorizedAction, actions::ActionFailure};
+use oqto_personal_wire::actions::{HostAction, MAX_FILE_CHUNK};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    io::{Read, Write},
+    path::{Component, Path},
+};
+
+const MAX_FILE: u64 = 8 * 1024 * 1024;
+fn invalid<T>(_: T) -> ActionFailure {
+    ActionFailure::Invalid
+}
+fn io_error(error: std::io::Error) -> ActionFailure {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        ActionFailure::NotFound
+    } else {
+        ActionFailure::Denied
+    }
+}
+fn relative(path: &str) -> Result<&Path, ActionFailure> {
+    let value = Path::new(path);
+    if path.len() > 4096
+        || path.chars().any(char::is_control)
+        || value
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(ActionFailure::Invalid);
+    }
+    Ok(if path.is_empty() {
+        Path::new(".")
+    } else {
+        value
+    })
+}
+fn bytes(dir: &Dir, path: &Path) -> Result<Vec<u8>, ActionFailure> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let mut file = dir.open_with(path, &options).map_err(io_error)?;
+    let meta = file.metadata().map_err(io_error)?;
+    if !meta.is_file() || meta.len() > MAX_FILE {
+        return Err(ActionFailure::Invalid);
+    }
+    let mut data = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_FILE + 1)
+        .read_to_end(&mut data)
+        .map_err(io_error)?;
+    if data.len() as u64 > MAX_FILE {
+        return Err(ActionFailure::Invalid);
+    }
+    Ok(data)
+}
+fn digest(data: &[u8]) -> String {
+    hex::encode(Sha256::digest(data))
+}
+fn baseline(dir: &Dir, path: &Path, expected: Option<&str>) -> Result<(), ActionFailure> {
+    match (bytes(dir, path), expected) {
+        (Err(ActionFailure::NotFound), None) => Ok(()),
+        (Ok(data), Some(hash)) if hash.len() == 64 && digest(&data) == hash => Ok(()),
+        (Err(error), _) if !matches!(error, ActionFailure::NotFound) => Err(error),
+        _ => Err(ActionFailure::StaleBaseline),
+    }
+}
+
+/// The embedding backend serializes Files operations. SHA preconditions detect
+/// stale snapshots and competing API writes. POSIX cannot offer a global CAS
+/// against unrelated native writers that do not participate in its lock.
+pub(crate) fn execute(
+    action: HostAction,
+    admission: AuthorizedAction,
+) -> Result<Value, ActionFailure> {
+    let (root_id, path) = match &action {
+        HostAction::FilesList { root_id, path }
+        | HostAction::FileRead { root_id, path, .. }
+        | HostAction::FileWrite { root_id, path, .. }
+        | HostAction::FileRemove { root_id, path, .. }
+        | HostAction::DirectoryCreate { root_id, path } => (root_id, path),
+        _ => return Err(ActionFailure::Invalid),
+    };
+    let grant = admission
+        .grants()
+        .files
+        .iter()
+        .find(|grant| grant.id() == root_id)
+        .ok_or(ActionFailure::Denied)?;
+    let writing = matches!(
+        action,
+        HostAction::FileWrite { .. }
+            | HostAction::FileRemove { .. }
+            | HostAction::DirectoryCreate { .. }
+    );
+    if writing && !grant.writable() {
+        return Err(ActionFailure::Denied);
+    }
+    let dir = Dir::from_std_file(grant.open_root().map_err(invalid)?);
+    let path = relative(path)?;
+    match &action {
+        HostAction::FilesList { .. } => {
+            let opened = dir.open_dir(path).map_err(io_error)?;
+            let mut entries = Vec::new();
+            for (seen, entry) in opened.entries().map_err(io_error)?.enumerate() {
+                if seen >= 10000 {
+                    return Err(ActionFailure::Invalid);
+                }
+                let entry = entry.map_err(io_error)?;
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if name.chars().any(char::is_control) {
+                    continue;
+                }
+                let kind = entry.file_type().map_err(io_error)?;
+                // Do not follow symlinks to collect metadata, including list-only reads.
+                let size = if kind.is_file() {
+                    opened.symlink_metadata(&name).map_err(io_error)?.len()
+                } else {
+                    0
+                };
+                entries.push(json!({"name":name,"directory":kind.is_dir(),"symlink":kind.is_symlink(),"size":size}));
+            }
+            entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            Ok(json!({"entries":entries}))
+        }
+        HostAction::FileRead { offset, limit, .. } => {
+            if *limit == 0 || *limit as usize > MAX_FILE_CHUNK {
+                return Err(ActionFailure::Invalid);
+            }
+            let data = bytes(&dir, path)?;
+            let offset = usize::try_from(*offset).map_err(invalid)?;
+            if offset > data.len() {
+                return Err(ActionFailure::Invalid);
+            }
+            let end = offset.saturating_add(*limit as usize).min(data.len());
+            Ok(
+                json!({"data_base64":base64::engine::general_purpose::STANDARD.encode(&data[offset..end]),"sha256":digest(&data),"size":data.len(),"offset":offset,"eof":end==data.len()}),
+            )
+        }
+        HostAction::DirectoryCreate { .. } => {
+            dir.create_dir(path).map_err(io_error)?;
+            Ok(json!({"created":true}))
+        }
+        HostAction::FileRemove {
+            expected_sha256, ..
+        } => {
+            baseline(&dir, path, Some(expected_sha256))?;
+            dir.remove_file(path).map_err(io_error)?;
+            Ok(json!({"removed":true}))
+        }
+        HostAction::FileWrite {
+            data_base64,
+            expected_sha256,
+            ..
+        } => {
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(data_base64)
+                .map_err(invalid)?;
+            if data.len() > MAX_FILE_CHUNK {
+                return Err(ActionFailure::Invalid);
+            }
+            let name = path.file_name().ok_or(ActionFailure::Invalid)?;
+            let parent = dir
+                .open_dir(
+                    path.parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new(".")),
+                )
+                .map_err(io_error)?;
+            let destination = Path::new(name);
+            // cap-std directory capabilities may be O_PATH on Linux. Open a
+            // readable directory descriptor relative to that SAME capability
+            // before committing; fsync on O_PATH would falsely make every
+            // successful write an uncertain outcome.
+            let mut sync_options = OpenOptions::new();
+            sync_options
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+            let sync_parent = parent.open_with(".", &sync_options).map_err(io_error)?;
+            baseline(&parent, destination, expected_sha256.as_deref())?;
+            let temp = format!(".oqto-write-{}", uuid::Uuid::new_v4());
+            let result = (|| {
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true).mode(0o600);
+                let mut file = parent.open_with(&temp, &options).map_err(io_error)?;
+                if expected_sha256.is_some() {
+                    let permissions = parent
+                        .symlink_metadata(destination)
+                        .map_err(io_error)?
+                        .permissions();
+                    file.set_permissions(permissions).map_err(io_error)?;
+                }
+                file.write_all(&data).map_err(io_error)?;
+                file.sync_all().map_err(io_error)?;
+                baseline(&parent, destination, expected_sha256.as_deref())?;
+                if expected_sha256.is_none() {
+                    // Atomic no-clobber creation, including native writers racing admission.
+                    parent
+                        .hard_link(&temp, &parent, destination)
+                        .map_err(|error| {
+                            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                                ActionFailure::StaleBaseline
+                            } else {
+                                io_error(error)
+                            }
+                        })?;
+                } else {
+                    parent
+                        .rename(&temp, &parent, destination)
+                        .map_err(io_error)?;
+                }
+                sync_parent
+                    .sync_all()
+                    .map_err(|_| ActionFailure::OutcomeUnknown)?;
+                Ok(json!({"written":data.len(),"sha256":digest(&data)}))
+            })();
+            let _ = parent.remove_file(&temp);
+            result
+        }
+        _ => Err(ActionFailure::Invalid),
+    }
+}

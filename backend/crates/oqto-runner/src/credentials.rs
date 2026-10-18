@@ -768,7 +768,9 @@ mod macos_tests {
     #[tokio::test]
     async fn local_credentials_refuse_unsupported_platform_without_vault() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let manager = Arc::new(CredentialManager::new(Some(root.path().to_owned())));
+        // Darwin's /tmp (and default /var/folders) can be symlink aliases.
+        // Reach the platform gate using a canonical synthetic storage root.
+        let manager = Arc::new(CredentialManager::new(Some(root.path().canonicalize()?)));
         for command in [
             CredentialCommand::Status,
             CredentialCommand::Initialize {

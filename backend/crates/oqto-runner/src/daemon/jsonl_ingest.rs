@@ -33,13 +33,57 @@ const NUDGE_DEDUPE_WINDOW: Duration = Duration::from_secs(10);
 /// Handle for nudging the ingest task about a session that was just read.
 #[derive(Clone)]
 pub struct IngestHandle {
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::Sender<Nudge>,
+}
+#[derive(Clone)]
+pub(crate) struct NativeObservation {
+    pub binding: crate::tui_rpc::ObservationBinding,
+    pub user_id: String,
+    pub fence: oqto_personal::DeviceFence,
+}
+impl crate::tui_rpc::ObservationAuthority for NativeObservation {
+    fn resolve(
+        &self,
+        authority: &str,
+        public: &str,
+    ) -> anyhow::Result<crate::tui_rpc::ObservationBinding> {
+        anyhow::ensure!(
+            authority == self.binding.authority_id && public == self.binding.public_session_id,
+            "Native source identity denied"
+        );
+        self.revalidate(&self.binding)?;
+        Ok(self.binding.clone())
+    }
+    fn revalidate(&self, binding: &crate::tui_rpc::ObservationBinding) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.fence.is_current()
+                && binding.grant_generation == self.fence.generation()
+                && binding.authority_id == self.binding.authority_id
+                && binding.public_session_id == self.binding.public_session_id
+                && binding.external_session_id == self.binding.external_session_id,
+            "Native source grant ended"
+        );
+        Ok(())
+    }
+}
+enum Nudge {
+    Legacy(String),
+    Native(Box<NativeObservation>),
 }
 
 impl IngestHandle {
     /// Ask the ingest task to check one session's JSONL file. Fire-and-forget.
     pub fn nudge(&self, session_or_external_id: &str) {
-        let _ = self.tx.send(session_or_external_id.to_string());
+        if !session_or_external_id.is_empty() && session_or_external_id.len() <= 256 {
+            let _ = self
+                .tx
+                .try_send(Nudge::Legacy(session_or_external_id.to_string()));
+        }
+    }
+    /// Bounded, best-effort nudge from an already admitted existing-Pi snapshot.
+    /// Not a synchronous repair or input replay; a dropped nudge may be repeated.
+    pub(crate) fn nudge_native(&self, source: NativeObservation) -> bool {
+        self.tx.try_send(Nudge::Native(Box::new(source))).is_ok()
     }
 }
 
@@ -47,20 +91,29 @@ impl IngestHandle {
 /// constructing a `Runner` directly) the task is not spawned and nudges are
 /// no-ops.
 pub fn spawn() -> IngestHandle {
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx, rx) = mpsc::channel(128);
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(run(rx));
     }
     IngestHandle { tx }
 }
 
-async fn run(mut rx: mpsc::UnboundedReceiver<String>) {
+#[cfg(test)]
+pub(crate) fn spawn_for_test(home: PathBuf, user_id: String) -> IngestHandle {
+    let (tx, rx) = mpsc::channel(128);
+    tokio::spawn(run_at(rx, home, user_id));
+    IngestHandle { tx }
+}
+async fn run(rx: mpsc::Receiver<Nudge>) {
     let Ok(home) = std::env::var("HOME") else {
         return;
     };
     let home = PathBuf::from(home);
     let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
+    run_at(rx, home, user_id).await;
+}
+async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
     let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut recent: HashMap<String, Instant> = HashMap::new();
@@ -74,9 +127,18 @@ async fn run(mut rx: mpsc::UnboundedReceiver<String>) {
                 let Some(id) = nudged else {
                     return;
                 };
-                let mut ids = vec![id];
-                while let Ok(more) = rx.try_recv() {
-                    ids.push(more);
+                let mut pending = vec![id];
+                while let Ok(more) = rx.try_recv() { pending.push(more); }
+                let mut ids = Vec::new();
+                let mut native = HashMap::new();
+                for nudge in pending {
+                    match nudge {
+                        Nudge::Legacy(id) => ids.push(id),
+                        Nudge::Native(source) => { native.insert(source.binding.public_session_id.clone(), source); }
+                    }
+                }
+                for source in native.into_values() {
+                    if let Err(error) = ingest_native(&home, *source).await { debug!("Native graph convergence deferred: {error:#}"); }
                 }
                 ids.sort();
                 ids.dedup();
@@ -92,6 +154,77 @@ async fn run(mut rx: mpsc::UnboundedReceiver<String>) {
             }
         }
     }
+}
+
+async fn ingest_native(home: &Path, source: NativeObservation) -> anyhow::Result<()> {
+    use anyhow::ensure;
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    ensure!(
+        source.fence.is_current() && source.binding.session_root == home.join(".pi/agent/sessions"),
+        "Native source authority ended"
+    );
+    // Read the native head HERE, on the serialized writer, rather than trusting
+    // arrival order of observations from independent Device connections.
+    let current = crate::tui_rpc::TuiObserver::attach_snapshots(
+        std::sync::Arc::new(source.clone()),
+        &source.binding.authority_id,
+        &source.binding.public_session_id,
+    )
+    .await?;
+    let leaf = current.initial_state().head.leaf_id()?.map(str::to_owned);
+    drop(current);
+    let path = source.binding.session_file.clone();
+    let native_id = source.binding.external_session_id.clone();
+    let workspace = source
+        .binding
+        .work_directory
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid native Workspace"))?
+        .to_owned();
+    let graph = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)?;
+        let before = file.metadata()?;
+        ensure!(
+            before.is_file()
+                && before.uid() == rustix::process::geteuid().as_raw()
+                && before.len() <= 64 * 1024 * 1024,
+            "Unsafe or oversized native source"
+        );
+        let mut bytes = Vec::new();
+        (&file).take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        let after = file.metadata()?;
+        let published = std::fs::symlink_metadata(&path)?;
+        ensure!(
+            (
+                before.dev(),
+                before.ino(),
+                before.len(),
+                before.mtime(),
+                before.mtime_nsec()
+            ) == (
+                after.dev(),
+                after.ino(),
+                after.len(),
+                after.mtime(),
+                after.mtime_nsec()
+            ) && (after.dev(), after.ino()) == (published.dev(), published.ino()),
+            "Native source changed during snapshot"
+        );
+        store::native_graph::NativeGraph::parse(&bytes, &native_id, &workspace, leaf.as_deref())
+    })
+    .await??;
+    ensure!(source.fence.is_current(), "Native source authority ended");
+    store::native_graph::merge(
+        home,
+        &source.user_id,
+        &source.binding.public_session_id,
+        &graph,
+    )
+    .await
 }
 
 async fn handle_nudge(home: &Path, user_id: &str, id: &str) {

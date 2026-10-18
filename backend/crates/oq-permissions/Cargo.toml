@@ -1,0 +1,25 @@
+[package]
+name = "oq-permissions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Runner-owned adaptive capability authority and executor generation fencing"
+
+[dependencies]
+oqto-sandbox = { path = "../oqto-sandbox" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

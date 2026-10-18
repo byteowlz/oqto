@@ -143,12 +143,32 @@ async fn projection_session_id(pool: &sqlx::SqlitePool, any_id: &str) -> Option<
 /// Keep Pi-native shell records and aborted assistant turns in raw
 /// oqto-log for provenance, but never misrepresent them as chat answers.
 /// Apply before pagination so cursors/has_more describe visible chat only.
+/// The first bound parameter MUST be the canonical Session id. The native-path
+/// CTE uses ?1 so SQLite computes one ancestor set, not a correlated walk per row.
 fn visible_chat_payload_sql() -> &'static str {
     r#"NOT (t.role = 'assistant' AND CASE
         WHEN json_valid(m.json_payload) THEN
             COALESCE(json_extract(m.json_payload, '$.role'), '') = 'bashExecution'
             OR COALESCE(json_extract(m.json_payload, '$.stopReason'), '') = 'aborted'
-        ELSE 0 END)"#
+        ELSE 0 END)
+        AND (
+          (SELECT json_extract(s.extensions_json, '$.pi_native_graph.branch_id')
+           FROM oqto_log_sessions s WHERE s.session_id = ?1) IS NULL
+          OR t.turn_id IN (
+            WITH RECURSIVE native_path(turn_id, parent_turn_id) AS (
+              SELECT h.turn_id, h.parent_turn_id
+              FROM oqto_log_branches b
+              JOIN oqto_log_turns h ON h.turn_id = b.head_turn_id
+              WHERE b.session_id = ?1
+                AND b.branch_id = (SELECT json_extract(s.extensions_json, '$.pi_native_graph.branch_id')
+                                   FROM oqto_log_sessions s WHERE s.session_id = ?1)
+              UNION
+              SELECT p.turn_id, p.parent_turn_id FROM oqto_log_turns p
+              JOIN native_path child ON child.parent_turn_id = p.turn_id
+              WHERE p.session_id = ?1
+            ) SELECT turn_id FROM native_path
+          )
+        )"#
 }
 
 async fn project_session_messages_in_db(
@@ -179,7 +199,7 @@ async fn project_session_messages_in_db(
               {} AS created_at_ms
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ? AND {}
+            WHERE t.session_id = ?1 AND {}
             ORDER BY t.turn_version ASC, m.seq ASC
             "#,
         projected_created_at_ms_sql(),
@@ -241,7 +261,7 @@ async fn project_session_messages_page_in_db(
     let session_id = canonical_id.as_str();
 
     let cursor_filter = if before.is_some() {
-        "AND (t.turn_version < ? OR (t.turn_version = ? AND m.seq < ?))"
+        "AND (t.turn_version < ?2 OR (t.turn_version = ?3 AND m.seq < ?4))"
     } else {
         ""
     };
@@ -258,14 +278,15 @@ async fn project_session_messages_page_in_db(
               m.seq AS seq
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-            WHERE t.session_id = ? AND {}
+            WHERE t.session_id = ?1 AND {}
             {}
             ORDER BY t.turn_version DESC, m.seq DESC
-            LIMIT ?
+            LIMIT {}
             "#,
         projected_created_at_ms_sql(),
         visible_chat_payload_sql(),
         cursor_filter,
+        if before.is_some() { "?5" } else { "?2" },
     );
 
     let mut q = sqlx::query(&query).bind(session_id);
@@ -273,11 +294,7 @@ async fn project_session_messages_page_in_db(
         q = q.bind(version).bind(version).bind(seq);
     }
     // Fetch one extra row to learn whether an older page exists.
-    let mut rows = q
-        .bind((limit + 1) as i64)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
+    let mut rows = q.bind((limit + 1) as i64).fetch_all(&pool).await.ok()?;
 
     let has_more = rows.len() > limit;
     rows.truncate(limit);
@@ -508,6 +525,31 @@ pub async fn read_message_version_auto(
     Ok(None)
 }
 
+/// Read native-head provenance without opening a writable/migrating pool.
+/// Revision changes fence multi-query page reads across a native Branch switch.
+pub async fn native_head_for_workspace(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+) -> Result<Option<serde_json::Value>> {
+    let db_path = resolve_user_home_workspace_db_path(user_home, workspace_id)?;
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .read_only(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?;
+    let value: Option<String> = sqlx::query_scalar("SELECT json_extract(extensions_json,'$.pi_native_graph') FROM oqto_log_sessions WHERE platform_id=?")
+        .bind(session_id).fetch_optional(&pool).await?.flatten();
+    value
+        .map(|value| serde_json::from_str(&value).context("Invalid native head provenance"))
+        .transpose()
+}
+
 /// Project one page of session messages for a known workspace, oldest-first.
 /// Mirrors [`project_session_messages_page_auto`] for a resolved workspace id.
 #[allow(dead_code)]
@@ -551,10 +593,11 @@ pub async fn project_session_messages_for_workspace(
           {} AS created_at_ms
         FROM oqto_log_turns t
         JOIN oqto_log_messages m ON m.turn_id = t.turn_id
-        WHERE t.session_id = ?
+        WHERE t.session_id = ?1 AND {}
         ORDER BY t.turn_version ASC, m.seq ASC
         "#,
         projected_created_at_ms_sql(),
+        visible_chat_payload_sql(),
     );
     let mut rows = sqlx::query(&query)
         .bind(session_id)

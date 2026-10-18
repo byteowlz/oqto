@@ -57,7 +57,7 @@ fn config_corpus() -> Vec<PathBuf> {
 
 #[test]
 fn checked_in_schema_matches_the_types() {
-    let generated = SandboxConfigFile::schema_json();
+    let generated = SandboxConfigFile::schema_json().expect("schema serializes");
     let path = schema_path();
     let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
 

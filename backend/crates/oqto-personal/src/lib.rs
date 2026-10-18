@@ -3,8 +3,12 @@
 //! authenticate proofs and re-check current capability grants before every action.
 #![cfg(unix)]
 
+pub mod actions;
 mod grants;
 pub mod http;
+mod identity;
+pub mod owner;
+pub use identity::TransportIdentity;
 mod private;
 use anyhow::{Context, Result, ensure};
 pub use grants::{Access, FileGrant, Grants, SessionAccess};
@@ -45,11 +49,37 @@ impl AuthenticatedDevice {
 
 /// Current capability admission held only across a bounded action/dispatch.
 /// Dropping this guard lets revocation complete. Never hold it for an idle stream.
+#[derive(Clone)]
+pub struct DeviceFence {
+    host_id: String,
+    device_id: String,
+    revision: i64,
+    active: Arc<std::sync::atomic::AtomicBool>,
+}
+impl DeviceFence {
+    pub fn host_id(&self) -> &str {
+        &self.host_id
+    }
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+    pub fn generation(&self) -> String {
+        self.revision.to_string()
+    }
+    pub fn is_current(&self) -> bool {
+        self.active.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 pub struct AuthorizedAction {
     grants: Grants,
+    fence: DeviceFence,
     _dispatch: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 impl AuthorizedAction {
+    pub fn fence(&self) -> DeviceFence {
+        self.fence.clone()
+    }
     pub fn grants(&self) -> &Grants {
         &self.grants
     }
@@ -61,6 +91,8 @@ pub struct PairingAuthority {
     root: PathBuf,
     host_id: String,
     dispatch: Arc<tokio::sync::RwLock<()>>,
+    fences:
+        tokio::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     _instance: std::fs::File,
 }
 impl PairingAuthority {
@@ -101,6 +133,7 @@ impl PairingAuthority {
             root,
             host_id,
             dispatch: Arc::new(tokio::sync::RwLock::new(())),
+            fences: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             _instance: instance,
         })
     }
@@ -239,8 +272,24 @@ impl PairingAuthority {
         let grants: Grants =
             serde_json::from_str(&grants.context("device grant revoked or changed")?)?;
         ensure!(grants.allows(access), "device capability not granted");
+        let mut fences = self.fences.lock().await;
+        let flag = Arc::clone(
+            fences
+                .entry(device.id.clone())
+                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(true))),
+        );
+        ensure!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "device fence closed"
+        );
         Ok(AuthorizedAction {
             grants,
+            fence: DeviceFence {
+                host_id: self.host_id.clone(),
+                device_id: device.id.clone(),
+                revision: device.revision,
+                active: flag,
+            },
             _dispatch: dispatch,
         })
     }
@@ -249,6 +298,13 @@ impl PairingAuthority {
     /// then prevents further admissions. Never terminates terminal-owned work.
     pub async fn revoke(&self, id: &str) -> Result<bool> {
         let _dispatch = self.dispatch.write().await;
+        // Fence FIRST, before a cancellation point in the durable write. A
+        // failed/cancelled revoke stays denied in this authority's lifetime.
+        let mut fences = self.fences.lock().await;
+        fences
+            .entry(id.to_owned())
+            .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(false)))
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         // Emergency revocation must still work if the wall clock is unavailable.
         let result = sqlx::query("UPDATE personal_devices SET revoked_at=coalesce(?, (SELECT watermark FROM personal_clock WHERE id=1)), revision=revision+1 WHERE id=? AND revoked_at IS NULL")
             .bind(now().ok()).bind(id).execute(&self.pool).await?;
@@ -273,6 +329,8 @@ fn token_hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
+#[cfg(test)]
+mod bootstrap_tests;
 #[cfg(test)]
 mod dispatch_tests;
 #[cfg(test)]

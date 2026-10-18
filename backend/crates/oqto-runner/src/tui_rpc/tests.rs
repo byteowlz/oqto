@@ -1,4 +1,34 @@
 use super::*;
+
+#[test]
+fn native_head_requires_explicit_runtime_evidence_including_empty_head() -> Result<()> {
+    let base = json!({"sessionId":"native","sessionFile":"/synthetic/source","cwd":"/synthetic"});
+    assert_eq!(
+        serde_json::from_value::<NativeState>(base.clone())?.head,
+        NativeHead::Unavailable
+    );
+    let mut state = base;
+    state["leafId"] = Value::Null;
+    assert_eq!(
+        serde_json::from_value::<NativeState>(state.clone())?.head,
+        NativeHead::Empty
+    );
+    state["leafId"] = "actual-entry".into();
+    assert_eq!(
+        serde_json::from_value::<NativeState>(state.clone())?.head,
+        NativeHead::Entry("actual-entry".into())
+    );
+    for invalid in [
+        json!(true),
+        json!(""),
+        json!("../entry"),
+        json!({"entry":"untrusted"}),
+    ] {
+        state["leafId"] = invalid;
+        assert!(serde_json::from_value::<NativeState>(state.clone()).is_err());
+    }
+    Ok(())
+}
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::net::UnixListener;
@@ -10,7 +40,7 @@ struct Authority {
 impl ObservationAuthority for Authority {
     fn resolve(&self, account: &str, session: &str) -> Result<ObservationBinding> {
         ensure!(
-            account == self.binding.account_id && session == self.binding.public_session_id,
+            account == self.binding.authority_id && session == self.binding.public_session_id,
             "denied"
         );
         self.revalidate(&self.binding)?;
@@ -56,7 +86,7 @@ impl Fixture {
         .into_bytes();
         std::fs::write(&file, &sentinel)?;
         let binding = ObservationBinding {
-            account_id: "alice".into(),
+            authority_id: "alice".into(),
             public_session_id: "public-id".into(),
             external_session_id: "native-id".into(),
             session_file: file,

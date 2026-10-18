@@ -111,10 +111,11 @@ static CATALOG_CACHE: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<CatalogKey, CatalogEntry>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-async fn catalog(
-    config: &HistoryReadConfig,
+async fn catalog_source(
+    home: &std::path::Path,
+    workspace_roots: &[PathBuf],
 ) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
-    let key: CatalogKey = (config.home.clone(), config.workspace_roots.clone());
+    let key: CatalogKey = (home.to_owned(), workspace_roots.to_vec());
     {
         let cache = CATALOG_CACHE.lock().await;
         if let Some((at, rows)) = cache.get(&key)
@@ -124,14 +125,14 @@ async fn catalog(
         }
     }
 
-    let workspaces = workspaces_under(&config.workspace_roots);
-    let rows = oqto_history::oqto_log::ops::list_sessions_for_workspaces(&config.home, &workspaces)
+    let workspaces = workspaces_under(workspace_roots);
+    let rows = oqto_history::oqto_log::ops::list_sessions_for_workspaces(home, &workspaces)
         .await?
         .into_iter()
         .filter(|row| {
             row.workspace_id
                 .as_deref()
-                .is_some_and(|workspace| is_under_roots(workspace, &config.workspace_roots))
+                .is_some_and(|workspace| is_under_roots(workspace, workspace_roots))
         })
         .collect::<Vec<_>>();
 
@@ -140,6 +141,67 @@ async fn catalog(
     cache.retain(|_, (at, _)| at.elapsed() < CATALOG_TTL);
     cache.insert(key, (std::time::Instant::now(), rows.clone()));
     Ok(rows)
+}
+
+/// One exact public/native binding in the already-authorized local source.
+/// Never pick the first index hit across Workspace owners or invent a mapping.
+pub(crate) async fn resolve_authorized_session(
+    home: &std::path::Path,
+    roots: &[PathBuf],
+    public_id: &str,
+) -> Result<oqto_history::oqto_log::ops::OqtoLogSessionRow> {
+    let rows = catalog_source(home, roots).await?;
+    let mut found = rows.iter().filter(|row| row.platform_id == public_id);
+    let row = found.next().context("Canonical Session unavailable")?;
+    ensure!(found.next().is_none(), "Ambiguous public Session identity");
+    ensure!(
+        !public_id.starts_with("pending-")
+            && !public_id.starts_with("tmp:")
+            && row.external_id.as_ref().is_some_and(|id| id != public_id),
+        "Canonical native binding required"
+    );
+    Ok(row.clone())
+}
+
+/// Personal native chat is unavailable until the background writer has an
+/// evidenced head. Never fall back to an unselected legacy/linear transcript.
+pub(crate) async fn read_native_authorized_history(
+    home: &std::path::Path,
+    roots: &[PathBuf],
+    session_id: String,
+    before: Option<String>,
+) -> Result<HistoryReadResponse> {
+    ensure!(
+        session_id.len() <= 256 && before.as_ref().is_none_or(|cursor| cursor.len() <= 2048),
+        "Invalid native history request"
+    );
+    let row = resolve_authorized_session(home, roots, &session_id).await?;
+    let workspace = row.workspace_id.context("Workspace unavailable")?;
+    let head =
+        oqto_history::oqto_log::projector::native_head_for_workspace(home, &workspace, &session_id)
+            .await?
+            .context("Native history synchronization pending")?;
+    let page = oqto_history::oqto_log::projector::project_session_messages_page_for_workspace(
+        home,
+        &workspace,
+        &session_id,
+        50,
+        before.as_deref(),
+    )
+    .await?
+    .context("Native history unavailable")?;
+    let after =
+        oqto_history::oqto_log::projector::native_head_for_workspace(home, &workspace, &session_id)
+            .await?;
+    ensure!(
+        after.as_ref() == Some(&head),
+        "Native head changed during history read; discard page and resnapshot"
+    );
+    let mut data = serde_json::to_value(page)?;
+    data.as_object_mut()
+        .context("Invalid history page")?
+        .insert("native_graph".into(), head);
+    Ok(HistoryReadResponse { data })
 }
 
 pub async fn read(
@@ -152,16 +214,26 @@ pub async fn read(
         dedicated && !config.account_id.is_empty() && config.account_id == request.account_id,
         "History access denied"
     );
+    read_authorized_source(&config.home, &config.workspace_roots, request.operation).await
+}
+
+/// Runner-only source adapter AFTER local paired-device capability admission.
+/// No synthetic Account/MFA is created; durable IDs/projections remain oqto-log's.
+pub(crate) async fn read_authorized_source(
+    home: &std::path::Path,
+    workspace_roots: &[PathBuf],
+    operation: HistoryReadOperation,
+) -> Result<HistoryReadResponse> {
     ensure!(
-        config.home.is_absolute() && config.home.is_dir(),
+        home.is_absolute() && home.is_dir(),
         "History home unavailable"
     );
-    let rows = catalog(config).await?;
+    let rows = catalog_source(home, workspace_roots).await?;
     let mut identities = std::collections::HashMap::new();
     for row in rows.iter() {
         *identities.entry(row.platform_id.clone()).or_insert(0_usize) += 1;
     }
-    let data = match request.operation {
+    let data = match operation {
         HistoryReadOperation::List {} => {
             let sessions: Vec<_> = rows
                 .iter()
@@ -190,7 +262,7 @@ pub async fn read(
                 "Unambiguous public Session ID required"
             );
             let page = oqto_history::oqto_log::projector::project_session_messages_page_auto(
-                &config.home,
+                home,
                 &session_id,
                 50,
                 before.as_deref(),
@@ -201,6 +273,13 @@ pub async fn read(
         }
     };
     Ok(HistoryReadResponse { data })
+}
+
+#[cfg(test)]
+async fn catalog(
+    config: &HistoryReadConfig,
+) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
+    catalog_source(&config.home, &config.workspace_roots).await
 }
 
 #[cfg(test)]

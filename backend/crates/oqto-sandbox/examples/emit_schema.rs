@@ -1,3 +1,4 @@
-fn main() {
-    println!("{}", oqto_sandbox::SandboxConfigFile::schema_json());
+fn main() -> anyhow::Result<()> {
+    println!("{}", oqto_sandbox::SandboxConfigFile::schema_json()?);
+    Ok(())
 }

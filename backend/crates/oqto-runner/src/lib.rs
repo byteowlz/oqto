@@ -13,6 +13,10 @@ pub mod history_import;
 pub mod history_read;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
+pub mod personal_cli;
+mod personal_files;
+mod personal_sessions;
+mod personal_terminal;
 pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;

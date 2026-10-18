@@ -1,3 +1,4 @@
+pub mod native_graph;
 use super::pool_cache::PoolCache;
 #[cfg(test)]
 use std::collections::HashMap;
@@ -858,6 +859,13 @@ async fn replace_session_with_snapshot_inner(
 ) -> Result<AppendStats> {
     let pool = open_workspace_pool(user_home, workspace_id).await?;
     let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
+    let graph_owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oqto_log_sessions WHERE (session_id=? OR platform_id=? OR external_id=?) AND json_type(extensions_json,'$.pi_native_graph') IS NOT NULL)")
+        .bind(session_id).bind(platform_id).bind(external_id).fetch_one(&mut *tx).await?;
+    if graph_owned {
+        bail!(
+            "Native graph provenance cannot be destructively replaced; use serialized graph convergence"
+        );
+    }
 
     let (session_id, platform_id) =
         canonicalize_session_identity(&mut tx, session_id, platform_id, external_id, true).await?;

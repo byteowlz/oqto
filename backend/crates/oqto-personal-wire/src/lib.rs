@@ -10,6 +10,8 @@ pub use xlatch_wire_auth::{Enrollment, OQTO_PERSONAL_V1, SignedRequest};
 #[cfg(feature = "tls")]
 pub mod tls;
 
+pub mod actions;
+
 pub const ENROLL_PATH: &str = "/personal/v1/enroll";
 
 #[derive(Debug, Serialize, Deserialize)]

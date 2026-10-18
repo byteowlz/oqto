@@ -28,6 +28,8 @@ use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 struct Args {
     #[command(subcommand)]
     command: Option<MaintenanceCommand>,
+    #[command(flatten)]
+    personal: oqto_runner::personal_cli::ServerOptions,
     #[arg(short, long)]
     config: Option<PathBuf>,
     #[arg(short, long, conflicts_with = "listen_tls")]
@@ -87,6 +89,11 @@ struct Args {
 
 #[derive(clap::Subcommand, Debug)]
 enum MaintenanceCommand {
+    /// Administer this user's running backendless personal host.
+    Personal {
+        #[command(subcommand)]
+        command: oqto_runner::personal_cli::OwnerCli,
+    },
     /// Preview native Pi history import; --apply updates only canonical oqto-log state.
     /// JSON is emitted on stdout; failures exit nonzero. Back up canonical stores first.
     HistoryImport {
@@ -100,29 +107,51 @@ enum MaintenanceCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
-    if let Some(MaintenanceCommand::HistoryImport { apply, max_imports }) = args.command {
-        use std::io::Write;
-        let config = args
-            .config
-            .clone()
-            .map(RunnerUserConfig::load_from_path)
-            .unwrap_or_else(RunnerUserConfig::load);
-        oqto_runner::runtime_guard::ensure_config_state_owner(&config)?;
-        let report = oqto_runner::history_import::run(&config, apply, max_imports.map(|n| n as usize)).await.unwrap_or_else(|_| serde_json::json!({"schema":1,"ok":false,"error":"History import unavailable; check explicit history configuration and source access"}));
-        let output = format!("{report}\n");
-        if let Err(error) = std::io::stdout().write_all(output.as_bytes()) {
-            if error.kind() == std::io::ErrorKind::BrokenPipe {
-                return Ok(());
-            }
-            return Err(error.into());
+    match args.command.take() {
+        Some(MaintenanceCommand::Personal { command }) => {
+            return oqto_runner::personal_cli::owner(command).await;
         }
-        anyhow::ensure!(
-            report["ok"] == true,
-            "History import failed; see the JSON summary"
-        );
-        return Ok(());
+        Some(MaintenanceCommand::HistoryImport { apply, max_imports }) => {
+            use std::io::Write;
+            let config = args
+                .config
+                .clone()
+                .map(RunnerUserConfig::load_from_path)
+                .unwrap_or_else(RunnerUserConfig::load);
+            oqto_runner::runtime_guard::ensure_config_state_owner(&config)?;
+            let report = oqto_runner::history_import::run(&config, apply, max_imports.map(|n| n as usize)).await.unwrap_or_else(|_| serde_json::json!({"schema":1,"ok":false,"error":"History import unavailable; check explicit history configuration and source access"}));
+            let output = format!("{report}\n");
+            if let Err(error) = std::io::stdout().write_all(output.as_bytes()) {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(error.into());
+            }
+            anyhow::ensure!(
+                report["ok"] == true,
+                "History import failed; see the JSON summary"
+            );
+            return Ok(());
+        }
+        None => {}
+    }
+    ensure!(
+        args.personal.personal_listen.is_some()
+            || (args.personal.grants.read_roots.is_empty()
+                && args.personal.grants.write_roots.is_empty()
+                && !args.personal.grants.full_user_terminal
+                && matches!(
+                    args.personal.grants.sessions,
+                    oqto_runner::personal_cli::Sessions::None
+                )),
+        "pairing grants require --personal-listen or personal pair"
+    );
+    if args.personal.personal_listen.is_some() {
+        args.personal.personal_state = Some(oqto_runner::personal_cli::state_path(
+            args.personal.personal_state.as_ref(),
+        )?);
     }
 
     let log_level = if args.verbose { "debug" } else { "info" };
@@ -189,6 +218,7 @@ async fn main() -> Result<()> {
         for path in std::iter::once(&socket_path)
             .chain(args.tls_key.iter())
             .chain(args.tls_client_ca.iter())
+            .chain(args.personal.personal_state.iter())
         {
             let path = path.to_string_lossy().into_owned();
             if !policy.deny_read.contains(&path) {
@@ -246,6 +276,9 @@ async fn main() -> Result<()> {
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
         extra_deny_read: {
             let mut denied = vec![socket_path.clone()];
+            if let Some(state) = args.personal.personal_state.as_ref() {
+                denied.push(state.clone());
+            }
             if let Some(key) = args.tls_key.as_ref() {
                 denied.push(key.clone());
             }
@@ -316,13 +349,22 @@ async fn main() -> Result<()> {
             grant: Box::new(grant),
         }
     };
-    let runner = Runner::new(
+    let runner = Arc::new(Runner::new(
         sandbox_config,
         binaries,
         legacy_user_config,
         pi_manager,
         args.expose_dir.clone(),
-    );
+    ));
+    if args.personal.personal_listen.is_some() {
+        ensure!(
+            inherited_unix_listener()?.is_none(),
+            "personal mode conflicts with socket activation"
+        );
+        if args.listen_tls.is_none() && args.socket.is_none() {
+            return runner.run_personal(args.personal).await;
+        }
+    }
     if let Some(inherited) = inherited_unix_listener()? {
         if args.listen_tls.is_some() {
             anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
@@ -345,7 +387,17 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
         let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
         let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
-        runner.run_transport(&listener, remote_access).await
+        if args.personal.personal_listen.is_some() {
+            runner
+                .run_transport_with_personal(&listener, remote_access, args.personal)
+                .await
+        } else {
+            runner.run_transport(&listener, remote_access).await
+        }
+    } else if args.personal.personal_listen.is_some() {
+        runner
+            .run_socket_with_personal(&socket_path, args.personal)
+            .await
     } else {
         runner.run(&socket_path).await
     }

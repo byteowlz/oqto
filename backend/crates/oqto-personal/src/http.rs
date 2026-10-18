@@ -49,12 +49,42 @@ pub async fn serve_enrollment_tls(
     authority: Arc<PairingAuthority>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    serve_router_tls(listener, config, enrollment_router(authority), shutdown).await
+}
+
+/// Runner composition point. The caller mounts only authenticated semantic routes.
+pub async fn serve_router_tls(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    router: Router,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    serve_router_tls_bounded(listener, config, router, shutdown, Duration::from_secs(30)).await
+}
+
+/// Composed signed-action listener permits a 30-second terminal confirmation
+/// plus TLS/admission/response overhead. Enrollment-only keeps its 30s bound.
+pub async fn serve_personal_tls(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    router: Router,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    serve_router_tls_bounded(listener, config, router, shutdown, Duration::from_secs(45)).await
+}
+
+async fn serve_router_tls_bounded(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    router: Router,
+    shutdown: impl Future<Output = ()>,
+    lifetime: Duration,
+) -> Result<()> {
     let mut config = (*config).clone();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     config.max_early_data_size = 0;
     config.send_tls13_tickets = 0;
     let acceptor = TlsAcceptor::from(Arc::new(config));
-    let router = enrollment_router(authority);
     let slots = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
     tokio::pin!(shutdown);
@@ -71,8 +101,8 @@ pub async fn serve_enrollment_tls(
                     let Ok(Ok(tls)) = tokio::time::timeout(Duration::from_secs(5), acceptor.accept(stream)).await else { return; };
                     let service = hyper::service::service_fn(move |request| router.clone().oneshot(request));
                     let mut builder = http1::Builder::new();
-                    builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(5));
-                    let _ = tokio::time::timeout(Duration::from_secs(30), builder.serve_connection(TokioIo::new(tls), service)).await;
+                    builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(5)).keep_alive(false);
+                    let _ = tokio::time::timeout(lifetime, builder.serve_connection(TokioIo::new(tls), service)).await;
                 });
             }
         }

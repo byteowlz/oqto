@@ -129,6 +129,44 @@ schema-update:
 test-sandbox-schema:
     cd backend && cargo test -p oqto-sandbox --test schema
 
+# Experimental source-only Durable runtime. Never installs or touches live profiles.
+test-oqt-core: test-sandbox-schema
+    python3 tools/oqt/preparation_lock_test.py
+    cd backend && cargo fmt -p oq-permissions -p oqto-sandbox --check
+    cd backend && cargo test --locked -p oq-permissions --lib --test lifecycle --test ceiling --test operator_receipts
+    cd backend && cargo test --locked -p oqto-sandbox --lib --test guard_config
+    cd backend && cargo clippy --locked -p oq-permissions -p oqto-sandbox --all-targets -- -D warnings
+    node --test --test-concurrency=1 tools/oqt/input-leases.test.mjs tools/oqt/guard-wire.test.mjs
+
+# Native persistence/recovery qualification; no provider or owner-profile access.
+test-oqt-operator-context PI_SOURCE:
+    OQT_PI_SOURCE="{{PI_SOURCE}}" timeout 40 node --import "{{PI_SOURCE}}/packages/coding-agent/src/experimental/source-resolver.ts" --test --test-concurrency=1 tools/oqt/operator-context-native.test.mjs tools/oqt/operator-receipts.test.mjs
+
+test-oqt-hands PI_SOURCE DAEMON BPF:
+    bash tools/oqt/test-hands.sh "{{PI_SOURCE}}" "{{DAEMON}}" "{{BPF}}"
+
+test-oqt-ui:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 160s python3 tools/oqt/tui_test.py
+
+test-oqt-coding:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 100s python3 tools/oqt/coding_tui_test.py
+
+# Real TUI plus provider-request capture across client reopen; disposable profile.
+test-oqt-bang:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 180s python3 tools/oqt/bang_tui_test.py
+
+test-oqt-operator-recovery:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 210s python3 tools/oqt/operator_recovery_tui_test.py
+
+test-oqt-sandbox-config:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 180s python3 tools/oqt/sandbox_config_tui_test.py
+
+test-oqt-recovery:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 260s python3 tools/oqt/recovery_tui_test.py
+
+test-oqt-multi:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 200s python3 tools/oqt/multiclient_tui_test.py
+
 # Sandbox containment gate. OQTO_REQUIRE_SANDBOX=1 makes a missing sandbox a
 # failure rather than a skip.
 test-containment:
@@ -982,6 +1020,15 @@ test-personal-authority:
     cd backend && cargo fmt -p oqto-personal -p oqto-personal-wire -- --check
     cd backend && cargo test --locked -p oqto-personal -p oqto-personal-wire --all-features
     cd backend && cargo clippy --locked -p oqto-personal -p oqto-personal-wire --all-targets --all-features -- -D warnings
+
+# Disposable process/HTTPS proofs, including new test code in the strict gate.
+# Uses deployed/default Runner features; optional Iroh qualification is separate.
+test-personal-host:
+    cd backend && cargo fmt -p oqto-runner -p oqto-history -- --check
+    cd backend && cargo clippy --locked -p oqto-runner -p oqto-history --all-targets -- -D warnings
+    cd backend && cargo test --locked -p oqto-history --lib
+    cd backend && cargo test --locked -p oqto-runner --lib -- --test-threads=1
+    cd backend && cargo test --locked -p oqto-runner --test personal_host
 
 # =============================================================================
 # Agent Quality Gate

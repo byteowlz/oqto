@@ -70,20 +70,25 @@ pub enum GuardPolicy {
     Deny,
 }
 
-/// Configuration for oqto-guard (FUSE filesystem for runtime access control).
-#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default)]
+/// Configuration for oqto-guard: runtime approval for access that is neither
+/// fully allowed nor fully denied by the sandbox (ADR-0060).
+///
+/// The guard decides what the operator is *asked* about inside the sandbox's
+/// containment; it can never widen containment. In a workspace file
+/// (`.oqto/sandbox.toml`) the guard may only narrow: `auto` anywhere is
+/// rejected there (see [`GuardConfig::validate_workspace`]).
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct GuardConfig {
-    /// Enable the guard FUSE filesystem.
+    /// Enable runtime approval for the runner. Consumers that always enforce
+    /// approvals (oqt) treat this as the runner's switch only.
     pub enabled: bool,
 
-    /// Paths to expose via the guard (symlinked to FUSE mount).
-    /// These paths are neither fully blocked nor fully allowed -
-    /// access is controlled at runtime with user prompts.
+    /// Requestable paths outside the workspace: access is approved at runtime.
     pub paths: Vec<String>,
 
-    /// Per-path policy overrides.
-    /// Keys are glob patterns (e.g., "~/.kube/*"), values are policies.
+    /// Per-path policy overrides. Keys are paths, optionally ending in `/*`
+    /// or `/**` for a subtree (e.g. "~/.kube/**"); values are policies.
     #[serde(default)]
     pub policy: HashMap<String, GuardPolicy>,
 
@@ -94,6 +99,100 @@ pub struct GuardConfig {
     /// What to do when prompt times out.
     #[serde(default)]
     pub default_on_timeout: GuardPolicy,
+
+    /// Policy for outside paths not listed in `paths`/`policy`: `prompt` or
+    /// `deny` (`auto` is rejected: unapproved outside access never happens).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside: Option<GuardPolicy>,
+
+    /// Reading workspace files (default `auto`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<GuardPolicy>,
+
+    /// Writing and editing workspace files (default `prompt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<GuardPolicy>,
+
+    /// Running shell commands (default `prompt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<GuardPolicy>,
+
+    /// Outbound network for executed tools (default `prompt`), within the
+    /// profile's network containment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<GuardPolicy>,
+
+    /// Pre-approved simple shell command prefixes (e.g. "cargo test",
+    /// "npm test"). Never honored from a workspace file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_shell: Vec<String>,
+}
+
+impl GuardConfig {
+    /// Overlay an owner-controlled `other` (user/admin file) on this profile
+    /// guard: scalars replace, lists union, policy entries extend/replace.
+    pub fn overlay(&self, other: &Self) -> Self {
+        let mut merged = self.clone();
+        merged.enabled = other.enabled || self.enabled;
+        for path in &other.paths {
+            if !merged.paths.contains(path) {
+                merged.paths.push(path.clone());
+            }
+        }
+        for (path, policy) in &other.policy {
+            merged.policy.insert(path.clone(), policy.clone());
+        }
+        if other.timeout_secs != default_guard_timeout() {
+            merged.timeout_secs = other.timeout_secs;
+        }
+        if other.default_on_timeout != GuardPolicy::default() {
+            merged.default_on_timeout = other.default_on_timeout.clone();
+        }
+        for (target, value) in [
+            (&mut merged.outside, &other.outside),
+            (&mut merged.read, &other.read),
+            (&mut merged.edit, &other.edit),
+            (&mut merged.shell, &other.shell),
+            (&mut merged.network, &other.network),
+        ] {
+            if value.is_some() {
+                *target = value.clone();
+            }
+        }
+        for prefix in &other.auto_shell {
+            if !merged.auto_shell.contains(prefix) {
+                merged.auto_shell.push(prefix.clone());
+            }
+        }
+        merged
+    }
+
+    /// A workspace file is agent-reachable data: it may deny or prompt, never
+    /// pre-approve anything.
+    pub fn validate_workspace(&self) -> Result<()> {
+        if !self.auto_shell.is_empty() {
+            anyhow::bail!("workspace guard: auto_shell is owner-only");
+        }
+        if self
+            .policy
+            .values()
+            .any(|policy| *policy == GuardPolicy::Auto)
+        {
+            anyhow::bail!("workspace guard: policy entries may be prompt or deny, never auto");
+        }
+        for (name, value) in [
+            ("outside", &self.outside),
+            ("read", &self.read),
+            ("edit", &self.edit),
+            ("shell", &self.shell),
+            ("network", &self.network),
+        ] {
+            if *value == Some(GuardPolicy::Auto) {
+                anyhow::bail!("workspace guard: {name} = \"auto\" would widen approvals");
+            }
+        }
+        Ok(())
+    }
 }
 
 fn default_guard_timeout() -> u64 {
@@ -1194,7 +1293,11 @@ impl SandboxProfile {
     /// See [`default_profile_name`]; this must exist as a built-in profile on
     /// the host it returns.
     pub fn for_platform() -> Self {
-        Self::builtin(default_profile_name()).expect("default profile is built-in")
+        if cfg!(target_os = "macos") {
+            Self::development_macos()
+        } else {
+            Self::development()
+        }
     }
 
     /// Get a built-in profile by name.
@@ -1243,6 +1346,11 @@ pub struct SandboxConfigFile {
     /// Keys are profile names, values are profile settings.
     #[serde(default)]
     pub profiles: HashMap<String, SandboxProfile>,
+
+    /// Runtime approval (oqto-guard) overrides on top of the resolved
+    /// profile's guard. In a workspace file this is a narrowing layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<GuardConfig>,
 
     // --- Overrides applied on top of the resolved profile ---
     //
@@ -1438,6 +1546,16 @@ pub struct SandboxConfig {
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
+
+    /// Resolved runtime approval (oqto-guard): the profile's guard with the
+    /// owner file's overrides applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<GuardConfig>,
+
+    /// The workspace file's guard, kept as a separate narrowing layer (never
+    /// merged into `guard`). Validated: contains no `auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_guard: Option<GuardConfig>,
 }
 
 /// Path to user-level sandbox config file (for single-user mode).
@@ -1449,6 +1567,8 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         let profile = SandboxProfile::for_platform();
         Self {
+            guard: profile.guard.clone(),
+            workspace_guard: None,
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
@@ -1487,9 +1607,9 @@ impl SandboxConfigFile {
     ///
     /// Generated rather than hand-written: the previous checked-in schema
     /// drifted until it rejected every real config.
-    pub fn schema_json() -> String {
+    pub fn schema_json() -> Result<String> {
         let schema = schemars::schema_for!(SandboxConfigFile);
-        serde_json::to_string_pretty(&schema).expect("schema serializes")
+        serde_json::to_string_pretty(&schema).context("serialize sandbox configuration schema")
     }
 }
 
@@ -1517,6 +1637,13 @@ impl From<SandboxConfigFile> for SandboxConfig {
             });
 
         let mut config = Self {
+            guard: match (&profile.guard, &file.guard) {
+                (Some(profile_guard), Some(file_guard)) => Some(profile_guard.overlay(file_guard)),
+                (Some(profile_guard), None) => Some(profile_guard.clone()),
+                (None, Some(file_guard)) => Some(file_guard.clone()),
+                (None, None) => None,
+            },
+            workspace_guard: None,
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
@@ -1616,6 +1743,8 @@ impl SandboxConfig {
     pub fn minimal() -> Self {
         let profile = SandboxProfile::minimal();
         Self {
+            guard: profile.guard.clone(),
+            workspace_guard: None,
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
@@ -1652,6 +1781,8 @@ impl SandboxConfig {
     pub fn strict() -> Self {
         let profile = SandboxProfile::strict();
         Self {
+            guard: profile.guard.clone(),
+            workspace_guard: None,
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
@@ -1710,6 +1841,8 @@ impl SandboxConfig {
             });
 
         let mut config = Self {
+            guard: profile.guard.clone(),
+            workspace_guard: None,
             workspace_cache_enabled: profile.workspace_cache_enabled,
             workspace_cache_root: profile.workspace_cache_root.clone(),
             resource_limits: profile.resource_limits,
@@ -1764,6 +1897,14 @@ impl SandboxConfig {
     /// Returns error only if file exists but can't be parsed.
     pub fn load_user_config() -> Result<Self> {
         let config_path = Self::expand_home(USER_SANDBOX_CONFIG);
+        Self::load_user_config_at(&config_path)
+    }
+
+    /// Load the user/admin sandbox config from an explicit path (for
+    /// processes without a home environment). Missing file: defaults. A file
+    /// that does not parse or names an unknown profile is an error.
+    pub fn load_user_config_at(config_path: &Path) -> Result<Self> {
+        let config_path = config_path.to_path_buf();
 
         if !config_path.exists() {
             debug!(
@@ -1778,6 +1919,15 @@ impl SandboxConfig {
 
         let file: SandboxConfigFile = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse sandbox config from {:?}", config_path))?;
+        if !file.profile.is_empty()
+            && !file.profiles.contains_key(&file.profile)
+            && SandboxProfile::builtin(&file.profile).is_none()
+        {
+            anyhow::bail!(
+                "sandbox config {config_path:?} selects unknown profile '{}'",
+                file.profile
+            );
+        }
 
         let config: Self = file.into();
 
@@ -1793,15 +1943,18 @@ impl SandboxConfig {
     /// The `global_profiles` parameter allows workspace configs to reference
     /// profiles defined in the global config.
     ///
-    /// Returns `None` if the file doesn't exist or can't be parsed.
-    pub fn load_from_workspace(
+    /// Strict: `Ok(None)` when the file is absent; an error when it exists but
+    /// cannot be read or parsed, names an unknown profile, or its guard tries
+    /// to widen approvals. Consumers that enforce restrictions must use this
+    /// (fail closed, ADR-0060).
+    pub fn try_load_from_workspace(
         workspace: &Path,
         global_profiles: &HashMap<String, SandboxProfile>,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>> {
         let config_path = workspace.join(".oqto").join("sandbox.toml");
         if !config_path.exists() {
             debug!("No workspace sandbox config at {:?}", config_path);
-            return None;
+            return Ok(None);
         }
 
         match std::fs::read_to_string(&config_path) {
@@ -1822,16 +1975,21 @@ impl SandboxConfig {
                         .get(profile_name)
                         .cloned()
                         .or_else(|| SandboxProfile::builtin(profile_name))
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "Workspace references unknown profile '{}', using '{}'",
-                                profile_name,
-                                default_profile_name()
-                            );
-                            SandboxProfile::for_platform()
-                        });
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "workspace sandbox config {config_path:?} references unknown profile '{profile_name}'"
+                            )
+                        })?;
+                    if let Some(guard) = &file.guard {
+                        guard
+                            .validate_workspace()
+                            .with_context(|| format!("invalid guard in {config_path:?}"))?;
+                    }
 
                     let config = Self {
+                        guard: profile.guard.clone(),
+                        // The workspace file's own guard is a narrowing layer.
+                        workspace_guard: file.guard.clone(),
                         workspace_cache_enabled: profile.workspace_cache_enabled,
                         workspace_cache_root: profile.workspace_cache_root.clone(),
                         resource_limits: profile.resource_limits,
@@ -1869,21 +2027,31 @@ impl SandboxConfig {
                         "Loaded workspace sandbox config from {:?}, profile='{}'",
                         config_path, config.profile
                     );
-                    Some(config)
+                    Ok(Some(config))
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to parse workspace sandbox config {:?}: {}",
-                        config_path, e
-                    );
-                    None
-                }
+                Err(e) => Err(anyhow::anyhow!(
+                    "failed to parse workspace sandbox config {config_path:?}: {e}"
+                )),
             },
-            Err(e) => {
-                warn!(
-                    "Failed to read workspace sandbox config {:?}: {}",
-                    config_path, e
-                );
+            Err(e) => Err(anyhow::anyhow!(
+                "failed to read workspace sandbox config {config_path:?}: {e}"
+            )),
+        }
+    }
+
+    /// Load workspace-specific sandbox config from `.oqto/sandbox.toml`.
+    ///
+    /// Lenient (runner compatibility): returns `None` when the file is absent
+    /// or invalid, logging a warning. This silently drops a broken workspace's
+    /// restrictions; enforcing consumers use [`Self::try_load_from_workspace`].
+    pub fn load_from_workspace(
+        workspace: &Path,
+        global_profiles: &HashMap<String, SandboxProfile>,
+    ) -> Option<Self> {
+        match Self::try_load_from_workspace(workspace, global_profiles) {
+            Ok(config) => config,
+            Err(error) => {
+                warn!("Ignoring workspace sandbox config: {error:#}");
                 None
             }
         }
@@ -1967,6 +2135,8 @@ impl SandboxConfig {
         profiles.extend(self.profiles.clone());
 
         Self {
+            guard: self.guard.clone(),
+            workspace_guard: workspace_config.workspace_guard.clone(),
             // A workspace may narrow home access but never widen it, so the
             // lower of the two wins. Ordering is None < Read < Write.
             home_access: self.home_access.min(workspace_config.home_access),
@@ -2433,6 +2603,7 @@ impl SandboxConfig {
         // the work directory and every deny, is decided by one policy and
         // emitted parent-first (ADR-0028).
         let permission_args = self.permission_args(workspace, username)?;
+        let tmp_mounts = policy_mounts_under_tmp(&permission_args, workspace);
 
         // The managed agent runtime and the systemd-resolved stub directory are
         // part of the policy's read-only baseline, so they are no longer bound
@@ -2512,6 +2683,10 @@ impl SandboxConfig {
                 workspace_str
             );
         }
+        // Same masking problem for every other policy mount under /tmp
+        // (e.g. extra_ro_bind of a toolchain checkout): replay them, in their
+        // original order so denies still follow their parent binds.
+        args.extend(tmp_mounts);
 
         // Overlayfs redirection for selected paths.
         // This keeps original paths readable while redirecting writes to
@@ -3271,8 +3446,86 @@ impl SandboxConfig {
     // macOS seatbelt/sandbox-exec helpers are implemented in the `oqto-sandbox` CLI.
 }
 
+/// bwrap applies mounts in order and the private /tmp is mounted late. Policy
+/// mounts whose destination lies under /tmp, outside the work directory (which
+/// is rebound separately), must be replayed above it or they silently vanish.
+fn policy_mounts_under_tmp(args: &[String], workspace: &Path) -> Vec<String> {
+    let mut replay = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arity = match args[index].as_str() {
+            "--bind" | "--ro-bind" | "--symlink" => 2,
+            "--tmpfs" => 1,
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        let Some(destination) = args.get(index + arity) else {
+            break;
+        };
+        let destination = Path::new(destination);
+        if destination.starts_with("/tmp")
+            && destination != Path::new("/tmp")
+            && !destination.starts_with(workspace)
+        {
+            replay.extend_from_slice(&args[index..=index + arity]);
+        }
+        index += arity + 1;
+    }
+    replay
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn platform_constructor_matches_named_builtin() -> anyhow::Result<()> {
+        let expected = super::SandboxProfile::builtin(super::default_profile_name())
+            .ok_or_else(|| anyhow::anyhow!("platform profile must have a named builtin"))?;
+        assert_eq!(
+            serde_json::to_value(super::SandboxProfile::for_platform())?,
+            serde_json::to_value(expected)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_mounts_under_tmp_are_replayed_in_order_outside_workspace() {
+        let args: Vec<String> = [
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/tmp/src",
+            "/tmp/src",
+            "--tmpfs",
+            "/tmp/src/secret",
+            "--bind",
+            "/tmp/work",
+            "/tmp/work",
+            "--symlink",
+            "../x",
+            "/tmp/link",
+            "--tmpfs",
+            "/tmp",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(
+            super::policy_mounts_under_tmp(&args, std::path::Path::new("/tmp/work")),
+            [
+                "--ro-bind",
+                "/tmp/src",
+                "/tmp/src",
+                "--tmpfs",
+                "/tmp/src/secret",
+                "--symlink",
+                "../x",
+                "/tmp/link",
+            ]
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
