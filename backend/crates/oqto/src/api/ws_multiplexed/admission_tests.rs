@@ -627,3 +627,195 @@ mod read_probe_hint {
         assert_eq!(read_probe_workspace_hint(&prompt), None);
     }
 }
+
+fn machine_fixture(account: &str) -> crate::runner::targets::RunnerTargets {
+    use crate::runner::targets::{RemoteExecutionGrant, RunnerTargetConfig, RunnerTargets};
+    RunnerTargets::new(vec![RunnerTargetConfig {
+        id: "mac".into(),
+        label: "Fixture Mac".into(),
+        account_ids: vec![account.into()],
+        endpoint: oqto_runner::transport::RunnerEndpointConfig::TcpTls {
+            address: "127.0.0.1:1".parse().unwrap(),
+            server_name: "fixture.test".into(),
+            ca: "/not-used/ca.pem".into(),
+            certificate: "/not-used/client.pem".into(),
+            key: "/not-used/key.pem".into(),
+        },
+        provider_login: false,
+        history_read: true,
+        execution: Some(RemoteExecutionGrant {
+            principal: "fixture".into(),
+            roots: vec!["/remote/mac".into()],
+        }),
+    }])
+    .unwrap()
+}
+
+fn machine_command(path: Option<&str>) -> oqto_protocol::commands::Command {
+    serde_json::from_value(serde_json::json!({
+        "id":"machine-intent", "session_id":"public-machine-fixture", "runner_id":"mac", "cmd":"session.create",
+        "config":{"harness":"pi","cwd":path}
+    })).unwrap()
+}
+
+#[tokio::test]
+async fn machine_intent_wrong_path_is_refused_before_even_dialing_personal_spy() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut state, owner) = state(root.path()).await;
+    state.runner_targets = Arc::new(machine_fixture(&owner));
+    let socket = root.path().join("personal-spy.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let personal = RunnerClient::new(socket);
+    for path in [None, Some("/not-on-mac"), Some("/remote/mac/../escape")] {
+        let conn = connection();
+        let response = tokio::time::timeout(
+            Duration::from_millis(400),
+            agent::handle_agent_command(
+                machine_command(path),
+                &owner,
+                &state,
+                Some(&personal),
+                Arc::clone(&conn),
+            ),
+        )
+        .await
+        .expect("machine intent must fail before transport resolution")
+        .unwrap();
+        let encoded = serde_json::to_value(response).unwrap();
+        assert_eq!(encoded["success"], false, "{encoded}");
+        assert!(
+            encoded.to_string().contains("no execution started"),
+            "{encoded}"
+        );
+        assert!(conn.lock().await.pi_session_meta.is_empty());
+        assert!(
+            state
+                .session_targets
+                .get("public-machine-fixture")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(40), listener.accept())
+            .await
+            .is_err(),
+        "personal runner was dialed"
+    );
+}
+
+#[tokio::test]
+async fn machine_intent_keeps_account_durable_machine_and_work_directory_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut state, owner) = state(root.path()).await;
+    state.runner_targets = Arc::new(machine_fixture(&owner));
+    let valid = machine_command(Some("/remote/mac/project"));
+    for id in ["_system", "pending-fixture", "tmp:fixture"] {
+        let mut reserved = valid.clone();
+        reserved.session_id = id.into();
+        assert!(
+            machine_intent::validate(&state, &owner, &reserved)
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        machine_intent::validate(&state, &owner, &valid)
+            .await
+            .is_ok()
+    );
+    assert!(
+        machine_intent::validate(&state, "foreign-account", &valid)
+            .await
+            .is_err()
+    );
+    let mut other = valid.clone();
+    other.runner_id = Some("unknown".into());
+    assert!(
+        machine_intent::validate(&state, &owner, &other)
+            .await
+            .is_err()
+    );
+    for (scope, machine, account, path) in [
+        (
+            SessionTargetScope::Personal,
+            None,
+            owner.as_str(),
+            "/remote/mac/project",
+        ),
+        (
+            SessionTargetScope::RemoteMachine,
+            Some("other-machine"),
+            owner.as_str(),
+            "/remote/mac/project",
+        ),
+        (
+            SessionTargetScope::RemoteMachine,
+            Some("mac"),
+            "foreign-account",
+            "/remote/mac/project",
+        ),
+        (
+            SessionTargetScope::RemoteMachine,
+            Some("mac"),
+            owner.as_str(),
+            "/remote/mac/other",
+        ),
+        (
+            SessionTargetScope::RemoteMachine,
+            Some("mac"),
+            owner.as_str(),
+            "/outside-grant",
+        ),
+    ] {
+        state
+            .session_targets
+            .upsert(&SessionTargetRecord {
+                session_id: valid.session_id.clone(),
+                owner_user_id: Some(account.into()),
+                scope,
+                workspace_id: machine.map(str::to_owned),
+                workspace_path: Some(path.into()),
+            })
+            .await
+            .unwrap();
+        assert!(
+            machine_intent::validate(&state, &owner, &valid)
+                .await
+                .is_err()
+        );
+    }
+    state
+        .session_targets
+        .upsert(&SessionTargetRecord {
+            session_id: valid.session_id.clone(),
+            owner_user_id: Some(owner.clone()),
+            scope: SessionTargetScope::RemoteMachine,
+            workspace_id: Some("mac".into()),
+            workspace_path: Some("/remote/mac/project".into()),
+        })
+        .await
+        .unwrap();
+    let mut read = valid.clone();
+    read.payload = serde_json::from_value(serde_json::json!({"cmd":"get_state"})).unwrap();
+    assert!(
+        machine_intent::validate(&state, &owner, &read)
+            .await
+            .is_ok()
+    );
+    state.runner_targets = Arc::default();
+    assert!(
+        machine_intent::validate(&state, &owner, &read)
+            .await
+            .is_err(),
+        "revoked grant survived a durable binding"
+    );
+    read.runner_id = None;
+    assert!(
+        machine_intent::validate(&state, &owner, &read)
+            .await
+            .is_ok(),
+        "ordinary clients still use existing admission"
+    );
+}

@@ -67,6 +67,7 @@ mod agent;
 mod files;
 mod git;
 mod history;
+mod machine_intent;
 mod terminal;
 
 fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {

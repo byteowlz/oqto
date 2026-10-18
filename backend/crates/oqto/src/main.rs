@@ -27,8 +27,6 @@ use hyper_util::service::TowerToHyperService;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
 mod agent_browser;
@@ -3309,34 +3307,9 @@ async fn run_admin_socket_server(
 
 #[cfg(unix)]
 fn unix_peer_uid(stream: &UnixStream) -> Result<u32> {
-    #[cfg(target_os = "linux")]
-    {
-        let fd = stream.as_raw_fd();
-        let mut ucred = libc::ucred {
-            pid: 0,
-            uid: 0,
-            gid: 0,
-        };
-        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                &mut ucred as *mut _ as *mut _,
-                &mut len,
-            )
-        };
-        if rc != 0 {
-            return Err(anyhow!("failed to read unix peer credentials"));
-        }
-        Ok(ucred.uid)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(unsafe { libc::geteuid() } as u32)
-    }
+    // Tokio uses the platform's peer-credential mechanism (including getpeereid
+    // on macOS); our process uid is never a substitute for the actual peer.
+    Ok(stream.peer_cred()?.uid())
 }
 
 /// Stop all running sessions during shutdown.
@@ -3842,6 +3815,16 @@ fn ensure_pi_settings_json(pi_dir: &std::path::Path, models_json: &serde_json::V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn admin_socket_peer_uid_uses_platform_socket_credentials() {
+        let (left, right) = UnixStream::pair().unwrap();
+        assert_eq!(
+            unix_peer_uid(&left).unwrap(),
+            right.peer_cred().unwrap().uid()
+        );
+    }
 
     #[test]
     fn local_runtime_wiring_sets_runner_pattern_in_single_user_mode() {
