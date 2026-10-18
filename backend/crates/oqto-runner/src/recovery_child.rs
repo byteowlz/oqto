@@ -91,7 +91,8 @@ mod tests {
         let binary = dir.path().join("runner");
         std::fs::write(
             &binary,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexec sleep 60\n",
+            // File existence is readiness: publish only after the complete argv write.
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args.tmp\"\nmv \"$0.args.tmp\" \"$0.args\"\nexec sleep 60\n",
         )
         .expect("script");
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).expect("mode");
