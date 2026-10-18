@@ -32,6 +32,10 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+# Python bytecode is regenerated locally, never implementation source.
+__pycache__/
+*.py[cod]
+
 # Local binaries / build artifacts
 backend/data/home/default/.opencode/bin/opencode
 fileserver/target/

@@ -13,10 +13,10 @@ import argparse
 import collections
 import json
 import pathlib
-import re
 import subprocess
 import sys
-from functools import lru_cache
+from rust_test_context import TestContext
+from rust_guardrail_paths import changed_paths
 from typing import Iterable, List
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -34,49 +34,19 @@ def _get_changed_rs() -> List[str]:
     except Exception:
         base = "HEAD~1"
 
-    out = _run(
-        [
-            "git",
-            "diff",
-            "--name-only",
-            "--diff-filter=ACMR",
-            f"{base}...HEAD",
-            "--",
-            "*.rs",
-        ]
-    )
-    paths = [p for p in out.splitlines() if p]
-    pat = re.compile(r"(^|/)(tests?|testdata|fixtures)/|_test\.rs$|/target/")
-    return [p for p in paths if not pat.search(p)]
-
-
-@lru_cache(maxsize=1024)
-def _first_cfg_test_line(rel_path: str) -> int | None:
-    path = ROOT / rel_path
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-
-    for idx, line in enumerate(text.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith("#[cfg(test)]"):
-            return idx
-    return None
-
-
-def _is_test_context(rel_path: str, line_zero_based: int) -> bool:
-    first_cfg = _first_cfg_test_line(rel_path)
-    return first_cfg is not None and line_zero_based >= first_cfg
+    return changed_paths(ROOT, base)
 
 
 def _scan(paths: Iterable[str], exclude_cfg_test: bool):
+    paths = list(paths)
+    context = TestContext(ROOT, paths) if exclude_cfg_test else None
     cmd = [
         "ast-grep",
         "scan",
         "--config",
         str(CFG),
         "--json=stream",
+        "--threads", "1",
         *paths,
     ]
     proc = subprocess.Popen(
@@ -102,8 +72,8 @@ def _scan(paths: Iterable[str], exclude_cfg_test: bool):
             continue
 
         rel_path = obj.get("file", "<unknown>")
-        start_line = obj.get("range", {}).get("start", {}).get("line", -1)
-        if exclude_cfg_test and isinstance(start_line, int) and _is_test_context(rel_path, start_line):
+        start_byte = obj["range"]["byteOffset"]["start"]
+        if context is not None and context.contains(rel_path, start_byte):
             continue
 
         total += 1
@@ -114,6 +84,9 @@ def _scan(paths: Iterable[str], exclude_cfg_test: bool):
     if proc.stderr:
         stderr = proc.stderr.read().strip()
     code = proc.wait()
+    proc.stdout.close()
+    if proc.stderr:
+        proc.stderr.close()
     if code != 0:
         print(f"ast-grep scan failed (exit={code})", file=sys.stderr)
         if stderr:
@@ -128,10 +101,11 @@ def main() -> int:
     p.add_argument("--paths", nargs="*", default=["backend/crates"], help="paths to scan")
     p.add_argument("--changed", action="store_true", help="scan only changed Rust files vs origin/main")
     p.add_argument("--top", type=int, default=20, help="top files to print")
+    p.add_argument("--check", action="store_true", help="exit 1 when findings remain")
     p.add_argument(
         "--exclude-cfg-test",
         action="store_true",
-        help="exclude findings at/after first #[cfg(test)] block in each file",
+        help="exclude AST-bounded cfg(test) items and proven external test modules",
     )
     args = p.parse_args()
 
@@ -154,7 +128,7 @@ def main() -> int:
     for file, count in by_file.most_common(args.top):
         print(f"{count}\t{file}")
 
-    return 0
+    return 1 if args.check and total else 0
 
 
 if __name__ == "__main__":

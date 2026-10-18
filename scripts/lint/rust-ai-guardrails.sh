@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 if ! command -v ast-grep >/dev/null 2>&1; then
-  echo "warning: ast-grep is not installed; skipping AI guardrail scan (install with: cargo install ast-grep --locked)" >&2
-  exit 0
+  echo "error: ast-grep is required for AI guardrails (install with: cargo install ast-grep --locked)" >&2
+  exit 2
 fi
+
+python3 -m unittest discover -s scripts/lint -p test_rust_test_context.py
+python3 -m unittest discover -s scripts/lint -p test_rust_guardrail_paths.py
 
 BASE_REF="${AIGENRIV_BASE_REF:-}"
 if [[ -z "$BASE_REF" ]]; then
@@ -18,8 +22,10 @@ if [[ -z "$BASE_REF" ]]; then
   fi
 fi
 
-mapfile -t changed_rs < <(git diff --name-only --diff-filter=ACMR "$BASE_REF"...HEAD -- '*.rs' \
-  | rg -v '(^|/)(tests?|testdata|fixtures)/|_test\.rs$|/target/' || true)
+paths_file="$(mktemp)"
+trap 'rm -f "$paths_file"' EXIT
+python3 scripts/lint/rust_guardrail_paths.py --base "$BASE_REF" > "$paths_file"
+mapfile -d '' -t changed_rs < "$paths_file"
 
 if [[ ${#changed_rs[@]} -eq 0 ]]; then
   echo "No changed Rust files to lint against AI guardrails."
