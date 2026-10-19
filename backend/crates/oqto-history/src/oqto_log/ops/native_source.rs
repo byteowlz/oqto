@@ -11,25 +11,54 @@ struct Identity {
     source: Option<String>,
 }
 
-async fn identities(home: &Path, public: &str, external: &str) -> Result<Vec<Identity>> {
-    let mut found = Vec::new();
-    for db in list_db_paths(home) {
+struct IdentityShard {
+    path: PathBuf,
+    pool: sqlx::SqlitePool,
+    has_extensions: bool,
+    has_bindings: bool,
+}
+impl IdentityShard {
+    async fn open(path: PathBuf) -> Result<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(
                 SqliteConnectOptions::new()
-                    .filename(&db)
+                    .filename(&path)
                     .read_only(true)
                     .create_if_missing(false),
             )
             .await
             .context("read native identity store")?;
-        let rows = sqlx::query("SELECT platform_id, external_id, workspace_id, json_extract(extensions_json, '$.personal_native_source') AS source FROM oqto_log_sessions WHERE external_id=? OR platform_id=? OR session_id=?")
-            .bind(external).bind(public).bind(public).fetch_all(&pool).await?;
-        let mut connection = pool.acquire().await?;
-        if let Some(binding) =
-            crate::oqto_log::bindings::resolve_pi_session_identity(&mut connection, external)
-                .await?
+        let has_extensions = session_columns(&pool).await?.contains("extensions_json");
+        let has_bindings = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='oqto_log_session_bindings')")
+            .fetch_one(&pool).await?;
+        Ok(Self {
+            path,
+            pool,
+            has_extensions,
+            has_bindings,
+        })
+    }
+    async fn identities(&self, public: &str, external: &str) -> Result<Vec<Identity>> {
+        let source_expr = if self.has_extensions {
+            "json_extract(extensions_json, '$.personal_native_source')"
+        } else {
+            "NULL"
+        };
+        let query = format!(
+            "SELECT platform_id, external_id, workspace_id, {source_expr} AS source FROM oqto_log_sessions WHERE external_id=? OR platform_id=? OR session_id=?"
+        );
+        let rows = sqlx::query(&query)
+            .bind(external)
+            .bind(public)
+            .bind(public)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut connection = self.pool.acquire().await?;
+        if self.has_bindings
+            && let Some(binding) =
+                crate::oqto_log::bindings::resolve_pi_session_identity(&mut connection, external)
+                    .await?
         {
             ensure!(
                 rows.len() == 1
@@ -41,18 +70,72 @@ async fn identities(home: &Path, public: &str, external: &str) -> Result<Vec<Ide
                 "Native binding facts conflict"
             );
         }
-        drop(connection);
-        for row in rows {
-            found.push(Identity {
-                platform: row.try_get("platform_id")?,
-                external: row.try_get("external_id")?,
-                workspace: row.try_get("workspace_id")?,
-                source: row.try_get("source")?,
-            });
-        }
-        pool.close().await;
+        rows.into_iter()
+            .map(|row| {
+                Ok(Identity {
+                    platform: row.try_get("platform_id")?,
+                    external: row.try_get("external_id")?,
+                    workspace: row.try_get("workspace_id")?,
+                    source: row.try_get("source")?,
+                })
+            })
+            .collect()
     }
-    Ok(found)
+}
+
+/// One pass on the serialized writer: reuse read-only shard connections and
+/// schema inventory, NOT identity results. Each check sees committed facts,
+/// including pins written earlier in this pass. Never cache across sweeps or
+/// use this snapshot to confer attachment authority.
+pub struct DiscoveryBatch {
+    home: PathBuf,
+    shards: Vec<IdentityShard>,
+}
+impl DiscoveryBatch {
+    pub async fn open(home: &Path) -> Result<Self> {
+        let mut shards = Vec::new();
+        for db in list_db_paths(home) {
+            shards.push(IdentityShard::open(db).await?);
+        }
+        Ok(Self {
+            home: home.to_owned(),
+            shards,
+        })
+    }
+    async fn identities(&self, public: &str, external: &str) -> Result<Vec<Identity>> {
+        let mut found = Vec::new();
+        for shard in &self.shards {
+            found.extend(shard.identities(public, external).await?);
+        }
+        Ok(found)
+    }
+    pub async fn discover(
+        &mut self,
+        user: &str,
+        workspace: &str,
+        external: &str,
+        source: &str,
+    ) -> Result<bool> {
+        let public = crate::oqto_log::store::platform_id_for_external_id(external);
+        let found = self.identities(&public, external).await?;
+        let changed =
+            discover_identity(&self.home, user, workspace, external, source, &found).await?;
+        if changed {
+            // New destinations join subsequent global conflict checks. An old
+            // destination upgraded by the writer needs fresh schema capability.
+            let db =
+                crate::oqto_log::paths::existing_user_home_workspace_db_path(&self.home, workspace);
+            match self.shards.iter().position(|shard| shard.path == db) {
+                Some(i) if self.shards[i].has_extensions && self.shards[i].has_bindings => {}
+                Some(i) => {
+                    self.shards.remove(i).pool.close().await;
+                    self.shards.push(IdentityShard::open(db).await?);
+                }
+                None => self.shards.push(IdentityShard::open(db).await?),
+            }
+        }
+        Ok(changed)
+    }
 }
 
 /// Only the existing serialized writer calls this. Existing identities/owners,
@@ -65,8 +148,21 @@ pub async fn discover(
     external: &str,
     source: &str,
 ) -> Result<bool> {
+    DiscoveryBatch::open(home)
+        .await?
+        .discover(user, workspace, external, source)
+        .await
+}
+
+async fn discover_identity(
+    home: &Path,
+    user: &str,
+    workspace: &str,
+    external: &str,
+    source: &str,
+    found: &[Identity],
+) -> Result<bool> {
     let public = crate::oqto_log::store::platform_id_for_external_id(external);
-    let found = identities(home, &public, external).await?;
     ensure!(found.len() <= 1, "Ambiguous native canonical identity");
     if let Some(row) = found.first() {
         ensure!(
@@ -170,7 +266,10 @@ pub async fn validate(
     workspace: &str,
     source: &str,
 ) -> Result<()> {
-    let found = identities(home, public, external).await?;
+    let found = DiscoveryBatch::open(home)
+        .await?
+        .identities(public, external)
+        .await?;
     ensure!(
         found.len() == 1,
         "Native canonical identity unavailable or ambiguous"
@@ -189,6 +288,132 @@ pub async fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn discovery_batch_refreshes_upgraded_and_new_shards_without_rebinding() -> Result<()> {
+        for prefix in [1, 3] {
+            let temp = tempfile::tempdir()?;
+            let workspace = "/synthetic/retained";
+            let db = crate::oqto_log::paths::resolve_user_home_workspace_db_path(
+                temp.path(),
+                workspace,
+            )?;
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true),
+                )
+                .await?;
+            let mut migrator = sqlx::migrate!("./migrations_oqto_log");
+            migrator.migrations =
+                std::borrow::Cow::Owned(migrator.iter().take(prefix).cloned().collect());
+            migrator.run(&pool).await?;
+            sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id) VALUES('legacy-row','oqto-retained-public','retained-native','original-owner',?)")
+                .bind(workspace).execute(&pool).await?;
+            pool.close().await;
+            let mut batch = DiscoveryBatch::open(temp.path()).await?;
+            assert!(
+                batch
+                    .discover("new-owner", workspace, "retained-native", "pin")
+                    .await?
+            );
+            assert!(
+                !batch
+                    .discover("new-owner", workspace, "retained-native", "pin")
+                    .await?
+            );
+            assert!(
+                batch
+                    .discover("new-owner", "/synthetic/fresh", "fresh-native", "fresh-pin")
+                    .await?
+            );
+            assert!(
+                batch
+                    .discover("new-owner", "/synthetic/other", "fresh-native", "fresh-pin")
+                    .await
+                    .is_err()
+            );
+            validate(
+                temp.path(),
+                "oqto-retained-public",
+                "retained-native",
+                workspace,
+                "pin",
+            )
+            .await?;
+            let rows = list_sessions(temp.path(), None).await?;
+            let row = rows
+                .iter()
+                .find(|row| row.external_id.as_deref() == Some("retained-native"))
+                .context("retained row")?;
+            assert_eq!(row.session_id, "legacy-row");
+            assert_eq!(row.platform_id, "oqto-retained-public");
+            assert_eq!(row.user_id, "original-owner");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retained_migration_prefix_conflicts_are_denied_without_writes() -> Result<()> {
+        for prefix in [1, 3] {
+            let temp = tempfile::tempdir()?;
+            let db = crate::oqto_log::paths::resolve_user_home_workspace_db_path(
+                temp.path(),
+                "/synthetic/legacy",
+            )?;
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true),
+                )
+                .await?;
+            let mut migrator = sqlx::migrate!("./migrations_oqto_log");
+            migrator.migrations =
+                std::borrow::Cow::Owned(migrator.iter().take(prefix).cloned().collect());
+            migrator.run(&pool).await?;
+            for id in ["oqto-old-owner-a", "oqto-old-owner-b"] {
+                sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id) VALUES(?,?,'conflict','retained-owner','/synthetic/legacy')")
+                    .bind(id).bind(id).execute(&pool).await?;
+            }
+            pool.close().await;
+            let before = std::fs::read(&db)?;
+            assert!(
+                discover(
+                    temp.path(),
+                    "new-owner",
+                    "/synthetic/fresh",
+                    "conflict",
+                    "pin"
+                )
+                .await
+                .is_err()
+            );
+            assert!(
+                validate(
+                    temp.path(),
+                    "oqto-old-owner-a",
+                    "conflict",
+                    "/synthetic/legacy",
+                    "pin"
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(std::fs::read(&db)?, before);
+            assert!(
+                !crate::oqto_log::paths::existing_user_home_workspace_db_path(
+                    temp.path(),
+                    "/synthetic/fresh"
+                )
+                .exists()
+            );
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn legacy_schema_without_source_pins_does_not_suppress_default_writer() -> Result<()> {
         let temp = tempfile::tempdir()?;

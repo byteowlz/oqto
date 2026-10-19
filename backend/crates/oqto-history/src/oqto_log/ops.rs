@@ -629,6 +629,19 @@ pub async fn list_sessions_for_workspaces(
     list_sessions_from(dbs, None).await
 }
 
+// Schema-aware, read-only compatibility with retained migration prefixes.
+// Missing columns mean those facts did not exist yet, not permission to skip
+// legacy rows or migrate during a catalog/attachment request.
+async fn session_columns(pool: &sqlx::SqlitePool) -> Result<std::collections::HashSet<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('oqto_log_sessions')")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect(),
+    )
+}
+
 async fn list_sessions_from(
     dbs: Vec<PathBuf>,
     workspace: Option<&str>,
@@ -647,22 +660,30 @@ async fn list_sessions_from(
             Err(_) => continue,
         };
 
-        let has_title_column = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'title'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0)
-            > 0;
-        let has_extensions_json_column = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(1) FROM pragma_table_info('oqto_log_sessions') WHERE name = 'extensions_json'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0)
-            > 0;
-
-        let title_expr = if has_title_column {
+        let columns = session_columns(&pool).await?;
+        let has_extensions_json_column = columns.contains("extensions_json");
+        let has_lineage = columns.contains("parent_session_id");
+        let parent_expr = if has_lineage {
+            "COALESCE((SELECT NULLIF(p.platform_id, '') FROM oqto_log_sessions p WHERE p.session_id = s.parent_session_id), s.parent_session_id)"
+        } else {
+            "NULL"
+        };
+        let fork_entry_expr = if columns.contains("forked_from_entry_id") {
+            "s.forked_from_entry_id"
+        } else {
+            "NULL"
+        };
+        let fork_at_expr = if columns.contains("forked_at") {
+            "s.forked_at"
+        } else {
+            "NULL"
+        };
+        let has_parent_expr = if has_lineage {
+            "s.parent_session_id IS NOT NULL"
+        } else {
+            "0"
+        };
+        let title_expr = if columns.contains("title") {
             "s.title"
         } else {
             "NULL AS title"
@@ -679,13 +700,13 @@ async fn list_sessions_from(
             "0"
         };
         let base_select = format!(
-            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    COALESCE((SELECT NULLIF(p.platform_id, '') FROM oqto_log_sessions p WHERE p.session_id = s.parent_session_id), s.parent_session_id) AS parent_session_id, s.forked_from_entry_id, s.forked_at,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
+            "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    {parent_expr} AS parent_session_id, {fork_entry_expr} AS forked_from_entry_id, {fork_at_expr} AS forked_at,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
             title_expr, readable_id_expr
         );
 
         let rows = if let Some(workspace) = workspace {
             let query = format!(
-                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       s.parent_session_id IS NOT NULL\n                       OR {native_identity_expr}\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       {has_parent_expr}\n                       OR {native_identity_expr}\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<
@@ -712,7 +733,7 @@ async fn list_sessions_from(
             .await?
         } else {
             let query = format!(
-                "{}\n                 WHERE s.parent_session_id IS NOT NULL\n                    OR {native_identity_expr}\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE {has_parent_expr}\n                    OR {native_identity_expr}\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<

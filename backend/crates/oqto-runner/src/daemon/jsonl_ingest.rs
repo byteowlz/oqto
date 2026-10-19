@@ -132,14 +132,15 @@ async fn run_at(
     let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut recent: HashMap<String, Instant> = HashMap::new();
+    let mut discovery: Option<Discovery> = None;
+    let mut legacy = std::collections::VecDeque::new();
+    let mut legacy_ids = std::collections::VecDeque::new();
 
     loop {
         tokio::select! {
-            _ = tick.tick() => {
-                if let Some(source) = &source
-                    && let Err(error) = discover(source, &user_id).await { debug!("Native catalog discovery deferred: {error:#}"); }
-                sweep(&home, &user_id).await;
-            }
+            // A queued admitted head observation runs before another discovery
+            // chunk. There is still exactly one writer, never a second task.
+            biased;
             nudged = rx.recv() => {
                 let Some(id) = nudged else {
                     return;
@@ -161,14 +162,37 @@ async fn run_at(
                 ids.dedup();
                 let now = Instant::now();
                 recent.retain(|_, seen| now.duration_since(*seen) < NUDGE_DEDUPE_WINDOW);
+                let mut discovery_requested = false;
                 for id in ids {
                     if recent.contains_key(&id) {
                         continue;
                     }
                     recent.insert(id.clone(), now);
-                    if let Some(source) = &source
-                        && let Err(error) = discover(source, &user_id).await { debug!("Native catalog nudge deferred: {error:#}"); }
+                    discovery_requested = true;
+                    if legacy_ids.len() < 128 { legacy_ids.push_back(id); }
+                }
+                if discovery_requested && discovery.is_none() && let Some(source) = &source {
+                    discovery = Discovery::start(source).await.unwrap_or_else(|error| {
+                        debug!("Native catalog nudge deferred: {error:#}"); None
+                    });
+                }
+            }
+            _ = tick.tick() => {
+                if discovery.is_none() && let Some(source) = &source {
+                    discovery = Discovery::start(source).await.unwrap_or_else(|error| {
+                        debug!("Native catalog discovery deferred: {error:#}"); None
+                    });
+                }
+                legacy = list_session_files(&home).into();
+            }
+            _ = std::future::ready(()), if discovery.is_some() || !legacy_ids.is_empty() || !legacy.is_empty() => {
+                if let Some(pass) = &mut discovery {
+                    if pass.step(&user_id).await { discovery = None; }
+                } else if let Some(id) = legacy_ids.pop_front() {
                     handle_nudge(&home, &user_id, &id).await;
+                } else if let Some(path) = legacy.pop_front()
+                    && let Some(external) = super::server::parse_pi_session_id_from_path(&path) {
+                    maybe_ingest(&home, &user_id, &external, &path).await;
                 }
             }
         }
@@ -177,47 +201,83 @@ async fn run_at(
 
 /// Additional native discovery never reads message bodies or sets a stat cursor.
 /// Only a fresh admitted socket observation can cause graph ingestion.
+const DISCOVERY_CHUNK: usize = 16;
+const DISCOVERY_SLICE: Duration = Duration::from_millis(25);
+
+struct Discovery {
+    home: PathBuf,
+    headers: std::vec::IntoIter<crate::personal_source::NativeHeader>,
+    inventory: ops::native_source::DiscoveryBatch,
+}
+impl Discovery {
+    async fn start(
+        source: &crate::personal_source::PersonalSource,
+    ) -> anyhow::Result<Option<Self>> {
+        let owned = source.clone();
+        let (headers, defaults) = tokio::task::spawn_blocking(move || {
+            Ok::<_, anyhow::Error>((owned.headers()?, list_session_files(&owned.home)))
+        })
+        .await??;
+        let mut counts = HashMap::new();
+        for header in &headers {
+            *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
+        }
+        let headers: Vec<_> = headers
+            .into_iter()
+            .filter(|header| {
+                let suffix = format!("_{}.jsonl", header.external_id);
+                counts[&header.external_id] == 1
+                    && !defaults.iter().any(|path| {
+                        path != &header.path
+                            && path
+                                .file_name()
+                                .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
+                    })
+            })
+            .collect();
+        if headers.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            home: source.home.clone(),
+            headers: headers.into_iter(),
+            inventory: ops::native_source::DiscoveryBatch::open(&source.home).await?,
+        }))
+    }
+    // Soft time budget: finish the in-flight SQLite operation, then return to
+    // the priority queue after at most 16 headers or 25ms, whichever comes first.
+    async fn step(&mut self, user: &str) -> bool {
+        let started = Instant::now();
+        for _ in 0..DISCOVERY_CHUNK {
+            let Some(header) = self.headers.next() else {
+                return true;
+            };
+            if let Some(workspace) = header.workspace.to_str() {
+                match self
+                    .inventory
+                    .discover(user, workspace, &header.external_id, &header.identity)
+                    .await
+                {
+                    Ok(true) => crate::history_read::invalidate_catalog(&self.home).await,
+                    Ok(false) => {}
+                    Err(error) => debug!("Native identity discovery denied: {error:#}"),
+                }
+            }
+            if started.elapsed() >= DISCOVERY_SLICE {
+                break;
+            }
+        }
+        self.headers.len() == 0
+    }
+}
+
+#[cfg(test)]
 async fn discover(
     source: &crate::personal_source::PersonalSource,
     user: &str,
 ) -> anyhow::Result<()> {
-    let owned = source.clone();
-    let headers = tokio::task::spawn_blocking(move || owned.headers()).await??;
-    let mut counts = HashMap::new();
-    for header in &headers {
-        *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
-    }
-    for header in headers {
-        if counts[&header.external_id] != 1 {
-            continue;
-        }
-        // A native id already present in the retained default source is not
-        // authority to silently switch that Session to another file/root.
-        let suffix = format!("_{}.jsonl", header.external_id);
-        if list_session_files(&source.home).iter().any(|path| {
-            path != &header.path
-                && path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
-        }) {
-            continue;
-        }
-        let Some(workspace) = header.workspace.to_str() else {
-            continue;
-        };
-        match ops::native_source::discover(
-            &source.home,
-            user,
-            workspace,
-            &header.external_id,
-            &header.identity,
-        )
-        .await
-        {
-            Ok(true) => crate::history_read::invalidate_catalog(&source.home).await,
-            Ok(false) => {}
-            Err(error) => debug!("Native identity discovery denied: {error:#}"),
-        }
+    if let Some(mut pass) = Discovery::start(source).await? {
+        while !pass.step(user).await {}
     }
     Ok(())
 }
@@ -372,6 +432,7 @@ pub(crate) fn read_session_cwd(path: &Path) -> Option<String> {
     None
 }
 
+#[cfg(test)]
 async fn sweep(home: &Path, user_id: &str) {
     let started = Instant::now();
     let mut checked = 0usize;

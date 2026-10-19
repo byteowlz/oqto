@@ -81,12 +81,24 @@ foreign-owned files/directories, malformed/partial headers, ambiguous native
 files, wrong encoded directories/filename IDs and outside-root/noncanonical cwd
 are rejected. Work directories follow the catalog's depth-four limit, excluding
 hidden, `node_modules`, `target` and `vendor` children. This is not all-profile
-bulk import or a promise of instantaneous catalog coverage.
+bulk import or a promise of instantaneous catalog coverage. Each pass inventories
+retained default-source filenames and canonical shard schemas/connections once;
+identity queries still consult committed facts, not a stale identity cache. New
+or writer-upgraded shards join subsequent conflict checks. Discovery yields to
+queued native observations after at most16 headers or a soft25ms slice (an
+in-flight SQLite operation must finish). Legacy sweeps/nudges remain serialized
+behind discovery and are processed one file per scheduling turn. Native-only
+nudges do not request another discovery pass.
 
 Header-only sessions get distinct deterministic public IDs through oqto-log's
 strict identity/binding API, even when fresh and empty. Existing public IDs,
 owners, legacy turns, Branches and Fork provenance remain intact. Conflicting
 or dangling binding facts fail closed, never trigger importer conflict repair.
+Retained April/July migration-prefix stores remain catalog/identity-readable even
+without their original JSONL. Readers select only columns/tables present in that
+schema, retaining all old identity facts and any existing Fork lineage; absent
+columns represent facts that did not exist yet. List/attach do not migrate a
+shard. Only a destination writer may upgrade it before committing a new pin.
 The canonical Session stores an immutable source pin (canonical source root and
 file paths, device/inode identity, native ID and cwd). A same-size/mtime copy in
 another root or replacement inode cannot inherit that binding. Such a change
@@ -117,4 +129,4 @@ real phone/native-session acceptance.
 
 ## Gates
 
-`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not camera-scanner or phone acceptance. `just test-personal-host` runs formatting and strict all-target Clippy **before** history/library/process tests; new fixtures cannot bypass lint. It qualifies the deployed/default Runner features, not optional Iroh. `cargo test -p oqto-runner --test personal_host` uses actual disposable Runner processes, private HOME/TMPDIR, pinned HTTPS and CLI enrollment to prove independent Files/PTTY grants and Unix+HTTPS cohosted existing-session history/control/revocation. Its native peer is synthetic; real terminal, frozen Linux/macOS and mobile acceptance remain separately required. The library fixtures also cover bootstrap process deaths, identity persistence and canonical equal-count head switching without rewriting native files.
+`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not camera-scanner or phone acceptance. `just test-personal-host` runs formatting and strict all-target Clippy **before** history/library/process tests; new fixtures cannot bypass lint. It qualifies the deployed/default Runner features, not optional Iroh. `cargo test -p oqto-runner --test personal_host` uses actual disposable Runner processes, private HOME/TMPDIR, pinned HTTPS and CLI enrollment to prove independent Files/PTTY grants and Unix+HTTPS cohosted existing-session history/control/revocation. Its native peer is synthetic; real terminal, frozen Linux/macOS and mobile acceptance remain separately required. The split-source process fixture retains actual April/July migration prefixes without matching default JSONL, verifies cold catalog/discovery and unchanged complete shard bytes across list/attach/restart, and retains old owner/history/Fork/source provenance. A second process fixture adds3821 synthetic header-only sources across eight workspaces and asserts queued native head convergence before discovery completes; it uses no private sources and is not a real-host timing guarantee. The library fixtures also cover bootstrap process deaths, identity persistence and canonical equal-count head switching without rewriting native files.

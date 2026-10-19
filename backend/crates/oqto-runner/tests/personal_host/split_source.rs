@@ -38,6 +38,7 @@ struct Fixture {
     config_bytes: Vec<u8>,
     transport_bytes: [Vec<u8>; 2],
     native_bytes: Vec<u8>,
+    retained_shards: Vec<(PathBuf, Vec<u8>)>,
 }
 impl Fixture {
     async fn start() -> Result<Self> {
@@ -90,6 +91,71 @@ impl Fixture {
             )?;
             std::fs::File::open(path)?
                 .set_modified(SystemTime::now() - Duration::from_secs(120))?;
+        }
+        // Actual retained migration prefixes, with NO source JSONL to upgrade
+        // them via the default writer. Fresh sources live in another store.
+        let mut retained_shards = Vec::new();
+        for (name, prefix) in [("april", 1), ("july", 3)] {
+            let workspace = work.join(name);
+            std::fs::create_dir(&workspace)?;
+            let db = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+                &home,
+                workspace.to_str().context("workspace")?,
+            )?;
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true),
+                )
+                .await?;
+            let mut migrator = sqlx::migrate!("../oqto-history/migrations_oqto_log");
+            migrator.migrations =
+                std::borrow::Cow::Owned(migrator.iter().take(prefix).cloned().collect());
+            migrator.run(&pool).await?;
+            for kind in ["parent", "child"] {
+                let session = format!("retained-{name}-{kind}");
+                sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id) VALUES(?,?,?,?,?)")
+                    .bind(&session).bind(format!("oqto-{session}"))
+                    .bind(format!("absent-native-{name}-{kind}"))
+                    .bind("retained-owner").bind(workspace.to_str()).execute(&pool).await?;
+                sqlx::query("INSERT INTO oqto_log_branches(branch_id,session_id) VALUES(?,?)")
+                    .bind(format!("branch-{session}"))
+                    .bind(&session)
+                    .execute(&pool)
+                    .await?;
+                sqlx::query("INSERT INTO oqto_log_turns(turn_id,session_id,branch_id,turn_version,role,status,source_kind,source_session_id,source_entry_id,source_hash) VALUES(?,?,?,1,'user','committed','pi_jsonl',?,'retained-entry','retained-hash')")
+                    .bind(format!("turn-{session}")).bind(&session).bind(format!("branch-{session}"))
+                    .bind(format!("absent-native-{name}-{kind}")).execute(&pool).await?;
+                sqlx::query("INSERT INTO oqto_log_messages(message_id,turn_id,seq,kind,role,content) VALUES(?,?,0,'text','user','retained synthetic history')")
+                    .bind(format!("message-{session}")).bind(format!("turn-{session}")).execute(&pool).await?;
+            }
+            if name == "july" {
+                sqlx::query("UPDATE oqto_log_sessions SET parent_session_id='retained-july-parent',forked_from_entry_id='retained-entry',forked_at='2026-07-19',fork_operation_id='retained-fork',extensions_json='{\"provenance\":\"retained\"}' WHERE session_id='retained-july-child'")
+                    .execute(&pool).await?;
+            }
+            pool.close().await;
+            retained_shards.push((db.clone(), std::fs::read(db)?));
+        }
+        // Cold reader must list both prefixes without upgrading either store.
+        let cold = oqto_history::oqto_log::ops::list_sessions(&home, None).await?;
+        assert_eq!(cold.len(), 4);
+        let child = cold
+            .iter()
+            .find(|row| row.platform_id == "oqto-retained-july-child")
+            .context("retained Fork")?;
+        assert_eq!(
+            child.parent_session_id.as_deref(),
+            Some("oqto-retained-july-parent")
+        );
+        assert_eq!(
+            child.forked_from_entry_id.as_deref(),
+            Some("retained-entry")
+        );
+        assert!(cold.iter().all(|row| row.user_id == "retained-owner"));
+        for (path, bytes) in &retained_shards {
+            assert_eq!(&std::fs::read(path)?, bytes);
         }
         let sentinel = home.join("pi-sentinel");
         std::fs::write(
@@ -171,6 +237,7 @@ impl Fixture {
             config_bytes,
             transport_bytes,
             native_bytes,
+            retained_shards,
         })
     }
     async fn primary(&self) -> Result<()> {
@@ -431,6 +498,108 @@ async fn page(host: &Host, device: &str, public: &str, head: &str) -> Result<Val
     .await?
 }
 #[tokio::test]
+async fn synthetic_3821_header_discovery_yields_to_queued_native_head() -> Result<()> {
+    const SOURCES: usize = 3821;
+    let mut fixture = Fixture::start().await?;
+    let peer = Peer::start(&fixture)?;
+    let device = fixture.host.enroll(&fixture.host.qr, 101).await?;
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(NATIVE);
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let (_, list) = fixture
+                .host
+                .action(&device, 101, HostAction::SessionsList)
+                .await?;
+            if list["sessions"]
+                .as_array()
+                .is_some_and(|rows| rows.len() == 22)
+            {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
+    attach(&fixture.host, &device, 101, &public).await?;
+    page(&fixture.host, &device, &public, "a").await?;
+    let root = fixture.user.join(".pi/agent/sessions");
+    for n in 0..SOURCES {
+        let work = fixture.host.work.join(format!("scale-{}", n % 8));
+        std::fs::create_dir_all(&work)?;
+        source_file(&root, &work, &format!("synthetic-scale-{n}"), "")?;
+    }
+    let cold = std::time::Instant::now();
+    fixture.restart().await?;
+    // Queue the head AFTER at least one new identity commits: this exercises
+    // an in-progress pass, not only a nudge that wins the startup select race.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, list) = fixture
+                .host
+                .action(&device, 101, HostAction::SessionsList)
+                .await?;
+            if list["sessions"]
+                .as_array()
+                .is_some_and(|rows| rows.len() > 22 && rows.len() < SOURCES + 22)
+            {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await??;
+    peer.head.store(true, Ordering::SeqCst);
+    let queued = std::time::Instant::now();
+    attach(&fixture.host, &device, 101, &public).await?;
+    page(&fixture.host, &device, &public, "b").await?;
+    let convergence = queued.elapsed();
+    assert!(
+        convergence < Duration::from_secs(5),
+        "queued convergence: {convergence:?}"
+    );
+    let (_, partial) = fixture
+        .host
+        .action(&device, 101, HostAction::SessionsList)
+        .await?;
+    let partial_count = partial["sessions"]
+        .as_array()
+        .context("partial catalog")?
+        .len();
+    assert!(
+        partial_count < SOURCES + 22,
+        "head must converge before the discovery pass finishes"
+    );
+    tokio::time::timeout(Duration::from_secs(180), async {
+        loop {
+            let (status, list) = fixture
+                .host
+                .action(&device, 101, HostAction::SessionsList)
+                .await?;
+            if status == 200
+                && list["sessions"]
+                    .as_array()
+                    .is_some_and(|rows| rows.len() == SOURCES + 22)
+            {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await??;
+    eprintln!(
+        "synthetic scale: {SOURCES} fresh headers / 8 workspaces, cold={:?}, queued attach/head={convergence:?}, partial catalog={partial_count}",
+        cold.elapsed()
+    );
+    for (path, bytes) in &fixture.retained_shards {
+        assert_eq!(&std::fs::read(path)?, bytes);
+    }
+    assert_eq!(std::fs::read(&fixture.source)?, fixture.native_bytes);
+    assert!(!fixture.user.join(".local").exists());
+    fixture.host.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_zero_pi_exec()
 -> Result<()> {
     let mut fixture = Fixture::start().await?;
@@ -465,7 +634,7 @@ async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_ze
             if status == 200
                 && list["sessions"]
                     .as_array()
-                    .is_some_and(|rows| rows.len() == 18)
+                    .is_some_and(|rows| rows.len() == 22)
                 && list.to_string().contains(&fresh)
                 && list.to_string().contains(
                     &oqto_history::oqto_log::store::platform_id_for_external_id("default-15"),
@@ -484,7 +653,7 @@ async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_ze
     let rows = oqto_history::oqto_log::ops::list_sessions(&host.home, None).await?;
     assert_eq!(
         rows.len(),
-        18,
+        22,
         "fixture rows: {:?}",
         rows.iter().map(|row| &row.external_id).collect::<Vec<_>>()
     );
@@ -522,6 +691,22 @@ async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_ze
         .0,
         200
     );
+    // A retained catalog identity without a native file/peer remains visible,
+    // but attachment fails closed rather than migrating or repairing its store.
+    for session in ["oqto-retained-april-child", "oqto-retained-july-child"] {
+        assert_ne!(
+            host.action(
+                &device,
+                101,
+                HostAction::SessionAttach {
+                    session_id: session.into(),
+                }
+            )
+            .await?
+            .0,
+            200
+        );
+    }
     let id = attach(host, &device, 101, &public).await?;
     assert_eq!(peer.leases.load(Ordering::SeqCst), 0);
     let first = page(host, &device, &public, "a").await?;
@@ -682,6 +867,13 @@ async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_ze
             .user_id,
         owner
     );
+    for (path, bytes) in &fixture.retained_shards {
+        // All list/attach/history/reload/discovery/restart operations preserve
+        // the complete old schema, IDs, owner, history and provenance bytes.
+        assert_eq!(&std::fs::read(path)?, bytes);
+        assert!(!path.with_extension("sqlite-wal").exists());
+        assert!(!path.with_extension("sqlite-shm").exists());
+    }
     assert_eq!(std::fs::read(&fixture.source)?, fixture.native_bytes);
     assert_eq!(
         std::fs::read(fixture.root.join("config.toml"))?,
