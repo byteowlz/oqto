@@ -4,6 +4,8 @@ use super::*;
 use anyhow::ensure;
 use sqlx::Row;
 use std::time::Duration;
+#[cfg(test)]
+mod inventory_tests;
 pub(super) mod reader;
 #[cfg(test)]
 mod resource_tests;
@@ -47,6 +49,16 @@ async fn identity_paths(home: &Path) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
         for entry in entries {
             let entry = entry?;
+            // WAL/SHM accelerator files may retire after readdir. They are not
+            // shard authority and must not be restatted as though they were.
+            // Keep symlinks on the strict metadata path: a missing directory or
+            // broken link must still refuse the complete inventory.
+            let kind = entry.file_type()?;
+            #[cfg(test)]
+            inventory_tests::after_entry(&entry)?;
+            if !kind.is_dir() && !kind.is_symlink() {
+                continue;
+            }
             if !std::fs::metadata(entry.path())?.is_dir() {
                 continue;
             }

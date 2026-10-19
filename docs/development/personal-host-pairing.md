@@ -111,7 +111,13 @@ not all existing Runner/socket/store resources; the existing serialized writer
 still owns destination migration and pin writes.
 
 All shard directories are enumerated strictly, without flattening errors or
-skipping unreadable/missing shard databases. No ownership or schema answers are
+skipping unreadable/missing shard databases. Inventory classifies directory entries
+before metadata lookup: known non-directory, non-symlink entries (including the
+index's retiring WAL/SHM files) are not shard authority. Directory and symlink
+metadata failures still refuse the whole inventory. A deterministic disposable
+regression retires regular sidecars after enumeration through the actual binding
+check and discovery APIs, while retaining missing-shard refusal and shard bytes.
+No ownership or schema answers are
 cached: preflight requests retain no identity facts, and commit re-enumerates and
 reads current global facts again. Newly added/upgraded shards participate without
 a remove-before-reopen window. Initial/read/verification failure aborts and
