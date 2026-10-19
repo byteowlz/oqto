@@ -132,15 +132,44 @@ test-sandbox-schema:
 # Experimental source-only Durable runtime. Never installs or touches live profiles.
 test-oqt-core: test-sandbox-schema
     python3 tools/oqt/preparation_lock_test.py
+    python3 tools/oqt/profile_namespace_test.py
     cd backend && cargo fmt -p oq-permissions -p oqto-sandbox --check
     cd backend && cargo test --locked -p oq-permissions --lib --test lifecycle --test ceiling --test operator_receipts
     cd backend && cargo test --locked -p oqto-sandbox --lib --test guard_config
     cd backend && cargo clippy --locked -p oq-permissions -p oqto-sandbox --all-targets -- -D warnings
-    node --test --test-concurrency=1 tools/oqt/input-leases.test.mjs tools/oqt/guard-wire.test.mjs
+    node --test --test-concurrency=1 tools/oqt/input-leases.test.mjs tools/oqt/guard-wire.test.mjs tools/oqt/classic-import.test.mjs tools/oqt/classic-source.test.mjs tools/oqt/classic-client.test.mjs tools/oqt/classic-cli.test.mjs
+
+# Owned derivative uses its pinned SDK's Biome, not the separate frontend version.
+test-oqt-lint PI_SOURCE:
+    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/input-leases.ts tools/oqt/input-leases.test.mjs tools/oqt/classic-*.ts tools/oqt/classic-*.mjs tools/oqt/session-*.ts tools/oqt/session-*.mjs tools/oqt/operator-*.ts tools/oqt/operator-*.mjs tools/oqt/guard*.ts tools/oqt/guard*.mjs tools/oqt/launcher.ts tools/oqt/coding-worker.ts tools/oqt/plugin/src/guard-client.ts tools/oqt/plugin/src/tui.ts
+
+test-oqt-typecheck PI_SOURCE:
+    bash tools/oqt/typecheck.sh "{{PI_SOURCE}}"
 
 # Native persistence/recovery qualification; no provider or owner-profile access.
 test-oqt-operator-context PI_SOURCE:
     OQT_PI_SOURCE="{{PI_SOURCE}}" timeout 40 node --import "{{PI_SOURCE}}/packages/coding-agent/src/experimental/source-resolver.ts" --test --test-concurrency=1 tools/oqt/operator-context-native.test.mjs tools/oqt/operator-receipts.test.mjs
+
+# Developer-only standalone runtime snapshot; no platform services/releases.
+install-oqt:
+    bash tools/oqt/install-oqt.sh
+
+test-oqt-install:
+    timeout 90 python3 tools/oqt/install_runtime_test.py
+    timeout 30 python3 tools/oqt/installed_state_test.py
+
+# Real native import storage and bounded host transport; disposable fixtures only.
+test-oqt-import-native PI_SOURCE:
+    OQT_PI_SOURCE="{{PI_SOURCE}}" timeout 90 node --import "{{PI_SOURCE}}/packages/coding-agent/src/experimental/source-resolver.ts" --test --test-concurrency=1 tools/oqt/classic-import-native.test.mjs tools/oqt/classic-import-host.test.mjs
+
+test-oqt-forks PI_SOURCE:
+    OQT_PI_SOURCE="{{PI_SOURCE}}" timeout 90 node --import "{{PI_SOURCE}}/packages/coding-agent/src/experimental/source-resolver.ts" --test --test-concurrency=1 tools/oqt/session-*.test.mjs
+
+test-oqt-forks-tui:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 260s python3 tools/oqt/session_tree_tui_test.py
+
+test-oqt-import-tui:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 300s python3 tools/oqt/classic_import_tui_test.py
 
 test-oqt-hands PI_SOURCE DAEMON BPF:
     bash tools/oqt/test-hands.sh "{{PI_SOURCE}}" "{{DAEMON}}" "{{BPF}}"

@@ -6,6 +6,65 @@ Keep this list small; every entry is a candidate upstream fix.
 
 PATCHES = [
     {
+        "id": "classic-import-bootstrap-no-scheduler",
+        "why": "Staging workers only perform passive factory import and close before publication; never resume tasks.",
+        "file": "packages/coding-agent/src/experimental/session-worker.ts",
+        "old": '\tharness.resume();',
+        "new": '\tif (!process.env.OQT_CLASSIC_IMPORT_SEED) harness.resume();',
+    },
+    {
+        "id": "classic-import-host-bind-import",
+        "why": "Protected operator import binds to the native catalog/worker closure, not a launcher store.",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": 'import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";',
+        "new": 'import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";\nimport { bindClassicImportBackend, isClassicImportStaged } from "./classic-import-host.ts";',
+    },
+    {
+        "id": "classic-import-hide-tracked-staging",
+        "why": "Bootstrap workers are never visible as catalog Sessions before publication.",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": 'for (const metadata of workers.trackedSessions) sessions.set(metadata.path, metadata);',
+        "new": 'for (const metadata of workers.trackedSessions) if (!isClassicImportStaged(metadata.path)) sessions.set(metadata.path, metadata);',
+    },
+    {
+        "id": "classic-import-block-staging-resolve",
+        "why": "Knowing a staged Session ID does not permit attachment or input during import.",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": 'if (metadata === undefined) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);',
+        "new": 'if (metadata === undefined || isClassicImportStaged(metadata.path)) throw new SessionNotFoundError(`Unknown session: ${sessionId}`);',
+    },
+    {
+        "id": "classic-import-native-backend-closure",
+        "why": "Only normal worker bootstrap touches Harness; host publishes metadata after commit/close.",
+        "file": "packages/coding-agent/src/experimental/server.ts",
+        "old": '\tconst host: ServerHost<SessionCatalogMetadata> = {',
+        "new": '''\tbindClassicImportBackend({
+        directory: sessionDir,
+        cwd: process.cwd(),
+        open: async (metadata) => {
+            const selected = await options.resolveSessionPlugins(metadata, undefined, BACKGROUND_CONTEXT);
+            return workers.openSession(metadata, BACKGROUND_CONTEXT, selected.manifestPaths);
+        },
+        close: (metadata) => workers.closeSession(metadata, BACKGROUND_CONTEXT),
+        refresh: () => serverServices.refresh(BACKGROUND_CONTEXT),
+    });
+\tconst host: ServerHost<SessionCatalogMetadata> = {''',
+    },
+    {
+        "id": "classic-import-catalog-publication-fence",
+        "why": "A crash between metadata creation and publication leaves import invisible to list/read.",
+        "file": "packages/coding-agent/src/experimental/session-catalog.ts",
+        "old": 'import { randomUUID } from "node:crypto";',
+        "new": 'import { randomUUID } from "node:crypto";\nimport { isClassicImportStaged } from "./classic-import-host.ts";',
+    },
+    {
+        "id": "classic-import-catalog-pending-check",
+        "why": "Pending import metadata is never a published catalog identity.",
+        "file": "packages/coding-agent/src/experimental/session-catalog.ts",
+        "old": '\tconst path = join(sessionDir, id);\n\tlet value: unknown;',
+        "new": '\tconst path = join(sessionDir, id);\n\tif (isClassicImportStaged(path)) return undefined;\n\tlet value: unknown;',
+    },
+    {
         "id": "client-tui-bang-commands",
         "why": "Classic Pi runs `!cmd` (and `!!cmd`, kept out of context) as the user's own "
                "command. Route it to the oqt-shell plugin command, which runs it in the confined "
@@ -601,6 +660,123 @@ import { createOqtSessionFacet } from "./session-commands.ts";""",
 				this.#busy = false;
 				if (/Reattaching|Reconnect|Session worker lost|Switching session/.test(this.#status)) this.#status = "";
 				this.#rebuild();""",
+    },
+]
+
+
+# Worker-router lane: append-only exact seams; do not alter the import lane above.
+PATCHES += [
+    {
+        "id": "oqt-router-runtime-facet-type",
+        "why": "Optional host-neutral replacement for the three conversation-bound native providers.",
+        "file": "packages/coding-agent/src/experimental/services/worker.ts",
+        "old": "\ttype Context,\n\tcreateFacetHost,",
+        "new": "\ttype Context,\n\ttype Facet,\n\tcreateFacetHost,",
+    },
+    {
+        "id": "oqt-router-runtime-conversation-facet",
+        "why": "Composition supplies stable routed providers without mutating Harness or default providers.",
+        "file": "packages/coding-agent/src/experimental/services/worker.ts",
+        "old": "\t/** The root conversation the services expose. */\n\treadonly conversation: Conversation;",
+        "new": "\t/** The selected conversation the services initially expose. */\n\treadonly conversation: Conversation;\n\treadonly conversationFacet?: Facet;",
+    },
+    {
+        "id": "oqt-router-service-options-facet",
+        "why": "Carry the explicit conversation facet into worker service composition.",
+        "file": "packages/coding-agent/src/experimental/services/worker.ts",
+        "old": "export async function createSessionWorkerServices(options: {\n\treadonly harness: Harness;\n\treadonly conversation: Conversation;",
+        "new": "export async function createSessionWorkerServices(options: {\n\treadonly harness: Harness;\n\treadonly conversation: Conversation;\n\treadonly conversationFacet?: Facet;",
+    },
+    {
+        "id": "oqt-router-select-native-builtins",
+        "why": "Replace only AgentController/Models/Transcript; keep SessionPlugins and runtime plugins intact.",
+        "file": "packages/coding-agent/src/experimental/services/worker.ts",
+        "old": """\tconst builtins = await createStaticFacetLoader([
+		agentControllerRuntimeFacet,
+		pluginRuntimeFacet,
+		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
+		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
+	]).load();""",
+        "new": """\tconst conversationFacets = options.conversationFacet ? [options.conversationFacet] : [
+		agentControllerRuntimeFacet,
+		await createModelsServiceFacet({ ...options, context: BACKGROUND_CONTEXT }),
+		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
+	];
+	const builtins = await createStaticFacetLoader([
+		...conversationFacets,
+		pluginRuntimeFacet,
+	]).load();""",
+    },
+    {
+        "id": "oqt-router-worker-forward-facet",
+        "why": "Router selection is restored by the factory before any worker services or request admission.",
+        "file": "packages/coding-agent/src/experimental/session-worker.ts",
+        "old": "\t\t\tconversation: runtime.conversation,\n\t\t\tmodelRuntime: runtime.modelRuntime,",
+        "new": "\t\t\tconversation: runtime.conversation,\n\t\t\tconversationFacet: runtime.conversationFacet,\n\t\t\tmodelRuntime: runtime.modelRuntime,",
+    },
+    {
+        "id": "oqt-router-client-fence-import",
+        "why": "All native TUI/headless session transports forward the observed view target, not a freshly fetched target.",
+        "file": "packages/coding-agent/src/experimental/services/connection.ts",
+        "old": 'import { type Client, createClientServiceTransport } from "@earendil-works/pi-client";',
+        "new": 'import { type Client, createClientServiceTransport } from "@earendil-works/pi-client";\nimport { fenceConversationTransport } from "../session-router.ts";',
+    },
+    {
+        "id": "oqt-router-client-fence-transport",
+        "why": "Stale concurrent clients cannot send mutations into a newly selected conversation.",
+        "file": "packages/coding-agent/src/experimental/services/connection.ts",
+        "old": "\t\tthis.#transport = createClientServiceTransport(client, () => client.attachment);",
+        "new": "\t\tthis.#transport = fenceConversationTransport(createClientServiceTransport(client, () => client.attachment));",
+    },
+]
+
+
+PATCHES += [
+    {
+        "id": "oqt-router-picker-target-helper",
+        "why": "Capture model/thinking picker targets before async presentation, not after another client navigates.",
+        "file": "packages/coding-agent/src/experimental/services/slash-commands-provider.ts",
+        "old": 'import { AgentController } from "./agent-controller.ts";',
+        "new": 'import { AgentController } from "./agent-controller.ts";\nimport { invokeAtConversation } from "../session-router.ts";',
+    },
+    {
+        "id": "oqt-router-model-picker-pinned-target",
+        "why": "Late model-picker completion must reject its old view instead of configuring the new branch.",
+        "file": "packages/coding-agent/src/experimental/services/slash-commands-provider.ts",
+        "old": '\t\t\tawait models.select({ provider: selected.provider, modelId: selected.modelId }, context);',
+        "new": '\t\t\tawait invokeAtConversation(models.select, [{ provider: selected.provider, modelId: selected.modelId }], state, context);',
+    },
+    {
+        "id": "oqt-router-thinking-picker-capture-target",
+        "why": "Pin the view even before asynchronous native thinking-level discovery.",
+        "file": "packages/coding-agent/src/experimental/services/slash-commands-provider.ts",
+        "old": '\t\t\tconst levels = await models.getThinkingLevels(context);',
+        "new": '\t\t\tconst target = models.state.value;\n\t\t\tconst levels = await models.getThinkingLevels(context);',
+    },
+    {
+        "id": "oqt-router-thinking-picker-pinned-target",
+        "why": "Late thinking-picker completion cannot silently configure another client\u0027s selected branch.",
+        "file": "packages/coding-agent/src/experimental/services/slash-commands-provider.ts",
+        "old": '\t\t\tawait models.selectThinking(selected, context);',
+        "new": '\t\t\tawait invokeAtConversation(models.selectThinking, [selected], target, context);',
+    },
+]
+
+
+PATCHES += [
+    {
+        "id": "oqt-router-tui-command-target-import",
+        "why": "Use Chord context values to retain a command's observed target across plugin/custom model pickers.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": 'import { createOqtSessionFacet } from "./session-commands.ts";',
+        "new": 'import { createOqtSessionFacet } from "./session-commands.ts";\nimport { captureConversationContext } from "./session-router.ts";',
+    },
+    {
+        "id": "oqt-router-tui-slash-open-target",
+        "why": "A stale plugin model picker cannot configure a branch selected by another client while it was open.",
+        "file": "packages/coding-agent/src/experimental/client-tui.ts",
+        "old": '\t\t\tconst result = await command.run(args, BACKGROUND_CONTEXT);',
+        "new": '\t\t\tconst commandContext = captureConversationContext(this.#conversationView(), BACKGROUND_CONTEXT);\n\t\t\tconst result = await command.run(args, commandContext);',
     },
 ]
 

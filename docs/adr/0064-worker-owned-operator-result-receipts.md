@@ -34,10 +34,12 @@ not output bytes or a second Chat timeline. Hosted canonical history remains
    not cross into the brain, model context, native documents or entries. Its
    human-facing output is intentionally not recoverable from Session history.
 4. The worker transactionally binds invocation ID to the complete publication
-   digest and, for `!`, payload in a conversation-owned document. Fork inheritance
-   is `initial`, not copied authority. Changed-payload ID reuse and foreign Session
-   IDs fail closed. This explicit binding is necessary because native request-ID
-   lookup does not itself compare input content.
+   digest and, for `!`, payload. Receipt v2 (ADR-0065) uses a bounded Session-owned
+   index with explicit native ConversationId, not a fork-copied document. Admission
+   pins the observed conversation before effects; recovery covers all branches.
+   Changed-payload ID reuse and foreign Session/conversation IDs fail closed. This
+   explicit binding is necessary because native request-ID lookup does not itself
+   compare input content.
 5. Visible context is admitted through native `Conversation.submit(type=write)`
    with a stable request ID, never prompt/steer/follow-up. It is passive and cannot
    initiate inference. Acknowledgment means **durable admission**, not placement,
@@ -60,8 +62,9 @@ not output bytes or a second Chat timeline. Hosted canonical history remains
    Session, including pending/uncertain IDs, and canonical publication JSON below
    28 KiB. Capacity is enforced **before effects** in protected admission; no
    receipt eviction or automatic Session reset. Open a new Session at capacity.
-10. `/shell-results` captures the selected public Session and queries its worker
-    service; interrupted IDs remain separately visible from protected authority.
+10. `/shell-results` captures the selected public Session and observed native
+    conversation and queries that exact worker target; interrupted IDs remain
+    separately visible from protected authority.
     Startup observers replay the current snapshot, and notification identity is
     the stable invocation ID, not array length or text. Terminal callbacks cannot
     inject results into another Session after a switch.

@@ -6,7 +6,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source=${1:-${OQT_PI_SOURCE:-$HOME/.local/share/oqt/pi-source}}
 work=$(mktemp -d /tmp/oqt-typecheck.XXXX)
 trap 'rm -rf "$work"' EXIT
-prepared=$(python3 "$root/tools/oqt/prepare.py" "$source" "$work" coding)
+mkdir "$work/owner"
+prepared=$(python3 "$root/tools/oqt/prepare.py" "$source" "$work" coding "$work/owner")
 python3 - "$prepared" "$source" "$work/tsconfig.json" <<'PY'
 import json, sys
 from pathlib import Path

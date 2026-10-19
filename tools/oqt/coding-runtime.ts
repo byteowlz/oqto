@@ -17,6 +17,8 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import type { GuardGate } from "./brain-client.ts";
+import { readClassicImportSeed } from "./classic-import-host.ts";
+import { applyClassicImport } from "./classic-import-worker.ts";
 import { type CodingGate, gatedTool } from "./gated-tool.ts";
 import type { HandsClient } from "./hands-client.ts";
 
@@ -206,6 +208,11 @@ export async function openCodingHarness(options: {
 					: {}),
 			},
 		});
+		// The factory has not exposed services or resumed the scheduler yet.
+		// Root policy is owner-approved; imported settings never select execution policy.
+		const importSeed = await readClassicImportSeed();
+		if (importSeed)
+			await applyClassicImport(harness, importSeed, BACKGROUND_CONTEXT);
 		return { harness, conversation };
 	} catch (error) {
 		await harness.close(BACKGROUND_CONTEXT);

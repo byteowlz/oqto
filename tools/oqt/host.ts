@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import lockfile from "proper-lockfile";
 import { loadProjectContextFiles } from "../core/resource-loader.ts";
+import { configureClassicImportHost } from "./classic-import-host.ts";
 import { Guard } from "./guard.ts";
 import { OwnerBroker } from "./owner-broker.ts";
 import { ownerModelDefaults } from "./owner-models.ts";
@@ -119,7 +120,15 @@ const guard = await Guard.open({
 		hardDeny: [agent],
 	},
 	authorityRoot: join(directory, "authority"),
-	protectedRoots: [owner, trusted, checkout, runtimeRoot],
+	protectedRoots: [
+		owner,
+		trusted,
+		checkout,
+		runtimeRoot,
+		...(process.env.OQT_INSTALLED_BIN_ROOT
+			? [process.env.OQT_INSTALLED_BIN_ROOT]
+			: []),
+	],
 	hands: {
 		launcher: required("OQT_HANDS"),
 		daemon: required("OQT_ENV_DAEMON"),
@@ -158,6 +167,7 @@ const guard = await Guard.open({
 		log: join(directory, "brain.log"),
 	},
 });
+configureClassicImportHost(guard.directory);
 installGuard(guard);
 await writeFile(join(guard.directory, "host.pid"), String(process.pid), {
 	mode: 0o600,

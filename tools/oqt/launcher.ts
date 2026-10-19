@@ -14,6 +14,8 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import lockfile from "proper-lockfile";
+import { uploadClassicSource } from "./classic-client.ts";
+import { readClassicSource } from "./classic-source.ts";
 import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
 import { readOwnedJson } from "./readonly-profile.ts";
@@ -29,14 +31,45 @@ if (args.includes("--demo") && args.includes("--coding"))
 if ((process.env.OQT_MODE === "coding") !== coding)
 	throw new Error("Launcher mode mismatch; refusing fallback");
 const continuing = args.includes("--continue") || args.includes("-c");
+let importPath: string | undefined;
+let importOrigin: string | undefined;
+let importLeaf: string | undefined;
+let json = false;
+const importSeen = new Set<string>();
+for (let index = 0; index < args.length; index++) {
+	const flag = args[index];
+	if (["--demo", "--coding", "--continue", "-c", "--smoke"].includes(flag))
+		continue;
+	if (importSeen.has(flag)) throw new Error("Duplicate import option");
+	importSeen.add(flag);
+	if (flag === "--json") {
+		json = true;
+		continue;
+	}
+	if (!["--import-classic", "--origin", "--leaf"].includes(flag))
+		throw new Error("Unsupported oqt prototype option");
+	const value = args[++index];
+	if (!value || value.startsWith("--"))
+		throw new Error("Import option requires a value");
+	if (flag === "--import-classic") importPath = value;
+	else if (flag === "--origin") importOrigin = value;
+	else importLeaf = value;
+}
+if (importPath && (!coding || smoke || !importOrigin))
+	throw new Error(
+		"Classic import requires coding mode and explicit --origin; --smoke is not an import",
+	);
+if (!importPath && (importOrigin || importLeaf || json))
+	throw new Error("Import options require --import-classic FILE");
+const frozenImport =
+	importPath && importOrigin
+		? await readClassicSource(importPath, importOrigin)
+		: undefined;
 if (
-	args.some(
-		(arg) =>
-			!["--demo", "--coding", "--continue", "-c", "--smoke"].includes(arg),
-	)
+	!smoke &&
+	(!importPath || continuing) &&
+	(!process.stdin.isTTY || !process.stdout.isTTY)
 )
-	throw new Error("Unsupported oqt prototype option");
-if (!smoke && (!process.stdin.isTTY || !process.stdout.isTTY))
 	throw new Error(
 		"oqt requires a real terminal (use --smoke only for qualification)",
 	);
@@ -194,6 +227,23 @@ if (coding) {
 	mark("launcher: modules loaded");
 	const host = await ensureHost();
 	mark("launcher: host ready");
+	let importedSessionId: string | undefined;
+	if (frozenImport && importOrigin) {
+		const receipt = await uploadClassicSource(
+			host.operator,
+			frozenImport,
+			importOrigin,
+			{ ...(importLeaf === undefined ? {} : { leafId: importLeaf }) },
+		);
+		importedSessionId = receipt.sessionId;
+		if (!continuing) {
+			console.log(JSON.stringify(receipt));
+			process.exit(0);
+		}
+		process.stderr.write(
+			`oqt: ${receipt.status} classic snapshot ${receipt.sessionId}\n`,
+		);
+	}
 	await mirrorAppearance(
 		process.env.OQT_OWNER_AGENT_DIR ?? "",
 		process.env.PI_CODING_AGENT_DIR ?? "",
@@ -205,6 +255,7 @@ if (coding) {
 		connect: { transport: "unix" as const, path: host.socketPath },
 		pluginPackages: [plugin],
 		...(continuing ? { continue: true } : {}),
+		...(importedSessionId ? { sessionId: importedSessionId } : {}),
 	};
 	try {
 		if (smoke) {

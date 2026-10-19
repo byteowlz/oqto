@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent/experimental/plugin";
 import { OperatorResults } from "../../../../src/experimental/operator-receipts.ts";
 import { Models } from "../../../../src/experimental/services/models.ts";
+import { Transcript } from "../../../../src/experimental/services/transcript.ts";
 import {
 	type PendingPermission,
 	type PermissionDecision,
@@ -86,6 +87,13 @@ export default defineFacet({
 		const demo = guard ? undefined : env.use(Permissions);
 		const coding = guard !== undefined;
 		const receipts = guard ? env.use(OperatorResults) : undefined;
+		const transcript = guard ? env.use(Transcript) : undefined;
+		const selectedConversation = () => {
+			const id = transcript?.state.value?.conversation.id;
+			if (!Number.isSafeInteger(id) || !id || id < 1)
+				throw new Error("Selected conversation view is not ready");
+			return id;
+		};
 		const state = (): OperatorState | undefined =>
 			guard
 				? guard.state.value
@@ -392,7 +400,10 @@ export default defineFacet({
 								ui.showStatus("Select a Session, then /shell-results", context);
 								return undefined;
 							}
-							const rows = await receipts.list({ session }, context);
+							const rows = await receipts.list(
+								{ session, conversationId: selectedConversation() },
+								context,
+							);
 							const interrupted =
 								state()?.interrupted.filter((row) => row.session === session) ??
 								[];
@@ -448,6 +459,7 @@ export default defineFacet({
 									command,
 									context,
 									silent,
+									selectedConversation(),
 								);
 								const lines = result.output.replace(/\n$/, "").split("\n");
 								const shown = lines.slice(-40);

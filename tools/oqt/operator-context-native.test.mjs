@@ -1,8 +1,7 @@
 // Qualification of the pinned engine seam, NOT the guard/TUI receipt pipeline.
 // No provider calls, real sessions, owner settings, or external effects.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -13,8 +12,13 @@ if (!source)
 	throw new Error(
 		"OQT_PI_SOURCE must name the pinned disposable test dependency",
 	);
-const require = createRequire(join(source, "package.json"));
-const load = (name) => import(pathToFileURL(require.resolve(name)));
+const modules = await mkdtemp(join(tmpdir(), "oqt-native-context-modules-"));
+await symlink(join(source, "node_modules"), join(modules, "node_modules"));
+await writeFile(
+	join(modules, "loader.mjs"),
+	"export const load = name => import(name);",
+);
+const { load } = await import(pathToFileURL(join(modules, "loader.mjs")));
 const { BACKGROUND_CONTEXT: context } = await load(
 	"@earendil-works/chord/context",
 );
@@ -95,5 +99,6 @@ test("passive operator context survives SQLite reopen and identical retry withou
 	} finally {
 		if (harness) await harness.close(context);
 		await rm(directory, { recursive: true, force: true });
+		await rm(modules, { recursive: true, force: true });
 	}
 });

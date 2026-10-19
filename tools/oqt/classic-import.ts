@@ -121,7 +121,7 @@ export function classicSnapshot(
 		if (record.parentId !== null) {
 			if (!Object.hasOwn(entryDigests, record.parentId))
 				throw new Error(
-					`Unresolved or cyclic classic parent ${record.parentId}`,
+					`Unresolved or cyclic classic parent ${JSON.stringify(record.parentId)}`,
 				);
 			parents.add(record.parentId);
 		}

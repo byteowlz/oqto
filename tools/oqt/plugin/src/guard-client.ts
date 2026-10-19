@@ -65,6 +65,7 @@ export interface PermissionsPort {
 		command: string,
 		context: Context,
 		excluded: boolean,
+		conversationId: number,
 	): Promise<{
 		id: string;
 		exitCode: number;
@@ -265,11 +266,11 @@ export function guardPermissions(path: string): PermissionsPort {
 			context.abortSignal?.throwIfAborted();
 			await call("forget_rules", {});
 		},
-		async shell(session, command, context, excluded) {
+		async shell(session, command, context, excluded, conversationId) {
 			context.abortSignal?.throwIfAborted();
 			return (await call(
 				"shell",
-				{ session, command, excluded },
+				{ session, command, excluded, conversationId },
 				context.abortSignal,
 			)) as {
 				id: string;

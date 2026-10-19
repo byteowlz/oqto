@@ -4,6 +4,7 @@ import {
 	classicSnapshot as parseSnapshot,
 	planClassicUpdate,
 } from "./classic-import.ts";
+
 const classicSnapshot = (raw, origin = "fixture") => parseSnapshot(raw, origin);
 
 const header = {
@@ -23,6 +24,14 @@ const entry = (id, parentId, extra = {}) => ({
 });
 const text = (...rows) => `${rows.map(JSON.stringify).join("\n")}\n`;
 const snap = (...rows) => classicSnapshot(text(header, ...rows));
+
+test("untrusted ancestry diagnostics cannot inject terminal controls", () => {
+	const terminalEscape = String.fromCharCode(27);
+	assert.throws(
+		() => snap(entry("a", `${terminalEscape}]52;c;AAAA`)),
+		(error) => !error.message.includes(terminalEscape),
+	);
+});
 
 test("classic preflight preserves branches and unknown records without executing or dropping them", () => {
 	const a = entry("a", null);

@@ -85,6 +85,7 @@ test(
 				"fixture",
 				withAbortSignal(abort.signal, BACKGROUND_CONTEXT),
 				true,
+				1,
 			);
 			await started;
 			abort.abort();

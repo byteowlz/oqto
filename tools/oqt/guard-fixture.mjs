@@ -120,7 +120,12 @@ export async function withGuard(
 			requestAccess: (params, signal) => gate.requestAccess(params, signal),
 		});
 		receipts = await installOperatorReceipts(
-			{ ...runtime, session, guard: tool },
+			{
+				...runtime,
+				session,
+				guard: tool,
+				selectedConversationId: () => runtime.conversation.id,
+			},
 			context,
 		);
 		await run({

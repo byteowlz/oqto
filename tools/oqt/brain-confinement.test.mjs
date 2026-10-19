@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import {
 	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
 	rm,
+	symlink,
 	writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -211,6 +213,130 @@ writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
 		} finally {
 			await guard.close();
 			coordinator.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
+
+// Exercise the native spec boundary, retaining the installed runtime's short
+// /var/tmp IPC alias while the real state remains in a separate persistent tree.
+test(
+	"native brain preserves short aliases without granting their parents",
+	{ timeout: 30000 },
+	async () => {
+		const root = await mkdtemp("/var/tmp/oqt-brain-alias-state-");
+		const alias = `/var/tmp/qi${process.getuid()}-${root.split("-").at(-1)}`;
+		const state = join(root, "persistent", "runtimes", "fixture-hash");
+		const session = join(state, "sessions");
+		const runtime = join(root, "runtime");
+		const specDir = join(root, "spec");
+		const forbidden = join(root, "protected");
+		let server;
+		try {
+			for (const dir of [
+				session,
+				join(state, "catalog"),
+				join(runtime, ".oqto"),
+				specDir,
+				forbidden,
+			])
+				await mkdir(dir, { recursive: true, mode: 0o700 });
+			await symlink(state, alias);
+			await writeFile(join(root, "persistent", "sibling-secret"), "hidden");
+			await writeFile(join(state, "unbound-secret"), "hidden");
+			await writeFile(join(state, "catalog", "models.json"), "public-catalog");
+			await writeFile(join(forbidden, "secret"), "hidden");
+			await symlink(forbidden, join(state, "protected-alias"));
+			await writeFile(
+				join(runtime, "probe.mjs"),
+				`
+import { readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+const probe = p => { try { readFileSync(p); return "readable"; } catch(e) { return e.code; } };
+const catalog = readFileSync(${JSON.stringify(join(alias, "catalog", "models.json"))}, "utf8");
+let catalogWrite;
+try { writeFileSync(${JSON.stringify(join(alias, "catalog", "models.json"))}, "changed"); catalogWrite = "writable"; } catch(e) { catalogWrite = e.code; }
+const socket = await new Promise(resolve => {
+ const s = connect(${JSON.stringify(join(alias, "sessions", "c.sock"))});
+ s.on("data", b => { resolve(b.toString()); s.destroy(); });
+ s.on("error", e => resolve(e.code));
+});
+writeFileSync(${JSON.stringify(join(alias, "sessions", "report.json"))}, JSON.stringify({socket, catalog, catalogWrite,
+ parent: probe(${JSON.stringify(join(root, "persistent", "sibling-secret"))}),
+ sibling: probe(${JSON.stringify(join(alias, "unbound-secret"))}),
+ canonicalSibling: probe(${JSON.stringify(join(state, "unbound-secret"))}),
+ protected: probe(${JSON.stringify(join(alias, "protected-alias", "secret"))})}));
+`,
+			);
+			server = createServer((s) => {
+				s.on("error", () => {});
+				s.end("short-ipc-ok");
+			});
+			await new Promise((resolve) =>
+				server.listen(join(alias, "sessions", "c.sock"), resolve),
+			);
+			const spec = {
+				node: process.execPath,
+				cwd: runtime,
+				ro: [runtime, join(alias, "catalog")],
+				rw: [join(alias, "sessions")],
+				forbidden: [forbidden],
+				bpf: process.env.OQT_SECCOMP_BPF,
+				env: {},
+				args: [join(runtime, "probe.mjs")],
+			};
+			const launch = async (value) => {
+				const path = join(specDir, "brain.json");
+				await writeFile(path, JSON.stringify(value), { mode: 0o600 });
+				const child = spawn(process.env.OQT_BRAIN, [path], {
+					env: {
+						...process.env,
+						OQTO_SANDBOX_SHIM_BIN: process.env.OQT_SANDBOX_SHIM,
+					},
+					stdio: ["ignore", "pipe", "pipe"],
+					timeout: 10000,
+					killSignal: "SIGKILL",
+				});
+				let log = "";
+				child.stdout.on("data", (b) => {
+					log += b;
+				});
+				child.stderr.on("data", (b) => {
+					log += b;
+				});
+				const code = await new Promise((resolve, reject) => {
+					child.once("error", reject);
+					child.once("exit", (c, s) => resolve(s ?? c));
+				});
+				return { code, log };
+			};
+			const result = await launch(spec);
+			assert.equal(result.code, 0, result.log);
+			const report = JSON.parse(
+				await readFile(join(session, "report.json"), "utf8"),
+			);
+			assert.equal(report.socket, "short-ipc-ok");
+			assert.equal(report.catalog, "public-catalog");
+			assert.ok(
+				["EROFS", "EACCES"].includes(report.catalogWrite),
+				report.catalogWrite,
+			);
+			for (const key of ["parent", "sibling", "canonicalSibling", "protected"])
+				assert.ok(
+					["ENOENT", "EACCES"].includes(report[key]),
+					`${key}: ${report[key]}`,
+				);
+			for (const kind of ["ro", "rw"]) {
+				const denied = await launch({
+					...spec,
+					[kind]: [...spec[kind], join(alias, "protected-alias")],
+				});
+				assert.notEqual(denied.code, 0);
+				assert.match(denied.log, /overlaps protected/);
+			}
+		} finally {
+			if (server) await new Promise((resolve) => server.close(resolve));
+			await rm(alias, { force: true });
 			await rm(root, { recursive: true, force: true });
 		}
 	},

@@ -105,9 +105,18 @@ fn main() -> Result<()> {
                         denied.display()
                     );
                 }
-                Ok(resolved.display().to_string())
+                // Keep both addresses of exactly the validated subtree. The
+                // namespace needs the lexical short IPC alias, while the
+                // Landlock shim resolves grants to their canonical address.
+                // Neither grant exposes the alias or target's parent.
+                let mut grants = vec![resolved.display().to_string()];
+                if path.is_absolute() && path != &resolved {
+                    grants.push(path.display().to_string());
+                }
+                Ok(grants)
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()
+            .map(|grants| grants.into_iter().flatten().collect())
     };
     let ro = resolve(&spec.ro)?;
     let rw = resolve(&spec.rw)?;

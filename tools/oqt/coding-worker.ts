@@ -21,6 +21,7 @@ import {
 } from "./operator-receipts.ts";
 import { ownerModelsStore } from "./owner-models.ts";
 import type { SessionWorkerRuntime } from "./services/worker.ts";
+import { createSessionRouter } from "./session-router.ts";
 import type { runSessionWorkerWithHarness } from "./session-worker.ts";
 
 type Options = Parameters<Parameters<typeof runSessionWorkerWithHarness>[1]>[1];
@@ -154,30 +155,83 @@ export async function createCodingHarness(
 			requestAccess: (params, signal) => gate.requestAccess(params, signal),
 			promptSections,
 		});
-		const receipts = await installOperatorReceipts(
-			{ ...runtime, session: options.metadata.id, guard },
+		let receipts:
+			| Awaited<ReturnType<typeof installOperatorReceipts>>
+			| undefined;
+		const router = await createSessionRouter(
+			{
+				harness: runtime.harness,
+				modelRuntime,
+				beginNavigation: async (conversationId) => {
+					const fence = await guard.call("operator_results_select_begin", {
+						conversationId,
+					});
+					if (
+						!fence ||
+						typeof fence !== "object" ||
+						!("token" in fence) ||
+						typeof fence.token !== "string"
+					)
+						throw new Error("Guard did not establish a navigation fence");
+					return fence.token;
+				},
+				endNavigation: async (token, conversationId) => {
+					await guard.call("operator_results_select_end", {
+						token,
+						conversationId,
+					});
+				},
+			},
 			BACKGROUND_CONTEXT,
-		).catch(async () => {
+		);
+		try {
+			receipts = await installOperatorReceipts(
+				{
+					harness: runtime.harness,
+					session: options.metadata.id,
+					guard,
+					selectedConversationId: () => router.currentConversationId(),
+				},
+				BACKGROUND_CONTEXT,
+			);
+		} catch (error) {
+			router.close();
 			await runtime.harness.close(BACKGROUND_CONTEXT);
-			throw new Error("Operator receipt recovery unavailable");
-		});
+			throw new Error("Operator target/receipt recovery unavailable", {
+				cause: error,
+			});
+		}
 		debug("harness open");
 		return {
 			...runtime,
+			conversation: router.conversation,
+			conversationFacet: router.conversationFacet,
 			modelRuntime,
 			facetLoader: createStaticFacetLoader([
 				defineFacet({
 					id: "oq.operator-results.worker",
 					setup(env) {
-						env.provide(OperatorResults, receipts);
+						env.provide(OperatorResults, {
+							list(params, context) {
+								if (
+									!receipts ||
+									params.conversationId !== router.currentConversationId()
+								)
+									throw new Error(
+										"Operator receipts unavailable for this conversation",
+									);
+								return receipts.list(params, context);
+							},
+						});
 					},
 				}),
 			]),
 			async beforeClose() {
-				await receipts.close();
+				await receipts?.close();
 			},
 			async cleanup() {
-				await receipts.close();
+				await receipts?.close();
+				router.close();
 				hands.close();
 				guard.close();
 			},

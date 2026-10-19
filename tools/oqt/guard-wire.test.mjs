@@ -1,11 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { connect } from "node:net";
 import { once } from "node:events";
-import { MAX_FRAME, serve, WireClient } from "./guard-wire.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { connect } from "node:net";
+import { join } from "node:path";
+import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { MAX_FRAME, serve, WireClient } from "./guard-wire.ts";
 
 test(
 	"wire cancellation never dispatches an already canceled queued handler",
@@ -72,11 +72,11 @@ test(
 				await once(socket, "connect");
 				const closed = new Promise((resolve) => socket.once("close", resolve));
 				socket.write(
-					JSON.stringify({
+					`${JSON.stringify({
 						id: 1,
 						method: "invalid-large",
 						params: { payload },
-					}) + "\n",
+					})}\n`,
 				);
 				await closed;
 				assert.equal(calls, 0);

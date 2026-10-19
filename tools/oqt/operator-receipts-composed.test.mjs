@@ -9,57 +9,160 @@ import {
 	MAX_OPERATOR_RECEIPTS,
 } from "./operator-receipts.ts";
 
+const shell = (operator, session, conversationId, command, excluded = false) =>
+	operator.call("shell", { session, conversationId, command, excluded });
+const list = (receipts, session, conversationId) =>
+	receipts.list({ session, conversationId }, context);
+
 test(
-	"guard returns success only after native receipt admission with Session-bound result lookup",
+	"guard admits passive v2 output to the explicit selected branch, rejecting stale clients",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
-			async ({ operator, session, operatorResults, conversation, faux }) => {
-				const result = await operator.call("shell", {
-					session,
-					command: "printf durable-shared-value",
-					excluded: false,
+			async ({
+				operator,
+				session,
+				operatorResults,
+				conversation,
+				harness,
+				tool,
+				faux,
+				workspace,
+			}) => {
+				const anchor = await conversation.commit(
+					(tx) =>
+						tx.appendEntry(conversation.id, { kind: "fixture", data: {} }),
+					context,
+				);
+				const child = await conversation.fork(
+					anchor.id,
+					{ ownership: { kind: "ownerless" } },
+					context,
+				);
+				const { token } = await tool.call("operator_results_select_begin", {
+					conversationId: conversation.id,
 				});
+				await assert.rejects(
+					shell(operator, session, conversation.id, "touch selection-escaped"),
+					/changing|busy/,
+				);
+				await tool.call("operator_results_select_end", {
+					token,
+					conversationId: child.id,
+				});
+				await assert.rejects(
+					shell(operator, session, conversation.id, "touch selection-escaped"),
+					/stale/,
+				);
+				await assert.rejects(access(join(workspace, "selection-escaped")));
+				const result = await shell(
+					operator,
+					session,
+					child.id,
+					"printf durable-shared-value",
+				);
 				assert.equal(result.durable, true);
-				assert.match(result.id, /:operator:/);
-				const rows = await operatorResults.list({ session }, context);
-				assert.equal(rows.length, 1);
+				const rows = await list(operatorResults, session, child.id);
 				assert.equal(rows[0].id, result.id);
 				assert.equal(rows[0].payload.output, result.output);
-				assert.equal(faux.state.callCount, 0);
+				assert.equal(rows[0].conversationId, child.id);
+				assert.deepEqual(
+					await list(operatorResults, session, conversation.id),
+					[],
+				);
 				assert.match(
+					JSON.stringify((await child.context(context)).messages),
+					/durable-shared-value/,
+				);
+				assert.doesNotMatch(
 					JSON.stringify((await conversation.context(context)).messages),
 					/durable-shared-value/,
 				);
-				await assert.rejects(
-					operatorResults.list({ session: "other-session" }, context),
+				assert.equal(faux.state.callCount, 0);
+				await assert.rejects(list(operatorResults, "other-session", child.id));
+				// A live/reserved invocation fences navigation, not merely publication time.
+				const pending = shell(
+					operator,
+					session,
+					child.id,
+					"sleep 0.2; printf live-fence",
 				);
+				await new Promise((resolve) => setTimeout(resolve, 30));
+				await assert.rejects(
+					tool.call("operator_results_select_begin", {
+						conversationId: child.id,
+					}),
+					/live/,
+				);
+				await pending;
+				const back = await tool.call("operator_results_select_begin", {
+					conversationId: child.id,
+				});
+				await tool.call("operator_results_select_end", {
+					token: back.token,
+					conversationId: conversation.id,
+				});
+				assert.equal(
+					(await list(operatorResults, session, child.id)).length,
+					2,
+				);
+				assert.equal(
+					(await list(operatorResults, session, conversation.id)).length,
+					0,
+				);
+				assert.ok(harness);
 			},
 		);
 	},
 );
 
 test(
-	"protected receipt quota is enforced before any new command effect",
+	"protected receipt quota is Session-wide and checked before new effects even after navigation",
 	{ timeout: 20000 },
 	async () => {
-		await withGuard(async ({ guardSession, session, operator, workspace }) => {
-			for (let index = 0; index < MAX_OPERATOR_RECEIPTS; index++)
-				await guardSession.authority.operatorBegin(
-					`${session}:operator:quota-${index}`,
-					"true",
+		await withGuard(
+			async ({
+				guardSession,
+				session,
+				operator,
+				workspace,
+				conversation,
+				tool,
+			}) => {
+				for (let i = 0; i < MAX_OPERATOR_RECEIPTS; i++)
+					await guardSession.authority.operatorBegin(
+						`${session}:operator:quota-${i}`,
+						"true",
+					);
+				const anchor = await conversation.commit(
+					(tx) =>
+						tx.appendEntry(conversation.id, { kind: "fixture", data: {} }),
+					context,
 				);
-			await assert.rejects(
-				operator.call("shell", { session, command: "touch capacity-escaped" }),
-				/capacity/,
-			);
-			await assert.rejects(access(join(workspace, "capacity-escaped")));
-		});
+				const child = await conversation.fork(
+					anchor.id,
+					{ ownership: { kind: "ownerless" } },
+					context,
+				);
+				const { token } = await tool.call("operator_results_select_begin", {
+					conversationId: conversation.id,
+				});
+				await tool.call("operator_results_select_end", {
+					token,
+					conversationId: child.id,
+				});
+				await assert.rejects(
+					shell(operator, session, child.id, "touch capacity-escaped"),
+					/capacity/,
+				);
+				await assert.rejects(access(join(workspace, "capacity-escaped")));
+			},
+		);
 	},
 );
 
 test(
-	"active inference cannot deadlock operator admission; queued context places without a second run",
+	"active inference cannot deadlock passive operator admission or start another model run",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
@@ -98,16 +201,16 @@ test(
 				let deadline;
 				try {
 					const result = await Promise.race([
-						operator.call("shell", {
+						shell(
+							operator,
 							session,
-							command: "printf queued-durable-context",
-						}),
+							conversation.id,
+							"printf queued-durable-context",
+						),
 						new Promise((_, reject) => {
 							deadline = setTimeout(
 								() =>
-									reject(
-										new Error("passive receipt admission waited for placement"),
-									),
+									reject(new Error("passive admission waited for placement")),
 								5000,
 							);
 						}),
@@ -119,7 +222,7 @@ test(
 					release();
 				}
 				await initial.wait(context);
-				const rows = await operatorResults.list({ session }, context);
+				const rows = await list(operatorResults, session, conversation.id);
 				const submission = await harness.submission(
 					rows[0].submission,
 					context,
@@ -136,7 +239,7 @@ test(
 );
 
 test(
-	"!! persists only opaque receipt identity, never private command/output in native history",
+	"!! crosses the worker boundary as opaque v2 metadata only, also on a selected fork",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
@@ -148,33 +251,54 @@ test(
 				faux,
 				tool,
 			}) => {
+				const anchor = await conversation.commit(
+					(tx) =>
+						tx.appendEntry(conversation.id, { kind: "fixture", data: {} }),
+					context,
+				);
+				const child = await conversation.fork(
+					anchor.id,
+					{ ownership: { kind: "ownerless" } },
+					context,
+				);
+				const { token } = await tool.call("operator_results_select_begin", {
+					conversationId: conversation.id,
+				});
+				await tool.call("operator_results_select_end", {
+					token,
+					conversationId: child.id,
+				});
 				const delivered = [];
 				const off = tool.on("operator_result", (receipt) =>
 					delivered.push(receipt),
 				);
-				const privateValue = "private-output-never-native-7461";
-				const result = await operator.call("shell", {
+				const value = "private-output-never-native-7461";
+				const result = await shell(
+					operator,
 					session,
-					command: `printf ${privateValue}`,
-					excluded: true,
-				});
-				assert.equal(result.output, privateValue);
-				off();
-				assert.equal(
-					JSON.stringify(delivered).includes(privateValue),
-					false,
-					"private bytes must not cross into the brain",
+					child.id,
+					`printf ${value}`,
+					true,
 				);
-				const rows = await operatorResults.list({ session }, context);
+				off();
+				assert.equal(result.output, value);
+				assert.equal(JSON.stringify(delivered).includes(value), false);
+				assert.equal(delivered[0].version, 2);
+				assert.equal(delivered[0].conversationId, child.id);
+				const rows = await list(operatorResults, session, child.id);
 				assert.equal(rows[0].id, result.id);
 				assert.equal(rows[0].excluded, true);
 				assert.equal(rows[0].payload, undefined);
-				assert.equal(JSON.stringify(rows).includes(privateValue), false);
+				assert.equal(JSON.stringify(rows).includes(value), false);
 				assert.equal(
-					JSON.stringify(
-						(await conversation.context(context)).messages,
-					).includes(privateValue),
+					JSON.stringify((await child.context(context)).messages).includes(
+						value,
+					),
 					false,
+				);
+				assert.deepEqual(
+					await list(operatorResults, session, conversation.id),
+					[],
 				);
 				assert.equal(faux.state.callCount, 0);
 			},
@@ -183,7 +307,7 @@ test(
 );
 
 test(
-	"native admission followed by lost guard ACK recovers by sealed ID without replaying the effect",
+	"lost fork ACK recovers all sealed branch receipts while root is selected, never replays effects",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
@@ -198,22 +322,40 @@ test(
 				conversation,
 				faux,
 			}) => {
+				const anchor = await conversation.commit(
+					(tx) =>
+						tx.appendEntry(conversation.id, { kind: "fixture", data: {} }),
+					context,
+				);
+				const child = await conversation.fork(
+					anchor.id,
+					{ ownership: { kind: "ownerless" } },
+					context,
+				);
+				const selection = await tool.call("operator_results_select_begin", {
+					conversationId: conversation.id,
+				});
+				await tool.call("operator_results_select_end", {
+					token: selection.token,
+					conversationId: child.id,
+				});
 				const original = tool.call.bind(tool);
 				tool.call = async (method, ...args) => {
 					if (method === "operator_result_committed")
-						throw new Error("injected ACK transport loss");
+						throw new Error("injected ACK loss");
 					return original(method, ...args);
 				};
 				await assert.rejects(
-					operator.call("shell", {
+					shell(
+						operator,
 						session,
-						command:
-							"printf once >> receipt-effect; printf committed-before-ack",
-					}),
+						child.id,
+						"printf once >> receipt-effect; printf committed-before-ack",
+					),
 					/not acknowledged/,
 				);
 				await operatorResults.drain();
-				const rows = await operatorResults.list({ session }, context);
+				const rows = await list(operatorResults, session, child.id);
 				assert.equal(rows.length, 1);
 				assert.equal((await guardSession.authority.recover()).length, 1);
 				await operatorResults.close();
@@ -224,19 +366,29 @@ test(
 				let receipts;
 				try {
 					receipts = await installOperatorReceipts(
-						{ harness, conversation, session, guard: replacement },
+						{
+							harness,
+							selectedConversationId: () => conversation.id,
+							session,
+							guard: replacement,
+						},
 						context,
 					);
 					assert.equal((await guardSession.authority.recover()).length, 0);
 					assert.equal(
-						(await receipts.list({ session }, context))[0].id,
+						(await list(receipts, session, child.id))[0].id,
 						rows[0].id,
 					);
+					assert.deepEqual(await list(receipts, session, conversation.id), []);
 					assert.equal(
 						await readFile(join(workspace, "receipt-effect"), "utf8"),
 						"once",
 					);
 					assert.equal(faux.state.callCount, 0);
+					assert.doesNotMatch(
+						JSON.stringify((await conversation.context(context)).messages),
+						/committed-before-ack/,
+					);
 				} finally {
 					await receipts?.close();
 					replacement.close();
@@ -255,6 +407,7 @@ test(
 				operator,
 				session,
 				harness,
+				conversation,
 				operatorResults,
 				guardSession,
 				workspace,
@@ -265,10 +418,12 @@ test(
 				};
 				try {
 					await assert.rejects(
-						operator.call("shell", {
+						shell(
+							operator,
 							session,
-							command: "touch unacknowledged-effect; printf undelivered",
-						}),
+							conversation.id,
+							"touch unacknowledged-effect; printf undelivered",
+						),
 						/not acknowledged/,
 					);
 				} finally {
@@ -277,7 +432,7 @@ test(
 				await access(join(workspace, "unacknowledged-effect"));
 				assert.equal((await guardSession.authority.recover()).length, 1);
 				assert.equal(
-					(await operatorResults.list({ session }, context)).length,
+					(await list(operatorResults, session, conversation.id)).length,
 					0,
 				);
 			},
@@ -286,11 +441,17 @@ test(
 );
 
 test(
-	"unconfirmed operator teardown freezes authority and cannot publish a result",
+	"unconfirmed operator teardown freezes authority and cannot publish",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
-			async ({ operator, session, operatorResults, guardSession }) => {
+			async ({
+				operator,
+				session,
+				conversation,
+				operatorResults,
+				guardSession,
+			}) => {
 				const replace = guardSession.supervisor.replace.bind(
 					guardSession.supervisor,
 				);
@@ -299,15 +460,17 @@ test(
 				};
 				try {
 					await assert.rejects(
-						operator.call("shell", {
+						shell(
+							operator,
 							session,
-							command: "printf withheld-stop-result",
-						}),
+							conversation.id,
+							"printf withheld-stop-result",
+						),
 					);
 					await assert.rejects(guardSession.authority.ready());
 					assert.equal((await guardSession.authority.recover()).length, 1);
 					assert.equal(
-						(await operatorResults.list({ session }, context)).length,
+						(await list(operatorResults, session, conversation.id)).length,
 						0,
 					);
 				} finally {
@@ -319,7 +482,7 @@ test(
 );
 
 test(
-	"resource expiry at the post-drain publication boundary withholds native disclosure",
+	"resource expiry at post-drain publication withholds native disclosure",
 	{ timeout: 20000 },
 	async () => {
 		await withGuard(
@@ -328,6 +491,7 @@ test(
 				tool,
 				session,
 				operator,
+				conversation,
 				guardSession,
 				operatorResults,
 			}) => {
@@ -356,14 +520,11 @@ test(
 					expired = true;
 				};
 				await assert.rejects(
-					operator.call("shell", {
-						session,
-						command: `cat '${outside}/secret'`,
-					}),
+					shell(operator, session, conversation.id, `cat '${outside}/secret'`),
 					/not acknowledged/,
 				);
 				assert.equal(
-					(await operatorResults.list({ session }, context)).length,
+					(await list(operatorResults, session, conversation.id)).length,
 					0,
 				);
 				assert.equal((await guardSession.authority.recover()).length, 1);

@@ -11,14 +11,20 @@ workdir=$PWD
 mode=coding
 owner=${OQT_OWNER_AGENT_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}
 args=()
+# Explicit inspection/discovery is independent of Pi, profiles and build caches.
+if [[ "${1-}" == inspect-classic || "${1-}" == list-classic ]]; then
+ exec node "$root/tools/oqt/classic-inspect.ts" "$@"
+fi
 while (($#)); do
  case "$1" in
   --workdir) workdir=${2:?--workdir needs a directory}; shift 2;;
   --coding) args+=("$1"); shift;;
   --owner-profile) owner=${2:?--owner-profile needs a directory}; shift 2;;
   --demo) mode=demo; args+=("$1"); shift;;
-  --continue|-c|--smoke) args+=("$1"); shift;;
-  -h|--help) printf '%s\n' 'oqt: experimental Pi Durable workspace coding' 'Usage: oqt [--continue] [--workdir DIR] [--owner-profile DIR]' 'Default: real coding. Owning Pi defaults; credentials brokered by a guard (never copied). Confined brain and hands.' 'Every tool call needs approval; request_access asks for outside paths/network (Session, 1h).' 'Ceilings: ~/.config/oqto/sandbox.toml and <workspace>/.oqto/sandbox.toml (narrow only). --continue joins/reopens. --demo = synthetic fixture demo.' 'Local OS operator boundary, not Oqto Account authentication. --demo keeps the synthetic demo. Nothing is installed.'; exit 0;;
+  --continue|-c|--smoke|--json) args+=("$1"); shift;;
+  --import-classic) file=${2:?--import-classic needs a file}; [[ "$file" == /* ]] || file="$PWD/$file"; args+=("$1" "$file"); shift 2;;
+  --origin|--leaf) args+=("$1" "${2:?option needs a value}"); shift 2;;
+  -h|--help) printf '%s\n' 'oqt: experimental Pi Durable workspace coding' 'Usage: oqt [--continue] [--workdir DIR] [--owner-profile DIR]' 'Import: oqt --import-classic FILE --origin NAME [--leaf ID] [--json] [--continue] --workdir DIR' 'Read-only: oqt inspect-classic FILE --origin NAME --json | oqt list-classic DIR --origin NAME --json' 'Default: real coding. Owning Pi defaults; credentials brokered by a guard (never copied). Confined brain and hands.' 'Every tool call needs approval; request_access asks for outside paths/network (Session, 1h).' 'Ceilings: ~/.config/oqto/sandbox.toml and <workspace>/.oqto/sandbox.toml (narrow only). --continue joins/reopens. --demo = synthetic fixture demo.' 'Local OS operator boundary, not Oqto Account authentication. --demo keeps the synthetic demo. Nothing is installed.'; exit 0;;
   *) echo "Unsupported oqt prototype option: $1" >&2; exit 2;;
  esac
 done
@@ -37,16 +43,16 @@ export CARGO_TARGET_DIR="$root/backend/target"
 bounded() { timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 "$@"; }
 cd "$root"
 bpf=$(timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source")
-runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir" "$mode")
+if [[ "$mode" == coding ]]; then
+ owner=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=True))' "$owner")
+fi
+runtime=$(bounded python3 tools/oqt/prepare.py "$source" "$workdir" "$mode" "$owner")
 # One parse: prepare.py's JSON -> an associative array (keys are fixed, values are paths).
 declare -A rt
 while IFS=$'\t' read -r key val; do rt[$key]=$val; done < <(python3 -c 'import json,sys
 for k, v in json.loads(sys.argv[1]).items(): print(f"{k}\t{v}")' "$runtime")
 value() { printf '%s' "${rt[$1]:?missing runtime key $1}"; }
 snapshot=$(value source); profile=$(value profile); home=$(value home); agent=$(value agent)
-if [[ "$mode" == coding ]]; then
- owner=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve(strict=True))' "$owner")
-fi
 cd "$workdir"
 # The interactive runtime runs at normal priority on all CPUs; only builds
 # above are bounded (one CPU, nice 19).

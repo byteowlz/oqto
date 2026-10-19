@@ -1,10 +1,10 @@
 // Worker-owned native Durable navigation; no filesystem, model or authority access.
 import { type Context, defineService } from "@earendil-works/chord";
 import {
-	defineDoc,
 	type ConversationId,
 	type ConversationRecord,
 	type Cursor,
+	defineDoc,
 	type EntryId,
 	type Harness,
 	type Page,
@@ -17,16 +17,31 @@ export interface ForkEntry {
 }
 export interface SessionForks {
 	selected(context: Context): Promise<ConversationId>;
-	conversations(limit: number, cursor: Cursor | undefined, context: Context): Promise<Page<ConversationRecord, Cursor>>;
-	entries(conversationId: ConversationId, limit: number, cursor: Cursor | undefined, context: Context): Promise<Page<ForkEntry, Cursor>>;
+	conversations(
+		limit: number,
+		cursor: Cursor | null,
+		context: Context,
+	): Promise<Page<ConversationRecord, Cursor>>;
+	entries(
+		conversationId: ConversationId,
+		limit: number,
+		cursor: Cursor | null,
+		context: Context,
+	): Promise<Page<ForkEntry, Cursor>>;
 	select(conversationId: ConversationId, context: Context): Promise<void>;
-	fork(conversationId: ConversationId, at: EntryId, context: Context): Promise<ConversationId>;
+	fork(
+		conversationId: ConversationId,
+		at: EntryId,
+		context: Context,
+	): Promise<ConversationId>;
 }
 export const SessionForks = defineService<SessionForks>("oqt.session-forks");
 
 // Selection is Session state, not fork-inherited conversation state or authority.
 export const SelectedConversationDoc = defineDoc<{ conversationId: number }>({
-	kind: "oqt.selected-conversation", version: 1, scope: "session",
+	kind: "oqt.selected-conversation",
+	version: 1,
+	scope: "session",
 	initial: () => ({ conversationId: 1 }),
 });
 
@@ -61,16 +76,32 @@ export function createSessionForks(
 			return id;
 		},
 		async conversations(limit, cursor, context) {
-			return harness.scanConversations({}, pageLimit(limit), cursor, context);
+			const bounded = pageLimit(limit);
+			return harness.commit(
+				(tx) => tx.scanConversations({}, bounded, cursor ?? undefined),
+				context,
+			);
 		},
 		async entries(id, limit, cursor, context) {
 			const target = await conversation(id, context);
-			const page = await target.entries({ order: "descending" }, pageLimit(limit), cursor, context);
-			return { ...page, items: page.items.map(({ id, conversationId, kind }) => ({ id, conversationId, kind })) };
+			const page = await target.entries(
+				{ order: "descending" },
+				pageLimit(limit),
+				cursor ?? undefined,
+				context,
+			);
+			return {
+				...page,
+				items: page.items.map(({ id, conversationId, kind }) => ({
+					id,
+					conversationId,
+					kind,
+				})),
+			};
 		},
 		async select(id, context) {
 			await conversation(id, context);
-			await harness.commit(async tx => {
+			await harness.commit(async (tx) => {
 				(await tx.doc(SelectedConversationDoc)).conversationId = id;
 			}, context);
 			await applySelection(id, context);
@@ -78,15 +109,29 @@ export function createSessionForks(
 		async fork(id, at, context) {
 			stableId(at);
 			const parent = await conversation(id, context);
+			const point = await parent.entries(
+				{ minEntryId: at, maxEntryId: at },
+				1,
+				undefined,
+				context,
+			);
+			if (point.items[0]?.kind === "oq.classic-archive.v1")
+				throw new Error(
+					"Classic archive entries are inert source envelopes, not model-context checkpoints. Import this source with --leaf <classic-source-entry-id> instead; classic IDs are distinct from numeric Durable entry IDs.",
+				);
 			// Native fork validates visibility (including inherited entries), copies no
-			// tasks, and respects persisted document fork policies. Authority and
-			// operator receipt docs MUST use fork: initial at their definitions.
-			const child = await parent.fork(at, {
-				ownership: { kind: "ownerless" },
-				init: async (tx, childId) => {
-					(await tx.doc(SelectedConversationDoc)).conversationId = childId;
+			// tasks, and respects document policies. Authority docs must be initial;
+			// the session receipt index pins each record to its original conversation.
+			const child = await parent.fork(
+				at,
+				{
+					ownership: { kind: "ownerless" },
+					init: async (tx, childId) => {
+						(await tx.doc(SelectedConversationDoc)).conversationId = childId;
+					},
 				},
-			}, context);
+				context,
+			);
 			await applySelection(child.id, context);
 			return child.id;
 		},

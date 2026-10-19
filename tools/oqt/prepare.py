@@ -28,7 +28,10 @@ runtime_modules = [p for p in sorted((repo / 'tools/oqt').glob('*.ts')) if not p
 runtime_modules.append(repo / 'tools/oqt/hands-proxy.mjs')
 sys.path.insert(0, str(repo / 'tools/oqt'))
 import source_patches
-files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / 'tools/oqt/preparation_lock.py', repo / 'tools/oqt/source_patches.py', *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
+from profile_namespace import workspace_profile_key
+owner = sys.argv[4] if len(sys.argv) > 4 else os.environ.get('OQT_OWNER_AGENT_DIR') or os.environ.get('PI_CODING_AGENT_DIR') or str(Path.home()/'.pi/agent')
+profile_key = workspace_profile_key(workdir, mode, owner)
+files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / 'tools/oqt/preparation_lock.py', repo / 'tools/oqt/profile_namespace.py', repo / 'tools/oqt/source_patches.py', *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
 files = [file for file in files if file.is_file()]
 identity = hashlib.sha256(PIN.encode())
 for file in files:
@@ -76,7 +79,7 @@ manifest = base / "runtime.json"
 agent = base / "agent-profile"; private(agent)
 home = base / "home"; private(home)
 profiles = base / "p"; private(profiles)
-profile = profiles / hashlib.sha256((str(workdir)+':'+mode).encode()).hexdigest()[:12]; private(profile)
+profile = profiles / profile_key; private(profile)
 if len(os.fsencode(profile / "control-00000000-0000-0000-0000-000000000000.sock")) >= 108:
     raise SystemExit("Profile exceeds Linux Unix-socket path limit")
 binding_file = profile / "work-directory.json"

@@ -27,6 +27,13 @@ import {
 	BACKGROUND_CONTEXT,
 	withAbortSignal,
 } from "@earendil-works/chord/context";
+import {
+	canAdmitSession,
+	classicImportSeedPath,
+	isClassicImportStaged,
+	operateClassicImport,
+	retireClassicImportPeer,
+} from "./classic-import-host.ts";
 import { classify } from "./classify.ts";
 import {
 	CodingAuthority,
@@ -43,6 +50,7 @@ import {
 	digestOperatorResult,
 	type OperatorResult,
 	validateOperatorResult,
+	validReceiptConversation,
 } from "./operator-receipts.ts";
 import type { OwnerBroker } from "./owner-broker.ts";
 import { mark } from "./trace.ts";
@@ -324,12 +332,17 @@ export class GuardSession {
 	readonly #releases = new Map<string, () => void>();
 	readonly #drained = new Set<string>();
 	#receiptPeer: Peer | undefined;
+	#receiptReady = false;
+	#receiptConversation: number | undefined;
+	#selection: { peer: Peer; token: string; previous: number } | undefined;
+	#operatorReserved = false;
 	#operatorInvocation: string | undefined;
 	readonly #publications = new Map<
 		string,
 		{
 			peer: Peer;
 			digest: string;
+			conversationId: number;
 			resolve: (value: unknown) => void;
 			reject: (error: Error) => void;
 		}
@@ -349,7 +362,13 @@ export class GuardSession {
 		let cancel: (() => void) | undefined;
 		try {
 			await new Promise((resolve, reject) => {
-				this.#publications.set(receipt.id, { peer, digest, resolve, reject });
+				this.#publications.set(receipt.id, {
+					peer,
+					digest,
+					conversationId: receipt.conversationId,
+					resolve,
+					reject,
+				});
 				cancel = () =>
 					reject(new Error("Operator receipt publication interrupted"));
 				signal.addEventListener("abort", cancel, { once: true });
@@ -371,6 +390,12 @@ export class GuardSession {
 			if (cancel) signal.removeEventListener("abort", cancel);
 			this.#publications.delete(receipt.id);
 		}
+	}
+	assertAdmission(): void {
+		if (!canAdmitSession(this.id))
+			throw new Error(
+				"Session import staging: effects and input are unavailable until publication",
+			);
 	}
 	async acquire(id: string, signal: AbortSignal) {
 		let acquired!: () => void;
@@ -425,6 +450,7 @@ export class GuardSession {
 		command: string,
 		signal: AbortSignal = new AbortController().signal,
 		excluded = false,
+		conversationId?: number,
 	): Promise<{
 		id: string;
 		exitCode: number;
@@ -432,7 +458,22 @@ export class GuardSession {
 		truncated: boolean;
 		durable: true;
 	}> {
+		this.assertAdmission();
+		if (
+			!validReceiptConversation(conversationId) ||
+			conversationId !== this.#receiptConversation ||
+			!this.#receiptReady ||
+			this.#selection ||
+			this.#operatorReserved
+		)
+			throw new Error(
+				"Operator destination is stale, changing, or busy; command not started",
+			);
+		// Capture before the first await/effect, and fence even queued invocations.
+		const destination = conversationId;
+		this.#operatorReserved = true;
 		return this.serial(async () => {
+			this.assertAdmission();
 			signal.throwIfAborted();
 			await this.ready;
 			await this.authority.ready(signal);
@@ -445,14 +486,15 @@ export class GuardSession {
 			const invocation = `${this.id}:operator:${randomUUID()}`;
 			// Validate bounded command/identity before any effect.
 			validateOperatorResult({
-				version: 1,
+				version: 2,
 				session: this.id,
+				conversationId: destination,
 				id: invocation,
 				command,
 				exitCode: 0,
 				output: "",
 				truncated: false,
-				excluded,
+				excluded: false, // size-check private command before its opaque projection
 				completedAt: Date.now(),
 			});
 			await this.authority.operatorBegin(invocation, command);
@@ -528,8 +570,9 @@ export class GuardSession {
 					throw new Error("Operator resources expired before publication");
 				if (!resultData) throw new Error("Operator result unavailable");
 				let receipt: OperatorResult = {
-					version: 1,
+					version: 2,
 					session: this.id,
+					conversationId: destination,
 					id: invocation,
 					command,
 					...resultData,
@@ -539,7 +582,7 @@ export class GuardSession {
 				// Account for JSON escaping, including worst-case Unicode/control output.
 				for (;;) {
 					try {
-						validateOperatorResult(receipt);
+						validateOperatorResult({ ...receipt, excluded: false });
 						break;
 					} catch {
 						if (!receipt.output.length)
@@ -564,7 +607,7 @@ export class GuardSession {
 					exitCode: receipt.exitCode,
 					output: receipt.output,
 					truncated: receipt.truncated,
-					durable: true,
+					durable: true as const,
 				};
 			} catch {
 				this.interrupted = await this.authority.recover();
@@ -575,6 +618,8 @@ export class GuardSession {
 			} finally {
 				this.#operatorInvocation = undefined;
 			}
+		}).finally(() => {
+			this.#operatorReserved = false;
 		});
 	}
 	/** One protected state transition at a time. */
@@ -654,7 +699,12 @@ export class GuardSession {
 			{
 				onConnect: (peer) => this.#live.set(peer, new Set()),
 				onClose: (peer) => {
-					if (this.#receiptPeer === peer) this.#receiptPeer = undefined;
+					if (this.#receiptPeer === peer) {
+						this.#receiptPeer = undefined;
+						this.#receiptReady = false;
+						this.#receiptConversation = undefined;
+					}
+					if (this.#selection?.peer === peer) this.#selection = undefined;
 					for (const publication of this.#publications.values())
 						if (publication.peer === peer)
 							publication.reject(
@@ -685,16 +735,67 @@ export class GuardSession {
 					!this.#receiptPeer.closed.aborted
 				)
 					throw new Error("Native receipt worker already registered");
+				if (
+					!validReceiptConversation(params.conversationId) ||
+					(params.recovering !== undefined &&
+						typeof params.recovering !== "boolean")
+				)
+					throw new Error("Invalid receipt consumer destination");
+				if (this.#selection || this.#operatorReserved)
+					throw new Error("Operator destination is busy");
 				this.#receiptPeer = peer;
-				return { ready: true };
+				this.#receiptConversation = params.conversationId;
+				this.#receiptReady = params.recovering !== true;
+				return {
+					ready: this.#receiptReady,
+					conversationId: this.#receiptConversation,
+				};
+			}
+			case "operator_results_select_begin": {
+				if (
+					peer !== this.#receiptPeer ||
+					!this.#receiptReady ||
+					!validReceiptConversation(params.conversationId) ||
+					params.conversationId !== this.#receiptConversation
+				)
+					throw new Error("Invalid or stale receipt selection consumer");
+				if (
+					this.#operatorReserved ||
+					this.#operatorInvocation ||
+					this.#selection
+				)
+					throw new Error("Operator invocation or navigation is live");
+				const token = randomUUID();
+				this.#selection = { peer, token, previous: params.conversationId };
+				return { token };
+			}
+			case "operator_results_select_end": {
+				const selection = this.#selection;
+				if (
+					!selection ||
+					selection.peer !== peer ||
+					selection.token !== params.token ||
+					!validReceiptConversation(params.conversationId)
+				)
+					throw new Error("Invalid receipt selection completion");
+				this.#receiptConversation = params.conversationId;
+				this.#selection = undefined;
+				return { conversationId: this.#receiptConversation };
 			}
 			case "operator_result_committed": {
-				if (typeof params.id !== "string" || typeof params.digest !== "string")
+				if (
+					peer !== this.#receiptPeer ||
+					typeof params.id !== "string" ||
+					typeof params.digest !== "string" ||
+					!validReceiptConversation(params.conversationId)
+				)
 					throw new Error("Invalid receipt acknowledgment");
 				const publication = this.#publications.get(params.id);
 				if (
 					publication &&
-					(publication.peer !== peer || publication.digest !== params.digest)
+					(publication.peer !== peer ||
+						publication.digest !== params.digest ||
+						publication.conversationId !== params.conversationId)
 				)
 					throw new Error("Receipt acknowledgment binding changed");
 				await this.authority.ready(signal);
@@ -716,6 +817,7 @@ export class GuardSession {
 				return { recorded: true };
 			}
 			case "prepare": {
+				this.assertAdmission();
 				const operation = codingOperation(params.operation);
 				const { expiresAt } = await this.authority.prepare(operation, signal);
 				live.add(operation.request_id);
@@ -732,6 +834,7 @@ export class GuardSession {
 				}
 			}
 			case "request_resource": {
+				this.assertAdmission();
 				const operation = await this.#resourceOperation(params);
 				const { expiresAt } = await this.authority.prepare(operation, signal);
 				live.add(operation.request_id);
@@ -749,6 +852,7 @@ export class GuardSession {
 				};
 			}
 			case "check": {
+				this.assertAdmission();
 				const operation = codingOperation(params.operation);
 				const admitted = this.#admitted.get(operation.request_id);
 				if (!live.has(operation.request_id) || !admitted)
@@ -1033,6 +1137,7 @@ export class Guard {
 		};
 	}
 	#retirePeer(peer: Peer) {
+		retireClassicImportPeer(peer);
 		this.#peers.delete(peer);
 		this.#subscribers.delete(peer);
 		for (const input of this.#inputs.values()) input.disconnect(peer);
@@ -1078,6 +1183,10 @@ export class Guard {
 		if (peer.closed.aborted || signal.aborted)
 			throw new Error("Operator disconnected");
 		switch (method) {
+			case "import_classic_begin":
+			case "import_classic_chunk":
+			case "import_classic_commit":
+				return operateClassicImport(method, params, peer);
 			case "input_describe": {
 				const session = this.#find(params);
 				return {
@@ -1089,6 +1198,7 @@ export class Guard {
 			}
 			case "input_request": {
 				const session = this.#find(params);
+				session.assertAdmission();
 				if (
 					typeof params.attachment !== "string" ||
 					typeof params.label !== "string"
@@ -1103,6 +1213,7 @@ export class Guard {
 			}
 			case "input_decide": {
 				const session = this.#find(params);
+				session.assertAdmission();
 				if (
 					!this.#subscribers.has(peer) ||
 					typeof params.id !== "string" ||
@@ -1123,6 +1234,7 @@ export class Guard {
 				return { subscribed: true };
 			case "decide": {
 				const session = this.#find(params);
+				session.assertAdmission();
 				await session.ready;
 				if (
 					typeof params.id !== "string" ||
@@ -1177,6 +1289,7 @@ export class Guard {
 			}
 			case "shell": {
 				const session = this.#find(params);
+				session.assertAdmission();
 				if (
 					typeof params.command !== "string" ||
 					params.command.trim() === "" ||
@@ -1188,10 +1301,13 @@ export class Guard {
 					typeof params.excluded !== "boolean"
 				)
 					throw new Error("Invalid shell context policy");
+				if (!validReceiptConversation(params.conversationId))
+					throw new Error("Invalid shell conversation");
 				return session.operatorShell(
 					params.command,
 					signal,
 					params.excluded === true,
+					params.conversationId,
 				);
 			}
 			case "acknowledge": {
@@ -1222,11 +1338,15 @@ export class Guard {
 			);
 		const session = this.session(options.metadata.id, workspace);
 		const control = env.PI_SESSION_WORKER_CONTROL_ADDRESS;
+		const importSeed = isClassicImportStaged(options.metadata.path)
+			? classicImportSeedPath(options.metadata.path)
+			: undefined;
 		const spec = {
 			node: brain.node,
 			cwd: session.brainCwd,
 			ro: [
 				...brain.ro,
+				...(importSeed ? [importSeed] : []),
 				session.socketsDir,
 				...new Set(options.pluginManifestPaths.map((path) => dirname(path))),
 				...(control ? [control] : []),
@@ -1244,6 +1364,7 @@ export class Guard {
 				__PI_INTERNAL_SPAWN: "session-worker",
 				OQT_GUARD_SOCKET: session.toolPath,
 				OQT_HANDS_SOCKET: session.handsPath,
+				...(importSeed ? { OQT_CLASSIC_IMPORT_SEED: importSeed } : {}),
 			},
 			args: [
 				"--import",

@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { gatedTool } from "./gated-tool.ts";
 
 test("uncertain teardown retains the invocation journal", async () => {

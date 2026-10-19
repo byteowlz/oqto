@@ -21,6 +21,46 @@ another owned Pi agent directory. Otherwise `OQT_OWNER_AGENT_DIR`,
 `PI_CODING_AGENT_DIR` and then `~/.pi/agent` are used. Nothing is installed,
 and no service, default or PATH entry changes.
 
+## Classic JSONL import and native branches
+
+```sh
+# Read-only preflight/discovery; no SDK preparation or owner-profile access:
+./oqt inspect-classic /path/session.jsonl --origin macbook --json
+./oqt list-classic /path/to/copied/sessions --origin macbook --json
+# Import an exact snapshot into the chosen owner's workspace catalog:
+./oqt --import-classic /path/session.jsonl --origin macbook --json --workdir /project
+# Add --leaf SOURCE_ENTRY_ID to select a source point; --continue attaches afterward.
+```
+
+In the TUI, `/resume --classic "/path/session.jsonl" --origin macbook`
+imports and switches. Without a path it offers bounded read-only discovery under
+the selected owner's `sessions` directory; Esc cancels without importing. Ordinary
+`/resume` still selects native Sessions. `/tree` selects a native conversation;
+`/branch` selects a visible native entry and creates a worker-owned fork.
+
+Source bytes, IDs, ancestry and inert records are retained, without scheduling old
+tools or loading extensions. Selected history renders through native message/tool
+views; `display:false` custom context stays hidden, and legacy extension renderers
+are not loaded. Source cwd/model/settings never choose runtime policy.
+Incomplete tool exchanges and unsupported semantics fail clearly. Archive-only
+native entries are not executable fork points: use the original source's `--leaf`
+for a different classic history point. Exact import retries reuse the snapshot;
+source append publishes a **new** snapshot and reports its published predecessor,
+leaving local continuation untouched. Rewrites/truncation require reconciliation.
+
+Catalogs are isolated by canonical workspace, mode and owner profile. This prototype
+also namespaces storage by runtime artifact: changing source/binaries selects a
+separate catalog, not an automatic cross-version migration. Remote MacBook sync,
+portable devices and cross-version handoff are not qualified. See
+[ADR-0065](../../docs/adr/0065-local-classic-import-and-native-conversation-navigation.md).
+
+Headless adapters use the same worker `SessionForks` service (`selected`, paged
+`conversations`/`entries`, `select`, `fork`) and observed-view fencing as the TUI;
+`test-oqt-forks` exercises real SQLite plus Chord clients without a UI. Stale
+pickers cannot mutate a newly selected branch. The stock transport may show the
+rejection as `Internal server error`: confirm the selected conversation and reopen
+the picker, rather than replaying its old choice.
+
 ## Architecture
 
 ```
@@ -64,8 +104,10 @@ completion envelope with empty command/output; the native store records only
 receipt identity/hash/status. Private output is deliberately not recoverable
 from Session history.
 
-Use `/shell-results` to inspect the selected Session's durable results and
-protected interrupted invocation IDs. Admission does not mean context placement
+Use `/shell-results` to inspect the selected Session/conversation's durable results
+and protected interrupted invocation IDs. Operator intent pins the observed native
+conversation before effects; stale targets and navigation during an invocation
+are rejected. Results retain that destination across navigation and recovery. Admission does not mean context placement
 or model delivery: a busy conversation queues the passive entry. Explicitly
 cancelled writes are not automatically resubmitted. No receipt permits a shell
 retry, restores grants or promises exactly-once external effects. A missing ACK
@@ -83,6 +125,12 @@ Source-only gates (disposable data; no installation or ordinary profiles):
 
 ```sh
 just test-oqt-operator-context /path/to/pinned/pi-source
+just test-oqt-import-native /path/to/pinned/pi-source
+just test-oqt-forks /path/to/pinned/pi-source
+just test-oqt-lint /path/to/pinned/pi-source
+just test-oqt-typecheck /path/to/pinned/pi-source
+just test-oqt-import-tui
+just test-oqt-forks-tui
 just test-oqt-bang
 just test-oqt-operator-recovery
 ```
@@ -183,18 +231,40 @@ A failed renewal fails closed.
 
 First provide a clean checkout at the qualified Pi pin (see Requirements below)
 at `~/.local/share/oqt/pi-source`, or set `OQT_PI_SOURCE` to its existing path.
-Do not overwrite an existing checkout to prepare it. Installation is optional
-and explicit; from this repository's root:
+Do not overwrite an existing checkout to prepare it. Explicit developer-only
+installation (not Oqto release deployment), from this repository's root:
 
 ```sh
-just install-oqt  # symlink ~/.local/bin/oqt to this checkout
+just test-oqt-install
+just install-oqt
+# Now the installed command may use THIS source checkout as its workspace:
+oqt
+# Read-only identity, without opening a Session:
+oqt --runtime-info
 ```
 
-`oqt` on PATH is a symlink to this checkout and still runs everything from
-here (builds, private distributions, assets). The pinned Pi source defaults to
-`~/.local/share/oqt/pi-source` (override with `OQT_PI_SOURCE`); temporary source
-checkouts stop working when cleaned. `just uninstall-oqt` removes the
-symlink. Nothing else is installed: no services, no global files.
+The installer copies patched Pi, dependencies, Node and confinement binaries into
+`~/.local/share/oqt/runtimes/<sha256>`, verifies the complete tree, backs up an
+unmanaged launcher and atomically activates `current`. `~/.local/bin/oqt` points
+through `current/oqt`, not back to source. New launches need neither Cargo nor the
+source checkout. Existing hosts stay pinned and are not restarted. Updates use
+the same command; old versions are retained. `--data-root` and `--stage-only` are
+available on `bash tools/oqt/install-oqt.sh` for explicit isolated qualification.
+
+Installed native state is separate under `~/.local/state/oqt/runtimes/<sha256>`;
+owned short `/var/tmp/qi<uid>-<prefix>` IPC aliases point there. XDG data/state
+roots are honored. Workspaces including runtime/state/IPC roots are refused, and
+the guard protects the store and installed launcher directory. Sandbox policy
+continues to use `~/.config/oqto/sandbox.toml`; owner settings/credentials are not
+copied or rewritten. No services, privileged files or global defaults change.
+
+Catalogs remain artifact-scoped: old source-runtime histories are not silently
+migrated into the installed version. Roll back explicitly with
+`python3 tools/oqt/install-runtime.py activate --runtime /absolute/oqt/runtimes/OLD_HASH`
+(the already-managed entrypoint follows `current`). This is a private local
+experiment, not signing, production release or power-loss qualification; see
+ADR-0066. The source `./oqt` still refuses its own checkout—use installed `oqt`
+when developing this repository.
 
 ## Look and feel
 

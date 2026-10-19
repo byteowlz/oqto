@@ -3,7 +3,6 @@
 Real operator execution/descendants, protected journal and native SQLite reopen;
 no provider calls or ordinary profiles. pidfds prevent PID-reuse retargeting.
 """
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,11 +13,12 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from coding_fixture import coding_world
+from profile_namespace import workspace_profile_key
 from tui_test import Terminal
 
 
-def kill_fixture_host(work):
-    key = hashlib.sha256((str(work.resolve()) + ':coding').encode()).hexdigest()[:12]
+def kill_fixture_host(work, owner):
+    key = workspace_profile_key(work, 'coding', owner)
     profiles = []
     for candidate in Path('/var/tmp').glob(f'q{os.getuid()}-*/p/{key}'):
         metadata = candidate.lstat()
@@ -35,6 +35,8 @@ def kill_fixture_host(work):
         command = Path(f"/proc/{host['pid']}/cmdline").read_bytes().split(b'\0')
         expected = str(profile.parents[1] / 'pi-source/packages/coding-agent/src/experimental/host.ts').encode()
         assert expected in command, 'fixture host executable binding changed'
+        environment = Path(f"/proc/{host['pid']}/environ").read_bytes().split(b'\0')
+        assert os.fsencode(f'OQT_OWNER_AGENT_DIR={owner.resolve()}') in environment, 'fixture host owner binding changed'
         assert json.loads((profile / 'host.json').read_text())['pid'] == host['pid']
         signal.pidfd_send_signal(descriptor, signal.SIGKILL)
     finally:
@@ -63,7 +65,7 @@ with coding_world(lambda request: ('text', 'must-not-be-called'), 'oqt-operator-
         while not (work / 'heartbeat').exists() and time.monotonic() < deadline:
             time.sleep(0.025)
         assert (work / 'heartbeat').exists(), 'operator effect never started'
-        kill_fixture_host(work)
+        kill_fixture_host(work, owner)
         time.sleep(1)
         settled = (work / 'heartbeat').stat().st_size
         time.sleep(0.6)
@@ -79,7 +81,7 @@ with coding_world(lambda request: ('text', 'must-not-be-called'), 'oqt-operator-
         marker = len(current.raw)
         current.send('!printf once >> completed-attempts; printf completed-durable-value\r')
         current.expect('durably recorded for this Session', marker)
-        kill_fixture_host(work)
+        kill_fixture_host(work, owner)
         current.close('operator-killed-completed')
         current = None
         current = terminal(owner, work, resume=True)
