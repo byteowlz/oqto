@@ -24,16 +24,48 @@ use log::{debug, warn};
 use oqto_history::oqto_log::index::{self, IngestCursor};
 use oqto_history::oqto_log::store::platform_id_for_external_id;
 use oqto_history::oqto_log::{ops, store};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiscoveryReadiness {
+    Disabled,
+    Checking,
+    Discovering,
+    Ready,
+    Failed,
+}
+
+#[derive(Default)]
+struct AuthorityHealth {
+    faults: std::sync::atomic::AtomicU64,
+    verified: std::sync::atomic::AtomicU64,
+}
+impl AuthorityHealth {
+    fn generation(&self) -> u64 {
+        self.faults.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn unavailable(&self) -> bool {
+        self.generation() != self.verified.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn fail(&self) -> u64 {
+        self.faults
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            .wrapping_add(1)
+    }
+}
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 const QUIESCENCE: Duration = Duration::from_secs(30);
 const NUDGE_DEDUPE_WINDOW: Duration = Duration::from_secs(10);
+static HEADER_SCANNER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Handle for nudging the ingest task about a session that was just read.
 #[derive(Clone)]
 pub struct IngestHandle {
     tx: mpsc::Sender<Nudge>,
+    readiness: watch::Receiver<DiscoveryReadiness>,
+    health: std::sync::Arc<AuthorityHealth>,
     pub(crate) source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
 }
 #[derive(Clone)]
@@ -70,9 +102,37 @@ impl crate::tui_rpc::ObservationAuthority for NativeObservation {
 enum Nudge {
     Legacy(String),
     Native(Box<NativeObservation>),
+    AuthorityFailed(u64),
 }
 
 impl IngestHandle {
+    pub(crate) fn readiness(&self) -> DiscoveryReadiness {
+        if self.source.is_some()
+            && (self.readiness.has_changed().is_err() || self.health.unavailable())
+        {
+            DiscoveryReadiness::Failed
+        } else {
+            *self.readiness.borrow()
+        }
+    }
+    pub(crate) fn mark_authority_failed(&self) {
+        if self.source.is_some() {
+            let generation = self.health.fail();
+            let _ = self.tx.try_send(Nudge::AuthorityFailed(generation));
+        }
+    }
+    pub(crate) fn catalog_ready(&self) -> bool {
+        !matches!(
+            self.readiness(),
+            DiscoveryReadiness::Checking | DiscoveryReadiness::Failed
+        )
+    }
+    // An initial, complete per-attachment identity query can independently
+    // admit an existing pin while initial discovery is still checking. A failed
+    // authority remains unavailable throughout retry, until the full probe wins.
+    pub(crate) fn native_available(&self) -> bool {
+        self.readiness() != DiscoveryReadiness::Failed
+    }
     /// Ask the ingest task to check one session's JSONL file. Fire-and-forget.
     pub fn nudge(&self, session_or_external_id: &str) {
         if !session_or_external_id.is_empty() && session_or_external_id.len() <= 256 {
@@ -99,21 +159,87 @@ pub(crate) fn spawn_with_source(
     source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
 ) -> IngestHandle {
     let (tx, rx) = mpsc::channel(128);
+    let (status, readiness) = watch::channel(if source.is_some() {
+        DiscoveryReadiness::Checking
+    } else {
+        DiscoveryReadiness::Disabled
+    });
+    let health = std::sync::Arc::new(AuthorityHealth::default());
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(run(rx, source.clone()));
+        handle.spawn(run(rx, source.clone(), status, health.clone()));
     }
-    IngestHandle { tx, source }
+    IngestHandle {
+        tx,
+        source,
+        readiness,
+        health,
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn spawn_for_test(home: PathBuf, user_id: String) -> IngestHandle {
     let (tx, rx) = mpsc::channel(128);
-    tokio::spawn(run_at(rx, home, user_id, None));
-    IngestHandle { tx, source: None }
+    let (status, readiness) = watch::channel(DiscoveryReadiness::Disabled);
+    let health = std::sync::Arc::new(AuthorityHealth::default());
+    tokio::spawn(run_at(
+        rx,
+        home,
+        user_id,
+        None,
+        status,
+        None,
+        health.clone(),
+    ));
+    IngestHandle {
+        tx,
+        source: None,
+        readiness,
+        health,
+    }
 }
+#[cfg(test)]
+pub(crate) fn spawn_paused_inventory_for_test(
+    home: PathBuf,
+    user: String,
+    source: std::sync::Arc<crate::personal_source::PersonalSource>,
+) -> (IngestHandle, tokio::sync::oneshot::Sender<()>) {
+    let (tx, rx) = mpsc::channel(128);
+    let (status, readiness) = watch::channel(DiscoveryReadiness::Checking);
+    let (release, paused) = tokio::sync::oneshot::channel();
+    let health = std::sync::Arc::new(AuthorityHealth::default());
+    let owned = source.clone();
+    let initial = Box::pin(async move {
+        let _ = paused.await;
+        DiscoveryEvent::Started {
+            generation: 0,
+            result: Discovery::start(&owned).await,
+        }
+    });
+    tokio::spawn(run_at(
+        rx,
+        home,
+        user,
+        Some(source.clone()),
+        status,
+        Some(initial),
+        health.clone(),
+    ));
+    (
+        IngestHandle {
+            tx,
+            source: Some(source),
+            readiness,
+            health,
+        },
+        release,
+    )
+}
+
 async fn run(
     rx: mpsc::Receiver<Nudge>,
     source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
+    status: watch::Sender<DiscoveryReadiness>,
+    health: std::sync::Arc<AuthorityHealth>,
 ) {
     let Ok(home) = std::env::var("HOME") else {
         return;
@@ -121,30 +247,31 @@ async fn run(
     let home = PathBuf::from(home);
     let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
-    run_at(rx, home, user_id, source).await;
+    run_at(rx, home, user_id, source, status, None, health).await;
 }
 async fn run_at(
     mut rx: mpsc::Receiver<Nudge>,
     home: PathBuf,
     user_id: String,
     source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
+    status: watch::Sender<DiscoveryReadiness>,
+    initial: Option<BoxFuture<'static, DiscoveryEvent>>,
+    health: std::sync::Arc<AuthorityHealth>,
 ) {
     let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut retry = tokio::time::interval(Duration::from_secs(5));
+    retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut recent: HashMap<String, Instant> = HashMap::new();
-    let mut discovery: Option<Discovery> = None;
+    let mut discovery = initial;
+    let mut epoch = 0u64;
     let mut legacy = std::collections::VecDeque::new();
     let mut legacy_ids = std::collections::VecDeque::new();
-
     loop {
         tokio::select! {
-            // A queued admitted head observation runs before another discovery
-            // chunk. There is still exactly one writer, never a second task.
             biased;
             nudged = rx.recv() => {
-                let Some(id) = nudged else {
-                    return;
-                };
+                let Some(id) = nudged else { return; };
                 let mut pending = vec![id];
                 while let Ok(more) = rx.try_recv() { pending.push(more); }
                 let mut ids = Vec::new();
@@ -153,44 +280,104 @@ async fn run_at(
                     match nudge {
                         Nudge::Legacy(id) => ids.push(id),
                         Nudge::Native(source) => { native.insert(source.binding.public_session_id.clone(), source); }
+                        Nudge::AuthorityFailed(generation) => {
+                            if generation > health.verified.load(std::sync::atomic::Ordering::SeqCst) {
+                                discovery = None;
+                                status.send_replace(DiscoveryReadiness::Failed);
+                            }
+                        }
                     }
                 }
                 for observation in native.into_values() {
-                    if let Err(error) = ingest_native(&home, source.as_deref(), *observation).await { debug!("Native graph convergence deferred: {error:#}"); }
+                    // A prepared read that overlapped writer work is discarded,
+                    // never committed as a cached ownership answer.
+                    epoch = epoch.wrapping_add(1);
+                    if let Err(error) = ingest_native(&home, source.as_deref(), *observation).await {
+                        if ops::native_source::authority_unavailable(&error) {
+                            discovery = None;
+                            health.fail();
+                            status.send_replace(DiscoveryReadiness::Failed);
+                            warn!("Native identity authority unavailable; sessions refused until a complete retry");
+                        }
+                        debug!("Native graph convergence deferred: {error:#}");
+                    }
                 }
-                ids.sort();
-                ids.dedup();
+                ids.sort(); ids.dedup();
                 let now = Instant::now();
                 recent.retain(|_, seen| now.duration_since(*seen) < NUDGE_DEDUPE_WINDOW);
-                let mut discovery_requested = false;
+                let mut requested = false;
                 for id in ids {
-                    if recent.contains_key(&id) {
-                        continue;
-                    }
+                    if recent.contains_key(&id) { continue; }
                     recent.insert(id.clone(), now);
-                    discovery_requested = true;
+                    requested = true;
                     if legacy_ids.len() < 128 { legacy_ids.push_back(id); }
                 }
-                if discovery_requested && discovery.is_none() && let Some(source) = &source {
-                    discovery = Discovery::start(source).await.unwrap_or_else(|error| {
-                        debug!("Native catalog nudge deferred: {error:#}"); None
-                    });
+                if requested && discovery.is_none() && let Some(source) = &source {
+                    discovery = Some(Discovery::start_job(source.clone(), health.generation()));
                 }
             }
             _ = tick.tick() => {
                 if discovery.is_none() && let Some(source) = &source {
-                    discovery = Discovery::start(source).await.unwrap_or_else(|error| {
-                        debug!("Native catalog discovery deferred: {error:#}"); None
-                    });
+                    discovery = Some(Discovery::start_job(source.clone(), health.generation()));
                 }
                 legacy = list_session_files(&home).into();
             }
-            _ = std::future::ready(()), if discovery.is_some() || !legacy_ids.is_empty() || !legacy.is_empty() => {
-                if let Some(pass) = &mut discovery {
-                    if pass.step(&user_id).await { discovery = None; }
-                } else if let Some(id) = legacy_ids.pop_front() {
-                    handle_nudge(&home, &user_id, &id).await;
-                } else if let Some(path) = legacy.pop_front()
+            _ = retry.tick(), if (*status.borrow() == DiscoveryReadiness::Failed || health.unavailable()) && discovery.is_none() => {
+                if let Some(source) = &source { discovery = Some(Discovery::start_job(source.clone(), health.generation())); }
+            }
+            event = async { match &mut discovery { Some(work) => work.await, None => std::future::pending().await } } => {
+                discovery = None;
+                match event {
+                    DiscoveryEvent::Started { generation, result: Ok(pass) } => {
+                        if generation != health.generation() {
+                            status.send_replace(DiscoveryReadiness::Failed);
+                            continue;
+                        }
+                        health.verified.store(generation, std::sync::atomic::Ordering::SeqCst);
+                        // Retry may follow a committed pin whose post-write
+                        // verification failed. Never expose an old cached list.
+                        crate::history_read::invalidate_catalog(&home).await;
+                        status.send_replace(if pass.is_some() { DiscoveryReadiness::Discovering } else { DiscoveryReadiness::Ready });
+                        discovery = pass.and_then(|pass| pass.next_job(epoch, None));
+                    }
+                    DiscoveryEvent::Started { result: Err(error), .. } => {
+                        status.send_replace(DiscoveryReadiness::Failed);
+                        warn!("Native discovery authority check failed; sessions unavailable: {error:#}");
+                    }
+                    DiscoveryEvent::Prepared { mut pass, header, read_epoch, result } => {
+                        if health.unavailable() {
+                            status.send_replace(DiscoveryReadiness::Failed);
+                            continue;
+                        }
+                        if read_epoch != epoch && result.is_ok() {
+                            discovery = pass.next_job(epoch, Some(header));
+                            continue;
+                        }
+                        let result = match result {
+                            Ok(prepared) => match header.workspace.to_str() {
+                                Some(workspace) => pass.inventory.commit(&user_id, workspace, &header.identity, prepared).await,
+                                None => Err(anyhow::anyhow!("Invalid native Workspace")),
+                            },
+                            Err(error) => Err(error),
+                        };
+                        match result {
+                            Ok(true) => crate::history_read::invalidate_catalog(&home).await,
+                            Ok(false) => {}
+                            Err(error) if ops::native_source::authority_unavailable(&error) => {
+                                status.send_replace(DiscoveryReadiness::Failed);
+                                warn!("Native discovery authority lost; whole batch aborted: {error:#}");
+                                continue;
+                            }
+                            Err(error) => debug!("Native identity discovery denied: {error:#}"),
+                        }
+                        discovery = pass.next_job(epoch, None);
+                        if discovery.is_none() { status.send_replace(DiscoveryReadiness::Ready); }
+                    }
+                }
+            }
+            _ = std::future::ready(()), if discovery.is_none() && *status.borrow() != DiscoveryReadiness::Failed && !health.unavailable() && (!legacy_ids.is_empty() || !legacy.is_empty()) => {
+                if let Some(id) = legacy_ids.pop_front() { handle_nudge(&home, &user_id, &id).await; }
+                else if let Some(path) = legacy.pop_front()
                     && let Some(external) = super::server::parse_pi_session_id_from_path(&path) {
                     maybe_ingest(&home, &user_id, &external, &path).await;
                 }
@@ -199,10 +386,82 @@ async fn run_at(
     }
 }
 
-/// Additional native discovery never reads message bodies or sets a stat cursor.
-/// Only a fresh admitted socket observation can cause graph ingestion.
-const DISCOVERY_CHUNK: usize = 16;
-const DISCOVERY_SLICE: Duration = Duration::from_millis(25);
+enum DiscoveryEvent {
+    Started {
+        generation: u64,
+        result: anyhow::Result<Option<Discovery>>,
+    },
+    Prepared {
+        pass: Discovery,
+        header: crate::personal_source::NativeHeader,
+        read_epoch: u64,
+        result: anyhow::Result<ops::native_source::PreparedDiscovery>,
+    },
+}
+// Filename authority is metadata-only and must not silently flatten an I/O
+// error into permission to rebind an ID already present in the default source.
+fn discovery_defaults(home: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let directories = match std::fs::read_dir(home.join(".pi/agent/sessions")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut files = Vec::new();
+    for directory in directories {
+        let directory = directory?;
+        if !std::fs::metadata(directory.path())?.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(directory.path())? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+                && std::fs::metadata(&path)?.is_file()
+            {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn discovery_headers(
+    source: &crate::personal_source::PersonalSource,
+) -> anyhow::Result<Vec<crate::personal_source::NativeHeader>> {
+    let headers = source.headers()?;
+    let mut counts = HashMap::new();
+    for header in &headers {
+        *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
+    }
+    // Reverse sorted filenames turn exact suffix matching (including native IDs
+    // containing underscores) into a prefix range, not headers x default files.
+    let mut defaults: Vec<_> = discovery_defaults(&source.home)?
+        .into_iter()
+        .filter_map(|path| {
+            let name: String = path.file_name()?.to_string_lossy().chars().rev().collect();
+            Some((name, path))
+        })
+        .collect();
+    defaults.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    Ok(headers
+        .into_iter()
+        .filter(|header| {
+            if counts[&header.external_id] != 1 {
+                return false;
+            }
+            let suffix: String = format!("_{}.jsonl", header.external_id)
+                .chars()
+                .rev()
+                .collect();
+            let start = defaults.partition_point(|(name, _)| name < &suffix);
+            !defaults[start..]
+                .iter()
+                .take_while(|(name, _)| name.starts_with(&suffix))
+                .any(|(_, path)| path != &header.path)
+        })
+        .collect())
+}
 
 struct Discovery {
     home: PathBuf,
@@ -210,64 +469,61 @@ struct Discovery {
     inventory: ops::native_source::DiscoveryBatch,
 }
 impl Discovery {
+    // Read-only initialization, including the initial complete shard probe, is
+    // polled beside the nudge queue. No SQL writes occur in these futures.
+    fn start_job(
+        source: std::sync::Arc<crate::personal_source::PersonalSource>,
+        generation: u64,
+    ) -> BoxFuture<'static, DiscoveryEvent> {
+        Box::pin(async move {
+            DiscoveryEvent::Started {
+                generation,
+                result: Self::start(&source).await,
+            }
+        })
+    }
     async fn start(
         source: &crate::personal_source::PersonalSource,
     ) -> anyhow::Result<Option<Self>> {
         let owned = source.clone();
-        let (headers, defaults) = tokio::task::spawn_blocking(move || {
-            Ok::<_, anyhow::Error>((owned.headers()?, list_session_files(&owned.home)))
-        })
-        .await??;
-        let mut counts = HashMap::new();
-        for header in &headers {
-            *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
-        }
-        let headers: Vec<_> = headers
-            .into_iter()
-            .filter(|header| {
-                let suffix = format!("_{}.jsonl", header.external_id);
-                counts[&header.external_id] == 1
-                    && !defaults.iter().any(|path| {
-                        path != &header.path
-                            && path
-                                .file_name()
-                                .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
-                    })
+        let snapshot = async {
+            let permit = HEADER_SCANNER.acquire().await?;
+            tokio::task::spawn_blocking(move || {
+                // Cancellation cannot return the permit while this job is still
+                // doing filesystem work; retries cannot fan out scanner threads.
+                let _permit = permit;
+                discovery_headers(&owned)
             })
-            .collect();
+            .await?
+        };
+        let headers = tokio::time::timeout(Duration::from_secs(5), snapshot)
+            .await
+            .map_err(|_| anyhow::anyhow!("Native header inventory deadline exceeded"))??;
+        let inventory = ops::native_source::DiscoveryBatch::open(&source.home).await?;
         if headers.is_empty() {
             return Ok(None);
         }
         Ok(Some(Self {
             home: source.home.clone(),
             headers: headers.into_iter(),
-            inventory: ops::native_source::DiscoveryBatch::open(&source.home).await?,
+            inventory,
         }))
     }
-    // Soft time budget: finish the in-flight SQLite operation, then return to
-    // the priority queue after at most 16 headers or 25ms, whichever comes first.
-    async fn step(&mut self, user: &str) -> bool {
-        let started = Instant::now();
-        for _ in 0..DISCOVERY_CHUNK {
-            let Some(header) = self.headers.next() else {
-                return true;
-            };
-            if let Some(workspace) = header.workspace.to_str() {
-                match self
-                    .inventory
-                    .discover(user, workspace, &header.external_id, &header.identity)
-                    .await
-                {
-                    Ok(true) => crate::history_read::invalidate_catalog(&self.home).await,
-                    Ok(false) => {}
-                    Err(error) => debug!("Native identity discovery denied: {error:#}"),
-                }
+    fn next_job(
+        mut self,
+        epoch: u64,
+        retry: Option<crate::personal_source::NativeHeader>,
+    ) -> Option<BoxFuture<'static, DiscoveryEvent>> {
+        let header = retry.or_else(|| self.headers.next())?;
+        Some(Box::pin(async move {
+            let result = self.inventory.prepare(&header.external_id).await;
+            DiscoveryEvent::Prepared {
+                pass: self,
+                header,
+                read_epoch: epoch,
+                result,
             }
-            if started.elapsed() >= DISCOVERY_SLICE {
-                break;
-            }
-        }
-        self.headers.len() == 0
+        }))
     }
 }
 
@@ -277,7 +533,21 @@ async fn discover(
     user: &str,
 ) -> anyhow::Result<()> {
     if let Some(mut pass) = Discovery::start(source).await? {
-        while !pass.step(user).await {}
+        for header in pass.headers {
+            let prepared = pass.inventory.prepare(&header.external_id).await?;
+            pass.inventory
+                .commit(
+                    user,
+                    header
+                        .workspace
+                        .to_str()
+                        .ok_or_else(|| anyhow::anyhow!("Workspace"))?,
+                    &header.identity,
+                    prepared,
+                )
+                .await?;
+            crate::history_read::invalidate_catalog(&pass.home).await;
+        }
     }
     Ok(())
 }
@@ -671,6 +941,29 @@ mod tests {
         assert!(index::get_ingest_cursor(&home, legacy).await.is_some());
         assert_eq!(std::fs::read_to_string(&path)?, bytes);
         assert!(!root.join("native/.local").exists());
+        // Suffix authority must retain IDs containing underscores; a parser
+        // that only takes the final underscore segment would miss this fact.
+        let collision = "native_with_underscore";
+        std::fs::write(
+            directory.join(format!("2026-10-19_{collision}.jsonl")),
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"session","id":collision,"cwd":work})
+            ),
+        )?;
+        write_session_file(&home, collision, &["default source identity fact"]);
+        discover(&source, "native-owner").await?;
+        assert!(
+            ops::find_session_by_external(&home, collision)
+                .await
+                .is_none()
+        );
+        // Metadata failure cannot look like an empty retained default source.
+        let broken = home.join(".pi/agent/sessions/broken-workspace");
+        std::os::unix::fs::symlink(home.join("missing-workspace"), &broken)?;
+        assert!(Discovery::start(&source).await.is_err());
+        std::fs::remove_file(broken)?;
+        assert!(Discovery::start(&source).await.is_ok());
         Ok(())
     }
 

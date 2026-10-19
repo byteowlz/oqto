@@ -18,6 +18,7 @@ pub struct PersonalBackend {
     files: Arc<Mutex<()>>,
     terminals: Arc<crate::personal_terminal::Terminals>,
     sessions: Arc<crate::personal_sessions::Sessions>,
+    ingest: super::super::jsonl_ingest::IngestHandle,
     reaper: tokio::task::JoinHandle<()>,
 }
 impl Drop for PersonalBackend {
@@ -34,7 +35,9 @@ impl PersonalBackend {
     ) -> Self {
         let terminals = Arc::new(crate::personal_terminal::Terminals::default());
         let weak = Arc::downgrade(&terminals);
-        let sessions = Arc::new(crate::personal_sessions::Sessions::with_ingest(ingest));
+        let sessions = Arc::new(crate::personal_sessions::Sessions::with_ingest(
+            ingest.clone(),
+        ));
         let weak_sessions = Arc::downgrade(&sessions);
         let reaper = tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -61,6 +64,7 @@ impl PersonalBackend {
             files: Arc::new(Mutex::new(())),
             terminals,
             sessions,
+            ingest,
             reaper,
         }
     }
@@ -277,6 +281,23 @@ impl ActionBackend for PersonalBackend {
         action: HostAction,
         authorization: AuthorizedAction,
     ) -> Result<Value, ActionFailure> {
+        // Existing r13c wire remains strict/unchanged. A failed/incomplete global
+        // authority is a standard 503/unavailable, not a falsely complete list
+        // or new capability/enrollment field. Cleanup remains usable.
+        if (matches!(
+            action,
+            HostAction::SessionsList | HostAction::SessionHistory { .. }
+        ) && !self.ingest.catalog_ready())
+            || (matches!(
+                action,
+                HostAction::SessionAttach { .. }
+                    | HostAction::SessionRead { .. }
+                    | HostAction::SessionRequestControl { .. }
+                    | HostAction::SessionInput { .. }
+            ) && !self.ingest.native_available())
+        {
+            return Err(ActionFailure::Unavailable);
+        }
         match action {
             HostAction::Capabilities => {
                 let grants = authorization.grants();
@@ -349,7 +370,10 @@ impl ActionBackend for PersonalBackend {
             )
             .await
             .map(|response| response.data)
-            .map_err(|_| ActionFailure::Unavailable),
+            .map_err(|_| {
+                self.ingest.mark_authority_failed();
+                ActionFailure::Unavailable
+            }),
             HostAction::SessionHistory { session_id, before } => {
                 crate::history_read::read_native_authorized_history(
                     &self.home,

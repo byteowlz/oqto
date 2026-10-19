@@ -632,7 +632,9 @@ pub async fn list_sessions_for_workspaces(
 // Schema-aware, read-only compatibility with retained migration prefixes.
 // Missing columns mean those facts did not exist yet, not permission to skip
 // legacy rows or migrate during a catalog/attachment request.
-async fn session_columns(pool: &sqlx::SqlitePool) -> Result<std::collections::HashSet<String>> {
+async fn session_columns(
+    pool: &mut sqlx::SqliteConnection,
+) -> Result<std::collections::HashSet<String>> {
     Ok(
         sqlx::query_scalar("SELECT name FROM pragma_table_info('oqto_log_sessions')")
             .fetch_all(pool)
@@ -650,17 +652,9 @@ async fn list_sessions_from(
     for db in dbs {
         // Catalog reads never migrate or bootstrap a store. Writers own schema
         // initialization, including explicit header-only native discovery.
-        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
-        let pool = match SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(_) => continue,
-        };
-
-        let columns = session_columns(&pool).await?;
+        let mut shard = native_source::reader::ReadShard::open(&db).await?;
+        let pool = shard.connection();
+        let columns = session_columns(&mut *pool).await?;
         let has_extensions_json_column = columns.contains("extensions_json");
         let has_lineage = columns.contains("parent_session_id");
         let parent_expr = if has_lineage {
@@ -729,7 +723,7 @@ async fn list_sessions_from(
             >(&query)
             .bind(workspace.trim_end_matches('/'))
             .bind(format!("{}/%", workspace.trim_end_matches('/')))
-            .fetch_all(&pool)
+            .fetch_all(&mut *pool)
             .await?
         } else {
             let query = format!(
@@ -754,9 +748,10 @@ async fn list_sessions_from(
                     i64,
                 ),
             >(&query)
-            .fetch_all(&pool)
+            .fetch_all(&mut *pool)
             .await?
         };
+        shard.finish().await?;
 
         sessions.extend(rows.into_iter().map(|row| OqtoLogSessionRow {
             session_id: row.0,

@@ -320,7 +320,15 @@ impl Sessions {
             return self
                 .attach(home, roots, session_id, &admission)
                 .await
-                .map_err(|_| ActionFailure::Unavailable);
+                .map_err(|error| {
+                    if (oqto_history::oqto_log::ops::native_source::authority_unavailable(&error)
+                        || error.chain().any(|cause| cause.is::<sqlx::Error>()))
+                        && let Some(ingest) = &self.ingest
+                    {
+                        ingest.mark_authority_failed();
+                    }
+                    ActionFailure::Unavailable
+                });
         }
         let id = match &action {
             HostAction::SessionRead { attachment_id }

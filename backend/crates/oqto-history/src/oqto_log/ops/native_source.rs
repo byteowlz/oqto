@@ -1,8 +1,29 @@
 //! Strict, non-repairing identity bootstrap for the serialized native writer.
-//! Source identity is durable and immutable. Reads never create/migrate stores.
+//! Reads never create/migrate stores or retain ownership answers.
 use super::*;
 use anyhow::ensure;
 use sqlx::Row;
+use std::time::Duration;
+pub(super) mod reader;
+#[cfg(test)]
+mod resource_tests;
+
+const SCAN_DEADLINE: Duration = Duration::from_secs(5);
+// Bound native inventory's blocking metadata work across validators/homes too.
+// The permit lives inside the blocking job, including if its caller cancels.
+static INVENTORY_SCANNER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Native identity authority unavailable")]
+pub struct AuthorityUnavailable(#[source] anyhow::Error);
+
+pub fn authority_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<AuthorityUnavailable>().is_some()
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct IdentityConflict(&'static str);
 
 struct Identity {
     platform: String,
@@ -11,103 +32,230 @@ struct Identity {
     source: Option<String>,
 }
 
-struct IdentityShard {
-    path: PathBuf,
-    pool: sqlx::SqlitePool,
-    has_extensions: bool,
-    has_bindings: bool,
-}
-impl IdentityShard {
-    async fn open(path: PathBuf) -> Result<Self> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                SqliteConnectOptions::new()
-                    .filename(&path)
-                    .read_only(true)
-                    .create_if_missing(false),
-            )
-            .await
-            .context("read native identity store")?;
-        let has_extensions = session_columns(&pool).await?.contains("extensions_json");
-        let has_bindings = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='oqto_log_session_bindings')")
-            .fetch_one(&pool).await?;
-        Ok(Self {
-            path,
-            pool,
-            has_extensions,
-            has_bindings,
-        })
-    }
-    async fn identities(&self, public: &str, external: &str) -> Result<Vec<Identity>> {
-        let source_expr = if self.has_extensions {
-            "json_extract(extensions_json, '$.personal_native_source')"
-        } else {
-            "NULL"
+// Unlike the general operational catalog iterator, this authority iterator must
+// never flatten directory/stat errors into a silently incomplete inventory.
+async fn identity_paths(home: &Path) -> Result<Vec<PathBuf>> {
+    let root = home.join(".local/share/oqto/oqto-log");
+    let permit = INVENTORY_SCANNER.acquire().await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error.into()),
         };
-        let query = format!(
-            "SELECT platform_id, external_id, workspace_id, {source_expr} AS source FROM oqto_log_sessions WHERE external_id=? OR platform_id=? OR session_id=?"
-        );
-        let rows = sqlx::query(&query)
-            .bind(external)
-            .bind(public)
-            .bind(public)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut connection = self.pool.acquire().await?;
-        if self.has_bindings
-            && let Some(binding) =
-                crate::oqto_log::bindings::resolve_pi_session_identity(&mut connection, external)
-                    .await?
-        {
-            ensure!(
-                rows.len() == 1
-                    && rows[0].try_get::<String, _>("platform_id")? == binding.platform_id
-                    && rows[0]
-                        .try_get::<Option<String>, _>("external_id")?
-                        .as_deref()
-                        == Some(external),
-                "Native binding facts conflict"
-            );
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if !std::fs::metadata(entry.path())?.is_dir() {
+                continue;
+            }
+            let db = entry.path().join("oqto-log.sqlite");
+            match std::fs::metadata(&db) {
+                Ok(metadata) => {
+                    ensure!(metadata.is_file(), "Invalid native identity shard");
+                    paths.push(db);
+                }
+                // A canonical shard directory without a readable database is
+                // incomplete authority, not an empty shard we may silently skip.
+                Err(error) => return Err(error.into()),
+            }
         }
-        rows.into_iter()
-            .map(|row| {
-                Ok(Identity {
-                    platform: row.try_get("platform_id")?,
-                    external: row.try_get("external_id")?,
-                    workspace: row.try_get("workspace_id")?,
-                    source: row.try_get("source")?,
-                })
+        paths.sort();
+        Ok(paths)
+    })
+    .await?
+}
+
+async fn probe(path: &Path) -> Result<()> {
+    let mut shard = reader::ReadShard::open(path).await?;
+    let columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('oqto_log_sessions')")
+            .fetch_all(shard.connection())
+            .await?;
+    ensure!(
+        columns.iter().any(|column| column == "external_id"),
+        "Missing native identity schema"
+    );
+    shard.finish().await
+}
+
+async fn shard_identities(path: &Path, public: &str, external: &str) -> Result<Vec<Identity>> {
+    let mut shard = reader::ReadShard::open(path).await?;
+    let connection = shard.connection();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('oqto_log_sessions')")
+            .fetch_all(&mut *connection)
+            .await?;
+    let source_expr = if columns.iter().any(|column| column == "extensions_json") {
+        "json_extract(extensions_json, '$.personal_native_source')"
+    } else {
+        "NULL"
+    };
+    let query = format!(
+        "SELECT platform_id, external_id, workspace_id, {source_expr} AS source FROM oqto_log_sessions WHERE external_id=? OR platform_id=? OR session_id=?"
+    );
+    let rows = sqlx::query(&query)
+        .bind(external)
+        .bind(public)
+        .bind(public)
+        .fetch_all(&mut *connection)
+        .await?;
+    let has_bindings: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM native_identity.sqlite_master WHERE type='table' AND name='oqto_log_session_bindings')")
+        .fetch_one(&mut *connection).await?;
+    if has_bindings {
+        let binding = crate::oqto_log::bindings::resolve_pi_session_identity(connection, external)
+            .await
+            .map_err(|error| match error {
+                SessionBindingError::Storage(_) => anyhow::Error::new(error),
+                _ => anyhow::Error::new(IdentityConflict("Native binding facts conflict")),
+            })?;
+        if let Some(binding) = binding
+            && (rows.len() != 1
+                || rows[0].try_get::<String, _>("platform_id")? != binding.platform_id
+                || rows[0]
+                    .try_get::<Option<String>, _>("external_id")?
+                    .as_deref()
+                    != Some(external))
+        {
+            return Err(IdentityConflict("Native binding facts conflict").into());
+        }
+    }
+    let found = rows
+        .into_iter()
+        .map(|row| {
+            Ok(Identity {
+                platform: row.try_get("platform_id")?,
+                external: row.try_get("external_id")?,
+                workspace: row.try_get("workspace_id")?,
+                source: row.try_get("source")?,
             })
-            .collect()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    shard.finish().await?;
+    Ok(found)
+}
+
+async fn identities(home: &Path, public: &str, external: &str) -> Result<Vec<Identity>> {
+    let operation = async {
+        let mut found = Vec::new();
+        for path in identity_paths(home).await? {
+            found.extend(shard_identities(&path, public, external).await?);
+        }
+        Ok::<_, anyhow::Error>(found)
+    };
+    match tokio::time::timeout(SCAN_DEADLINE, operation).await {
+        Ok(Ok(found)) => Ok(found),
+        Ok(Err(error)) if error.downcast_ref::<IdentityConflict>().is_some() => Err(error),
+        Ok(Err(error)) => Err(AuthorityUnavailable(error).into()),
+        Err(error) => Err(AuthorityUnavailable(error.into()).into()),
     }
 }
 
-/// One pass on the serialized writer: reuse read-only shard connections and
-/// schema inventory, NOT identity results. Each check sees committed facts,
-/// including pins written earlier in this pass. Never cache across sweeps or
-/// use this snapshot to confer attachment authority.
+/// Completed read-only preflight request, not ownership evidence. No identity
+/// answers survive preparation; commit always re-enumerates/reads current facts.
+pub struct PreparedDiscovery {
+    home: PathBuf,
+    external: String,
+}
+
+/// No resident per-shard pools or schema/ownership cache. Every prepare enumerates
+/// and queries ALL current shards via the process-wide bounded read workers.
+/// An unavailable inventory/post-write verification poisons this whole batch.
 pub struct DiscoveryBatch {
     home: PathBuf,
-    shards: Vec<IdentityShard>,
+    poisoned: bool,
+    #[cfg(test)]
+    after_write: Option<Box<dyn FnOnce() + Send>>,
 }
 impl DiscoveryBatch {
     pub async fn open(home: &Path) -> Result<Self> {
-        let mut shards = Vec::new();
-        for db in list_db_paths(home) {
-            shards.push(IdentityShard::open(db).await?);
-        }
+        let operation = async {
+            for path in identity_paths(home).await? {
+                probe(&path).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::time::timeout(SCAN_DEADLINE, operation)
+            .await
+            .map_err(|error| AuthorityUnavailable(error.into()))?
+            .map_err(AuthorityUnavailable)?;
         Ok(Self {
             home: home.to_owned(),
-            shards,
+            poisoned: false,
+            #[cfg(test)]
+            after_write: None,
         })
     }
-    async fn identities(&self, public: &str, external: &str) -> Result<Vec<Identity>> {
-        let mut found = Vec::new();
-        for shard in &self.shards {
-            found.extend(shard.identities(public, external).await?);
+    async fn read_facts(&mut self, external: &str) -> Result<Vec<Identity>> {
+        if self.poisoned {
+            return Err(AuthorityUnavailable(anyhow::anyhow!("Batch poisoned")).into());
         }
-        Ok(found)
+        let public = crate::oqto_log::store::platform_id_for_external_id(external);
+        let result = identities(&self.home, &public, external).await;
+        if let Err(error) = &result {
+            self.poisoned |= authority_unavailable(error);
+        }
+        result
+    }
+    pub async fn prepare(&mut self, external: &str) -> Result<PreparedDiscovery> {
+        let found = self.read_facts(external).await?;
+        ensure!(found.len() <= 1, "Ambiguous native canonical identity");
+        Ok(PreparedDiscovery {
+            home: self.home.clone(),
+            external: external.to_owned(),
+        })
+    }
+    pub async fn commit(
+        &mut self,
+        user: &str,
+        workspace: &str,
+        source: &str,
+        prepared: PreparedDiscovery,
+    ) -> Result<bool> {
+        if self.poisoned {
+            return Err(AuthorityUnavailable(anyhow::anyhow!("Batch poisoned")).into());
+        }
+        ensure!(
+            prepared.home == self.home,
+            "Wrong native inventory authority"
+        );
+        // Never adopt from a preflight snapshot, even if a caller retained its
+        // request while a different writer or validator changed authority.
+        let found = self.read_facts(&prepared.external).await?;
+        let result = discover_identity(
+            &self.home,
+            user,
+            workspace,
+            &prepared.external,
+            source,
+            &found,
+        )
+        .await;
+        if let Err(error) = &result {
+            self.poisoned |= error
+                .chain()
+                .any(|cause| cause.is::<sqlx::Error>() || cause.is::<std::io::Error>());
+        }
+        if result.as_ref().is_ok_and(|changed| *changed) {
+            #[cfg(test)]
+            if let Some(fault) = self.after_write.take() {
+                fault();
+            }
+            let path =
+                crate::oqto_log::paths::existing_user_home_workspace_db_path(&self.home, workspace);
+            if let Err(error) = probe(&path).await {
+                self.poisoned = true;
+                return Err(AuthorityUnavailable(error).into());
+            }
+        }
+        result.map_err(|error| {
+            if self.poisoned {
+                AuthorityUnavailable(error).into()
+            } else {
+                error
+            }
+        })
     }
     pub async fn discover(
         &mut self,
@@ -116,31 +264,12 @@ impl DiscoveryBatch {
         external: &str,
         source: &str,
     ) -> Result<bool> {
-        let public = crate::oqto_log::store::platform_id_for_external_id(external);
-        let found = self.identities(&public, external).await?;
-        let changed =
-            discover_identity(&self.home, user, workspace, external, source, &found).await?;
-        if changed {
-            // New destinations join subsequent global conflict checks. An old
-            // destination upgraded by the writer needs fresh schema capability.
-            let db =
-                crate::oqto_log::paths::existing_user_home_workspace_db_path(&self.home, workspace);
-            match self.shards.iter().position(|shard| shard.path == db) {
-                Some(i) if self.shards[i].has_extensions && self.shards[i].has_bindings => {}
-                Some(i) => {
-                    self.shards.remove(i).pool.close().await;
-                    self.shards.push(IdentityShard::open(db).await?);
-                }
-                None => self.shards.push(IdentityShard::open(db).await?),
-            }
-        }
-        Ok(changed)
+        let prepared = self.prepare(external).await?;
+        self.commit(user, workspace, source, prepared).await
     }
 }
 
-/// Only the existing serialized writer calls this. Existing identities/owners,
-/// turns, branches and Fork provenance are never replaced or rebound.
-/// Returns true when a new binding was committed (catalog invalidation needed).
+/// Existing serialized writer only; never invoked by list/attach.
 pub async fn discover(
     home: &Path,
     user: &str,
@@ -230,33 +359,30 @@ async fn discover_identity(
 }
 
 pub async fn is_bound(home: &Path, external: &str) -> Result<bool> {
-    // This guard also runs before the retained legacy writer's migrations.
-    // An old store without extensions cannot contain a new source pin; do not
-    // let an unrelated pre-binding schema suppress default-source ingestion.
-    for db in list_db_paths(home) {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                SqliteConnectOptions::new()
-                    .filename(db)
-                    .read_only(true)
-                    .create_if_missing(false),
-            )
-            .await?;
-        let has_extensions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('oqto_log_sessions') WHERE name='extensions_json'")
-            .fetch_one(&pool).await?;
-        let bound = if has_extensions == 0 {
-            false
-        } else {
-            sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM oqto_log_sessions WHERE (external_id=? OR platform_id=?) AND json_type(extensions_json,'$.personal_native_source')='text')")
-                .bind(external).bind(crate::oqto_log::store::platform_id_for_external_id(external)).fetch_one(&pool).await?
-        };
-        pool.close().await;
-        if bound {
-            return Ok(true);
+    let operation = async {
+        for path in identity_paths(home).await? {
+            let mut shard = reader::ReadShard::open(&path).await?;
+            let connection = shard.connection();
+            let has_extensions: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pragma_table_info('oqto_log_sessions') WHERE name='extensions_json')")
+                .fetch_one(&mut *connection).await?;
+            let bound = if has_extensions {
+                sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM oqto_log_sessions WHERE (external_id=? OR platform_id=?) AND json_type(extensions_json,'$.personal_native_source')='text')")
+                    .bind(external).bind(crate::oqto_log::store::platform_id_for_external_id(external))
+                    .fetch_one(&mut *connection).await?
+            } else {
+                false
+            };
+            shard.finish().await?;
+            if bound {
+                return Ok::<_, anyhow::Error>(true);
+            }
         }
-    }
-    Ok(false)
+        Ok(false)
+    };
+    tokio::time::timeout(SCAN_DEADLINE, operation)
+        .await
+        .map_err(|error| AuthorityUnavailable(error.into()))?
+        .map_err(|error| AuthorityUnavailable(error).into())
 }
 
 pub async fn validate(
@@ -266,10 +392,7 @@ pub async fn validate(
     workspace: &str,
     source: &str,
 ) -> Result<()> {
-    let found = DiscoveryBatch::open(home)
-        .await?
-        .identities(public, external)
-        .await?;
+    let found = identities(home, public, external).await?;
     ensure!(
         found.len() == 1,
         "Native canonical identity unavailable or ambiguous"

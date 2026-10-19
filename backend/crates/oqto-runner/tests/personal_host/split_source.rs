@@ -39,9 +39,14 @@ struct Fixture {
     transport_bytes: [Vec<u8>; 2],
     native_bytes: Vec<u8>,
     retained_shards: Vec<(PathBuf, Vec<u8>)>,
+    broken_shard: Option<PathBuf>,
+    inventory_fixture: bool,
 }
 impl Fixture {
     async fn start() -> Result<Self> {
+        Self::start_with_inventory(0, false).await
+    }
+    async fn start_with_inventory(shards: usize, broken: bool) -> Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix("oqsplit-")
             .tempdir_in("/tmp")?;
@@ -157,6 +162,37 @@ impl Fixture {
         for (path, bytes) in &retained_shards {
             assert_eq!(&std::fs::read(path)?, bytes);
         }
+        // Many canonical shards outside the approved source roots still belong
+        // to GLOBAL identity authority. No source/profile is read to build them.
+        let mut broken_shard = None;
+        for n in 0..shards {
+            let workspace = root.join("outside-inventory").join(format!("shard-{n}"));
+            let db = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+                &home,
+                workspace.to_str().context("inventory Workspace")?,
+            )?;
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true),
+                )
+                .await?;
+            let mut migrator = sqlx::migrate!("../oqto-history/migrations_oqto_log");
+            migrator.migrations =
+                std::borrow::Cow::Owned(migrator.iter().take(1).cloned().collect());
+            migrator.run(&pool).await?;
+            sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id) VALUES(?,?,?,'inventory-owner',?)")
+                .bind(format!("retained-inventory-{n}")).bind(format!("oqto-retained-inventory-{n}"))
+                .bind(format!("outside-native-{n}")).bind(workspace.to_str()).execute(&pool).await?;
+            pool.close().await;
+            retained_shards.push((db.clone(), std::fs::read(&db)?));
+            if broken && n == shards / 2 {
+                std::fs::write(&db, b"injected unreadable SQLite authority")?;
+                broken_shard = Some(db);
+            }
+        }
         let sentinel = home.join("pi-sentinel");
         std::fs::write(
             &sentinel,
@@ -203,7 +239,11 @@ impl Fixture {
             "--personal-native-socket-root".into(),
             sockets.to_string_lossy().into(),
         ];
-        let mut child = command(&home)
+        let mut process = command(&home);
+        if shards > 0 {
+            process.env("TOKIO_WORKER_THREADS", "2");
+        }
+        let mut child = process
             .args(&args)
             .args(["--sessions", "control", "--pair-output", "json"])
             .stdout(Stdio::piped())
@@ -238,6 +278,8 @@ impl Fixture {
             transport_bytes,
             native_bytes,
             retained_shards,
+            broken_shard,
+            inventory_fixture: shards > 0,
         })
     }
     async fn primary(&self) -> Result<()> {
@@ -293,7 +335,11 @@ impl Fixture {
                 .await??
                 .success()
         );
-        self.host.child = command(&self.host.home)
+        let mut process = command(&self.host.home);
+        if self.inventory_fixture {
+            process.env("TOKIO_WORKER_THREADS", "2");
+        }
+        self.host.child = process
             .args(&self.args)
             .arg("--personal-no-pair")
             .stdout(Stdio::null())
@@ -497,6 +543,267 @@ async fn page(host: &Host, device: &str, public: &str, head: &str) -> Result<Val
     })
     .await?
 }
+// Inspect only the exact disposable child created by this fixture, never the
+// deployed Runner or another process. No OS limits are raised.
+fn synthetic_child_resources(pid: u32) -> Result<(usize, usize)> {
+    #[cfg(target_os = "macos")]
+    {
+        let threads = std::process::Command::new("ps")
+            .args(["-M", "-p", &pid.to_string(), "-o", "pid="])
+            .output()?;
+        ensure!(
+            threads.status.success(),
+            "synthetic child thread inspection failed"
+        );
+        let thread_sample = String::from_utf8(threads.stdout)?;
+        let threads = thread_sample
+            .lines()
+            .filter(|line| {
+                line.split_whitespace()
+                    .last()
+                    .is_some_and(|field| field.parse::<u32>() == Ok(pid))
+            })
+            .count();
+        let fds = std::process::Command::new("/usr/sbin/lsof")
+            .args(["-n", "-P", "-p", &pid.to_string(), "-Ff"])
+            .output()?;
+        ensure!(fds.status.success(), "synthetic child fd inspection failed");
+        let fds = String::from_utf8(fds.stdout)?
+            .lines()
+            .filter(|line| {
+                line.strip_prefix('f')
+                    .is_some_and(|fd| !fd.is_empty() && fd.bytes().all(|b| b.is_ascii_digit()))
+            })
+            .count();
+        ensure!(
+            threads >= 3 && fds >= 3,
+            "resource sample must include real threads/descriptors: threads={threads}, fds={fds}, ps={thread_sample:?}"
+        );
+        Ok((threads, fds))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let base = PathBuf::from(format!("/proc/{pid}"));
+        Ok((
+            std::fs::read_dir(base.join("task"))?.count(),
+            std::fs::read_dir(base.join("fd"))?.count(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn many_shard_failure_refuses_sessions_recovers_and_bounds_process_resources() -> Result<()> {
+    const SHARDS: usize = 192;
+    let fixture = Fixture::start_with_inventory(SHARDS, true).await?;
+    let peer = Peer::start(&fixture)?;
+    let device = fixture.host.enroll(&fixture.host.qr, 101).await?;
+    let sampling = Arc::new(AtomicBool::new(true));
+    let active = sampling.clone();
+    let pid = fixture.host.child.id().context("synthetic child pid")?;
+    let sampler = tokio::spawn(async move {
+        let mut peak = (0, 0);
+        while active.load(Ordering::SeqCst) {
+            let (threads, fds) =
+                tokio::task::spawn_blocking(move || synthetic_child_resources(pid)).await??;
+            peak.0 = peak.0.max(threads);
+            peak.1 = peak.1.max(fds);
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+        Ok::<_, anyhow::Error>(peak)
+    });
+    let (_, caps) = fixture
+        .host
+        .action(&device, 101, HostAction::Capabilities)
+        .await?;
+    // The installed strict shared decoder accepts this exact existing shape in
+    // both failed and recovered states; readiness adds NO capability fields.
+    serde_json::from_value::<oqto_personal_wire::actions::HostCapabilities>(caps.clone())?;
+    let (status, failure) = fixture
+        .host
+        .action(&device, 101, HostAction::SessionsList)
+        .await?;
+    assert_eq!(
+        status, 503,
+        "an incomplete authority must not serve an old/partial successful catalog: {failure}"
+    );
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(NATIVE);
+    assert_eq!(
+        fixture
+            .host
+            .action(
+                &device,
+                101,
+                HostAction::SessionAttach {
+                    session_id: public.clone()
+                }
+            )
+            .await?
+            .0,
+        503
+    );
+    let destination = oqto_history::oqto_log::paths::existing_user_home_workspace_db_path(
+        &fixture.host.home,
+        fixture.host.work.to_str().context("Workspace")?,
+    );
+    assert!(
+        !destination.exists(),
+        "initial inventory failure must precede any fresh adoption"
+    );
+    let bad = fixture.broken_shard.as_ref().context("injected shard")?;
+    let bytes = &fixture
+        .retained_shards
+        .iter()
+        .find(|(path, _)| path == bad)
+        .context("retained bytes")?
+        .1;
+    std::fs::write(bad, bytes)?;
+    tokio::time::timeout(Duration::from_secs(25), async {
+        loop {
+            let (status, list) = fixture
+                .host
+                .action(&device, 101, HostAction::SessionsList)
+                .await?;
+            if status == 200
+                && list["sessions"]
+                    .as_array()
+                    .is_some_and(|rows| rows.len() == 22)
+            {
+                break Ok::<_, anyhow::Error>(());
+            }
+            if status != 200 {
+                assert_eq!(status, 503);
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await??;
+    let (_, recovered_caps) = fixture
+        .host
+        .action(&device, 101, HostAction::Capabilities)
+        .await?;
+    serde_json::from_value::<oqto_personal_wire::actions::HostCapabilities>(
+        recovered_caps.clone(),
+    )?;
+    assert_eq!(
+        caps, recovered_caps,
+        "readiness is not a wire/capability schema change"
+    );
+    peer.head.store(true, Ordering::SeqCst);
+    let queued = std::time::Instant::now();
+    let host = &fixture.host;
+    let (a, b, c, d, e, f, g, h) = tokio::join!(
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+        attach(host, &device, 101, &public),
+    );
+    let handles = [a?, b?, c?, d?, e?, f?, g?, h?];
+    let converged = page(host, &device, &public, "b").await?;
+    assert_eq!(
+        converged["messages"]
+            .as_array()
+            .context("native messages")?
+            .len(),
+        1,
+        "overlapping observations must share one idempotent writer projection"
+    );
+    let convergence = queued.elapsed();
+    assert!(
+        convergence < Duration::from_secs(5),
+        "many-shard overlapping attach/head: {convergence:?}"
+    );
+    // Detect a new fault after Ready through an overlapping validator. The
+    // shared fault generation must revoke cached-catalog readiness immediately,
+    // not wait for the next five-minute sweep; cleanup remains available.
+    host.action(
+        &device,
+        101,
+        HostAction::SessionDetach {
+            attachment_id: handles[0].clone(),
+        },
+    )
+    .await?;
+    std::fs::write(bad, b"injected late authority failure")?;
+    assert_eq!(
+        host.action(
+            &device,
+            101,
+            HostAction::SessionAttach {
+                session_id: public.clone()
+            }
+        )
+        .await?
+        .0,
+        503
+    );
+    assert_eq!(
+        host.action(&device, 101, HostAction::SessionsList).await?.0,
+        503
+    );
+    assert_eq!(
+        host.action(
+            &device,
+            101,
+            HostAction::SessionRead {
+                attachment_id: handles[1].clone()
+            }
+        )
+        .await?
+        .0,
+        503
+    );
+    for id in handles.into_iter().skip(1) {
+        assert_eq!(
+            host.action(
+                &device,
+                101,
+                HostAction::SessionDetach { attachment_id: id }
+            )
+            .await?
+            .0,
+            200
+        );
+    }
+    std::fs::write(bad, bytes)?;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let (status, list) = host.action(&device, 101, HostAction::SessionsList).await?;
+            if status == 200
+                && list["sessions"]
+                    .as_array()
+                    .is_some_and(|rows| rows.len() == 22)
+            {
+                break Ok::<_, anyhow::Error>(());
+            }
+            assert_eq!(status, 503);
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await??;
+    sampling.store(false, Ordering::SeqCst);
+    let (threads, fds) = sampler.await??;
+    // Includes Tokio, TLS, sockets, catalog and the existing single writer, not
+    // only reader slots. This low-thread fixture does not change real settings.
+    assert!(threads <= 24, "process thread peak {threads}");
+    assert!(fds <= 64, "process numeric fd peak {fds}");
+    for (path, bytes) in &fixture.retained_shards {
+        assert_eq!(&std::fs::read(path)?, bytes);
+    }
+    assert_eq!(std::fs::read(&fixture.source)?, fixture.native_bytes);
+    assert!(!fixture.user.join(".local").exists());
+    assert_eq!(peer.leases.load(Ordering::SeqCst), 0);
+    assert_eq!(peer.writes.load(Ordering::SeqCst), 0);
+    eprintln!(
+        "synthetic resource/recovery: {SHARDS} extra global shards, 8 overlapping validators, threads_peak={threads}, numeric_fds_peak={fds}, attach/head={convergence:?}"
+    );
+    fixture.host.stop().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn synthetic_3821_header_discovery_yields_to_queued_native_head() -> Result<()> {
     const SOURCES: usize = 3821;
