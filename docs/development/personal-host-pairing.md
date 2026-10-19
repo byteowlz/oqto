@@ -89,12 +89,18 @@ an in-flight commit must finish. Legacy work remains serialized behind discovery
 and is retained while authority is unavailable. Native-only nudges do not request
 another discovery pass.
 
-Native identity reads and canonical catalogs share one process-wide pool of at
-most two SQLite connections/workers, regardless of shard count, HOME or overlapping
-validators. Each connection attaches at most one exact `mode=ro` shard to an empty
-in-memory main database, then detaches it; cancellation cleanup must succeed
-before another shard is used. Statement caching and lifetime/idle recycling are
-disabled. Canonical metadata enumeration has one process-wide blocking-scan
+Native identity reads and canonical catalogs share two process-lifetime SQLite
+reader connections/workers, regardless of shard count, HOME or overlapping
+validators. Each is established exactly once on a caller-independent initializer
+thread/runtime, without an establishment timeout that could discard a live worker.
+The two initializer threads exit after handoff. Caller cancellation/runtime shutdown
+returns the same connection synchronously; it never releases capacity for a new
+worker. No pool/recycling/replacement path exists. Initialization or irrecoverable
+worker failure fails closed for that slot until process restart (not an automatic
+restart request); shard/attachment errors can recover on the same readers. Each
+connection attaches at most one exact `mode=ro` shard to an empty in-memory main
+database, then detaches it; queued SQL and cancelled attachments must be cleaned
+successfully before another shard is used. Statement caching is disabled. Canonical metadata enumeration has one process-wide blocking-scan
 permit; header/default-filename snapshots have a separate single-scanner permit
 and five-second caller deadline. Permits remain inside blocking jobs across
 cancellation, so retries cannot fan out scanner threads. Filename filtering is
@@ -110,8 +116,9 @@ cached: preflight requests retain no identity facts, and commit re-enumerates an
 reads current global facts again. Newly added/upgraded shards participate without
 a remove-before-reopen window. Initial/read/verification failure aborts and
 poisons the whole batch; it cannot resume after silently losing a shard. Complete
-identity scans have a five-second caller deadline, pool acquisition two seconds
-and SQLite busy waits100ms. These are refusal bounds, not a disk/host latency SLA.
+identity scans have a five-second caller deadline, reader availability waits two
+seconds and SQLite busy waits100ms. A blocked establishment keeps its fixed slot;
+caller timeout cannot create a replacement. These are refusal bounds, not a disk/host latency SLA.
 
 Header-only sessions get distinct deterministic public IDs through oqto-log's
 strict identity/binding API, even when fresh and empty. Existing public IDs,
@@ -163,4 +170,4 @@ real phone/native-session acceptance.
 
 ## Gates
 
-`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not camera-scanner or phone acceptance. `just test-personal-host` runs formatting and strict all-target Clippy **before** history/library/process tests; new fixtures cannot bypass lint. It qualifies the deployed/default Runner features, not optional Iroh. `cargo test -p oqto-runner --test personal_host` uses actual disposable Runner processes, private HOME/TMPDIR, pinned HTTPS and CLI enrollment to prove independent Files/PTTY grants and Unix+HTTPS cohosted existing-session history/control/revocation. Its native peer is synthetic; real terminal, frozen Linux/macOS and mobile acceptance remain separately required. The split-source process fixture retains actual April/July migration prefixes without matching default JSONL, verifies cold catalog/discovery and unchanged complete shard bytes across list/attach/restart, and retains old owner/history/Fork/source provenance. A second process fixture adds3821 synthetic header-only sources across eight workspaces and asserts queued native head convergence before discovery completes; it uses no private sources and is not a real-host timing guarantee. A resource/recovery process fixture adds192 distinct retained shards outside the approved roots, injects initial and later SQLite failures, overlaps eight validators, asserts503 refusal/recovery and unchanged strict capabilities, and samples only its disposable child's threads/FDs. It uses two Tokio test workers without changing OS limits or real runtime settings. History tests cover12 overlapping validators, initial/post-upgrade reopen failure, poisoned-batch refusal, fresh commits after preflight, WAL visibility and cancelled read cleanup. The native session library fixture repeats all original assertions with the initial inventory held pending and requires both heads to converge before releasing it. The library fixtures also cover bootstrap process deaths, identity persistence and canonical equal-count head switching without rewriting native files.
+`just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not camera-scanner or phone acceptance. `just test-personal-host` runs formatting and strict all-target Clippy **before** history/library/process tests; new fixtures cannot bypass lint. It qualifies the deployed/default Runner features, not optional Iroh. `cargo test -p oqto-runner --test personal_host` uses actual disposable Runner processes, private HOME/TMPDIR, pinned HTTPS and CLI enrollment to prove independent Files/PTTY grants and Unix+HTTPS cohosted existing-session history/control/revocation. Its native peer is synthetic; real terminal, frozen Linux/macOS and mobile acceptance remain separately required. The split-source process fixture retains actual April/July migration prefixes without matching default JSONL, verifies cold catalog/discovery and unchanged complete shard bytes across list/attach/restart, and retains old owner/history/Fork/source provenance. A second process fixture adds3821 synthetic header-only sources across eight workspaces and asserts queued native head convergence before discovery completes; it uses no private sources and is not a real-host timing guarantee. A resource/recovery process fixture adds192 distinct retained shards outside the approved roots, injects initial and later SQLite failures, overlaps eight validators, asserts503 refusal/recovery and unchanged strict capabilities, and samples only its disposable child's threads/FDs. It uses two Tokio test workers without changing OS limits or real runtime settings. History tests cover12 overlapping validators, initial/post-upgrade reopen failure, poisoned-batch refusal, fresh commits after preflight, WAL visibility and cancelled read cleanup. A fresh-process cancellation regression stalls actual SQLite progress callbacks during establishment and idle acquisition, overlaps validators/catalogs across four synthetic homes, aborts fourteen callers and shuts down their runtime while workers remain blocked, then requires sixteen successful reads on the same two physical worker threads. ConnectionState-owned captures measure physical-owner overlap, not pool size; test-only hooks add stalls, not production lifetime enforcement. The native session library fixture repeats all original assertions with the initial inventory held pending and requires both heads to converge before releasing it. The library fixtures also cover bootstrap process deaths, identity persistence and canonical equal-count head switching without rewriting native files.

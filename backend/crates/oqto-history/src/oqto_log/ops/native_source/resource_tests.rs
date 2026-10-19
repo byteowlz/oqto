@@ -1,6 +1,6 @@
 use super::*;
 
-async fn prefix_shard(home: &Path, workspace: &str, prefix: usize) -> Result<PathBuf> {
+pub(super) async fn prefix_shard(home: &Path, workspace: &str, prefix: usize) -> Result<PathBuf> {
     let db = crate::oqto_log::paths::resolve_user_home_workspace_db_path(home, workspace)?;
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
