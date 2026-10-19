@@ -75,8 +75,9 @@ pub(in crate::oqto_log::ops) struct ReadShard {
 }
 impl ReadShard {
     pub(in crate::oqto_log::ops) async fn open(path: &Path) -> Result<Self> {
+        let acquire_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         let slot = ReturnSlot(
-            tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::time::timeout_at(acquire_deadline, async {
                 READERS.receiver.lock().await.recv().await
             })
             .await?
@@ -91,9 +92,14 @@ impl ReadShard {
             connection,
             _slot: slot,
         };
-        #[cfg(test)]
-        lifecycle_tests::idle_acquire(shard.connection()).await?;
-        shard.connection.ping().await?;
+        // Preserve the old acquire deadline across availability AND idle ping.
+        // Timing out here returns the same fixed reader, never a replacement.
+        tokio::time::timeout_at(acquire_deadline, async {
+            #[cfg(test)]
+            lifecycle_tests::idle_acquire(shard.connection()).await?;
+            shard.connection.ping().await
+        })
+        .await??;
         // Cancelled operations may leave queued SQL/attachments. SQLx serializes
         // commands on this SAME worker; cleanup must complete before new ATTACH.
         let attached: bool = sqlx::query_scalar(

@@ -116,8 +116,8 @@ cached: preflight requests retain no identity facts, and commit re-enumerates an
 reads current global facts again. Newly added/upgraded shards participate without
 a remove-before-reopen window. Initial/read/verification failure aborts and
 poisons the whole batch; it cannot resume after silently losing a shard. Complete
-identity scans have a five-second caller deadline, reader availability waits two
-seconds and SQLite busy waits100ms. A blocked establishment keeps its fixed slot;
+identity scans have a five-second caller deadline, reader acquisition (availability
+plus idle ping) two seconds and SQLite busy waits100ms. A blocked establishment keeps its fixed slot;
 caller timeout cannot create a replacement. These are refusal bounds, not a disk/host latency SLA.
 
 Header-only sessions get distinct deterministic public IDs through oqto-log's

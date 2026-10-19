@@ -192,6 +192,18 @@ async fn cancel_callers(initial: bool) -> Result<Recovery> {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     }
+    let deadline_calls = [
+        operation(homes[2].path().to_owned(), false),
+        operation(homes[3].path().to_owned(), true),
+    ];
+    for task in deadline_calls {
+        let result = tokio::time::timeout(Duration::from_secs(3), task).await??;
+        assert!(
+            result.is_err(),
+            "blocked acquisition must refuse on its own deadline"
+        );
+    }
+    eprintln!("R4a acquisition_deadline_refusals=2 while_workers_still_blocked=true");
     let (peak, created, live) = {
         let counts = probe.counts.lock().unwrap();
         (counts.peak, counts.created, counts.live)
