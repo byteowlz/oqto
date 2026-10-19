@@ -424,7 +424,10 @@ async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()
         .0,
         403
     );
-    let input = "stty size; printf 'oqto-pty-fixture\\n'; printf '%s' \"$$\" > shell.pid\n";
+    // Publish the fixture-owned PID atomically. Existence of a redirection
+    // target alone is not readiness: it can still be empty before printf runs.
+    // Delaying the temporary write exercises polling before publication.
+    let input = "stty size; printf 'oqto-pty-fixture\\n'; : > shell.pid.tmp; sleep 0.05; printf '%s' \"$$\" > shell.pid.tmp; mv shell.pid.tmp shell.pid\n";
     assert_eq!(
         host.action(
             &device,
@@ -462,7 +465,9 @@ async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(String::from_utf8_lossy(&output).contains("31 91"));
-    let pid: i32 = std::fs::read_to_string(host.work.join("shell.pid"))?.parse()?;
+    let pid: i32 = std::fs::read_to_string(host.work.join("shell.pid"))?
+        .parse()
+        .context("atomically published fixture shell PID")?;
     let pid = rustix::process::Pid::from_raw(pid).context("owned shell PID")?;
     assert_eq!(host.owner(&["revoke", &device]).await?["revoked"], true);
     assert_eq!(
