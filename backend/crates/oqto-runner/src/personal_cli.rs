@@ -78,6 +78,12 @@ pub struct ServerOptions {
     /// Explicit canonical Workspace roots for stored/live Session admission.
     #[arg(long = "personal-workspace-root", requires = "personal_listen")]
     pub workspace_roots: Vec<PathBuf>,
+    /// Additional native JSONL source; canonical history remains in service HOME.
+    #[arg(long, requires = "personal_listen")]
+    pub personal_native_session_root: Option<PathBuf>,
+    /// Trusted terminal Pi socket directory, independent of service TMPDIR.
+    #[arg(long, requires = "personal_native_session_root")]
+    pub personal_native_socket_root: Option<PathBuf>,
     /// Start without issuing a ticket; use `personal pair` later.
     #[arg(long, requires = "personal_listen")]
     pub personal_no_pair: bool,

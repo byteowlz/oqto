@@ -170,7 +170,21 @@ impl super::Runner {
             options.workspace_roots.len() <= 32,
             "too many personal Workspace roots"
         );
-        let home = dirs::home_dir().context("personal history home unavailable")?;
+        let home = if let Some(source) = &self.user_config.personal_source {
+            source.validate()?;
+            ensure!(
+                source.workspace_roots() == options.workspace_roots,
+                "Personal Workspace source mismatch"
+            );
+            source.home.clone()
+        } else {
+            ensure!(
+                options.personal_native_session_root.is_none()
+                    && options.personal_native_socket_root.is_none(),
+                "Native source must be resolved before starting Runner workers"
+            );
+            dirs::home_dir().context("personal history home unavailable")?
+        };
         crate::runtime_guard::ensure_history_state_owner(&home)?;
         let authority = Arc::new(
             PairingAuthority::open_private(&crate::personal_cli::state_path(

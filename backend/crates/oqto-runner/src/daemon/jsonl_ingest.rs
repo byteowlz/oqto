@@ -34,6 +34,7 @@ const NUDGE_DEDUPE_WINDOW: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 pub struct IngestHandle {
     tx: mpsc::Sender<Nudge>,
+    pub(crate) source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
 }
 #[derive(Clone)]
 pub(crate) struct NativeObservation {
@@ -91,29 +92,43 @@ impl IngestHandle {
 /// constructing a `Runner` directly) the task is not spawned and nudges are
 /// no-ops.
 pub fn spawn() -> IngestHandle {
+    spawn_with_source(None)
+}
+
+pub(crate) fn spawn_with_source(
+    source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
+) -> IngestHandle {
     let (tx, rx) = mpsc::channel(128);
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(run(rx));
+        handle.spawn(run(rx, source.clone()));
     }
-    IngestHandle { tx }
+    IngestHandle { tx, source }
 }
 
 #[cfg(test)]
 pub(crate) fn spawn_for_test(home: PathBuf, user_id: String) -> IngestHandle {
     let (tx, rx) = mpsc::channel(128);
-    tokio::spawn(run_at(rx, home, user_id));
-    IngestHandle { tx }
+    tokio::spawn(run_at(rx, home, user_id, None));
+    IngestHandle { tx, source: None }
 }
-async fn run(rx: mpsc::Receiver<Nudge>) {
+async fn run(
+    rx: mpsc::Receiver<Nudge>,
+    source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
+) {
     let Ok(home) = std::env::var("HOME") else {
         return;
     };
     let home = PathBuf::from(home);
     let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
-    run_at(rx, home, user_id).await;
+    run_at(rx, home, user_id, source).await;
 }
-async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
+async fn run_at(
+    mut rx: mpsc::Receiver<Nudge>,
+    home: PathBuf,
+    user_id: String,
+    source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
+) {
     let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut recent: HashMap<String, Instant> = HashMap::new();
@@ -121,6 +136,8 @@ async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                if let Some(source) = &source
+                    && let Err(error) = discover(source, &user_id).await { debug!("Native catalog discovery deferred: {error:#}"); }
                 sweep(&home, &user_id).await;
             }
             nudged = rx.recv() => {
@@ -137,8 +154,8 @@ async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
                         Nudge::Native(source) => { native.insert(source.binding.public_session_id.clone(), source); }
                     }
                 }
-                for source in native.into_values() {
-                    if let Err(error) = ingest_native(&home, *source).await { debug!("Native graph convergence deferred: {error:#}"); }
+                for observation in native.into_values() {
+                    if let Err(error) = ingest_native(&home, source.as_deref(), *observation).await { debug!("Native graph convergence deferred: {error:#}"); }
                 }
                 ids.sort();
                 ids.dedup();
@@ -149,6 +166,8 @@ async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
                         continue;
                     }
                     recent.insert(id.clone(), now);
+                    if let Some(source) = &source
+                        && let Err(error) = discover(source, &user_id).await { debug!("Native catalog nudge deferred: {error:#}"); }
                     handle_nudge(&home, &user_id, &id).await;
                 }
             }
@@ -156,14 +175,72 @@ async fn run_at(mut rx: mpsc::Receiver<Nudge>, home: PathBuf, user_id: String) {
     }
 }
 
-async fn ingest_native(home: &Path, source: NativeObservation) -> anyhow::Result<()> {
+/// Additional native discovery never reads message bodies or sets a stat cursor.
+/// Only a fresh admitted socket observation can cause graph ingestion.
+async fn discover(
+    source: &crate::personal_source::PersonalSource,
+    user: &str,
+) -> anyhow::Result<()> {
+    let owned = source.clone();
+    let headers = tokio::task::spawn_blocking(move || owned.headers()).await??;
+    let mut counts = HashMap::new();
+    for header in &headers {
+        *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
+    }
+    for header in headers {
+        if counts[&header.external_id] != 1 {
+            continue;
+        }
+        // A native id already present in the retained default source is not
+        // authority to silently switch that Session to another file/root.
+        let suffix = format!("_{}.jsonl", header.external_id);
+        if list_session_files(&source.home).iter().any(|path| {
+            path != &header.path
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
+        }) {
+            continue;
+        }
+        let Some(workspace) = header.workspace.to_str() else {
+            continue;
+        };
+        match ops::native_source::discover(
+            &source.home,
+            user,
+            workspace,
+            &header.external_id,
+            &header.identity,
+        )
+        .await
+        {
+            Ok(true) => crate::history_read::invalidate_catalog(&source.home).await,
+            Ok(false) => {}
+            Err(error) => debug!("Native identity discovery denied: {error:#}"),
+        }
+    }
+    Ok(())
+}
+
+async fn ingest_native(
+    home: &Path,
+    configured: Option<&crate::personal_source::PersonalSource>,
+    source: NativeObservation,
+) -> anyhow::Result<()> {
     use anyhow::ensure;
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    ensure!(
-        source.fence.is_current() && source.binding.session_root == home.join(".pi/agent/sessions"),
-        "Native source authority ended"
-    );
+    ensure!(source.fence.is_current(), "Native source authority ended");
+    let expected_file = if let Some(configured) = configured {
+        ensure!(home == configured.home, "Native canonical HOME mismatch");
+        Some(configured.validate_binding(&source.binding).await?)
+    } else {
+        ensure!(
+            source.binding.session_root == home.join(".pi/agent/sessions"),
+            "Native source root denied"
+        );
+        None
+    };
     // Read the native head HERE, on the serialized writer, rather than trusting
     // arrival order of observations from independent Device connections.
     let current = crate::tui_rpc::TuiObserver::attach_snapshots(
@@ -194,6 +271,14 @@ async fn ingest_native(home: &Path, source: NativeObservation) -> anyhow::Result
                 && before.len() <= 64 * 1024 * 1024,
             "Unsafe or oversized native source"
         );
+        // Check the opened descriptor against the durable pin BEFORE reading
+        // any body, not just the path after parsing (ancestor replacement race).
+        if let Some(expected) = expected_file {
+            ensure!(
+                (before.dev(), before.ino()) == (expected.dev, expected.ino),
+                "Native opened source identity changed"
+            );
+        }
         let mut bytes = Vec::new();
         (&file).take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
         let after = file.metadata()?;
@@ -218,6 +303,9 @@ async fn ingest_native(home: &Path, source: NativeObservation) -> anyhow::Result
     })
     .await??;
     ensure!(source.fence.is_current(), "Native source authority ended");
+    if let Some(configured) = configured {
+        configured.validate_binding(&source.binding).await?;
+    }
     store::native_graph::merge(
         home,
         &source.user_id,
@@ -237,11 +325,19 @@ async fn handle_nudge(home: &Path, user_id: &str, id: &str) {
         id.to_string()
     };
 
-    let Some(path) =
-        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await
-    else {
+    // Resolve strictly under this writer's canonical default source, never
+    // through the process-global Pi lookup or a first-of-many fallback.
+    let suffix = format!("_{external_id}.jsonl");
+    let mut matches = list_session_files(home).into_iter().filter(|path| {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
+    });
+    let Some(path) = matches.next() else {
         return;
     };
+    if matches.next().is_some() {
+        return;
+    }
     maybe_ingest(home, user_id, &external_id, &path).await;
 }
 
@@ -318,6 +414,14 @@ fn list_session_files(home: &Path) -> Vec<PathBuf> {
 }
 
 async fn maybe_ingest(home: &Path, user_id: &str, external_id: &str, path: &Path) {
+    // Source-bound native Sessions never enter the legacy count/cursor path.
+    // Identity errors are fail-closed, not permission to repair another source.
+    if ops::native_source::is_bound(home, external_id)
+        .await
+        .unwrap_or(true)
+    {
+        return;
+    }
     let Ok(meta) = std::fs::metadata(path) else {
         return;
     };
@@ -407,6 +511,7 @@ async fn ingest_file(
             );
             return;
         }
+        crate::history_read::invalidate_catalog(home).await;
         debug!(
             "jsonl ingest: replaced session={session_id} external_id={external_id} with {} messages (was {oqto_log_count})",
             records.len()
@@ -445,6 +550,67 @@ mod tests {
             .expect("touch");
         assert!(status.success());
         path
+    }
+
+    #[tokio::test]
+    async fn split_source_discovery_ignores_legacy_cursors_and_nudges_never_use_ambient_home()
+    -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        let (home, native, work, sockets) = (
+            root.join("service"),
+            root.join("native/.pi/agent/sessions"),
+            root.join("work"),
+            root.join("sockets"),
+        );
+        for path in [&home, &native, &work, &sockets] {
+            std::fs::create_dir_all(path)?;
+        }
+        let source = crate::personal_source::PersonalSource::new(
+            home.clone(),
+            native.clone(),
+            sockets,
+            vec![work.clone()],
+        )?;
+        let directory = native.join(oqto_pi::session_files::cwd_to_safe_dirname(&work));
+        std::fs::create_dir(&directory)?;
+        let id = "fresh-external-source";
+        let path = directory.join(format!("2026-10-19_{id}.jsonl"));
+        let bytes = format!(
+            "{}\nNOT JSON BODY: header discovery only\n",
+            serde_json::json!({"type":"session","id":id,"cwd":work})
+        );
+        std::fs::write(&path, &bytes)?;
+        let cursor = IngestCursor {
+            file_size: bytes.len() as i64,
+            file_mtime_ms: 42,
+        };
+        index::upsert_ingest_cursor(&home, id, cursor).await?;
+        // Cache an empty catalog before the serialized writer discovers IDs.
+        crate::history_read::read_authorized_source(
+            &home,
+            source.workspace_roots(),
+            crate::history_read::HistoryReadOperation::List {},
+        )
+        .await?;
+        discover(&source, "native-owner").await?;
+        handle_nudge(&home, "native-owner", id).await;
+        assert_eq!(index::get_ingest_cursor(&home, id).await, Some(cursor));
+        let catalog = crate::history_read::read_authorized_source(
+            &home,
+            source.workspace_roots(),
+            crate::history_read::HistoryReadOperation::List {},
+        )
+        .await?;
+        assert_eq!(catalog.data["sessions"].as_array().map(Vec::len), Some(1));
+        let legacy = "11111111-2222-3333-4444-555555555555";
+        write_session_file(&home, legacy, &["retained default source"]);
+        handle_nudge(&home, "service-owner", legacy).await;
+        assert!(ops::find_session_by_external(&home, legacy).await.is_some());
+        assert!(index::get_ingest_cursor(&home, legacy).await.is_some());
+        assert_eq!(std::fs::read_to_string(&path)?, bytes);
+        assert!(!root.join("native/.local").exists());
+        Ok(())
     }
 
     #[tokio::test]

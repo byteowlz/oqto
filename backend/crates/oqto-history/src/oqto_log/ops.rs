@@ -1,3 +1,5 @@
+pub mod native_source;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -633,7 +635,8 @@ async fn list_sessions_from(
 ) -> Result<Vec<OqtoLogSessionRow>> {
     let mut sessions = Vec::new();
     for db in dbs {
-        crate::oqto_log::store::migrate_db_path(&db).await?;
+        // Catalog reads never migrate or bootstrap a store. Writers own schema
+        // initialization, including explicit header-only native discovery.
         let options = SqliteConnectOptions::new().filename(&db).read_only(true);
         let pool = match SqlitePoolOptions::new()
             .max_connections(1)
@@ -670,6 +673,11 @@ async fn list_sessions_from(
             "NULL AS readable_id"
         };
 
+        let native_identity_expr = if has_extensions_json_column {
+            "json_type(s.extensions_json, '$.personal_native_source') = 'text'"
+        } else {
+            "0"
+        };
         let base_select = format!(
             "SELECT s.session_id, s.platform_id, s.external_id, s.user_id, s.workspace_id,\n                    COALESCE((SELECT NULLIF(p.platform_id, '') FROM oqto_log_sessions p WHERE p.session_id = s.parent_session_id), s.parent_session_id) AS parent_session_id, s.forked_from_entry_id, s.forked_at,\n                    s.created_at, s.updated_at, {},\n                    {},\n                    0 AS messages\n             FROM oqto_log_sessions s",
             title_expr, readable_id_expr
@@ -677,7 +685,7 @@ async fn list_sessions_from(
 
         let rows = if let Some(workspace) = workspace {
             let query = format!(
-                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       s.parent_session_id IS NOT NULL\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       s.parent_session_id IS NOT NULL\n                       OR {native_identity_expr}\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<
@@ -704,7 +712,7 @@ async fn list_sessions_from(
             .await?
         } else {
             let query = format!(
-                "{}\n                 WHERE s.parent_session_id IS NOT NULL\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE s.parent_session_id IS NOT NULL\n                    OR {native_identity_expr}\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
                 base_select
             );
             sqlx::query_as::<

@@ -12,6 +12,8 @@ pub struct RunnerUserConfig {
     pub credentials: crate::credentials::CredentialConfig,
     pub provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     pub history_read: Option<crate::history_read::HistoryReadConfig>,
+    /// Resolved once from explicit owner startup flags, never Account config.
+    pub personal_source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
     pub fileserver_binary: String,
     pub ttyd_binary: String,
     pub pi_binary: String,
@@ -130,9 +132,20 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
-        let (pi_binary, pi_version) =
-            resolve_pi_binary(&config_file.pi.executable, &home, &data_dir);
-        info!("Pi binary: {} (v{})", pi_binary, pi_version);
+        // Selection is metadata-only. Existing-session personal startup and
+        // owner administration must never execute a Pi candidate.
+        let candidates = pi_binary_candidates(&config_file.pi.executable, &home, &data_dir);
+        let pi_binary = if config_file.pi.executable.contains('/') {
+            config_file.pi.executable.clone()
+        } else {
+            candidates
+                .iter()
+                .find(|candidate| Path::new(candidate).is_file())
+                .or_else(|| candidates.first())
+                .cloned()
+                .unwrap_or_else(|| config_file.pi.executable.clone())
+        };
+        info!("Selected Pi binary (not executed): {}", pi_binary);
 
         let runner_id = config_file
             .runner
@@ -147,6 +160,7 @@ impl RunnerUserConfig {
             credentials: config_file.runner.credentials,
             provider_login: config_file.runner.provider_login,
             history_read: config_file.runner.history_read,
+            personal_source: None,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             terminal_enabled: config_file.local.terminal_enabled,
@@ -184,43 +198,15 @@ impl RunnerUserConfig {
     }
 }
 
-/// Resolve the Pi binary the runner should spawn.
-///
-/// If `configured` is an explicit path (contains `/`), it is honored first.
-/// Otherwise the runner prefers Oqto's checksummed, atomically promoted
-/// standalone runtime. Legacy system paths remain migration fallbacks; a
-/// user-global package-manager install is deliberately not a candidate because
-/// its independently resolved dependencies are not part of the deployed release.
-fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> (String, String) {
-    let candidates = pi_binary_candidates(configured, home, data_dir);
-    for candidate in &candidates {
-        let path = Path::new(candidate);
-        if !path.exists() && candidate.contains('/') {
-            warn!("Configured Pi binary does not exist: {candidate}");
-            continue;
-        }
-
-        let version = pi_binary_version(path).unwrap_or_else(|| "unknown".to_string());
-        if pi_rpc_smoke_test(path) {
-            return (candidate.clone(), version);
-        }
-
-        warn!(
-            "Pi binary failed RPC smoke test and will not be used: {} (v{})",
-            candidate, version
-        );
+/// Execution qualification belongs only to an explicit managed launch.
+/// A selected candidate fails closed; never probe/downgrade during config load.
+pub(crate) fn qualify_managed_pi(path: &Path) -> anyhow::Result<()> {
+    let version = pi_binary_version(path)
+        .ok_or_else(|| anyhow::anyhow!("Managed Pi version qualification failed"))?;
+    if !pi_rpc_smoke_test(path) {
+        anyhow::bail!("Managed Pi RPC qualification failed (v{version})");
     }
-
-    warn!(
-        "No Pi binary passed the RPC smoke test; falling back to configured value '{}'. Run setup.sh to repair Pi.",
-        configured
-    );
-    let fallback = candidates
-        .first()
-        .cloned()
-        .unwrap_or_else(|| configured.to_string());
-    let version = pi_binary_version(Path::new(&fallback)).unwrap_or_else(|| "unknown".to_string());
-    (fallback, version)
+    Ok(())
 }
 
 fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<String> {
@@ -266,16 +252,14 @@ fn resolve_configured_pi(configured: &str) -> Option<String> {
         return Some(configured.to_string());
     }
 
-    if let Ok(output) = Command::new("which").arg(configured).output()
-        && output.status.success()
-    {
-        let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !resolved.is_empty() {
-            return Some(resolved);
-        }
-    }
-
-    Some(configured.to_string())
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(configured))
+                .find(|path| path.is_file())
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .or_else(|| Some(configured.to_string()))
 }
 
 fn push_candidate(candidates: &mut Vec<String>, candidate: Option<String>) {
@@ -302,19 +286,16 @@ fn pi_rpc_smoke_test(path: &Path) -> bool {
 
     thread::sleep(Duration::from_millis(1500));
 
-    match child.try_wait() {
-        Ok(Some(_status)) => false,
-        Ok(None) => {
-            if let Err(err) = child.kill() {
-                debug!("Failed to stop Pi smoke-test process: {err}");
-            }
-            if let Err(err) = child.wait() {
-                debug!("Failed to reap Pi smoke-test process: {err}");
-            }
-            true
-        }
-        Err(_) => false,
+    let alive = matches!(child.try_wait(), Ok(None));
+    // Always reap the owned qualification child, including inspection errors.
+    if let Err(err) = child.kill() {
+        debug!("Pi qualification child already stopped or kill failed: {err}");
     }
+    if let Err(err) = child.wait() {
+        debug!("Failed to reap Pi qualification child: {err}");
+        return false;
+    }
+    alive
 }
 
 fn pi_binary_version(path: &Path) -> Option<String> {
@@ -337,6 +318,35 @@ fn pi_binary_version(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_is_nonexecuting_but_managed_launch_still_qualifies() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir()?;
+        let executable = temp.path().join("pi");
+        let calls = temp.path().join("invocations");
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = --version ]; then printf 'synthetic-version\\n'; exit 0; fi\nexec /bin/sleep 10\n",
+                calls.display()
+            ),
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        let config = temp.path().join("config.toml");
+        std::fs::write(
+            &config,
+            format!("[pi]\nexecutable={}\n", serde_json::to_string(&executable)?),
+        )?;
+        let loaded = RunnerUserConfig::load_from_path(config);
+        assert_eq!(loaded.pi_binary, executable.to_string_lossy());
+        assert!(!calls.exists());
+        qualify_managed_pi(&executable)?;
+        assert_eq!(std::fs::read_to_string(&calls)?, "--version\n--mode rpc\n");
+        std::fs::write(&executable, "#!/bin/sh\nexit 1\n")?;
+        assert!(qualify_managed_pi(&executable).is_err());
+        Ok(())
+    }
 
     #[test]
     fn bare_pi_prefers_canonical_runtime_and_excludes_user_global_install() {

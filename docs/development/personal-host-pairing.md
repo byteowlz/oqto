@@ -49,6 +49,72 @@ Session handles are Device/generation-bound, capped at eight per Device and128 o
 
 The composed listener uses a45-second connection lifetime to allow30-second terminal confirmation plus transport overhead, with one HTTP request per connection; enrollment-only remains30 seconds. TLS/header/connection-count bounds otherwise remain unchanged.
 
+## Explicit native source contract
+
+Use these **additional owner startup flags** when the existing Runner's service
+HOME/TMPDIR differ from the terminal-owned Pi source:
+
+```sh
+--personal-native-session-root /absolute/canonical/native-user/.pi/agent/sessions \
+--personal-native-socket-root /absolute/canonical/native-user-tmp \
+--personal-workspace-root /absolute/canonical/approved-work-directory
+```
+
+Keep the existing service UID, HOME, XDG environment, config, mTLS options and
+personal state path unchanged. No automatic exposure or grant creation occurs.
+Without the new source flag the existing source/socket defaults are unchanged.
+With it, the native root, socket root and Workspace roots must exist, be
+canonical absolute directories and belong to the Runner's effective UID.
+The socket-root flag defaults only to canonicalized service TMPDIR; select the
+terminal's actual owned socket directory explicitly for split-TMPDIR setups.
+The new roots are CLI-only, resolved before workers/listeners; `history_read.home`
+and `runner.pi_sessions_dir` do not implicitly authorize this personal source.
+No client wire change is required.
+
+The one existing ingest task retains its default HOME-based legacy sweep and
+adds bounded header-only discovery of the selected native source at startup and
+on its five-minute sweep (legacy nudges also request discovery). Discovery reads
+exactly the first newline-terminated header, at most16KiB, with no read-ahead
+into bodies. It examines at most4096 immediate source directories and32768
+entries total; a bound violation defers the whole discovery pass. Symlinks,
+foreign-owned files/directories, malformed/partial headers, ambiguous native
+files, wrong encoded directories/filename IDs and outside-root/noncanonical cwd
+are rejected. Work directories follow the catalog's depth-four limit, excluding
+hidden, `node_modules`, `target` and `vendor` children. This is not all-profile
+bulk import or a promise of instantaneous catalog coverage.
+
+Header-only sessions get distinct deterministic public IDs through oqto-log's
+strict identity/binding API, even when fresh and empty. Existing public IDs,
+owners, legacy turns, Branches and Fork provenance remain intact. Conflicting
+or dangling binding facts fail closed, never trigger importer conflict repair.
+The canonical Session stores an immutable source pin (canonical source root and
+file paths, device/inode identity, native ID and cwd). A same-size/mtime copy in
+another root or replacement inode cannot inherit that binding. Such a change
+requires explicit owner-reviewed reconciliation, not silent rebinding or a
+symlink workaround. Filesystem identity pins are not a defense against arbitrary
+unsandboxed execution by the same Principal.
+
+List/attach/history resolve against the original service HOME. Catalog reads
+are read-only; writer identity commits and legacy ingestion invalidate the
+30-second catalog cache, including in-flight cache-fill fencing. The cache
+contains canonical rows only, not path authority: attachment revalidates the
+configured root identities, header and durable pin before socket discovery.
+The additional source never uses the legacy size/mtime cursor or count-based
+replacement path. A nudge cannot import an external body or fall back to ambient
+HOME. Only an admitted snapshot nudges graph ingestion; on that same serialized
+writer a fresh socket `get_state.leafId` selects the native graph. Root/pin and
+grant checks run before and after graph parsing. Missing head, partial tail,
+changed immutable entry facts or revoked authority remain unavailable; no last
+entry guess, managed adoption, second Pi or JSONL rewrite/restore is allowed.
+
+Pi candidate selection during config loading is filesystem-only. Explicit
+managed create/model-discovery launch paths retain version/RPC qualification,
+failing closed on the selected candidate; existing-Pi personal paths execute
+neither qualification nor a Pi process. Disposable executable sentinels test
+full startup, owner commands, mTLS-denied managed launch, native history/control,
+uncertain input and restart. This is source qualification, not activation or
+real phone/native-session acceptance.
+
 ## Gates
 
 `just test-personal-authority` checks both packages, QR rendering, proof/store integration, formatting and strict all-target Clippy. These include real loopback pinned-TLS enrollment and wrong-pin/copied-certificate rejection. They are not camera-scanner or phone acceptance. `just test-personal-host` runs formatting and strict all-target Clippy **before** history/library/process tests; new fixtures cannot bypass lint. It qualifies the deployed/default Runner features, not optional Iroh. `cargo test -p oqto-runner --test personal_host` uses actual disposable Runner processes, private HOME/TMPDIR, pinned HTTPS and CLI enrollment to prove independent Files/PTTY grants and Unix+HTTPS cohosted existing-session history/control/revocation. Its native peer is synthetic; real terminal, frozen Linux/macOS and mobile acceptance remain separately required. The library fixtures also cover bootstrap process deaths, identity persistence and canonical equal-count head switching without rewriting native files.

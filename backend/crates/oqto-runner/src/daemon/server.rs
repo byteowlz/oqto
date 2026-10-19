@@ -702,6 +702,8 @@ impl Runner {
         let credentials = Arc::new(crate::credentials::CredentialManager::with_config(
             user_config.credentials.clone(),
         ));
+        let jsonl_ingest =
+            super::jsonl_ingest::spawn_with_source(user_config.personal_source.clone());
         Self {
             state: Arc::new(RwLock::new(RunnerState::new())),
             shutdown_tx,
@@ -711,7 +713,7 @@ impl Runner {
             provider_login: Arc::new(crate::provider_login::ProviderLoginManager::default()),
             credentials,
             pi_manager,
-            jsonl_ingest: super::jsonl_ingest::spawn(),
+            jsonl_ingest,
             expose_dir,
             exposed_ports: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }

@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 // Used only by the non-Linux guards below, which are compiled out on Linux.
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
@@ -175,11 +175,32 @@ async fn main() -> Result<()> {
     load_env_file();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
 
-    let user_config = args
+    let mut user_config = args
         .config
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
     oqto_runner::runtime_guard::ensure_config_state_owner(&user_config)?;
+
+    if let Some(root) = &args.personal.personal_native_session_root {
+        ensure!(
+            user_config.single_user && !user_config.linux_users_enabled,
+            "personal native source requires the dedicated host-user Runner"
+        );
+        let home = dirs::home_dir().context("personal canonical HOME unavailable")?;
+        let sockets = args
+            .personal
+            .personal_native_socket_root
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| std::env::temp_dir().canonicalize())?;
+        user_config.personal_source =
+            Some(Arc::new(oqto_runner::personal_source::PersonalSource::new(
+                home,
+                root.clone(),
+                sockets,
+                args.personal.workspace_roots.clone(),
+            )?));
+    }
 
     // Validate ownership before any worker can touch configured private state.
     // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
@@ -299,6 +320,7 @@ async fn main() -> Result<()> {
         credentials: user_config.credentials.clone(),
         provider_login: user_config.provider_login.clone(),
         history_read: user_config.history_read.clone(),
+        personal_source: user_config.personal_source.clone(),
         fileserver_binary: user_config.fileserver_binary.clone(),
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),

@@ -934,6 +934,11 @@ impl PiSessionManager {
             }
         }
 
+        // Qualification is an execution side effect, permitted only at an
+        // explicit managed-launch seam, never during config/personal startup.
+        let binary = self.config.pi_binary.clone();
+        tokio::task::spawn_blocking(move || crate::daemon::config::qualify_managed_pi(&binary))
+            .await??;
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
         // RPC sessions are non-interactive: Pi's first-use trust prompt can
@@ -2476,6 +2481,9 @@ impl PiSessionManager {
             workdir
         );
 
+        let binary = self.config.pi_binary.clone();
+        tokio::task::spawn_blocking(move || crate::daemon::config::qualify_managed_pi(&binary))
+            .await??;
         let mut cmd = Command::new(&self.config.pi_binary);
         cmd.args(["--mode", "rpc", "--approve", "--no-session"])
             .current_dir(workdir)

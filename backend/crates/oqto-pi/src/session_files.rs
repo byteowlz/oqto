@@ -21,7 +21,7 @@ const PI_SESSIONS_REL: &str = ".pi/agent/sessions";
 ///
 /// Pi replaces `/` with `-` and wraps in `--..--`.
 /// Example: `/home/user/project` -> `--home-user-project--`
-fn cwd_to_safe_dirname(cwd: &Path) -> String {
+pub fn cwd_to_safe_dirname(cwd: &Path) -> String {
     let path_str = cwd.to_string_lossy();
     // Strip leading slash and replace remaining slashes with dashes
     let safe = path_str
