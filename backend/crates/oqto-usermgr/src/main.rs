@@ -41,6 +41,10 @@ const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 /// backfills and new-principal provisioning cannot silently drift apart.
 const PI_DEFAULT_EXTENSIONS: &str =
     include_str!("../../../../scripts/dist/pi-default-extensions.txt");
+const PI_EXTENSION_RECONCILER: &str =
+    include_str!("../../../../scripts/dist/managed-pi-extensions.py");
+const PI_EXTENSION_POLICY: &str =
+    include_str!("../../../../scripts/dist/pi-extension-supersessions.json");
 
 fn pi_default_extensions() -> impl Iterator<Item = &'static str> {
     PI_DEFAULT_EXTENSIONS
@@ -1529,11 +1533,10 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
 /// Copies each extension in PI_DEFAULT_EXTENSIONS from PI_EXTENSIONS_DIR
 /// into the user's home.
 ///
-/// Robustness rules:
-/// - Install to canonical destination names (`pi-*`) even when reading from
-///   legacy unprefixed source dirs.
-/// - Fail hard if any required extension cannot be sourced or copied.
-/// - Validate that all required extensions exist after install.
+/// Uses the same canonical manifest, recognized supersessions and preserve-first
+/// reconciliation as setup/upgrade sync. Unknown user indexes fail closed rather
+/// than being overwritten; known retired assets retain owners/bytes in archives.
+/// All filesystem work runs as the target principal, not through root traversal.
 fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     let username = match get_str(args, "username") {
         Ok(u) => u,
@@ -1557,62 +1560,41 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
         ));
     }
 
-    let dest_root = format!("{home}/.pi/agent/extensions");
-    if let Err(e) = std::fs::create_dir_all(&dest_root) {
-        return Response::error(format!("creating {dest_root}: {e}"));
+    if let Err(e) = validate_group(group) {
+        return Response::error(e);
     }
-
-    let mut installed = 0u32;
-    for ext_name in pi_default_extensions() {
-        let src_dir = src_root.join(ext_name);
-        let actual_src = if src_dir.is_dir() && src_dir.join("index.ts").exists() {
-            src_dir
-        } else {
-            // Legacy fallback: older server snapshots used unprefixed directory names.
-            let legacy_name = ext_name.strip_prefix("pi-").unwrap_or(ext_name);
-            let legacy_src = src_root.join(legacy_name);
-            if legacy_src.is_dir() && legacy_src.join("index.ts").exists() {
-                eprintln!(
-                    "warning: using legacy extension directory '{legacy_name}' for '{ext_name}'"
-                );
-                legacy_src
-            } else {
-                return Response::error(format!(
-                    "required extension not found in source: {ext_name}"
-                ));
-            }
-        };
-
-        // Always install using canonical destination names.
-        let dest_dir = format!("{dest_root}/{ext_name}");
-        // Remove old version if present
-        let _ = std::fs::remove_dir_all(&dest_dir);
-
-        if let Err(e) = copy_dir_recursive(&actual_src, std::path::Path::new(&dest_dir)) {
-            return Response::error(format!("copying extension {ext_name}: {e}"));
-        }
-        // Remove install script (not needed at runtime); keep package.json
-        let _ = std::fs::remove_file(format!("{dest_dir}/install.sh"));
-        installed += 1;
+    let extensions = match serde_json::to_string(&pi_default_extensions().collect::<Vec<_>>()) {
+        Ok(value) => value,
+        Err(error) => return Response::error(format!("encoding managed extension list: {error}")),
+    };
+    // Execute the same preserve-first reconciler as setup/deploy, as the target
+    // principal. Never recursively delete user assets or follow their paths as root.
+    if let Err(error) = run_cmd(
+        "/usr/sbin/runuser",
+        &[
+            "-u",
+            username,
+            "-g",
+            group,
+            "--",
+            "/usr/bin/python3",
+            "-I",
+            "-c",
+            PI_EXTENSION_RECONCILER,
+            "--home",
+            &home,
+            "--source",
+            PI_EXTENSIONS_DIR,
+            "--extensions-json",
+            &extensions,
+            "--policy-json",
+            PI_EXTENSION_POLICY,
+        ],
+    ) {
+        return Response::error(format!(
+            "managed Pi extension reconciliation for {username}: {error}"
+        ));
     }
-
-    // chown extensions to the user
-    let owner = format!("{username}:{group}");
-    if let Err(e) = run_cmd("/usr/bin/chown", &["-R", &owner, &dest_root]) {
-        return Response::error(format!("chown {dest_root}: {e}"));
-    }
-
-    // Final validation to avoid silent partial installs.
-    for ext_name in pi_default_extensions() {
-        let ext_dir = std::path::Path::new(&dest_root).join(ext_name);
-        if !ext_dir.is_dir() || !ext_dir.join("index.ts").exists() {
-            return Response::error(format!(
-                "extension install validation failed for {ext_name}"
-            ));
-        }
-    }
-
-    eprintln!("info: installed {installed} Pi extensions for {username}");
     Response::success()
 }
 

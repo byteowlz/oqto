@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "source_repository": "https://github.com/byteowlz/pi-agent-extensions",
+  "source_revision": "bfd441aa1f45aac52e501a4435d3a0d63bb5b39d",
+  "supersessions": {
+    "auto-rename": {
+      "replacement": "pi-auto-rename",
+      "index_sha256": [
+        "5244a546b3dfcf4ea857109976e29aeab851532b6561f3f39481029c936f64e0",
+        "5d8fec8ddb78b501698e357684f0dedfb2e39841d81805d895e5790ad27e75d0",
+        "63c480c2a48f5769f483a2751bd75191d7919f75c446f8170975931ae475ab90",
+        "74d48f28e10b7f4afdcbf8b2cfe3c72370de5418d314ee8a6f7fbe08faa8106d",
+        "c50ee35b19dbd0773b4423a9eb198b7dfb787d50a2feb4534fca9318dac9b412",
+        "feaad4a108632776113a1ce8c3f4127bd50483d4ce40775dc40697aa1029ca32"
+      ]
+    },
+    "azure-empty-response-guard": {
+      "replacement": "pi-azure-empty-response-guard",
+      "index_sha256": [
+        "0b169745bfffeb70e9ea3cd056cdd5a273b1a84961b8791b538e19f3d6d74fa0",
+        "10ffd75320ceceac448ec2ff94bdd763022643cbad950c12cefb8dc6b5749e1a",
+        "2e6a635b9e566bc85f5696007966b37e32a8ae4283c9f7536096a6d0179c22bf",
+        "69d3dac452d7318ac9d8d02498aaf3e0cc4e8597124a11a31520dd623a049e9d",
+        "78baa7cc5cc0ab37330bf4371660e77dd16b4126aa015d66b6f090ce3cead2d6"
+      ]
+    },
+    "introspection": {
+      "replacement": "pi-introspection",
+      "index_sha256": [
+        "4ac69a2b8863af8d305997d8854e69e326afaa3a05bddb25c0bd380687e2dfcb",
+        "5fc6dee62f10a56570a74b33f3ef6251f71cd5dd2195094e42f0fcfc09e57f80",
+        "691ba0b3c49bbe9be33553db7cbdf640207588dae8759edd4eeb7e871e6279e7"
+      ]
+    },
+    "oqto-bridge": {
+      "replacement": "pi-oqto-bridge",
+      "index_sha256": [
+        "33c60419258c2dfd72c577bfe2f6ed8614179bad568642c56117112d8f1e1786",
+        "6deb160b429a6f66484064e8ac49fd5477bbc783de6d5b1349a94c995bb0ba4b",
+        "91bcca268e8e5866a4066f55b97e3f070b1e17cf42093a05f76d32b003e55ecc",
+        "b8ca5c8a74eccdff968f002399cf5c50d6f02fced355a70bfe33d21e483e45ff",
+        "e8b09854a0eed934558d4d5d627efe6c6335a1c776474a17d9f62703a243c079"
+      ]
+    },
+    "octo-bridge": {
+      "replacement": "pi-oqto-bridge",
+      "index_sha256": [
+        "bc13d5a5244e5d99161127d41f43b533b88f0470f5805f7f8fe6eb6cd6d52861"
+      ]
+    },
+    "oqto-todos": {
+      "evidence": "oqto-g5x2.1 authorized 20261008T100246Z recovery: exact legacy index in 46 homes",
+      "replacement": "pi-todolist",
+      "index_sha256": [
+        "615142736af6515843b63721d218509239f10a9b7c064fb2e5751f069ce2b5dd",
+        "09af6a8f441a26b9881945c4d5d80ef2d801c4d02cad95aa77080d8da890e05a",
+        "20f6f20a7c3a22c3d58a97bcc779bfe3eba359e95fb7a9cb8c81dd4c599f89ff",
+        "537ae10dbef9f3d84252cc28e77d9b8ff8c8dc9105d149350d5aef0ab3ed8b11",
+        "5a41fe20a63db9a4084a928cf1d40ae259cc060aec6adfb472123f314498e273",
+        "db88b2057dbb7c9677ff6e22aba772f73484c73df3a633c18273154a1ab5f282",
+        "f7fb300a5ccbba0b4be0b71b7e2538223fb858f7f3251802a60fa9a5943995f6"
+      ]
+    },
+    "octo-todos": {
+      "replacement": "pi-todolist",
+      "index_sha256": [
+        "ab0f40dd3a30c3f42f5a33f8a0564ddc50229bd842ddb00013bdd8b24b28f7c3",
+        "b0f19b9cb76c467897b557e4c2997db91f82224e8b5a5b1a5a385b4dd1e7851f",
+        "f2df1bbc5da24e035f593cbe63bb114d9f167a0f5880b70a7eec9a92a47d019b",
+        "f7c0b4fb232008b84c2da72f8e40e272460a79c8cb48dd522156db48b6851770"
+      ]
+    },
+    "custom-context-files": {
+      "replacement": "pi-custom-context-files",
+      "index_sha256": [
+        "1471c9e2ddf216676036c9751d48ec35d258aa90aa84e05d8901b45f33f088be",
+        "e6f46e7cf0d0e72aa1dc831dda97a12ab93a051abbf64487ddb265daca6216a5"
+      ]
+    },
+    "read-image-guard": {
+      "replacement": "pi-read-image-guard",
+      "index_sha256": [
+        "61c8431533569ee307636bd9b16d83cc30b80e2cd41589c014b9e56f8210b16b",
+        "6cc502d586400c4daeac603a64e3c8e1a6e04600fcd2cc99f38a970ef28ebd9c"
+      ]
+    },
+    "read-file-guard": {
+      "replacement": "pi-read-file-guard",
+      "index_sha256": [
+        "390a9dccd8c82cc86936606797ea7b6e37c452911c44b74506a2c07173ab2827",
+        "65f56010cda964fad0e32d63ee70a4cfa29184c3be3b33762fd1e3631f3dc197"
+      ]
+    },
+    "openai-completions-convert-think-tags": {
+      "replacement": null,
+      "index_sha256": [
+        "44c10b06ede3b0510e54410b07cf5ef1af495126973b45be810b4b01062bbe6c",
+        "501ea5f1719acdfcb39a3f7d681868a66f7dd11caef3eea6372fceaa5cdc7ff6",
+        "c0d4b9907cd1dc0709553f4d038f478b41ac621e5aa3df08d8a80e59cb9fd817"
+      ]
+    },
+    "pi-openai-completions-convert-think-tags": {
+      "replacement": null,
+      "index_sha256": [
+        "4aa5e933f01b75b5715fbbedcbbca941a7aa177ee609df030492e4afd0e25d8d",
+        "501ea5f1719acdfcb39a3f7d681868a66f7dd11caef3eea6372fceaa5cdc7ff6"
+      ]
+    },
+    "pi-oqto-todos": {
+      "replacement": "pi-todolist",
+      "index_sha256": [
+        "0f7523d7037ddb42fd853767f2c314ba37e8dedf35f8ea061e1847f80e4ed24a",
+        "30dc9d04507ad31b72938770cf6ffbf955a92adf502fff67a620975d80f1c3cb",
+        "407c631ba9e862ca688a455c57e2e803e937ed51efadc3eaaf990da789363f64",
+        "5a41fe20a63db9a4084a928cf1d40ae259cc060aec6adfb472123f314498e273",
+        "76f35f32c1db5706e22bb58df041cdfb2fd4d9489b48e649dc6e2b1617902b74",
+        "9adfcc22f1e45a3d3ea8ac91e2b36e26e959711ffb0b5929f005e542f7c81033",
+        "a0fe6d09e2d09b1ea7c6f97a7271bfa2adc53c9a17691fc16774996c08b1edb3",
+        "fcd79c9c90da8b0d18dac13c3b6f4284716596940f845f48abe9e33deced53fe",
+        "fd18b62fd9bc2f468d2a015f337a30eee8865e94129b91ac48f242f67cd72373"
+      ]
+    }
+  },
+  "managed_index_sha256": {
+    "pi-auto-rename": [
+      "12d3d5a0ec23a0c0d5972390e2e1360c1cb71954c8f7c176927c394a95338ee4",
+      "198dfdf045f6a252ba460f7d93253a2c412b1484687fc262f579d55f606d8c23",
+      "1d3dbd952792fb756ab1b8cd66c2280e2eb26073558d740909a99b75c81e60b4",
+      "3ef9c74eafc3da1ae3272967fa16f65ebcc16780c4e2bdf786923d8da81669aa",
+      "58f88c1dbb31f290e3413552bf131215bebb40b3d6955acfb476f7f3ee18680a",
+      "5eb41cb9feb658a6588349d1bcc93f40476f06fe9188be445029dcf0a85119c3",
+      "5ff6efb9a3bb145bcabd758825bf288f734a31d1f174c6cf705cb4fb9c598bf7",
+      "61907d65caa7626fb04f4b1851aca1498a7cf15169d77a1b687c483ffedebc58",
+      "6d009041c40d4d498423ed07eaaa81988b86b04fcf5f3cfca8efa6875e036516",
+      "6f3821effe509ab8c9ef6a34fdf1fdde1d706f559f47d864c2a1d65660362f29",
+      "74d48f28e10b7f4afdcbf8b2cfe3c72370de5418d314ee8a6f7fbe08faa8106d",
+      "74dcb609145fd055b79e1bbc903ce5301037ae9523d2b632df78f5529a90bddd",
+      "78050fd439e238d81da09289de381495dbdc4bba68e0c094a5cffb8a00f6d348",
+      "7ab7624aff37ea023f5fd83853c4b8b2904ba586a4222a69efc49a4bd8e3a4d5",
+      "833d5df00dce08e63ac1843a815e7ac9a23bf20991c5980ad5a102c54b8db2a9",
+      "8a1e4b0bb4e0f971ee60aedc084b226b75daacd801ad2ed4e64a68e900732473",
+      "8a9fe1b9ea3c4d6e4b4425c75c3c24df032f72a6468f97c7b3a4288f5295ad55",
+      "9552b438969067437382c6a07fdc8ed8d886be0aa8b273f2f4061d22f49c4074",
+      "b0b7bd3797a207521870af44a8495b8db604bb26fe733e15fbb6ecdae292a1d1",
+      "ba48298c8216f22c5c74340707117b8a8067a842e336d3abf898ab2d843a9049",
+      "c52b75db817c8c2495b68faea1ac266179c65ab170afccf338395e1d370843c9",
+      "e3788fe6156b41dabe55f4f20e2cbce2a45246f312a485bdad1f73a51184e251",
+      "ebdc3332933d28874e30924a357bc63146bde5a81d37db2f7bf150d6b0912935",
+      "ed39867a721e140db8a6ccb3ee138784df861ae4397952fbbf6179abac4edcfe",
+      "f2ade51e520fc9f7d33cb65968f456ebb049e1231f46fe177467383fe0e71e39"
+    ],
+    "pi-azure-empty-response-guard": [
+      "110f0ece9a90fa9f236dea44a7ae6c3dcd6ed43821a85f72d828896fdf8a983e",
+      "2e6a635b9e566bc85f5696007966b37e32a8ae4283c9f7536096a6d0179c22bf",
+      "49a0d01aa7acaf2dd03153cefaa7688000363db158bd652a47593340f9abe9ef",
+      "d296eabd84dc1e24c59b0a6372e1ecd39cdf224d31eec153c5e8c385347c4cd3"
+    ],
+    "pi-introspection": [
+      "41ce6efcea43a3670a24a794ac74b1e23897dc346f5cf3e988c9dc25dbe162f2",
+      "4ac69a2b8863af8d305997d8854e69e326afaa3a05bddb25c0bd380687e2dfcb",
+      "717b21ec6a954b19e5ca19c5e63f0ebc435595b72154eb8ee35d724a0949d63c",
+      "c6c2ffbc0890252b540305046952d3d156626f5d3363f23d46104e1ce610ef36",
+      "dbfaf2c975d9bc8f710337bd2f71c2dbad242d281a910939fd7e5c65cec6919b",
+      "f4cd6160b31bebd1078824aba566edd767fc146c495099f329c7dd32e8071925"
+    ],
+    "pi-oqto-bridge": [
+      "48a03fef233f3b6f2ea82803919ac5dbe714165b5e8e67c2480ec82824c63d51",
+      "a8e670cce319ff502539dbadb580eeab88675976d142624b4180ed3ac69455ee",
+      "aa8cdfba647ed406803bba05a56a110e885da6fb51b5aa998d96673143e4846a",
+      "b3402f103e75b395b458592c69a3cd1175b352bce7ef32b8f9ae33c8d3b93ffb",
+      "b8ca5c8a74eccdff968f002399cf5c50d6f02fced355a70bfe33d21e483e45ff",
+      "d7ce7145d276160c636c4349bbcfe0854539f438719e6ccb399284f2485cf393"
+    ],
+    "pi-todolist": [
+      "066ab7df764fa155098e9e60b448fd4263fc4d48e610e95e03f266ce1c408640",
+      "9c99b747b53d3f50e3a4a24519125e95a82195c1d7471ab498f165c64c5e45af",
+      "befaa85643a1fe13528cc7563d0019b37237335ca76ac39a6a60b046ab3bf147",
+      "dbbf52a80a6edc29244415fca73bb473d548c25addf5da8e6adee076fda6c92b"
+    ],
+    "pi-capabilities": [
+      "f93d6ae0cd1f5211410af71277233cd75223d2cd42197044485f19b6b661d3b3"
+    ],
+    "pi-selection": [
+      "0a2dcb8368a134adeb8f17ca125792cf59cb43b73f53977f8697cb27ec7b7ed7",
+      "1e36ad6bf4988a5298b74803cb3056faeff6730dc47063107c855fd0455d781e",
+      "4409f2f62478a0f67172d31bdc74f4fad7f75ecce13f6a75fa24af2fa9444245",
+      "61f6cc2ea059a510657ea5f746471012acda1164270b49e9bd66d5177b738143"
+    ],
+    "pi-custom-context-files": [
+      "1471c9e2ddf216676036c9751d48ec35d258aa90aa84e05d8901b45f33f088be",
+      "2d0629afabf28091b5e4f7f8fc7fb4e96f21535f4132cad60aca60a530b85487"
+    ],
+    "pi-read-image-guard": [
+      "5eb8139bb37685e31ac3ce8d7ff60e9036de369c7d5b025e4656c015b02f5e35",
+      "61c8431533569ee307636bd9b16d83cc30b80e2cd41589c014b9e56f8210b16b"
+    ],
+    "pi-read-file-guard": [
+      "65f56010cda964fad0e32d63ee70a4cfa29184c3be3b33762fd1e3631f3dc197",
+      "c1f36b97838c6a8123b40413958d2fa5e46a7b7252afd6783a7947ec1c1f3a49"
+    ],
+    "pi-history-search": [
+      "11f861184f315d6fc80d9038554dc574d4510f151dafb27eed8b9827ccf7e690",
+      "13873597f00468981f8af0fd6221985f1594d668c958160db67981a342857968",
+      "2c3d0693f867753ae49f48becaf76046ae66a64935fed4846b2234c652cd086c",
+      "38018ee8e57c777ab7ce57c2d9fe8f77dbc2e54f3c9eef9c0216375178bc7c8a",
+      "3d3e67146e14f77a90c9b5692f1e97666fc0edee77d1de56cce17b6370075ea1",
+      "52ffed440da6afd0781b69a8d7845d4fcd5dba48aab07bc2d43906c61a480f24",
+      "663b59d139d91f885a598bf0d3b6a242cf36eaff64c1e1d3710ce4480583efe3",
+      "751f06039431df1a1d5ccd45795188fe6a518bfa328d881145b01adda2677c0c",
+      "79847cc69573987107d52c02a4432fad1cd5806bea5ec2781cae7c14f7f0d9eb",
+      "8cdb975029e92c91ee8b62ef0cf7a4b6129a4184efc723a427deb2a7406b36bd",
+      "96fd69dc03060202efc7dc81567f870ff514bd643b7127d76df775b79fb33564",
+      "9ecbdb23e6a9346d40d8ec74d59c7b3e2ebe0fe8af03b42012de08ff7e4f584f",
+      "df70100c68810d4c0338dac2ddfefeacc7dbf3bbf777b0b22994909a92b3b7f3"
+    ]
+  }
+}

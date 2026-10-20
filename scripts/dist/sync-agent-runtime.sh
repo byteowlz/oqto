@@ -35,22 +35,9 @@ mapfile -t PI_DEFAULT_EXTENSIONS < <(grep -Ev '^[[:space:]]*(#|$)' "$PI_DEFAULT_
   exit 1
 }
 
-# Superseded or fully removed extension dir names. Pruning them on every sync
-# both clears stale duplicates from the octo->oqto and pre-`pi-` renames (a
-# stale copy alongside its pi-* successor aborts Pi RPC startup with a fatal
-# tool conflict -> zero models -> deploy verification failure) and retires
-# extensions that have been dropped entirely. All are byteowlz-owned names,
-# never user-custom, so pruning is safe.
-# pi-openai-completions-convert-think-tags: removed -- MiniMax works on the
-# built-in openai-completions api via reasoning_content; the think-tag adapter
-# is no longer needed (see oqto-4brd).
-PI_LEGACY_EXTENSIONS=(
-  auto-rename azure-empty-response-guard introspection
-  oqto-bridge octo-bridge oqto-todos octo-todos
-  custom-context-files read-image-guard read-file-guard
-  openai-completions-convert-think-tags
-  pi-openai-completions-convert-think-tags
-)
+# One versioned policy/reconciler is shared with new-principal provisioning.
+# Names alone are not ownership: unknown user indexes must remain untouched.
+PI_EXTENSION_POLICY_FILE="${PI_EXTENSION_POLICY_FILE:-$SCRIPT_DIR/pi-extension-supersessions.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -142,9 +129,8 @@ ext_cache() {
 # user's private git cache. Args: <home> <src>
 install_ext_for_home() {
   local home="$1" src="$2"
-  local dir="$home/.pi/agent/extensions" owner group parent legacy ext
+  local owner
   owner="$(stat -c '%U' "$home")" || return 1
-  group="$(stat -c '%G' "$home")" || return 1
 
   as_owner() {
     if [[ "$owner" == root ]]; then
@@ -154,60 +140,17 @@ install_ext_for_home() {
     fi
   }
 
-  # Repair only deployment-created parent directories, never arbitrary user
-  # config. A previous interrupted root install may have left them root-owned.
-  if [[ "$owner" != root ]]; then
-    for parent in "$home/.pi" "$home/.pi/agent" "$dir"; do
-      if [[ -d "$parent" && "$(stat -c '%U' "$parent")" == root ]]; then
-        "${SUDO[@]}" chown "$owner:$group" "$parent" || return 1
-      fi
-    done
-  fi
-  as_owner mkdir -p "$dir" || return 1
-
-  # Only deployment-owned names are touched, and never destroyed: a changed or
-  # retired managed extension moves to a timestamped backup owned by the user,
-  # the replacement is assembled beside it first, and identical content is left
-  # alone so repeated syncs are no-ops. Custom extensions are never read.
-  local backups="$home/.pi/agent/extension-backups/$SYNC_STAMP"
-  preserve() {
-    local path="$1"
-    if [[ "$owner" != root && ! -L "$path" ]]; then
-      "${SUDO[@]}" chown -hR "$owner:$group" "$path" || return 1
-    fi
-    local dest="$backups/${path##*/}"
-    [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$$.$RANDOM"
-    as_owner mkdir -p "$backups" || return 1
-    as_owner mv -T -- "$path" "$dest" || return 1
-    log "  preserved $path -> $dest"
-  }
-  for legacy in "${PI_LEGACY_EXTENSIONS[@]}"; do
-    [[ -e "$dir/$legacy" || -L "$dir/$legacy" ]] || continue
-    preserve "$dir/$legacy" || return 1
-  done
-  for ext in "${PI_DEFAULT_EXTENSIONS[@]}"; do
-    [[ -f "$src/$ext/index.ts" ]] || { err "extension missing from source: $ext"; return 1; }
-    if [[ -d "$dir/$ext" && ! -L "$dir/$ext" ]] \
-      && diff -rq --exclude=install.sh -- "$src/$ext" "$dir/$ext" >/dev/null 2>&1; then
-      continue
-    fi
-    local staged="$dir/.oqto-staging-$ext"
-    as_owner rm -rf -- "$staged" || return 1
-    if ! as_owner cp -r -- "$src/$ext" "$staged"; then
-      as_owner rm -rf -- "$staged"
-      err "copy failed for $ext in $home; existing extension left in place"
-      return 1
-    fi
-    as_owner rm -f -- "$staged/install.sh" || return 1
-    if [[ -e "$dir/$ext" || -L "$dir/$ext" ]]; then
-      preserve "$dir/$ext" || return 1
-    fi
-    as_owner mv -- "$staged" "$dir/$ext" || return 1
-    [[ "$(stat -c '%U' "$dir/$ext")" == "$owner" ]] || {
-      err "extension not owned by $owner after install: $dir/$ext"
-      return 1
-    }
-  done
+  # No privileged traversal/chown of user-controlled parents. Bad ownership
+  # fails closed for explicit repair; a directory name is not provenance.
+  local extensions_json reconciler policy_json
+  extensions_json="$(printf '%s\n' "${PI_DEFAULT_EXTENSIONS[@]}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().splitlines()))')" || return 1
+  reconciler="$(< "$SCRIPT_DIR/managed-pi-extensions.py")" || return 1
+  policy_json="$(< "$PI_EXTENSION_POLICY_FILE")" || return 1
+  # Send trusted bytes, not paths into the operator's possibly private checkout.
+  # This is the same embedded -I/-c entrypoint used by oqto-usermgr.
+  as_owner python3 -I -c "$reconciler" \
+    --home "$home" --source "$src" --extensions-json "$extensions_json" \
+    --policy-json "$policy_json" || return 1
 }
 
 sync_extensions() {

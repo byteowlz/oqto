@@ -960,11 +960,26 @@ test-release-tag-version:
 test-release-assets:
     python3 -B scripts/tests/test-release-assets.py
 
-# Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
-test-deploy-mode:
-    python3 -B scripts/tests/test-deploy-sudo.py
+# Managed asset recognition, preservation, rollback and repeat-run producer gates
+# (stdlib only; no root, real profiles, services or provider credentials)
+test-managed-pi-extensions:
+    python3 -B scripts/tests/test-managed-pi-extensions.py
     bash scripts/dist/test-sync-agent-runtime-extensions.sh
     bash scripts/dist/test-sync-agent-runtime-extensions.sh --skip-pi --non-interactive
+    bash scripts/dist/test-pi-todo-supersession.sh
+
+# Actual daemon early-exit, broken-stdin, cancellation and no-fallback regressions
+test-pi-startup-readiness:
+    cd backend && CARGO_BUILD_JOBS=2 CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p oqto-runner --test pi_startup_readiness -- --test-threads=1
+
+# Actual native autoload + complete extension closure + loopback mock-provider turn
+# Explicit binaries/assets and a fresh output directory; no production state
+test-pi-extension-supersession binary source output:
+    python3 -B scripts/dist/test-pi-extension-supersession.py --binary {{quote(binary)}} --source {{quote(source)}} --legacy-source scripts/tests/fixtures/pi-oqto-todos --output {{quote(output)}}
+
+# Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
+test-deploy-mode: test-managed-pi-extensions
+    python3 -B scripts/tests/test-deploy-sudo.py
     ./scripts/tests/deploy-mode-test.sh
     ./scripts/tests/test-deploy-private-staging.sh
     ./scripts/tests/test-deploy-bootstrap-invocation.sh

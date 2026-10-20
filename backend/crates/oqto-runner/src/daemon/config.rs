@@ -2,10 +2,10 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
-    time::Duration,
+    process::Command,
 };
+
+mod probe;
 
 #[derive(Debug, Clone, Default)]
 pub struct RunnerUserConfig {
@@ -130,9 +130,8 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
-        let (pi_binary, pi_version) =
-            resolve_pi_binary(&config_file.pi.executable, &home, &data_dir);
-        info!("Pi binary: {} (v{})", pi_binary, pi_version);
+        let pi_binary = resolve_pi_binary(&config_file.pi.executable, &home, &data_dir);
+        info!("Selected Pi binary: {} (not yet qualified)", pi_binary);
 
         let runner_id = config_file
             .runner
@@ -173,6 +172,12 @@ impl RunnerUserConfig {
         }
     }
 
+    /// Qualify only the selected runtime. Metadata-only maintenance commands do
+    /// not execute Pi; daemon readiness must call this after ownership checks.
+    pub fn qualify_pi(&self, workdir: &Path) -> anyhow::Result<()> {
+        probe::qualify(Path::new(&self.pi_binary), Some(workdir))
+    }
+
     fn expand_path(path: &str, home: &str) -> PathBuf {
         if path.starts_with("~/") {
             PathBuf::from(path.replacen("~", home, 1))
@@ -191,36 +196,14 @@ impl RunnerUserConfig {
 /// standalone runtime. Legacy system paths remain migration fallbacks; a
 /// user-global package-manager install is deliberately not a candidate because
 /// its independently resolved dependencies are not part of the deployed release.
-fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> (String, String) {
+fn resolve_pi_binary(configured: &str, home: &str, data_dir: &Path) -> String {
     let candidates = pi_binary_candidates(configured, home, data_dir);
-    for candidate in &candidates {
-        let path = Path::new(candidate);
-        if !path.exists() && candidate.contains('/') {
-            warn!("Configured Pi binary does not exist: {candidate}");
-            continue;
-        }
-
-        let version = pi_binary_version(path).unwrap_or_else(|| "unknown".to_string());
-        if pi_rpc_smoke_test(path) {
-            return (candidate.clone(), version);
-        }
-
-        warn!(
-            "Pi binary failed RPC smoke test and will not be used: {} (v{})",
-            candidate, version
-        );
-    }
-
-    warn!(
-        "No Pi binary passed the RPC smoke test; falling back to configured value '{}'. Run setup.sh to repair Pi.",
-        configured
-    );
-    let fallback = candidates
-        .first()
+    candidates
+        .iter()
+        .find(|candidate| !candidate.contains('/') || Path::new(candidate).exists())
+        .or_else(|| candidates.first())
         .cloned()
-        .unwrap_or_else(|| configured.to_string());
-    let version = pi_binary_version(Path::new(&fallback)).unwrap_or_else(|| "unknown".to_string());
-    (fallback, version)
+        .unwrap_or_else(|| configured.to_string())
 }
 
 fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<String> {
@@ -235,7 +218,7 @@ fn pi_binary_candidates(configured: &str, _home: &str, data_dir: &Path) -> Vec<S
     }
     let mut candidates = Vec::new();
     if configured.contains('/') {
-        push_candidate(&mut candidates, Some(configured.to_string()));
+        return vec![configured.to_string()];
     } else {
         push_candidate(
             &mut candidates,
@@ -285,53 +268,6 @@ fn push_candidate(candidates: &mut Vec<String>, candidate: Option<String>) {
     if !candidates.iter().any(|existing| existing == &candidate) {
         candidates.push(candidate);
     }
-}
-
-fn pi_rpc_smoke_test(path: &Path) -> bool {
-    let mut child = match Command::new(path)
-        .arg("--mode")
-        .arg("rpc")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return false,
-    };
-
-    thread::sleep(Duration::from_millis(1500));
-
-    match child.try_wait() {
-        Ok(Some(_status)) => false,
-        Ok(None) => {
-            if let Err(err) = child.kill() {
-                debug!("Failed to stop Pi smoke-test process: {err}");
-            }
-            if let Err(err) = child.wait() {
-                debug!("Failed to reap Pi smoke-test process: {err}");
-            }
-            true
-        }
-        Err(_) => false,
-    }
-}
-
-fn pi_binary_version(path: &Path) -> Option<String> {
-    let output = Command::new(path).arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    // Pi installs differ in where they write `--version`: the bun-global
-    // shim writes to stderr (node shebang), while the system bash wrapper
-    // forwards bun's stdout. Accept either stream, preferring stdout.
-    for stream in [&output.stdout, &output.stderr] {
-        let v = String::from_utf8_lossy(stream).trim().to_string();
-        if !v.is_empty() {
-            return Some(v);
-        }
-    }
-    None
 }
 
 #[cfg(test)]

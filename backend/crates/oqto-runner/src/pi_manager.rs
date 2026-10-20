@@ -849,6 +849,32 @@ struct PiSession {
     _cmd_handle: tokio::task::JoinHandle<()>,
 }
 
+struct SessionStartup {
+    manager: std::sync::Weak<PiSessionManager>,
+    session_id: String,
+    pending: PendingResponses,
+    permit: Option<tokio::sync::OwnedMutexGuard<()>>,
+    armed: bool,
+}
+
+impl Drop for SessionStartup {
+    fn drop(&mut self) {
+        if self.armed
+            && let Some(manager) = self.manager.upgrade()
+            && let Some(permit) = self.permit.take()
+        {
+            let session_id = self.session_id.clone();
+            let pending = Arc::clone(&self.pending);
+            // Keep the per-key permit until cancellation cleanup completes.
+            // A replacement cannot observe/reuse this half-created slot.
+            tokio::spawn(async move {
+                manager.discard_failed_startup(&session_id, &pending).await;
+                drop(permit);
+            });
+        }
+    }
+}
+
 impl PiSession {
     async fn subscriber_count(&self) -> usize {
         self.subscribers.subscriber_count().await
@@ -885,7 +911,7 @@ pub struct PiSessionManager {
     /// inserted into the `sessions` map. Prevents the TOQTOU race in
     /// `get_or_create_session` where two concurrent callers both pass the
     /// `contains_key` check and each spawn a separate Pi process.
-    creating: tokio::sync::Mutex<std::collections::HashSet<String>>,
+    creating: tokio::sync::Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
     /// Cached model lists per workdir (populated when any session in that workdir fetches models).
     /// Key: canonical workdir path, Value: (models JSON, unix timestamp when cached).
     model_cache: RwLock<HashMap<String, (serde_json::Value, u64)>>,
@@ -908,7 +934,7 @@ impl PiSessionManager {
             sessions: RwLock::new(HashMap::new()),
             config,
             shutdown_tx,
-            creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            creating: tokio::sync::Mutex::new(HashMap::new()),
             model_cache: RwLock::new(model_cache),
             models_json_mtime: RwLock::new(None),
             session_aliases: Arc::new(RwLock::new(HashMap::new())),
@@ -921,10 +947,36 @@ impl PiSessionManager {
     /// the provisional `session_id` passed by the caller). For resumed
     /// sessions the IDs typically match; for brand-new sessions Pi generates
     /// its own ID and the runner re-keys the session map.
+    async fn creation_permit(&self, session_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut creating = self.creating.lock().await;
+            creating.retain(|_, lock| lock.strong_count() > 0);
+            match creating.get(session_id).and_then(std::sync::Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(tokio::sync::Mutex::new(()));
+                    creating.insert(session_id.to_string(), Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
+    }
+
     pub async fn create_session(
         self: &Arc<Self>,
         session_id: String,
         config: PiSessionConfig,
+    ) -> Result<String> {
+        let permit = self.creation_permit(&session_id).await;
+        self.create_session_locked(session_id, config, permit).await
+    }
+
+    async fn create_session_locked(
+        self: &Arc<Self>,
+        session_id: String,
+        config: PiSessionConfig,
+        permit: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<String> {
         // Check if session already exists
         {
@@ -1189,7 +1241,9 @@ impl PiSessionManager {
             .context("Failed to configure sandbox pre-exec hooks")?;
         }
 
-        // Spawn the process
+        // Every process here is runner-owned, unlike adopted terminal runtimes.
+        // Cancellation before publication must not orphan a newly spawned child.
+        cmd.kill_on_drop(true);
         let mut child = cmd.spawn().context("Failed to spawn Pi process")?;
         let pid = child.id().unwrap_or(0);
         info!(
@@ -1261,6 +1315,9 @@ impl PiSessionManager {
             let active_model_for_reader = Arc::clone(&active_model);
 
             let runner_id = self.config.runner_id.clone();
+            let manager = Arc::downgrade(self);
+            let cleanup_id = session_id.clone();
+            let cleanup_pending = Arc::clone(&pending_responses);
             tokio::spawn(async move {
                 Self::stdout_reader_task(
                     session_id,
@@ -1281,6 +1338,13 @@ impl PiSessionManager {
                     active_model_for_reader,
                 )
                 .await;
+                if let Some(manager) = manager.upgrade() {
+                    tokio::spawn(async move {
+                        manager
+                            .discard_failed_startup(&cleanup_id, &cleanup_pending)
+                            .await;
+                    });
+                }
             })
         };
 
@@ -1294,6 +1358,10 @@ impl PiSessionManager {
                 pending: Arc::clone(&pending_responses),
                 external_id: Arc::clone(&session_external_id),
             };
+            let manager = Arc::downgrade(self);
+            let cleanup_id = session_id.clone();
+            let cleanup_pending = Arc::clone(&pending_responses);
+            let cleanup_state = Arc::clone(&state);
 
             tokio::spawn(async move {
                 Self::command_processor_task(
@@ -1306,9 +1374,25 @@ impl PiSessionManager {
                     control_runtime,
                 )
                 .await;
+                if *cleanup_state.read().await == PiSessionState::Stopping
+                    && let Some(manager) = manager.upgrade()
+                {
+                    tokio::spawn(async move {
+                        manager
+                            .discard_failed_startup(&cleanup_id, &cleanup_pending)
+                            .await;
+                    });
+                }
             })
         };
 
+        let mut startup = SessionStartup {
+            manager: Arc::downgrade(self),
+            session_id: session_id.clone(),
+            pending: Arc::clone(&pending_responses),
+            permit: Some(permit),
+            armed: true,
+        };
         let requested_provider = config.provider.clone();
         let requested_model = config.model.clone();
         let requested_workdir = config.cwd.to_string_lossy().to_string();
@@ -1344,22 +1428,58 @@ impl PiSessionManager {
             sessions.insert(session_id.clone(), session);
         }
 
-        if let (Some(provider), Some(model_id)) = (requested_provider, requested_model)
-            && let Err(err) = self
-                .apply_initial_model_selection(
-                    &session_id,
-                    &provider,
-                    &model_id,
-                    Some(&requested_workdir),
-                )
-                .await
+        if let Err(error) = self.get_state(&session_id).await {
+            self.discard_failed_startup(&session_id, &startup.pending)
+                .await;
+            startup.armed = false;
+            anyhow::bail!(
+                "Pi startup failed (euid={}, cwd={requested_workdir}): {error:#}; failed session slot removed",
+                rustix::process::geteuid().as_raw()
+            );
+        }
         {
-            warn!(
-                "Session '{}' initial model sync failed (provider='{}', model='{}'): {}. Continuing with Pi default.",
-                session_id, provider, model_id, err
+            let mut current = state.write().await;
+            anyhow::ensure!(
+                *current != PiSessionState::Stopping,
+                "Pi exited during startup handshake"
+            );
+            if *current == PiSessionState::Starting {
+                *current = PiSessionState::Idle;
+            }
+        }
+
+        if let (Some(provider), Some(model_id)) = (requested_provider, requested_model) {
+            self.apply_initial_model_selection(
+                &session_id,
+                &provider,
+                &model_id,
+                Some(&requested_workdir),
+            )
+            .await
+            .context("requested startup model could not be applied")?;
+            let verified = self
+                .get_state(&session_id)
+                .await
+                .context("Pi exited during startup model verification")?;
+            anyhow::ensure!(
+                verified
+                    .model
+                    .is_some_and(|model| model.provider == provider && model.id == model_id),
+                "Pi startup model verification did not match the requested provider/model"
             );
         }
 
+        {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(&session_id)
+                .context("Pi exited during startup; active slot unavailable")?;
+            anyhow::ensure!(
+                session.process.try_wait()?.is_none(),
+                "Pi exited during startup handshake"
+            );
+        }
+        startup.armed = false;
         info!("Session '{}' created successfully", session_id);
         Ok(session_id)
     }
@@ -1377,54 +1497,75 @@ impl PiSessionManager {
         session_id: &str,
         config: PiSessionConfig,
     ) -> Result<String> {
+        let permit = self.creation_permit(session_id).await;
         if let Some(existing) = self.resolve_session_key(session_id).await {
-            debug!(
-                "Session '{}' already exists (alias '{}')",
-                session_id, existing
+            let pending = {
+                let sessions = self.sessions.read().await;
+                match sessions.get(&existing) {
+                    Some(session) if *session.state.read().await == PiSessionState::Starting => {
+                        anyhow::bail!("Pi session '{session_id}' is still starting; not ready")
+                    }
+                    Some(session) if *session.state.read().await != PiSessionState::Stopping => {
+                        return Ok(existing);
+                    }
+                    Some(session) => Some(Arc::clone(&session.pending_responses)),
+                    None => None,
+                }
+            };
+            if let Some(pending) = pending {
+                self.discard_failed_startup(&existing, &pending).await;
+            }
+            anyhow::bail!(
+                "Pi session '{session_id}' exited; dead slot removed; retry creation explicitly"
             );
-            return Ok(existing);
         }
-
-        // Acquire creation lock to prevent concurrent spawns for the same ID.
-        {
-            let mut creating = self.creating.lock().await;
-            // Re-check under lock: another caller may have finished creating
-            // between our read above and acquiring this lock.
-            if let Some(existing) = self.resolve_session_key(session_id).await {
-                debug!("Session '{}' created by concurrent caller", session_id);
-                return Ok(existing);
-            }
-            if creating.contains(session_id) {
-                // Another task is currently creating this session. Return
-                // success -- the caller will find it in the map shortly.
-                info!(
-                    "Session '{}' creation already in progress, skipping duplicate spawn",
-                    session_id
-                );
-                return Ok(session_id.to_string());
-            }
-            creating.insert(session_id.to_string());
-        }
-
-        // Spawn the session (the creating guard is held in the set).
-        // Hard timeout so session.create cannot hang forever and wedge callers.
-        let result = match tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            self.create_session(session_id.to_string(), config),
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            self.create_session_locked(session_id.to_string(), config, permit),
         )
         .await
-        {
-            Ok(res) => res,
-            Err(_) => anyhow::bail!("timed out creating session '{}' after 20s", session_id),
+        .with_context(|| format!("timed out creating session '{session_id}' after 20s"))?
+    }
+
+    async fn discard_failed_startup(&self, session_id: &str, expected: &PendingResponses) {
+        let removed = {
+            let mut sessions = self.sessions.write().await;
+            if !sessions
+                .get(session_id)
+                .is_some_and(|session| Arc::ptr_eq(&session.pending_responses, expected))
+            {
+                return;
+            }
+            // Same lock order as close_session; no process/channel I/O while
+            // holding the maps. Fence cleanup by the process's unique pending map.
+            let mut aliases = self.session_aliases.write().await;
+            let removed = sessions.remove(session_id);
+            Self::drop_session_aliases_for_platform(&mut aliases, session_id, session_id);
+            removed
         };
-
-        // Remove from creation set regardless of success/failure.
-        {
-            let mut creating = self.creating.lock().await;
-            creating.remove(session_id);
+        if let Some(mut session) = removed {
+            session._reader_handle.abort();
+            session._cmd_handle.abort();
+            Self::fail_pending(
+                &session.pending_responses,
+                "Pi startup/transport failed; session slot removed",
+            )
+            .await;
+            let _ = session.process.kill().await;
+            let _ = session.process.wait().await;
         }
+    }
 
-        result
+    async fn fail_pending(pending: &PendingResponses, error: &str) {
+        let waiters = std::mem::take(&mut *pending.write().await);
+        for (id, waiter) in waiters {
+            let _ = waiter.send(PiResponse {
+                id: Some(id),
+                success: false,
+                data: None,
+                error: Some(error.to_string()),
+            });
+        }
     }
 
     async fn apply_initial_model_selection(
@@ -1457,11 +1598,8 @@ impl PiSessionManager {
                     .await
                     .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
                 if !model_available_for_provider(&available, provider, model_id) {
-                    warn!(
-                        "Session '{}' requested startup model '{}/{}' is unavailable; continuing with Pi default",
-                        session_id, provider, model_id
-                    );
-                    return Ok(());
+                    return Err(err).with_context(|| format!(
+                        "requested startup model '{provider}/{model_id}' is unavailable; no default-model fallback"));
                 }
                 Err(err)
             }
@@ -1685,7 +1823,7 @@ impl PiSessionManager {
             .resolve_session_key(session_id)
             .await
             .unwrap_or_else(|| session_id.to_string());
-        let (runner_state, pending_responses, cmd_tx) = {
+        let (runner_state, pending_responses, cmd_tx, live_state) = {
             let sessions = self.sessions.read().await;
             let session = sessions
                 .get(&resolved_id)
@@ -1695,6 +1833,7 @@ impl PiSessionManager {
                 current_state,
                 Arc::clone(&session.pending_responses),
                 session.cmd_tx.clone(),
+                Arc::clone(&session.state),
             )
         };
 
@@ -1707,22 +1846,27 @@ impl PiSessionManager {
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = pending_responses.write().await;
+            anyhow::ensure!(
+                *live_state.read().await != PiSessionState::Stopping,
+                "Pi process exited; GetState unavailable"
+            );
             pending.insert(request_id.clone(), tx);
         }
 
-        // Send the command
-        cmd_tx
+        if let Err(error) = cmd_tx
             .send(PiSessionCommand::GetState {
                 request_id: request_id.clone(),
             })
             .await
-            .context("Failed to send GetState command")?;
-
-        // Wait for response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
-            .await
+        {
+            pending_responses.write().await.remove(&request_id);
+            return Err(error).context("Failed to send GetState: Pi command pipe closed");
+        }
+        let result = tokio::time::timeout(Duration::from_secs(10), rx).await;
+        pending_responses.write().await.remove(&request_id);
+        let response = result
             .context("Timeout waiting for GetState response")?
-            .context("Response channel closed")?;
+            .context("Pi process exited: response channel closed")?;
 
         if !response.success {
             anyhow::bail!(
@@ -3250,6 +3394,25 @@ impl PiSessionManager {
         let resolved_id = self.resolve_session_key(session_id).await;
         let resolved_id = resolved_id.as_deref().unwrap_or(session_id);
         info!("Closing session '{}'", resolved_id);
+        let expected = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .get(resolved_id)
+                .map(|session| Arc::clone(&session.pending_responses))
+        };
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        let _permit = self.creation_permit(resolved_id).await;
+        {
+            let sessions = self.sessions.read().await;
+            if !sessions
+                .get(resolved_id)
+                .is_some_and(|session| Arc::ptr_eq(&session.pending_responses, &expected))
+            {
+                return Ok(());
+            }
+        }
 
         // Resolve Pi native session ID before shutdown when we still have only
         // an Oqto ID. This avoids persisting final buffered messages under a
@@ -3684,12 +3847,15 @@ impl PiSessionManager {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
                     if !line.trim().is_empty() {
-                        debug!("Pi[{}] stderr: {}", session_id, line);
+                        debug!(
+                            "Pi[{}] received stderr output (not logged: may contain credentials)",
+                            session_id
+                        );
                         let mut buf = ring.lock().await;
                         if buf.len() >= 50 {
                             buf.pop_front();
                         }
-                        buf.push_back(line);
+                        buf.push_back(line.chars().take(2048).collect());
                     }
                 }
             });
@@ -3719,9 +3885,6 @@ impl PiSessionManager {
         // Whether we've already resolved Pi's native session ID.
         // Sessions keyed directly by a non-oqto ID are already native.
         let mut pi_native_id_known = !session_id.starts_with("oqto-");
-
-        // Mark as Idle after first successful read (Pi is ready)
-        let mut first_event_seen = false;
 
         loop {
             raw_buf.clear();
@@ -4040,32 +4203,9 @@ impl PiSessionManager {
                 };
 
                 if let Some(new_state) = new_state {
-                    *state.write().await = new_state;
-                }
-
-                // Mark as ready after first event and proactively request get_state
-                // to learn Pi's native session ID before any AgentEnd fires.
-                if !first_event_seen {
-                    first_event_seen = true;
-                    let current_state = *state.read().await;
-                    if current_state == PiSessionState::Starting {
-                        *state.write().await = PiSessionState::Idle;
-                    }
-                    // Send get_state immediately so we learn Pi's native session ID
-                    // before the first AgentEnd triggers oqto-log persistence.
-                    if let Err(e) = cmd_tx
-                        .send(PiSessionCommand::GetState {
-                            request_id: format!(
-                                "get_state_proactive_{}",
-                                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-                            ),
-                        })
-                        .await
-                    {
-                        warn!(
-                            "Pi[{}] failed to send proactive get_state: {}",
-                            session_id, e
-                        );
+                    let mut current = state.write().await;
+                    if *current != PiSessionState::Stopping {
+                        *current = new_state;
                     }
                 }
 
@@ -4558,25 +4698,15 @@ impl PiSessionManager {
 
         // Process exited -- broadcast error event with stderr context
         info!("Pi[{}] stdout reader finished (process exited)", session_id);
+        *state.write().await = PiSessionState::Stopping;
 
         // Give stderr reader a moment to flush remaining lines
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let stderr_lines: Vec<String> = stderr_ring.lock().await.iter().cloned().collect();
-        let error_msg = if stderr_lines.is_empty() {
-            "Agent process exited".to_string()
-        } else {
-            // Include last stderr lines in the error for diagnosis
-            let stderr_tail = if stderr_lines.len() > 20 {
-                &stderr_lines[stderr_lines.len() - 20..]
-            } else {
-                &stderr_lines
-            };
-            format!(
-                "Agent process exited. Last stderr output:\n{}",
-                stderr_tail.join("\n")
-            )
-        };
+        let error_msg = Self::exit_diagnostic(&stderr_lines);
+        *state.write().await = PiSessionState::Stopping;
+        Self::fail_pending(&pending_responses, &error_msg).await;
 
         let exit_event = translator.state.on_process_exit(error_msg);
         let canonical_event = CanonicalEvent {
@@ -4587,6 +4717,48 @@ impl PiSessionManager {
         };
         event_tx.publish(canonical_event).await;
         *state.write().await = PiSessionState::Stopping;
+    }
+
+    fn exit_diagnostic(lines: &[String]) -> String {
+        // Allowlisted classifications only. Native stderr can contain provider
+        // credentials, so never send raw lines to logs, clients or history.
+        for line in lines.iter().rev() {
+            if let Some((_, rest)) = line.split_once("Tool \"")
+                && let Some((tool, paths)) = rest.split_once("\" conflicts between")
+                && tool.len() <= 64
+                && tool
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                let sources: Vec<String> = paths
+                    .split(" and ")
+                    .filter_map(|path| {
+                        let path = std::path::Path::new(path.trim());
+                        let file = path.file_name()?.to_str()?;
+                        let directory = path.parent()?.file_name()?.to_str()?;
+                        (file == "index.ts"
+                            && directory.len() <= 80
+                            && directory
+                                .chars()
+                                .all(|ch| ch.is_ascii_alphanumeric() || "-_".contains(ch)))
+                        .then(|| format!("{directory}/index.ts"))
+                    })
+                    .take(2)
+                    .collect();
+                return format!(
+                    "Pi process exited: Tool '{tool}' conflicts in effective user/workspace/package extensions [{}]; reconcile managed supersessions and preserve unknown extensions",
+                    sources.join(", ")
+                );
+            }
+            if line.contains("No such file or directory") || line.contains("ENOENT") {
+                return "Pi process exited: runtime or sandbox path unavailable (ENOENT)"
+                    .to_string();
+            }
+            if line.contains("ERR_MODULE_NOT_FOUND") || line.contains("Cannot find module") {
+                return "Pi process exited: effective extension dependency unavailable".to_string();
+            }
+        }
+        "Pi process exited before completing RPC; stderr omitted to protect credentials".to_string()
     }
 
     /// Background task that processes commands and writes to stdin.
@@ -4938,18 +5110,15 @@ impl PiSessionManager {
 
             if let Err(e) = result {
                 error!("Pi[{}] failed to write command: {}", session_id, e);
-                // If write failed (e.g. broken pipe from dead process), the
-                // state may have been set to Streaming/Compacting before the
-                // write attempt. Reset to Idle so subsequent commands are not
-                // permanently rejected with "not idle (state=streaming)".
-                let current = *state.read().await;
-                if current != PiSessionState::Idle {
-                    warn!(
-                        "Pi[{}] resetting state from {:?} to Idle after write failure",
-                        session_id, current
-                    );
-                    *state.write().await = PiSessionState::Idle;
-                }
+                // Broken stdin is not Idle/readiness. Unblock every waiter now;
+                // the startup owner or next create removes this dead slot.
+                *state.write().await = PiSessionState::Stopping;
+                Self::fail_pending(
+                    &control_runtime.pending,
+                    "Pi command pipe closed; process is unavailable",
+                )
+                .await;
+                break;
             }
 
             *last_activity.write().await = Instant::now();

@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 // Used only by the non-Linux guards below, which are compiled out on Linux.
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
@@ -89,6 +89,12 @@ struct Args {
 
 #[derive(clap::Subcommand, Debug)]
 enum MaintenanceCommand {
+    /// Qualify native Pi RPC in an explicit workdir; no listener or prompt.
+    /// This is not sandbox, provider-auth or chat-readiness acceptance.
+    CheckPi {
+        #[arg(long)]
+        workdir: PathBuf,
+    },
     /// Administer this user's running backendless personal host.
     Personal {
         #[command(subcommand)]
@@ -110,6 +116,26 @@ async fn main() -> Result<()> {
     let mut args = Args::parse();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
     match args.command.take() {
+        Some(MaintenanceCommand::CheckPi { workdir }) => {
+            let config = args
+                .config
+                .clone()
+                .map(RunnerUserConfig::load_from_path)
+                .unwrap_or_else(RunnerUserConfig::load);
+            oqto_runner::runtime_guard::ensure_config_state_owner(&config)?;
+            let result = config.qualify_pi(&workdir);
+            let report = serde_json::json!({"schema":1,"scope":"native_rpc_only","ok":result.is_ok(),
+                "euid":rustix::process::geteuid().as_raw(),"workdir":workdir,"runtime":config.pi_binary,
+                "error":result.as_ref().err().map(|error| format!("{error:#}"))});
+            use std::io::Write;
+            if let Err(error) = std::io::stdout().write_all(format!("{report}\n").as_bytes()) {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(error).context("writing Pi preflight report");
+            }
+            return result;
+        }
         Some(MaintenanceCommand::Personal { command }) => {
             return oqto_runner::personal_cli::owner(command).await;
         }
@@ -180,6 +206,9 @@ async fn main() -> Result<()> {
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
     oqto_runner::runtime_guard::ensure_config_state_owner(&user_config)?;
+    // Files/terminal/observation-only hosts do not require or execute Pi.
+    // Pi readiness is checked in its actual sandbox/workdir at session admission;
+    // explicit native-only preflight is available through check-pi.
 
     // Validate ownership before any worker can touch configured private state.
     // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
