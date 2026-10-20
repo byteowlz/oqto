@@ -48,13 +48,13 @@ oqto-runner pair \
 Terminal access is **not confined** by the selected Workspace directories. Control
 of an existing terminal-owned Pi still requires its own fresh confirmation.
 
-`--port` defaults to39444. Network discovery binds the selected interface IP, not all
+`--port` defaults to 39444. Network discovery binds the selected interface IP, not all
 interfaces. Tailscale must be running/connected and the phone must reach that
 address; LAN mode requires an actual private local address. No firewall rule,
 Tailscale ACL, account authentication or privileged setup is silently changed.
 
 TTY complete flags still ask for confirmation unless `--yes` is explicit. Headless
-usage requires all workspaces/access/network and `--yes`; incomplete input exits with code2.
+usage requires all workspaces/access/network and `--yes`; incomplete input exits with code 2.
 `--yes` cannot bypass confirmation of choices that still require the wizard.
 
 ## Output / diagnosis
@@ -64,7 +64,7 @@ usage requires all workspaces/access/network and `--yes`; incomplete input exits
 - stderr: selection prompts, scope summary, warnings and errors. JSON runtime and
   semantic usage failures emit `{ok:false,error:{code,message}}` on stdout; JSON
   cancellation emits `{ok:true,cancelled:true}`. Parser syntax errors use normal
-  clap stderr/exit code2. Broken pipe is benign. An uncertain ticket response is not
+  clap stderr/exit code 2. Broken pipe is benign. An uncertain ticket response is not
   automatically replayed.
 - `oqto-runner pair --status`: non-secret schema1 JSON with PID, listener `active`,
   bound plan and authority state path. It never starts or configures a Runner.
@@ -115,10 +115,14 @@ actual flag-driven fresh CLI bootstrap, repeated same-PID pairing and stable
 identity, not actual production discovery, phone enrollment, Mac service operation
 or tailnet reachability. QR bytes are captured privately and never printed/stored.
 
-Source checkpoint qualification: runner/authority/wire all-target serial242 passed,
-4 ignored (nested subprocess results not double-counted); new pair suites8 passed;
-strict Clippy has0 code warnings. Existing `proc-macro-error2 2.0.1` future-incompatibility
+Source checkpoint qualification: runner/authority/wire all-target serial 242 passed,
+4 ignored (nested subprocess results not double-counted); new pair suites 8 passed;
+strict Clippy has 0 code warnings. Existing `proc-macro-error2 2.0.1` future-incompatibility
 notice is tracked `oqto-aavh`: transitive dependency upgrade is outside this slice,
 not silenced or claimed resolved. Real Mac source-binding/phone/current-native,
 production process census, service/PATH installation and broader lifecycle/security
-acceptance remain open. No existing Mac process/configuration was changed.
+acceptance remain open. The sealed native Mac build was attempted but linking
+failed with exit69 because Xcode's license has not been accepted. A human must
+review/accept that license; this checkpoint did not accept it, use elevated
+privileges or substitute an SDK to bypass the gate. Failure logs are retained.
+No existing Mac service/configuration/native history was changed.
