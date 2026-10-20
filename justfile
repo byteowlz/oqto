@@ -1065,6 +1065,13 @@ test-personal-authority:
     cd backend && cargo test --locked -p oqto-personal -p oqto-personal-wire --all-features
     cd backend && cargo clippy --locked -p oqto-personal -p oqto-personal-wire --all-targets --all-features -- -D warnings
 
+# One-command pairing: strict default-feature gate + loopback process and PTY proofs.
+test-pair-wizard:
+    cd backend && cargo fmt -p oqto-runner -- --check
+    cd backend && cargo clippy --locked -p oqto-runner --all-targets -- -D warnings
+    cd backend && cargo test --locked -p oqto-runner --test pair_wizard --test pair_wizard_transport -- --test-threads=1
+    python3 scripts/tests/test-runner-pair-wizard.py --binary "$(cd backend && cargo metadata --locked --offline --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/debug/oqto-runner"
+
 # Disposable process/HTTPS proofs, including new test code in the strict gate.
 # Uses deployed/default Runner features; optional Iroh qualification is separate.
 test-personal-host:

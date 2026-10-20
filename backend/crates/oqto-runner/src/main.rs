@@ -89,6 +89,8 @@ struct Args {
 
 #[derive(clap::Subcommand, Debug)]
 enum MaintenanceCommand {
+    /// Pair your phone: optional interactive selection, existing Runner reuse and QR.
+    Pair(oqto_runner::pair_cli::PairOptions),
     /// Qualify native Pi RPC in an explicit workdir; no listener or prompt.
     /// This is not sandbox, provider-auth or chat-readiness acceptance.
     CheckPi {
@@ -116,6 +118,31 @@ async fn main() -> Result<()> {
     let mut args = Args::parse();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
     match args.command.take() {
+        Some(MaintenanceCommand::Pair(options)) => {
+            use std::io::IsTerminal;
+            let tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+            let output = if options.status {
+                oqto_runner::personal_cli::Output::Json
+            } else {
+                options.output
+            };
+            let wizard = options.mode(tty).unwrap_or_else(|error| {
+                let _ = oqto_runner::pair_cli::json_error(output, "usage", &error);
+                clap::Error::raw(clap::error::ErrorKind::MissingRequiredArgument, error).exit()
+            });
+            let result = oqto_runner::pair_cli::run(options, wizard).await;
+            if let Err(error) = &result {
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+                }) {
+                    return Ok(());
+                }
+                oqto_runner::pair_cli::json_error(output, "pairing_failed", &error.to_string())?;
+            }
+            return result;
+        }
         Some(MaintenanceCommand::CheckPi { workdir }) => {
             let config = args
                 .config
@@ -241,6 +268,17 @@ async fn main() -> Result<()> {
         args.sandbox_config.as_ref(),
         allow_user_sandbox_fallback,
     )?;
+    let private_pairing_paths = if user_config.single_user && !user_config.linux_users_enabled {
+        let pairing_home = dirs::home_dir()
+            .context("pairing home unavailable")?
+            .canonicalize()?;
+        vec![
+            oqto_runner::pair_control::root(&pairing_home),
+            pairing_home.join(".local/share/oqto/personal"),
+        ]
+    } else {
+        Vec::new()
+    };
     // Every sandboxed child, including provider-auth workers, must be unable
     // to read or mutate runner transport capabilities.
     if let Some(policy) = sandbox_config.as_mut() {
@@ -248,6 +286,7 @@ async fn main() -> Result<()> {
             .chain(args.tls_key.iter())
             .chain(args.tls_client_ca.iter())
             .chain(args.personal.personal_state.iter())
+            .chain(private_pairing_paths.iter())
         {
             let path = path.to_string_lossy().into_owned();
             if !policy.deny_read.contains(&path) {
@@ -385,50 +424,59 @@ async fn main() -> Result<()> {
         pi_manager,
         args.expose_dir.clone(),
     ));
-    if args.personal.personal_listen.is_some() {
-        ensure!(
-            inherited_unix_listener()?.is_none(),
-            "personal mode conflicts with socket activation"
-        );
-        if args.listen_tls.is_none() && args.socket.is_none() {
-            return runner.run_personal(args.personal).await;
-        }
-    }
-    if let Some(inherited) = inherited_unix_listener()? {
-        if args.listen_tls.is_some() {
-            anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
-        }
-        info!("Using socket-activated listener (LISTEN_FDS)");
-        return runner.run_inherited(inherited).await;
-    }
-    if let Some(address) = args.listen_tls {
-        let certificate = args
-            .tls_cert
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-cert is required with --listen-tls"))?;
-        let key = args
-            .tls_key
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-key is required with --listen-tls"))?;
-        let client_ca = args
-            .tls_client_ca
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
-        let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
-        let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
+    let dynamic_pairing = args.personal.personal_listen.is_none();
+    let pairing_host = Arc::clone(&runner);
+    let transport = async move {
         if args.personal.personal_listen.is_some() {
+            ensure!(
+                inherited_unix_listener()?.is_none(),
+                "personal mode conflicts with socket activation"
+            );
+            if args.listen_tls.is_none() && args.socket.is_none() {
+                return runner.run_personal(args.personal).await;
+            }
+        }
+        if let Some(inherited) = inherited_unix_listener()? {
+            if args.listen_tls.is_some() {
+                anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
+            }
+            info!("Using socket-activated listener (LISTEN_FDS)");
+            return runner.run_inherited(inherited).await;
+        }
+        if let Some(address) = args.listen_tls {
+            let certificate = args
+                .tls_cert
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-cert is required with --listen-tls"))?;
+            let key = args
+                .tls_key
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-key is required with --listen-tls"))?;
+            let client_ca = args
+                .tls_client_ca
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
+            let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
+            let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
+            if args.personal.personal_listen.is_some() {
+                runner
+                    .run_transport_with_personal(&listener, remote_access, args.personal)
+                    .await
+            } else {
+                runner.run_transport(&listener, remote_access).await
+            }
+        } else if args.personal.personal_listen.is_some() {
             runner
-                .run_transport_with_personal(&listener, remote_access, args.personal)
+                .run_socket_with_personal(&socket_path, args.personal)
                 .await
         } else {
-            runner.run_transport(&listener, remote_access).await
+            runner.run(&socket_path).await
         }
-    } else if args.personal.personal_listen.is_some() {
-        runner
-            .run_socket_with_personal(&socket_path, args.personal)
-            .await
+    };
+    if dynamic_pairing {
+        pairing_host.with_pairing_control(transport).await
     } else {
-        runner.run(&socket_path).await
+        transport.await
     }
 }
 

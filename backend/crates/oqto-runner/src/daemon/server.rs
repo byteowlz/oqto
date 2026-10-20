@@ -20,6 +20,7 @@ use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
+pub mod pair_control;
 mod personal;
 pub use personal::PersonalBackend;
 

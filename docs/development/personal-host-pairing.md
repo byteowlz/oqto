@@ -30,6 +30,13 @@ The enrollment server accepts a caller-owned listener/config and shutdown future
 
 ## Runner composition and owner operations
 
+The source one-command flow is `oqto-runner pair`: optional terminal selection,
+equivalent flags and same-process hot-enable through a private owner controller.
+See [pairing CLI](runner-pairing-cli.md) for readiness, output and acceptance
+boundaries. In particular, the installed Studio's isolated native-source binding
+is still a blocker; the source feature is not evidence of a live Mac update.
+The explicit composition flags below remain the lower-level operator interface.
+
 Use the dedicated host Principal with `single_user=true` and Linux-user provisioning disabled. Start with an explicitly reachable HTTPS origin and no implicit grants, for example:
 
 ```sh

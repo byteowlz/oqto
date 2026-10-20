@@ -78,7 +78,7 @@ impl super::Runner {
         self: Arc<Self>,
         options: crate::personal_cli::ServerOptions,
     ) -> anyhow::Result<()> {
-        self.run_personal_inner(options, true).await
+        self.run_personal_inner(options, true, None).await
     }
     /// One Runner, one Pi manager and one serialized ingest writer. The existing
     /// authenticated transport keeps its own grants; pairing confers none there.
@@ -105,7 +105,7 @@ impl super::Runner {
         options: crate::personal_cli::ServerOptions,
     ) -> anyhow::Result<()> {
         tokio::pin!(transport);
-        let personal = self.clone().run_personal_inner(options, false);
+        let personal = self.clone().run_personal_inner(options, false, None);
         tokio::pin!(personal);
         tokio::select! {
             result = &mut personal => {
@@ -131,10 +131,18 @@ impl super::Runner {
             }
         }
     }
+    pub(crate) async fn run_personal_hot(
+        self: Arc<Self>,
+        options: crate::personal_cli::ServerOptions,
+        ready: tokio::sync::oneshot::Sender<()>,
+    ) -> anyhow::Result<()> {
+        self.run_personal_inner(options, false, Some(ready)).await
+    }
     async fn run_personal_inner(
         self: Arc<Self>,
         options: crate::personal_cli::ServerOptions,
         owns_lifecycle: bool,
+        ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<()> {
         use anyhow::{Context, ensure};
         use oqto_personal::PairingAuthority;
@@ -172,6 +180,8 @@ impl super::Runner {
         );
         let home = dirs::home_dir().context("personal history home unavailable")?;
         crate::runtime_guard::ensure_history_state_owner(&home)?;
+        // Reserve the endpoint before creating any identity or grant store.
+        let listener = tokio::net::TcpListener::bind(address).await?;
         let authority = Arc::new(
             PairingAuthority::open_private(&crate::personal_cli::state_path(
                 options.personal_state.as_ref(),
@@ -180,7 +190,6 @@ impl super::Runner {
         );
         let identity = authority.transport_identity().await?;
         let config = identity.server_config()?;
-        let listener = tokio::net::TcpListener::bind(address).await?;
         let owner_listener = authority.bind_owner_socket()?;
         let owner_path = authority.owner_socket();
         let owner_meta = std::fs::symlink_metadata(&owner_path)?;
@@ -227,6 +236,9 @@ impl super::Runner {
         );
         if owns_lifecycle {
             super::sd_notify_ready();
+        }
+        if let Some(ready) = ready {
+            let _ = ready.send(());
         }
         let result = tokio::select! {
             result=oqto_personal::http::serve_personal_tls(listener,config,router,async {let _=network_shutdown.recv().await;})=>result,
