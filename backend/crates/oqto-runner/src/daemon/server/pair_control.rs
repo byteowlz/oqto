@@ -379,10 +379,24 @@ impl super::Runner {
         home: &Path,
         state: &Path,
     ) -> Result<ListenerTask> {
-        ensure!(
-            plan.native_home == home,
-            "Runner native source differs from your home; source-binding upgrade required before pairing (oqto-8x3p.10.7.5)"
-        );
+        if let Some(source) = &self.user_config.personal_source {
+            source.validate()?;
+            ensure!(
+                source.session_root()
+                    == plan.native_home.join(".pi/agent/sessions").canonicalize()?
+                    && source.workspace_roots() == plan.workspaces,
+                "selected native source/Workspaces differ from the preconfigured owner binding; no scope change made"
+            );
+        } else {
+            ensure!(
+                plan.native_home == home,
+                "Runner source binding required before pairing a different native HOME"
+            );
+            ensure!(
+                !home.join(".pi/agent/sessions").try_exists()?,
+                "native source must be bound before Runner workers start; existing runtime preserved"
+            );
+        }
         let (ready, receive) = tokio::sync::oneshot::channel();
         let options = plan.options(state.to_owned());
         let task = ListenerTask(Some(tokio::spawn(self.run_personal_hot(options, ready))));

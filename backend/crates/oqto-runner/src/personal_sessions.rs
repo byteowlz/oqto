@@ -23,6 +23,7 @@ struct Authority {
     binding: ObservationBinding,
     fence: DeviceFence,
     permit: Option<ControlPermit>,
+    source: Option<(Arc<crate::personal_source::PersonalSource>, String)>,
 }
 impl ObservationAuthority for Authority {
     fn resolve(&self, authority: &str, public_session: &str) -> Result<ObservationBinding> {
@@ -43,6 +44,12 @@ impl ObservationAuthority for Authority {
                 && binding.grant_generation == self.fence.generation(),
             "Session grant ended"
         );
+        if let Some((source, identity)) = &self.source {
+            ensure!(
+                source.header(&binding.session_file)?.identity == *identity,
+                "Native source replaced"
+            );
+        }
         Ok(())
     }
 }
@@ -117,6 +124,7 @@ struct Attachment {
     user_id: String,
     fence: DeviceFence,
     touched: Instant,
+    source: Option<(Arc<crate::personal_source::PersonalSource>, String)>,
 }
 impl Attachment {
     fn belongs_to(&self, fence: &DeviceFence) -> bool {
@@ -133,6 +141,7 @@ pub(crate) struct Sessions {
     budget: Arc<Budget>,
     socket_root: PathBuf,
     ingest: Option<crate::daemon::jsonl_ingest::IngestHandle>,
+    source: Option<Arc<crate::personal_source::PersonalSource>>,
 }
 impl Default for Sessions {
     fn default() -> Self {
@@ -141,12 +150,19 @@ impl Default for Sessions {
             budget: Arc::default(),
             socket_root: std::env::temp_dir(),
             ingest: None,
+            source: None,
         }
     }
 }
 impl Sessions {
     pub(crate) fn with_ingest(ingest: crate::daemon::jsonl_ingest::IngestHandle) -> Self {
         Self {
+            socket_root: ingest
+                .source
+                .as_ref()
+                .map(|source| source.socket_root().to_owned())
+                .unwrap_or_else(std::env::temp_dir),
+            source: ingest.source.clone(),
             ingest: Some(ingest),
             ..Self::default()
         }
@@ -170,6 +186,72 @@ impl Sessions {
             handles.retain(|_, attachment| attachment.current());
         }
     }
+    /// Resolve canonical ownership and the immutable native source before any
+    /// socket discovery. This path only reads; the writer bootstraps identities.
+    async fn resolve_authority(
+        &self,
+        home: &Path,
+        roots: &[PathBuf],
+        session_id: &str,
+        admission: &AuthorizedAction,
+    ) -> Result<(Arc<Authority>, String)> {
+        let row = crate::history_read::resolve_authorized_session(home, roots, session_id).await?;
+        let workspace = PathBuf::from(row.workspace_id.context("Workspace unavailable")?);
+        let workspace_root = roots
+            .iter()
+            .find(|root| workspace.starts_with(root))
+            .context("Workspace denied")?
+            .clone();
+        let external = row.external_id.context("Native identity unavailable")?;
+        if let Some(source) = &self.source {
+            ensure!(
+                source.home == home && source.workspace_roots() == roots,
+                "Personal source mismatch"
+            );
+            source.validate()?;
+        }
+        let session_root = self
+            .source
+            .as_ref()
+            .map(|source| source.session_root().to_owned())
+            .unwrap_or_else(|| home.join(".pi/agent/sessions"));
+        let session_file = oqto_pi::session_files::find_unique_session_file_in(
+            &session_root,
+            &external,
+            &workspace,
+        )?
+        .context("Native source unavailable")?;
+        let fence = admission.fence();
+        let source_identity = self
+            .source
+            .as_ref()
+            .map(|source| {
+                source
+                    .header(&session_file)
+                    .map(|header| (source.clone(), header.identity))
+            })
+            .transpose()?;
+        let authority = Arc::new(Authority {
+            binding: ObservationBinding {
+                authority_id: format!("personal-host:{}", fence.host_id()),
+                public_session_id: session_id.to_owned(),
+                external_session_id: external,
+                session_file,
+                session_root,
+                work_directory: workspace,
+                workspace_root,
+                socket_root: self.socket_root.canonicalize()?,
+                grant_generation: fence.generation(),
+            },
+            permit: None,
+            fence: fence.clone(),
+            source: source_identity,
+        });
+        if let Some(source) = &self.source {
+            source.validate_binding(&authority.binding).await?;
+        }
+        Ok((authority, row.user_id))
+    }
     async fn attach(
         &self,
         home: &Path,
@@ -184,37 +266,9 @@ impl Sessions {
             fence.device_id().into(),
             fence.generation(),
         ))?;
-        let row = crate::history_read::resolve_authorized_session(home, roots, &session_id).await?;
-        let workspace = PathBuf::from(row.workspace_id.context("Workspace unavailable")?);
-        let workspace_root = roots
-            .iter()
-            .find(|root| workspace.starts_with(root))
-            .context("Workspace denied")?
-            .clone();
-        let external = row.external_id.context("Native identity unavailable")?;
-        let session_root = home.join(".pi/agent/sessions");
-        let session_file = oqto_pi::session_files::find_unique_session_file_in(
-            &session_root,
-            &external,
-            &workspace,
-        )?
-        .context("Native source unavailable")?;
-        let fence = admission.fence();
-        let authority = Arc::new(Authority {
-            binding: ObservationBinding {
-                authority_id: format!("personal-host:{}", fence.host_id()),
-                public_session_id: session_id.clone(),
-                external_session_id: external,
-                session_file,
-                session_root,
-                work_directory: workspace,
-                workspace_root,
-                socket_root: self.socket_root.canonicalize()?,
-                grant_generation: fence.generation(),
-            },
-            permit: None,
-            fence: fence.clone(),
-        });
+        let (authority, user_id) = self
+            .resolve_authority(home, roots, &session_id, admission)
+            .await?;
         let observer = TuiObserver::attach_snapshots(
             authority.clone(),
             &authority.binding.authority_id,
@@ -244,9 +298,10 @@ impl Sessions {
             _reservation: reservation,
             observer,
             binding: authority.binding.clone(),
-            user_id: row.user_id,
+            user_id,
             fence,
             touched: Instant::now(),
+            source: authority.source.clone(),
         };
         let sync_requested = self.nudge(&attachment, &state)?;
         handles.insert(id.clone(), attachment);
@@ -265,7 +320,15 @@ impl Sessions {
             return self
                 .attach(home, roots, session_id, &admission)
                 .await
-                .map_err(|_| ActionFailure::Unavailable);
+                .map_err(|error| {
+                    if (oqto_history::oqto_log::ops::native_source::authority_unavailable(&error)
+                        || error.chain().any(|cause| cause.is::<sqlx::Error>()))
+                        && let Some(ingest) = &self.ingest
+                    {
+                        ingest.mark_authority_failed();
+                    }
+                    ActionFailure::Unavailable
+                });
         }
         let id = match &action {
             HostAction::SessionRead { attachment_id }
@@ -301,7 +364,7 @@ impl Sessions {
             HostAction::SessionRequestControl { .. } => {
                 let permit = ControlPermit::from_paired_device(&admission, attachment.observer.public_session_id().into()).map_err(|_| ActionFailure::Denied)?;
                 let binding = attachment.binding.clone();
-                let authority = Arc::new(Authority { binding, fence: admission.fence(), permit: Some(permit) });
+                let authority = Arc::new(Authority { binding, fence: admission.fence(), permit: Some(permit), source: attachment.source.clone() });
                 attachment.observer.acquire_input(authority, admission.fence().device_id()).await.map(|()| json!({"input_held": true}))
             }
             HostAction::SessionInput { input, .. } => {

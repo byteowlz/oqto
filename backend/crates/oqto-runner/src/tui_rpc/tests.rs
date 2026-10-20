@@ -73,7 +73,11 @@ impl Drop for Fixture {
 }
 impl Fixture {
     fn new() -> Result<Self> {
-        let temp = tempfile::tempdir()?;
+        // macOS's normal TMPDIR can exceed sockaddr_un's length once the
+        // per-UID socket layout is appended. Keep the actual native proof short.
+        let temp = tempfile::Builder::new()
+            .prefix("oqtui-")
+            .tempdir_in("/tmp")?;
         let root = temp.path().canonicalize()?;
         for name in ["sessions", "work", "sockets"] {
             std::fs::create_dir(root.join(name))?;

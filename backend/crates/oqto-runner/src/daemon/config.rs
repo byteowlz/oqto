@@ -1,9 +1,6 @@
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 mod probe;
 
@@ -12,6 +9,8 @@ pub struct RunnerUserConfig {
     pub credentials: crate::credentials::CredentialConfig,
     pub provider_login: Option<crate::provider_login::ProviderLoginConfig>,
     pub history_read: Option<crate::history_read::HistoryReadConfig>,
+    /// Resolved once from explicit owner startup flags, never Account config.
+    pub personal_source: Option<std::sync::Arc<crate::personal_source::PersonalSource>>,
     pub fileserver_binary: String,
     pub ttyd_binary: String,
     pub pi_binary: String,
@@ -146,6 +145,7 @@ impl RunnerUserConfig {
             credentials: config_file.runner.credentials,
             provider_login: config_file.runner.provider_login,
             history_read: config_file.runner.history_read,
+            personal_source: None,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             terminal_enabled: config_file.local.terminal_enabled,
@@ -249,16 +249,14 @@ fn resolve_configured_pi(configured: &str) -> Option<String> {
         return Some(configured.to_string());
     }
 
-    if let Ok(output) = Command::new("which").arg(configured).output()
-        && output.status.success()
-    {
-        let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !resolved.is_empty() {
-            return Some(resolved);
-        }
-    }
-
-    Some(configured.to_string())
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(configured))
+                .find(|path| path.is_file())
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .or_else(|| Some(configured.to_string()))
 }
 
 fn push_candidate(candidates: &mut Vec<String>, candidate: Option<String>) {
@@ -273,6 +271,33 @@ fn push_candidate(candidates: &mut Vec<String>, candidate: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_selection_does_not_execute_pi() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir()?;
+        let executable = temp.path().join("pi");
+        let calls = temp.path().join("invocations");
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = --version ]; then printf 'synthetic-version\\n'; exit 0; fi\nexec /bin/sleep 10\n",
+                calls.display()
+            ),
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        let config = temp.path().join("config.toml");
+        std::fs::write(
+            &config,
+            format!("[pi]\nexecutable={}\n", serde_json::to_string(&executable)?),
+        )?;
+        let loaded = RunnerUserConfig::load_from_path(config);
+        assert_eq!(loaded.pi_binary, executable.to_string_lossy());
+        assert!(!calls.exists());
+        // Managed creation is covered by pi_startup_readiness: correlated typed
+        // get_state + actual-cwd model validation, not an alive-only smoke probe.
+        Ok(())
+    }
 
     #[test]
     fn bare_pi_prefers_canonical_runtime_and_excludes_user_global_install() {

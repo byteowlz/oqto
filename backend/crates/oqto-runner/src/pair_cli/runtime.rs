@@ -178,7 +178,7 @@ pub(super) async fn enable(
         pair_control::private_dir(&control)?;
         let _start_lock = pair_control::lock(&control.join("start.lock"))?;
         if !control.join("control.sock").try_exists()? {
-            start(home, &control).await?;
+            start(home, &control, plan).await?;
         }
     }
     let status = pair_control::request(&control, &Request::Enable { plan: plan.clone() }).await?;
@@ -188,7 +188,7 @@ pub(super) async fn enable(
     );
     Ok(status)
 }
-async fn start(home: &Path, control: &Path) -> Result<()> {
+async fn start(home: &Path, control: &Path, plan: &ListenerPlan) -> Result<()> {
     let executable = runner_executable(&std::env::current_exe()?)?;
     // Old/custom transports may not publish a controller. Never silently launch
     // another process over their histories. Discovery failure is not absence.
@@ -269,6 +269,18 @@ async fn start(home: &Path, control: &Path) -> Result<()> {
             && m.nlink() == 1,
         "untrusted Runner log"
     );
+    let native = plan.native_home.join(".pi/agent/sessions");
+    if native.try_exists()? {
+        crate::personal_source::binding::install(
+            home,
+            &crate::personal_source::binding::Binding {
+                schema: 1,
+                session_root: native.canonicalize()?,
+                socket_root: std::env::temp_dir().canonicalize()?,
+                workspaces: plan.workspaces.clone(),
+            },
+        )?;
+    }
     let mut cmd = Command::new(executable);
     cmd.arg("--socket")
         .arg(control.join("native.sock"))

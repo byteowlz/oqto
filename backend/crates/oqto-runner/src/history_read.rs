@@ -111,13 +111,22 @@ static CATALOG_CACHE: once_cell::sync::Lazy<
     tokio::sync::Mutex<std::collections::HashMap<CatalogKey, CatalogEntry>>,
 > = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+static CATALOG_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) async fn invalidate_catalog(home: &std::path::Path) {
+    let mut cache = CATALOG_CACHE.lock().await;
+    CATALOG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    cache.retain(|(cached_home, _), _| cached_home != home);
+}
+
 async fn catalog_source(
     home: &std::path::Path,
     workspace_roots: &[PathBuf],
 ) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
     let key: CatalogKey = (home.to_owned(), workspace_roots.to_vec());
+    let generation;
     {
         let cache = CATALOG_CACHE.lock().await;
+        generation = CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
         if let Some((at, rows)) = cache.get(&key)
             && at.elapsed() < CATALOG_TTL
         {
@@ -139,7 +148,9 @@ async fn catalog_source(
     let rows = std::sync::Arc::new(rows);
     let mut cache = CATALOG_CACHE.lock().await;
     cache.retain(|_, (at, _)| at.elapsed() < CATALOG_TTL);
-    cache.insert(key, (std::time::Instant::now(), rows.clone()));
+    if generation == CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst) {
+        cache.insert(key, (std::time::Instant::now(), rows.clone()));
+    }
     Ok(rows)
 }
 

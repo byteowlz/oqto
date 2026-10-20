@@ -18,6 +18,7 @@ pub mod personal_cli;
 pub use daemon::server::pair_control;
 mod personal_files;
 mod personal_sessions;
+pub mod personal_source;
 mod personal_terminal;
 pub mod pi_manager;
 pub mod pi_translator;

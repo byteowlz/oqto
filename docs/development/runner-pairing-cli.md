@@ -9,6 +9,15 @@ the controller; its isolated HOME/native-source mismatch also blocks activation
 until `oqto-8x3p.10.7.5` is reviewed/integrated. Do not run another Runner over its
 history, flip HOME, copy profiles or edit/reload its plist as a workaround.
 
+Native source selection is resolved **before workers start**. Fresh normal-user
+bootstrap persists an immutable owner-only `pairing/native-source.json` declaration
+when native sessions exist; explicit source flags must agree with any declaration.
+The source socket directory must satisfy the source ownership checks (a shared
+system temporary directory is not silently accepted). Hot enable checks existing
+source/Workspace bindings, never switches a running worker's roots. Existing
+managed-service source migration still requires qualified operator setup; the
+integration's default-parallel scale gate is not yet accepted.
+
 ## Interactive
 
 ```sh

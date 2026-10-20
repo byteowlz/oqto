@@ -258,6 +258,59 @@ async fn hot_enable_same_pid_pair_and_restart_preserve_identity() -> Result<()> 
     Ok(())
 }
 #[tokio::test]
+async fn prebound_split_source_hot_enables_without_changing_service_home() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().canonicalize()?;
+    let home = root.join("service");
+    let native = root.join("native-user");
+    let sessions = native.join(".pi/agent/sessions");
+    let sockets = root.join("native-tmp");
+    let work = native.join("work");
+    for directory in [&home, &sessions, &sockets, &work, &home.join("runtime")] {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::set_permissions(home.join("runtime"), std::fs::Permissions::from_mode(0o700))?;
+    let binding = oqto_runner::personal_source::binding::Binding {
+        schema: 1,
+        session_root: sessions.clone(),
+        socket_root: sockets,
+        workspaces: vec![work.clone()],
+    };
+    oqto_runner::personal_source::binding::install(&home, &binding)?;
+    let bucket = sessions.join(oqto_pi::session_files::cwd_to_safe_dirname(&work));
+    std::fs::create_dir(&bucket)?;
+    let file = bucket.join("2026-10-20_binding-native.jsonl");
+    let bytes = format!(
+        "{}\n",
+        serde_json::json!({"type":"session","version":3,"id":"binding-native","cwd":work})
+    )
+    .into_bytes();
+    std::fs::write(&file, &bytes)?;
+    let mut host = Host::start(&home)?;
+    host.ready().await?;
+    let pid = host.child.id();
+    let selected = plan(&native)?;
+    let activated = pair_control::request(
+        &pair_control::root(&home),
+        &Request::Enable { plan: selected },
+    )
+    .await?;
+    ensure!(activated.active && activated.pid == pid && activated.state.starts_with(&home));
+    let grant = GrantSelection {
+        sessions: Sessions::Control,
+        write_roots: vec![work],
+        full_user_terminal: true,
+        ..Default::default()
+    };
+    let ticket = oqto_personal::owner::request_owner(&activated.state, &grant.command()).await?;
+    ensure!(ticket["purpose"] == "oqto.personal-host.v1");
+    ensure!(std::fs::read(&file)? == bytes);
+    ensure!(host.socket.starts_with(&home) && !native.join(".local").exists());
+    host.stop()?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn occupied_port_and_native_home_mismatch_leave_primary_runner_alive() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let home = temp.path().canonicalize()?;
