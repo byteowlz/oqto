@@ -12,7 +12,7 @@ history, flip HOME, copy profiles or edit/reload its plist as a workaround.
 ## Interactive
 
 ```sh
-oqto-runner pair
+oqto pair
 ```
 
 A terminal automatically opens the wizard for missing inputs:
@@ -35,7 +35,7 @@ never causes an unexpected prompt. There is no full-screen UI or mouse requireme
 ## Equivalent flags
 
 ```sh
-oqto-runner pair \
+oqto pair \
   --workspace "$HOME/byteowlz" \
   --workspace "$HOME/work" \
   --access full --network tailscale \
@@ -66,7 +66,7 @@ usage requires all workspaces/access/network and `--yes`; incomplete input exits
   cancellation emits `{ok:true,cancelled:true}`. Parser syntax errors use normal
   clap stderr/exit code 2. Broken pipe is benign. An uncertain ticket response is not
   automatically replayed.
-- `oqto-runner pair --status`: non-secret schema1 JSON with PID, listener `active`,
+- `oqto pair --status`: non-secret schema1 JSON with PID, listener `active`,
   bound plan and authority state path. It never starts or configures a Runner.
 - `--runner-home PATH`: explicitly selects an already-running controller profile;
   it is not permission to rewrite HOME or launch another profile.
@@ -79,8 +79,13 @@ Private `pairing/listener.json` holds transport configuration only. Existing
 unknown config/identities, symlinks, unavailable owner endpoint, an occupied port,
 source mismatch or a different active plan fail closed. Roots/network changes do
 not silently widen existing Devices or disrupt unrelated sessions. This version
-requires the same configured plan for subsequent tickets. No managed-service
-upgrade/migration/reconfiguration command or PATH installation is claimed here.
+requires the same configured plan for subsequent tickets. The public entrypoint dispatches the same shared implementation before server
+configuration/log initialization; it does not start an API backend. Bootstrap
+resolves the matching sibling `oqto-runner` from the installed artifact, never
+ambient PATH or recursively `oqto`. Both binaries must be installed together.
+The lower-level `oqto-runner pair` uses that same implementation for administration.
+No managed-service upgrade/migration/reconfiguration command or PATH installation
+is claimed here.
 
 Fresh bootstrap uses a private primary socket and log inside `pairing`,
 not the backend's usual socket. Existing user config must already select a

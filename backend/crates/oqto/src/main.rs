@@ -98,19 +98,59 @@ async fn async_search(cmd: SearchCommand) -> Result<()> {
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
 
-    let ctx = RuntimeContext::new(cli.common.clone())?;
-    ctx.init_logging()?;
-    debug!("resolved paths: {:#?}", ctx.paths);
-
+    // Pairing is local owner administration, not server initialization. Do not
+    // load backend configuration, initialize stores or log paths before dispatch.
+    let context = || -> Result<RuntimeContext> {
+        let ctx = RuntimeContext::new(cli.common.clone())?;
+        ctx.init_logging()?;
+        debug!("resolved paths: {:#?}", ctx.paths);
+        Ok(ctx)
+    };
     match cli.command {
-        Command::Serve(cmd) => async_main(ctx, cmd),
-        Command::Init(cmd) => handle_init(&ctx, cmd),
-        Command::Config { command } => handle_config(&ctx, command),
-        Command::InviteCodes { command } => async_invite_codes(ctx, command),
-        Command::Runner { command } => handle_runner(&ctx, command),
+        Command::Pair(mut options) => {
+            if cli.common.dry_run
+                || cli.common.yaml
+                || cli.common.config.is_some()
+                || cli.common.timeout.is_some()
+                || cli.common.parallel.is_some()
+            {
+                let message = "pair does not support server --config, --dry-run, --yaml, --timeout or --parallel; no changes made";
+                let output = if cli.common.json {
+                    oqto_runner::personal_cli::Output::Json
+                } else {
+                    options.output
+                };
+                oqto_runner::pair_cli::json_error(output, "usage", message)?;
+                clap::Error::raw(clap::error::ErrorKind::ArgumentConflict, message).exit();
+            }
+            options.yes |= cli.common.assume_yes;
+            if cli.common.json {
+                if matches!(options.output, oqto_runner::personal_cli::Output::Svg) {
+                    let message = "--json conflicts with --output svg";
+                    oqto_runner::pair_cli::json_error(
+                        oqto_runner::personal_cli::Output::Json,
+                        "usage",
+                        message,
+                    )?;
+                    clap::Error::raw(clap::error::ErrorKind::ArgumentConflict, message).exit();
+                }
+                options.output = oqto_runner::personal_cli::Output::Json;
+            }
+            async_pair(options)
+        }
+        Command::Serve(cmd) => async_main(context()?, cmd),
+        Command::Init(cmd) => handle_init(&context()?, cmd),
+        Command::Config { command } => handle_config(&context()?, command),
+        Command::InviteCodes { command } => async_invite_codes(context()?, command),
+        Command::Runner { command } => handle_runner(&context()?, command),
         Command::Search { command } => async_search(command),
         Command::Completions { shell } => handle_completions(shell),
     }
+}
+
+#[tokio::main]
+async fn async_pair(options: oqto_runner::pair_cli::PairOptions) -> Result<()> {
+    oqto_runner::pair_cli::execute(options).await
 }
 
 #[derive(Debug, Parser)]
@@ -160,7 +200,7 @@ struct CommonOpts {
     #[arg(long = "dry-run", global = true)]
     dry_run: bool,
     /// Assume "yes" for interactive prompts
-    #[arg(short = 'y', long = "yes", alias = "force", global = true)]
+    #[arg(id = "yes", short = 'y', long = "yes", alias = "force", global = true)]
     assume_yes: bool,
     /// Maximum seconds to allow an operation to run
     #[arg(long = "timeout", value_name = "SECONDS", global = true)]
@@ -185,6 +225,8 @@ enum ColorOption {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Pair your phone: choose Workspaces, access and network, then scan the QR.
+    Pair(oqto_runner::pair_cli::PairOptions),
     /// Start the HTTP API server
     Serve(ServeCommand),
     /// Create config directories and default files

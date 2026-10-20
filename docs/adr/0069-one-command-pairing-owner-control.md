@@ -14,7 +14,11 @@ identity. A Device pairing ticket is not Account/MFA or a native input lease.
 
 ## Decision
 
-`oqto-runner pair` is an ephemeral terminal wizard over an explicit shared plan.
+`oqto pair` is the public ephemeral terminal wizard over an explicit shared plan.
+It dispatches before server configuration/log initialization; `oqto-runner pair`
+retains the lower-level administration entry over the same implementation. Public
+bootstrap resolves the matching installed sibling Runner, never ambient PATH or
+recursively invoking `oqto` as a daemon.
 Terminal stdin/stderr automatically select the wizard when inputs are incomplete;
 flags provide the same action headlessly. Explicit `--interactive` requires a TTY;
 `--non-interactive` requires complete scopes/network and `--yes`. Choices do not

@@ -106,6 +106,32 @@ async fn managed_home(home: &Path) -> Result<Option<PathBuf>> {
     ensure!(home.is_absolute(), "Runner service home must be absolute");
     Ok(Some(home.canonicalize()?))
 }
+// Resolve within the installed artifact; never trust ambient PATH for a daemon.
+// `oqto pair` must not recursively launch the public/server executable.
+fn runner_executable(current: &Path) -> Result<PathBuf> {
+    let candidate = if current
+        .file_name()
+        .is_some_and(|name| name == "oqto-runner")
+    {
+        current.to_owned()
+    } else {
+        current
+            .parent()
+            .context("executable has no installation directory")?
+            .join("oqto-runner")
+    };
+    let executable = candidate
+        .canonicalize()
+        .context("install the matching oqto-runner beside oqto before pairing")?;
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::metadata(&executable)?;
+    ensure!(
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
+        "matching Runner is not executable"
+    );
+    Ok(executable)
+}
+
 struct Starting(Option<tokio::process::Child>);
 impl Drop for Starting {
     fn drop(&mut self) {
@@ -163,6 +189,7 @@ pub(super) async fn enable(
     Ok(status)
 }
 async fn start(home: &Path, control: &Path) -> Result<()> {
+    let executable = runner_executable(&std::env::current_exe()?)?;
     // Old/custom transports may not publish a controller. Never silently launch
     // another process over their histories. Discovery failure is not absence.
     let uid = rustix::process::geteuid().as_raw().to_string();
@@ -242,7 +269,7 @@ async fn start(home: &Path, control: &Path) -> Result<()> {
             && m.nlink() == 1,
         "untrusted Runner log"
     );
-    let mut cmd = Command::new(std::env::current_exe()?);
+    let mut cmd = Command::new(executable);
     cmd.arg("--socket")
         .arg(control.join("native.sock"))
         .arg("--config")
@@ -272,4 +299,23 @@ async fn start(home: &Path, control: &Path) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     anyhow::bail!("Runner readiness timed out; only the newly started child is stopped")
+}
+
+#[cfg(test)]
+mod executable_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn public_entry_resolves_only_packaged_sibling() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let public = home.path().join("oqto");
+        ensure!(runner_executable(&public).is_err());
+        let runner = home.path().join("oqto-runner");
+        std::fs::write(&runner, b"fixture")?;
+        ensure!(runner_executable(&public).is_err());
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700))?;
+        ensure!(runner_executable(&public)? == runner.canonicalize()?);
+        ensure!(runner_executable(&runner)? == runner.canonicalize()?);
+        Ok(())
+    }
 }

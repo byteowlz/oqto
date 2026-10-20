@@ -153,6 +153,32 @@ pub fn grants(options: &PairOptions, roots: &[PathBuf]) -> GrantSelection {
         full_user_terminal: options.terminal.unwrap_or(full),
     }
 }
+/// Common CLI entry: both public `oqto pair` and low-level runner administration
+/// use the same validation, interaction, grant gate and output contract.
+pub async fn execute(options: PairOptions) -> Result<()> {
+    let tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let output = if options.status {
+        Output::Json
+    } else {
+        options.output
+    };
+    let wizard = options.mode(tty).unwrap_or_else(|error| {
+        let _ = json_error(output, "usage", &error);
+        clap::Error::raw(clap::error::ErrorKind::MissingRequiredArgument, error).exit()
+    });
+    let result = run(options, wizard).await;
+    if let Err(error) = &result {
+        if error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+        }) {
+            return Ok(());
+        }
+        json_error(output, "pairing_failed", &error.to_string())?;
+    }
+    result
+}
 pub async fn run(mut options: PairOptions, wizard: bool) -> Result<()> {
     let home = dirs::home_dir()
         .context("home unavailable")?

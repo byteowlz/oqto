@@ -119,29 +119,7 @@ async fn main() -> Result<()> {
     oqto_runner::runtime_guard::ensure_launch_identity()?;
     match args.command.take() {
         Some(MaintenanceCommand::Pair(options)) => {
-            use std::io::IsTerminal;
-            let tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-            let output = if options.status {
-                oqto_runner::personal_cli::Output::Json
-            } else {
-                options.output
-            };
-            let wizard = options.mode(tty).unwrap_or_else(|error| {
-                let _ = oqto_runner::pair_cli::json_error(output, "usage", &error);
-                clap::Error::raw(clap::error::ErrorKind::MissingRequiredArgument, error).exit()
-            });
-            let result = oqto_runner::pair_cli::run(options, wizard).await;
-            if let Err(error) = &result {
-                if error.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
-                }) {
-                    return Ok(());
-                }
-                oqto_runner::pair_cli::json_error(output, "pairing_failed", &error.to_string())?;
-            }
-            return result;
+            return oqto_runner::pair_cli::execute(options).await;
         }
         Some(MaintenanceCommand::CheckPi { workdir }) => {
             let config = args

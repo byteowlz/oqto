@@ -148,7 +148,14 @@ def bootstrap(binary, home):
             lease = os.pidfd_open(pid)
             try:
                 cmdline = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
-                assert str(home).encode() in cmdline and binary.encode() in cmdline
+                expected_runner = (
+                    pathlib.Path(binary).with_name("oqto-runner").resolve()
+                )
+                assert str(home).encode() in cmdline
+                assert (
+                    pathlib.Path(os.fsdecode(cmdline.split(b"\0")[0])).resolve()
+                    == expected_runner
+                )
                 signal.pidfd_send_signal(lease, signal.SIGTERM)
                 ready, _, _ = select.select([lease], [], [], 8)
                 assert ready, "owned fixture shutdown deadline"
