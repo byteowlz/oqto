@@ -121,8 +121,10 @@ strict Clippy has 0 code warnings. Existing `proc-macro-error2 2.0.1` future-inc
 notice is tracked `oqto-aavh`: transitive dependency upgrade is outside this slice,
 not silenced or claimed resolved. Real Mac source-binding/phone/current-native,
 production process census, service/PATH installation and broader lifecycle/security
-acceptance remain open. The sealed native Mac build was attempted but linking
-failed with exit69 because Xcode's license has not been accepted. A human must
-review/accept that license; this checkpoint did not accept it, use elevated
-privileges or substitute an SDK to bypass the gate. Failure logs are retained.
-No existing Mac service/configuration/native history was changed.
+acceptance remain open. Native Mac strict Clippy and all 8 pairing cases now pass,
+as does the real PTY full-wizard/decline proof. Initial exit69/Xcode-license failure
+was resolved by the user; the subsequent fixture-only `/tmp` symlink failure was
+fixed by canonicalizing its temporary directory, not weakening production guards.
+Both original failures are retained. This is disposable source qualification,
+not installed-service or phone acceptance. No existing Mac service/configuration/
+native history was changed.

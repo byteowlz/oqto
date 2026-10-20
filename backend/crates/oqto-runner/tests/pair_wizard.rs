@@ -101,13 +101,14 @@ fn mac_managed_profile_paths_fit_portable_unix_socket_limit() -> Result<()> {
 #[test]
 fn state_symlinks_and_lock_contention_fail_without_mutating_targets() -> Result<()> {
     let home = tempfile::tempdir()?;
-    let target = home.path().join("target");
+    let canonical_home = home.path().canonicalize()?;
+    let target = canonical_home.join("target");
     std::fs::create_dir(&target)?;
-    let alias = home.path().join("alias");
+    let alias = canonical_home.join("alias");
     symlink(&target, &alias)?;
     ensure!(pair_control::private_dir(&alias.join("new")).is_err());
     ensure!(!target.join("new").exists());
-    let root = home.path().join("private");
+    let root = canonical_home.join("private");
     pair_control::private_dir(&root)?;
     let lock = pair_control::lock(&root.join("lock"))?;
     ensure!(pair_control::lock(&root.join("lock")).is_err());
