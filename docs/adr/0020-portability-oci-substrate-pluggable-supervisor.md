@@ -1,5 +1,7 @@
 # Portability: OCI container as isolation substrate; the placement supervisor is pluggable; no platform tooling in the core
 
+Amended by [ADR-0068](0068-local-first-platform-and-first-class-deployment-paths.md): retain pluggable supervisors and advertised capabilities, but OCI is not a universal prerequisite. Laptop, appliance and operator-managed/Kubernetes paths are equally first-class; local processes, full VMs and microVMs use the same domain contracts without claiming identical isolation.
+
 Status: accepted (grilled 2026-06-25; accepted 2026-07-27 as the intended
 direction, not yet implemented). Amended 2026-07-27 for microVM placement and
 external runtime backends; see the addendum at the end. Generalizes ADR-0011 (placement contract) and **amends ADR-0002** (systemd is demoted from "the local supervisor" to one supervisor backend). Foundation for ADR-0019.

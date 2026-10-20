@@ -29,6 +29,10 @@ A client installation identified by possession of a key enrolled directly with a
 **Personal Pairing**:
 Owner-approved, single-use, identity-pinned enrollment of a Paired Device with a Runner, without a Control Plane or centralized Account/MFA prerequisite. Distinct from Operator Identity Enrollment and from an existing mTLS Files grant (ADR-0062).
 
+**Deployment Profile**:
+An operational shape of the same Oqto platform: local, appliance, or operator-managed. Each is a first-class starting point and destination; it does not determine identity, tenancy, resource authority or Isolation Tier.
+_Avoid_: runtime mode (a deployment profile does not change the domain contracts)
+
 **Deployment Target**:
 A named destination for operator actions: one Oqto Control Plane and its managed placements. The CLI's `--host` value names a Deployment Target, not a placement machine or SSH host.
 _Avoid_: host (reserved for the App capability contract), server (ambiguous)

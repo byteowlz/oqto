@@ -1,6 +1,6 @@
 # One public Oqto session id; harness ids are adapter-local bindings
 
-Status: accepted (2026-07-19). Companion to ADR-0013 and prerequisite for the Work Session read model / attach contract ADR.
+Status: accepted (2026-07-19). Companion to ADR-0013 and prerequisite for the Work Session read model / attach contract ADR. [ADR-0068](0068-local-first-platform-and-first-class-deployment-paths.md) amends backend-only minting for standalone operation: an authorized local Session authority must mint stable public Oqto IDs without a central backend, preserving them through enrollment/sync with collision and provenance checks. The one-public-ID and distinct native-binding rules remain unchanged; sync mechanics are not implemented by this decision.
 
 Oqto has previously been hurt by multiple competing session ids: frontend-generated generic ids, backend platform ids, and harness-native ids from pi or other agents. That ambiguity caused fragile joins, reconnect bugs, and message reconciliation mistakes. As Oqto expands from pi to Claude Code, Codex, OpenCode, Hermes, and app-server-backed integrations, the identity rule must be explicit and mechanically enforceable.
 

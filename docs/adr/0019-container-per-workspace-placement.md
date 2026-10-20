@@ -1,5 +1,7 @@
 # Container-per-workspace is a Placement, not a runtime mode
 
+Scope clarified by [ADR-0068](0068-local-first-platform-and-first-class-deployment-paths.md): this remains the container-provider contract, not a requirement that every local, appliance or operator-managed environment be a container/Pod. Local, full-VM and microVM paths remain first-class architectural targets; their qualification is separate.
+
 Status: accepted (grilled 2026-06-25; accepted 2026-07-27 as the intended
 direction, not yet implemented). Depends on the PlacementStore contract (`oqto-3ct7.16`, ADR-0011), the dead-code deletion (`oqto-3ct7.15`), the portability foundation (ADR-0020), and consumes the prebuilt bundle from ADR-0018. **Amends ADR-0009** (host-Principal lifecycle collapses for container placements).
 
