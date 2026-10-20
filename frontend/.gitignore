@@ -121,6 +121,8 @@ web_modules/
 .node_repl_history
 # Output of 'npm pack'
 *.tgz
+# Reviewed canonical SDK distribution; integrity checked by app-sdk-snapshot.test.
+!vendor/oqto-app-sdk/byteowlz-oqto-app-sdk-0.4.0.tgz
 # Yarn Integrity file
 .yarn-integrity
 # dotenv environment variable files

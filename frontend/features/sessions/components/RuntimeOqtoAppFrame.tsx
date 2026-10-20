@@ -17,6 +17,7 @@ import {
 	OQTO_APP_PROTOCOL,
 	OQTO_APP_PROTOCOL_V1,
 	OQTO_APP_PROTOCOL_V2,
+	OQTO_APP_PROTOCOL_V3,
 	type OqtoCapability,
 	type OqtoFileRef,
 	type OqtoFileVersion,
@@ -33,6 +34,7 @@ import {
 	serveOqtoAppPort,
 } from "@byteowlz/oqto-app-sdk/host";
 import { useCallback, useRef } from "react";
+import { createConnectionsCapability } from "./app-connections";
 import { detectAppColorScheme, observeAppTheme } from "./app-theme-observer";
 
 interface RuntimeOqtoAppFrameProps {
@@ -299,12 +301,15 @@ export function RuntimeOqtoAppFrame({
 
 			let bridge: OqtoHostBridge | undefined;
 			let accepted = false;
+			let disposed = false;
+			let withdrawn = false;
 			const suspendIfWithdrawn = (detail: AppPermissionChangedDetail) => {
 				if (
 					detail.instanceId === instanceId &&
 					detail.state !== "allowed" &&
 					detail.state !== "not_required"
 				) {
+					withdrawn = true;
 					bridge?.suspend({
 						reason: detail.state === "revoked" ? "revoked" : "suspended",
 						message: "Oqto App permission was withdrawn",
@@ -363,18 +368,21 @@ export function RuntimeOqtoAppFrame({
 					Array.isArray(message.supportedVersions)
 						? message.supportedVersions
 						: [OQTO_APP_PROTOCOL];
-				const protocol = offered.includes(OQTO_APP_PROTOCOL_V2)
-					? OQTO_APP_PROTOCOL_V2
-					: offered.includes(OQTO_APP_PROTOCOL_V1)
-						? OQTO_APP_PROTOCOL_V1
-						: offered.includes(OQTO_APP_PROTOCOL)
-							? OQTO_APP_PROTOCOL
-							: undefined;
+				const protocol = offered.includes(OQTO_APP_PROTOCOL_V3)
+					? OQTO_APP_PROTOCOL_V3
+					: offered.includes(OQTO_APP_PROTOCOL_V2)
+						? OQTO_APP_PROTOCOL_V2
+						: offered.includes(OQTO_APP_PROTOCOL_V1)
+							? OQTO_APP_PROTOCOL_V1
+							: offered.includes(OQTO_APP_PROTOCOL)
+								? OQTO_APP_PROTOCOL
+								: undefined;
 				if (!protocol) return;
 
 				accepted = true;
 				void (async () => {
 					const permission = await getAppPermissions(workspacePath, instanceId);
+					if (disposed || withdrawn) return;
 					if (
 						permission.state !== "allowed" &&
 						permission.state !== "not_required"
@@ -405,10 +413,16 @@ export function RuntimeOqtoAppFrame({
 							(capability) => capability.operations,
 						) as OqtoGrantedOperation[];
 					const capabilities = [
-						...granted.filter((capability) => capability !== "theme"),
+						...granted.filter(
+							(capability) =>
+								capability !== "theme" &&
+								(capability !== "connections" ||
+									protocol === OQTO_APP_PROTOCOL_V3),
+						),
 						"theme",
 						"presentation",
 					] as OqtoCapability[];
+					if (disposed || withdrawn) return;
 					const context: OqtoHostContext = {
 						protocol,
 						instanceId,
@@ -426,6 +440,14 @@ export function RuntimeOqtoAppFrame({
 					bridge = serveOqtoAppPort(
 						{
 							context,
+							...(capabilities.includes("connections")
+								? {
+										connections: createConnectionsCapability(
+											workspacePath,
+											instanceId,
+										),
+									}
+								: {}),
 							...(granted.includes("kv")
 								? {
 										kv: {
@@ -509,6 +531,7 @@ export function RuntimeOqtoAppFrame({
 			window.addEventListener("message", onMessage);
 			frame.srcdoc = html;
 			cleanupRef.current = () => {
+				disposed = true;
 				window.removeEventListener("message", onMessage);
 				window.removeEventListener(
 					APP_PERMISSION_CHANGED_EVENT,

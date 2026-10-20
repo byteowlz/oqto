@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/byteowlz/oqto-app-sdk",
+  "source_commit": "8e83ba7ea7bf032c6edaa1f6a12d104ff46e6a60",
+  "version": "0.4.0",
+  "status": "unreleased source snapshot; no tag/npm publication implied",
+  "regenerate": "pnpm check && pnpm pack in canonical SDK checkout; copy the distribution tarball, update this hash and regenerate the canonical Bun lock. Do not hand-edit the package.",
+  "tarball_sha256": "0b0a04e27d4a8cfc9c912199196b988cd9da55a8b03b86dedfc77ed60d35bb34"
+}

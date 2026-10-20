@@ -4,6 +4,7 @@ import type { AppPermissionDecision } from "@/src/generated/AppPermissionDecisio
 import type { AppPermissionStatus } from "@/src/generated/AppPermissionStatus";
 import type { AppPresentationDocument } from "@/src/generated/AppPresentationDocument";
 import type { AppPublishResult } from "@/src/generated/AppPublishResult";
+import { type JsonValue, OqtoAppError } from "@byteowlz/oqto-app-sdk";
 import { authFetch, controlPlaneApiUrl } from "./client";
 
 export const APP_PERMISSION_CHANGED_EVENT = "oqto:app-permission-changed";
@@ -242,6 +243,39 @@ export async function writeAppFile(
 		},
 	);
 	return appJson(response);
+}
+
+/** Host-only adapter: mount identity/workdir come from the trusted parent,
+ * never from the frame. The backend rechecks the live binding and dispatches
+ * through the owning runner; credentials never enter this request or response.
+ */
+export async function invokeAppConnection(
+	workspacePath: string,
+	instanceId: string,
+	slot: string,
+	path: string,
+): Promise<JsonValue> {
+	const response = await authFetch(
+		controlPlaneApiUrl(
+			`/api/apps/instances/${encodeURIComponent(instanceId)}/connections/invoke`,
+		),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ workspace_path: workspacePath, slot, path }),
+		},
+	);
+	if (!response.ok) {
+		throw new OqtoAppError(
+			response.status === 401 || response.status === 403
+				? "denied"
+				: response.status === 409
+					? "suspended"
+					: "internal",
+			"Connection use denied or unavailable",
+		);
+	}
+	return response.json();
 }
 
 export interface AppOperationResult {

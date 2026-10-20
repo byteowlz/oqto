@@ -23,7 +23,7 @@
 	},
 	"dependencies": {
 		"@byteowlz/ears-browser": "file:vendor/ears-browser",
-		"@byteowlz/oqto-app-sdk": "github:byteowlz/oqto-app-sdk#v0.3.1",
+		"@byteowlz/oqto-app-sdk": "file:vendor/oqto-app-sdk/byteowlz-oqto-app-sdk-0.4.0.tgz",
 		"@hookform/resolvers": "^5.2.2",
 		"@mdxeditor/editor": "^4.0.2",
 		"@mermaid-js/layout-elk": "^0.1.4",
