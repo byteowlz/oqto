@@ -100,6 +100,22 @@ fn mac_managed_profile_paths_fit_portable_unix_socket_limit() -> Result<()> {
 }
 #[test]
 fn state_symlinks_and_lock_contention_fail_without_mutating_targets() -> Result<()> {
+    // flock is tied to the open description: another parallel test's fork can
+    // briefly inherit it before CLOEXEC. Assert release in an isolated process,
+    // not against an unrelated fork/exec window in the test harness.
+    const CHILD: &str = "OQTO_PAIR_LOCK_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "state_symlinks_and_lock_contention_fail_without_mutating_targets",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .status()?;
+        ensure!(status.success(), "isolated pairing lock test failed");
+        return Ok(());
+    }
     let home = tempfile::tempdir()?;
     let canonical_home = home.path().canonicalize()?;
     let target = canonical_home.join("target");
