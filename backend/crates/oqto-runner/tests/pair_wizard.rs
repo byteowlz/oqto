@@ -146,7 +146,7 @@ impl Host {
             .env("TMPDIR", home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(home.join("fixture-stderr.log"))?)
             .spawn()?;
         Ok(Self {
             child,
@@ -157,7 +157,11 @@ impl Host {
     }
     async fn ready(&mut self) -> Result<()> {
         for _ in 0..100 {
-            ensure!(self.child.try_wait()?.is_none(), "fixture Runner exited");
+            ensure!(
+                self.child.try_wait()?.is_none(),
+                "fixture Runner exited: {}",
+                std::fs::read_to_string(self.home.join("fixture-stderr.log")).unwrap_or_default()
+            );
             if pair_control::request(&pair_control::root(&self.home), &Request::Status)
                 .await
                 .is_ok()
@@ -259,7 +263,11 @@ async fn hot_enable_same_pid_pair_and_restart_preserve_identity() -> Result<()> 
 }
 #[tokio::test]
 async fn prebound_split_source_hot_enables_without_changing_service_home() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    // Nested service HOME must fit the real portable Unix-socket bound even
+    // when the qualification harness itself has a long private TMPDIR.
+    let temp = tempfile::Builder::new()
+        .prefix("oqpair-bind-")
+        .tempdir_in("/tmp")?;
     let root = temp.path().canonicalize()?;
     let home = root.join("service");
     let native = root.join("native-user");
