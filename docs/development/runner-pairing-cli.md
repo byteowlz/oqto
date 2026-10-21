@@ -4,10 +4,12 @@ Workstream `pair-wizard`, `oqto-8x3p.10.7.6`.
 [ADR-0069](../adr/0069-one-command-pairing-owner-control.md) defines the owner
 management boundary; [personal wire](personal-host-pairing.md) defines enrollment.
 
-**Source feature, not an installed Mac update.** The installed Studio runner lacks
-the controller; its isolated HOME/native-source mismatch also blocks activation
-until `oqto-8x3p.10.7.5` is reviewed/integrated. Do not run another Runner over its
-history, flip HOME, copy profiles or edit/reload its plist as a workaround.
+**Qualified development setup, not a public release.** The authorized Studio
+update now provides the owner controller and explicit native-source binding while
+preserving its isolated service HOME. `oqto pair` is installed on the user's PATH.
+Real phone enrollment/native control acceptance is a separate remaining gate.
+Do not run another Runner over its history, flip HOME, copy profiles or edit/reload
+its plist as a workaround.
 
 Native source selection is resolved **before workers start**. Fresh normal-user
 bootstrap persists an immutable owner-only `pairing/native-source.json` declaration
