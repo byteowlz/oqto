@@ -1067,10 +1067,11 @@ test-personal-authority:
 
 # One-command pairing: strict default-feature gate + loopback process and PTY proofs.
 test-pair-wizard:
-    cd backend && cargo fmt -p oqto -p oqto-runner -- --check
-    cd backend && cargo clippy --locked -p oqto -p oqto-runner --all-targets -- -D warnings
+    cd backend && cargo fmt -p oqto -p oqto-runner -p oqto-personal -- --check
+    cd backend && cargo clippy --locked -p oqto -p oqto-runner -p oqto-personal --all-targets -- -D warnings
+    cd backend && cargo test --locked -p oqto-personal owner::tests::
     cd backend && cargo test --locked -p oqto -p oqto-runner --test pair_cli --test pair_wizard --test pair_wizard_transport -- --test-threads=1
-    cd backend && cargo test --locked -p oqto-runner --lib pair_cli::runtime::executable_tests
+    cd backend && cargo test --locked -p oqto-runner --lib pair_cli::
     python3 scripts/tests/test-runner-pair-wizard.py --binary "$(cd backend && cargo metadata --locked --offline --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/debug/oqto"
 
 # Disposable process/HTTPS proofs, including new test code in the strict gate.

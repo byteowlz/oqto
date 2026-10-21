@@ -6,12 +6,7 @@ use dialoguer::{Input, MultiSelect, Select};
 pub(super) async fn select(options: &mut PairOptions, home: &Path) -> Result<bool> {
     let mut candidates = options.workspaces.clone();
     if candidates.is_empty() {
-        for name in ["byteowlz", "work"] {
-            let p = home.join(name);
-            if p.is_dir() {
-                candidates.push(p);
-            }
-        }
+        candidates = runtime::saved_workspaces(home, options.runner_home.as_deref()).await?;
     }
     loop {
         let mut labels: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();

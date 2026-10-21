@@ -224,9 +224,20 @@ pub async fn run(mut options: PairOptions, wizard: bool) -> Result<()> {
     }
     let status = runtime::enable(&home, options.runner_home.as_deref(), &plan.listener).await?;
     // Exactly one ticket request. Failure after dispatch is uncertain, never replayed.
-    let qr=oqto_personal::owner::request_owner(&status.state,&plan.grants.command()).await
-        .context("pairing outcome uncertain on transport failure; do not automatically replay ticket issuance")?;
+    let qr = oqto_personal::owner::request_owner(&status.state, &plan.grants.command())
+        .await
+        .map_err(owner_issue_error)?;
     crate::personal_cli::emit_pair(qr, options.output)
+}
+fn owner_issue_error(error: anyhow::Error) -> anyhow::Error {
+    if error
+        .downcast_ref::<oqto_personal::owner::OwnerRequestRejected>()
+        .is_some()
+    {
+        error
+    } else {
+        error.context("pairing outcome uncertain on transport failure; do not automatically replay ticket issuance")
+    }
 }
 pub fn json_error(output: Output, code: &str, message: &str) -> Result<()> {
     if matches!(output, Output::Json) {
@@ -278,4 +289,18 @@ fn summary(plan: &PairPlan) {
         );
     }
     eprintln!("  QR: single use, expires in five minutes. Keep it private.");
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    #[test]
+    fn preissuance_rejection_is_definitive_but_unknown_failure_is_not() {
+        let rejected = super::owner_issue_error(
+            oqto_personal::owner::OwnerRequestRejected::TerminalUnavailable.into(),
+        );
+        assert!(rejected.to_string().contains("no pairing ticket issued"));
+        assert!(!rejected.to_string().contains("uncertain"));
+        let unknown = super::owner_issue_error(anyhow::anyhow!("owner_command_refused"));
+        assert!(unknown.to_string().contains("uncertain"));
+    }
 }

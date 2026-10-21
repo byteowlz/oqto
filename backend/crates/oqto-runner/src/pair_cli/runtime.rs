@@ -144,6 +144,29 @@ impl Drop for Starting {
     }
 }
 
+/// Suggestions come from this owner's saved selection, never folder-name heuristics.
+pub(super) async fn saved_workspaces(home: &Path, selected: Option<&Path>) -> Result<Vec<PathBuf>> {
+    let runner_home = selected
+        .map(Path::canonicalize)
+        .transpose()?
+        .or(managed_home(home).await?)
+        .unwrap_or_else(|| home.to_owned());
+    if let Some(source) = crate::personal_source::binding::load(&runner_home)? {
+        return Ok(source.workspace_roots().to_vec());
+    }
+    if pair_control::root(&runner_home)
+        .join("control.sock")
+        .try_exists()?
+    {
+        return Ok(status(home, selected)
+            .await?
+            .plan
+            .map(|plan| plan.workspaces)
+            .unwrap_or_default());
+    }
+    Ok(Vec::new())
+}
+
 pub(super) async fn status(home: &Path, selected: Option<&Path>) -> Result<Status> {
     let runner_home = selected
         .map(Path::canonicalize)
@@ -317,6 +340,26 @@ async fn start(home: &Path, control: &Path, plan: &ListenerPlan) -> Result<()> {
 mod executable_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    #[tokio::test]
+    async fn workspace_suggestions_are_saved_selection_not_folder_names() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().canonicalize()?;
+        for name in ["byteowlz", "work", "projects", "native", "sockets"] {
+            std::fs::create_dir(home.join(name))?;
+        }
+        ensure!(saved_workspaces(&home, Some(&home)).await?.is_empty());
+        crate::personal_source::binding::install(
+            &home,
+            &crate::personal_source::binding::Binding {
+                schema: 1,
+                session_root: home.join("native"),
+                socket_root: home.join("sockets"),
+                workspaces: vec![home.join("projects")],
+            },
+        )?;
+        ensure!(saved_workspaces(&home, Some(&home)).await? == vec![home.join("projects")]);
+        Ok(())
+    }
     #[test]
     fn public_entry_resolves_only_packaged_sibling() -> Result<()> {
         let home = tempfile::tempdir()?;

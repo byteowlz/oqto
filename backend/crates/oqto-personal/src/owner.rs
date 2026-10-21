@@ -12,6 +12,7 @@ use tokio::{
 };
 
 const LIMIT: u64 = 64 * 1024;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelectedRoot {
@@ -33,6 +34,33 @@ pub enum OwnerCommand {
         device_id: String,
     },
 }
+/// Definitive rejection BEFORE ticket issuance. Other failures remain uncertain.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerRequestRejected {
+    FilesUnavailable,
+    TerminalUnavailable,
+    SessionsUnavailable,
+    ControlUnavailable,
+    InvalidFileRoots,
+}
+impl std::fmt::Display for OwnerRequestRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::FilesUnavailable => "Files are unavailable; no pairing ticket issued",
+            Self::TerminalUnavailable => {
+                "Terminal is disabled in the Runner configuration; no pairing ticket issued"
+            }
+            Self::SessionsUnavailable => {
+                "Session observation is unavailable; no pairing ticket issued"
+            }
+            Self::ControlUnavailable => "Session control is unavailable; no pairing ticket issued",
+            Self::InvalidFileRoots => "File roots were rejected; no pairing ticket issued",
+        })
+    }
+}
+impl std::error::Error for OwnerRequestRejected {}
+
 #[derive(Clone, Copy)]
 pub struct Supported {
     pub files: bool,
@@ -79,26 +107,23 @@ impl PairingAuthority {
                 files,
                 full_user_terminal,
             } => {
-                ensure!(
-                    files.len() <= 32 && (files.is_empty() || supported.files),
-                    "Files unavailable"
-                );
-                ensure!(
-                    !full_user_terminal || supported.terminal,
-                    "terminal unavailable"
-                );
-                ensure!(
-                    sessions == SessionAccess::None || supported.sessions,
-                    "session observation unavailable"
-                );
-                ensure!(
-                    sessions != SessionAccess::Control || supported.control,
-                    "session control unavailable"
-                );
+                if files.len() > 32 || (!files.is_empty() && !supported.files) {
+                    return Err(OwnerRequestRejected::FilesUnavailable.into());
+                }
+                if full_user_terminal && !supported.terminal {
+                    return Err(OwnerRequestRejected::TerminalUnavailable.into());
+                }
+                if sessions != SessionAccess::None && !supported.sessions {
+                    return Err(OwnerRequestRejected::SessionsUnavailable.into());
+                }
+                if sessions == SessionAccess::Control && !supported.control {
+                    return Err(OwnerRequestRejected::ControlUnavailable.into());
+                }
                 let files = files
                     .into_iter()
                     .map(|root| FileGrant::select(&root.path, root.writable))
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>>>()
+                    .map_err(|_| OwnerRequestRejected::InvalidFileRoots)?;
                 let grants = Grants {
                     sessions,
                     files,
@@ -165,7 +190,10 @@ pub async fn serve_owner(
                         let command = serde_json::from_slice(&line)?;
                         let reply = match authority.owner_command(command,&origin,&leaf,supported).await {
                             Ok(value) => serde_json::json!({"ok":true,"data":value}),
-                            Err(_) => serde_json::json!({"ok":false,"error":"owner_command_refused"}),
+                            Err(error) => match error.downcast_ref::<OwnerRequestRejected>() {
+                                Some(reason) => serde_json::json!({"ok":false,"error":"owner_request_rejected","reason":reason}),
+                                None => serde_json::json!({"ok":false,"error":"owner_command_refused"}),
+                            },
                         };
                         let mut bytes=serde_json::to_vec(&reply)?; bytes.push(b'\n');
                         reader.get_mut().write_all(&bytes).await?;
@@ -217,9 +245,16 @@ pub async fn request_owner(state: &Path, command: &OwnerCommand) -> Result<serde
             .await?;
         ensure!(line.len() as u64 <= LIMIT, "owner response too large");
         let value: serde_json::Value = serde_json::from_slice(&line)?;
+        if value["ok"] == false && value["error"] == "owner_request_rejected" {
+            let rejected: OwnerRequestRejected = serde_json::from_value(value["reason"].clone())?;
+            return Err(rejected.into());
+        }
         ensure!(value["ok"] == true, "personal owner command refused");
         Ok(value["data"].clone())
     })
     .await
     .context("owner command timed out; do not automatically retry an uncertain effect")?
 }
+
+#[cfg(test)]
+mod tests;

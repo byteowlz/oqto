@@ -42,14 +42,18 @@ oqto pair
 
 A terminal automatically opens the wizard for missing inputs:
 
-1. Workspaces: existing `~/byteowlz` and `~/work` are preselected; toggle with Space,
-   continue with Enter, or add a directory. Paths are canonicalized/deduplicated.
+1. Workspaces: explicit flags or the selected Runner's saved roots are preselected;
+   a fresh setup starts with no guessed directories. Toggle with Space, continue
+   with Enter, or add a directory. Paths are canonicalized/deduplicated.
 2. Access: session control, read/write Files, terminal as your OS user. Full defaults
    are only selections, not grants. Flag overrides seed the choices; Escape cancels.
 3. Network: Tailscale is preferred if available; otherwise local network is
    preselected with an explanation. No provider credential prompt is involved.
 4. Review directories, endpoint and permissions. The unrestricted-terminal warning
    is explicit; final confirmation defaults to **No**. Declining creates no state.
+   Terminal selection requires `[local] terminal_enabled = true` in the selected
+   Runner configuration. A typed pre-issuance rejection reports no ticket issued;
+   transport/issuance failures remain uncertain and are never automatically retried.
 5. Discover/reuse the dedicated host Runner and hot-enable personal HTTPS on that
    same process, or start a missing normal-user Runner conservatively. Display the
    private, single-use five-minute QR. Scan it with Oqto on the phone.

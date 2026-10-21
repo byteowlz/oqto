@@ -41,7 +41,19 @@ def environment(home):
 def wizard(binary, home):
     pid, fd = pty.fork()
     if pid == 0:
-        os.execve(binary, [binary, "pair", "--interactive"], environment(home))
+        os.execve(
+            binary,
+            [
+                binary,
+                "pair",
+                "--interactive",
+                "--workspace",
+                str(home / "projects"),
+                "--workspace",
+                str(home / "research"),
+            ],
+            environment(home),
+        )
     data, stage, reaped = b"", 0, False
     prompts = [b"Workspaces", b"Access", b"Connection", b"Enable pairing and show QR?"]
     try:
@@ -61,7 +73,7 @@ def wizard(binary, home):
                 break
         assert stage == 4 and b"NOT restricted" in data and b"Pairing cancelled" in data
         assert not (home / ".local").exists(), "declined wizard changed state"
-        assert b"byteowlz" in data and b"work" in data
+        assert b"projects" in data and b"research" in data
         return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", data.decode(errors="replace"))
     finally:
         # Never signal a PID that has already been reaped and could be reused.
@@ -176,7 +188,7 @@ def main():
     binary = str(args.binary.resolve(strict=True))
     with tempfile.TemporaryDirectory(prefix="oqto-wizard-proof-") as raw:
         home = pathlib.Path(raw).resolve()
-        for name in ["byteowlz", "work"]:
+        for name in ["projects", "research", "byteowlz", "work"]:
             (home / name).mkdir()
         snapshot = wizard(binary, home)
         if args.snapshot:
