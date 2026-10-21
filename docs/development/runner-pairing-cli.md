@@ -15,8 +15,22 @@ when native sessions exist; explicit source flags must agree with any declaratio
 The source socket directory must satisfy the source ownership checks (a shared
 system temporary directory is not silently accepted). Hot enable checks existing
 source/Workspace bindings, never switches a running worker's roots. Existing
-managed-service source migration still requires qualified operator setup; the
-integration's default-parallel scale gate is not yet accepted.
+managed-service source migration requires qualified operator setup. The owner can
+prepare the declaration without editing a plist or changing a running process:
+
+```sh
+oqto-runner configure-native-source \
+  --runner-home /canonical/managed/home \
+  --session-root /canonical/native/home/.pi/agent/sessions \
+  --socket-root /canonical/native/temporary/directory \
+  --workspace-root /canonical/byteowlz --workspace-root /canonical/work
+```
+
+This command is operator plumbing, not a second public pairing flow. It validates
+ownership and all paths, preserves identical declarations, refuses different or
+unknown unsafe declarations, and reports activation on the next Runner start.
+It does not restart the service, enroll a Device, grant permissions, or copy data.
+The public user entrypoint remains **`oqto pair`**.
 
 ## Interactive
 

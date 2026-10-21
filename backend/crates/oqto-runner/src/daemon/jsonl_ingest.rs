@@ -263,7 +263,7 @@ async fn run_at(
     let mut retry = tokio::time::interval(Duration::from_secs(5));
     retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut recent: HashMap<String, Instant> = HashMap::new();
-    let mut discovery = initial;
+    let mut discovery = initial.map(DiscoveryReadJob::new);
     let mut epoch = 0u64;
     let mut legacy = std::collections::VecDeque::new();
     let mut legacy_ids = std::collections::VecDeque::new();
@@ -325,7 +325,7 @@ async fn run_at(
             _ = retry.tick(), if (*status.borrow() == DiscoveryReadiness::Failed || health.unavailable()) && discovery.is_none() => {
                 if let Some(source) = &source { discovery = Some(Discovery::start_job(source.clone(), health.generation())); }
             }
-            event = async { match &mut discovery { Some(work) => work.await, None => std::future::pending().await } } => {
+            event = async { match &mut discovery { Some(work) => work.wait().await, None => std::future::pending().await } } => {
                 discovery = None;
                 match event {
                     DiscoveryEvent::Started { generation, result: Ok(pass) } => {
@@ -383,6 +383,37 @@ async fn run_at(
                 }
             }
         }
+    }
+}
+
+/// A single owned READ-ONLY job, not another writer. It must progress while
+/// the actor awaits native work: an inline suspended future may own both fixed
+/// reader slots and deadlock the native operation borrowing the same readers.
+/// Prepared results remain epoch-fenced; replacement/shutdown aborts the job.
+struct DiscoveryReadJob {
+    task: tokio::task::JoinHandle<DiscoveryEvent>,
+}
+impl DiscoveryReadJob {
+    fn new(work: impl std::future::Future<Output = DiscoveryEvent> + Send + 'static) -> Self {
+        Self {
+            task: tokio::spawn(work),
+        }
+    }
+    async fn wait(&mut self) -> DiscoveryEvent {
+        match (&mut self.task).await {
+            Ok(event) => event,
+            Err(error) => DiscoveryEvent::Started {
+                generation: 0,
+                result: Err(anyhow::anyhow!(
+                    "Native discovery reader task ended: {error}"
+                )),
+            },
+        }
+    }
+}
+impl Drop for DiscoveryReadJob {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 
@@ -470,12 +501,13 @@ struct Discovery {
 }
 impl Discovery {
     // Read-only initialization, including the initial complete shard probe, is
-    // polled beside the nudge queue. No SQL writes occur in these futures.
+    // independently scheduled beside the nudge queue. No SQL writes occur in
+    // these jobs; their resource owners must progress while native work awaits.
     fn start_job(
         source: std::sync::Arc<crate::personal_source::PersonalSource>,
         generation: u64,
-    ) -> BoxFuture<'static, DiscoveryEvent> {
-        Box::pin(async move {
+    ) -> DiscoveryReadJob {
+        DiscoveryReadJob::new(async move {
             DiscoveryEvent::Started {
                 generation,
                 result: Self::start(&source).await,
@@ -513,9 +545,9 @@ impl Discovery {
         mut self,
         epoch: u64,
         retry: Option<crate::personal_source::NativeHeader>,
-    ) -> Option<BoxFuture<'static, DiscoveryEvent>> {
+    ) -> Option<DiscoveryReadJob> {
         let header = retry.or_else(|| self.headers.next())?;
-        Some(Box::pin(async move {
+        Some(DiscoveryReadJob::new(async move {
             let result = self.inventory.prepare(&header.external_id).await;
             DiscoveryEvent::Prepared {
                 pass: self,
@@ -856,6 +888,60 @@ async fn ingest_file(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn dropped_discovery_job_releases_its_owned_read_work() -> anyhow::Result<()> {
+        let readers = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+        let pool = readers.clone();
+        let (held, acquired) = tokio::sync::oneshot::channel();
+        let job = super::DiscoveryReadJob::new(async move {
+            let _permits = pool.acquire_many_owned(2).await;
+            let _ = held.send(());
+            std::future::pending().await
+        });
+        acquired.await?;
+        drop(job);
+        let _returned = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            readers.acquire_many_owned(2),
+        )
+        .await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn native_work_can_acquire_readers_while_discovery_event_is_not_polled()
+    -> anyhow::Result<()> {
+        // Match the actor's select -> await-native pattern: discovery owns both
+        // reader permits when the actor stops polling its result to serve a nudge.
+        let readers = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (held, acquired) = tokio::sync::oneshot::channel();
+        let pool = readers.clone();
+        let finish = release.clone();
+        let mut job = super::DiscoveryReadJob::new(async move {
+            let permits = pool.acquire_many_owned(2).await;
+            let _ = held.send(());
+            finish.notified().await;
+            drop(permits);
+            super::DiscoveryEvent::Started {
+                generation: 0,
+                result: Ok(None),
+            }
+        });
+        tokio::select! {
+            result = acquired => { result?; }
+            _ = job.wait() => anyhow::bail!("discovery completed before releasing readers"),
+        }
+        release.notify_one();
+        let _native = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            readers.acquire_many_owned(2),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("unpolled discovery monopolized both native readers"))??;
+        let _ = job.wait().await;
+        Ok(())
+    }
     use super::*;
 
     fn write_session_file(home: &Path, external_id: &str, messages: &[&str]) -> PathBuf {

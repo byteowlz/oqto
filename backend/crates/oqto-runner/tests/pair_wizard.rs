@@ -276,7 +276,26 @@ async fn prebound_split_source_hot_enables_without_changing_service_home() -> Re
         socket_root: sockets,
         workspaces: vec![work.clone()],
     };
-    oqto_runner::personal_source::binding::install(&home, &binding)?;
+    let configured = Command::new(env!("CARGO_BIN_EXE_oqto-runner"))
+        .arg("configure-native-source")
+        .arg("--runner-home")
+        .arg(&home)
+        .arg("--session-root")
+        .arg(&binding.session_root)
+        .arg("--socket-root")
+        .arg(&binding.socket_root)
+        .arg("--workspace-root")
+        .arg(&work)
+        .env("HOME", &home)
+        .stdin(Stdio::null())
+        .output()?;
+    ensure!(
+        configured.status.success(),
+        "source CLI failed: {}",
+        String::from_utf8_lossy(&configured.stderr)
+    );
+    let configured: serde_json::Value = serde_json::from_slice(&configured.stdout)?;
+    ensure!(configured["configured"] == true && configured["activation"] == "on_next_start");
     let bucket = sessions.join(oqto_pi::session_files::cwd_to_safe_dirname(&work));
     std::fs::create_dir(&bucket)?;
     let file = bucket.join("2026-10-20_binding-native.jsonl");

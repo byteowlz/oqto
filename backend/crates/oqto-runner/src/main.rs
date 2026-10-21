@@ -91,6 +91,18 @@ struct Args {
 enum MaintenanceCommand {
     /// Pair your phone: optional interactive selection, existing Runner reuse and QR.
     Pair(oqto_runner::pair_cli::PairOptions),
+    /// Prepare an immutable owner-selected source for the next managed Runner start.
+    /// Does not restart a process, change HOME, issue grants or copy native history.
+    ConfigureNativeSource {
+        #[arg(long)]
+        runner_home: PathBuf,
+        #[arg(long)]
+        session_root: PathBuf,
+        #[arg(long)]
+        socket_root: PathBuf,
+        #[arg(long, required = true)]
+        workspace_root: Vec<PathBuf>,
+    },
     /// Qualify native Pi RPC in an explicit workdir; no listener or prompt.
     /// This is not sandbox, provider-auth or chat-readiness acceptance.
     CheckPi {
@@ -120,6 +132,30 @@ async fn main() -> Result<()> {
     match args.command.take() {
         Some(MaintenanceCommand::Pair(options)) => {
             return oqto_runner::pair_cli::execute(options).await;
+        }
+        Some(MaintenanceCommand::ConfigureNativeSource {
+            runner_home,
+            session_root,
+            socket_root,
+            workspace_root,
+        }) => {
+            let home = runner_home
+                .canonicalize()
+                .context("resolving managed Runner HOME")?;
+            oqto_runner::personal_source::binding::install(
+                &home,
+                &oqto_runner::personal_source::binding::Binding {
+                    schema: 1,
+                    session_root,
+                    socket_root,
+                    workspaces: workspace_root,
+                },
+            )?;
+            println!(
+                "{}",
+                serde_json::json!({"schema":1,"configured":true,"activation":"on_next_start"})
+            );
+            return Ok(());
         }
         Some(MaintenanceCommand::CheckPi { workdir }) => {
             let config = args
