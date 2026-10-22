@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented and under native qualification, `oqto-8x3p.10.7.8`. Extends ADR-0062
-and ADR-0069's preserve-first local owner workflow. Not phone/control acceptance.
+Implemented and qualified on Linux and native macOS, `oqto-8x3p.10.7.8`.
+Explicitly approved development update and marker migration activated on the Mac
+Studio on 2026-10-22; the saved listener is active again. Extends ADR-0062 and
+ADR-0069's preserve-first local owner workflow. Not phone/control acceptance.
 
 ## Context
 
