@@ -1,0 +1,46 @@
+{
+  "base": "0f0d520e9a00b294fcfbcaaf9345b280e8860b0a",
+  "included": {
+    "backend/crates/oqto-sandbox/src/cli.rs": {
+      "original_sha256": "02f5e4bfdcdb26fed2aacda717e2b7921d8c09e39106f7aeabc023d4af2a2325",
+      "snapshot_sha256": "02f5e4bfdcdb26fed2aacda717e2b7921d8c09e39106f7aeabc023d4af2a2325"
+    },
+    "backend/crates/oqto-sandbox/src/command.rs": {
+      "original_sha256": "214caab6b7e3cfcb52e77ad982d9cf97238890b0204e08799f92ad509c1c42d3",
+      "snapshot_sha256": "214caab6b7e3cfcb52e77ad982d9cf97238890b0204e08799f92ad509c1c42d3"
+    },
+    "backend/crates/oqto-sandbox/src/lib.rs": {
+      "original_sha256": "ea2e85103074c4a9953a6dacfd7b74436fbef61a08819208a4e7b5ccf20d6201",
+      "snapshot_sha256": "7481d70dc3e25111770755cad4285726c7a94ef4e2512386f014d9edd7c25ecf"
+    },
+    "backend/crates/oqto-sandbox/src/effective.rs": {
+      "original_sha256": "6a61693213f088fed8c172bd07726bc9ed8fdddda97d08f87ddc0dfd69e4204f",
+      "snapshot_sha256": "6a61693213f088fed8c172bd07726bc9ed8fdddda97d08f87ddc0dfd69e4204f"
+    },
+    "backend/crates/oqto-sandbox/src/overlay.rs": {
+      "original_sha256": "29a413ad97ecb82dbbfcc03f5a7868f093894f4b1cbdd8be2a0684ac455fb2f8",
+      "snapshot_sha256": "29a413ad97ecb82dbbfcc03f5a7868f093894f4b1cbdd8be2a0684ac455fb2f8"
+    },
+    "backend/crates/oqto-sandbox/tests/overlay.rs": {
+      "original_sha256": "e08c7e51d27382fa46d8bf756aa7d398499e5698b95945fae686704c6d2ea202",
+      "snapshot_sha256": "e08c7e51d27382fa46d8bf756aa7d398499e5698b95945fae686704c6d2ea202"
+    },
+    "backend/crates/oqto-sandbox/tests/effective_report.rs": {
+      "original_sha256": "176a07cd175b30790eb6fc009b91cbfd28daa6248f392fdd630100d89cbf9924",
+      "snapshot_sha256": "176a07cd175b30790eb6fc009b91cbfd28daa6248f392fdd630100d89cbf9924"
+    },
+    "backend/crates/oqto-sandbox/tests/effective_cli_test.py": {
+      "original_sha256": "a5316fa536126c2f7eab48b90d85045471bad25593233d02f7b628bfb9b2a66d",
+      "snapshot_sha256": "a5316fa536126c2f7eab48b90d85045471bad25593233d02f7b628bfb9b2a66d"
+    }
+  },
+  "excluded": [
+    "policy_editor module/tests",
+    "config.rs policy-editor-only extraction",
+    "oq-permissions WIP",
+    "frontend/oqt WIP"
+  ],
+  "transformations": {
+    "src/lib.rs": "remove only pub mod policy_editor; (unrelated concurrent WIP)"
+  }
+}
