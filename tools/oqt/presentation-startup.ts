@@ -20,14 +20,30 @@ export interface PresentationStartupView {
 	readonly queued: boolean;
 	readonly sending: boolean;
 	/** Unsent/uncertain startup text kept separately from a newer editor draft. */
-	readonly retained: readonly { readonly requestId: string; readonly text: string }[];
-	readonly status: "loading" | "queued" | "ready" | "sending" | "failed" | "uncertain" | "closed";
+	readonly retained: readonly {
+		readonly requestId: string;
+		readonly text: string;
+	}[];
+	readonly status:
+		| "loading"
+		| "queued"
+		| "ready"
+		| "sending"
+		| "failed"
+		| "uncertain"
+		| "closed";
 }
 interface Pending {
 	readonly requestId: string;
 	readonly text: string;
 }
-const fields = ["runtime", "session", "conversation", "model", "guardEpoch"] as const;
+const fields = [
+	"runtime",
+	"session",
+	"conversation",
+	"model",
+	"guardEpoch",
+] as const;
 function copyBinding(binding: PresentationBinding): PresentationBinding {
 	for (const field of fields) {
 		const value = binding[field];
@@ -52,10 +68,13 @@ export function createPresentationStartup(options: {
 	readonly launchId: string;
 	readonly runtime: string;
 	readonly expectedSession?: string;
-	readonly dispatch: (submission: StartupSubmission) => Promise<"accepted" | "rejected">;
+	readonly dispatch: (
+		submission: StartupSubmission,
+	) => Promise<"accepted" | "rejected">;
 	readonly changed: () => void;
 }) {
-	if (!options.launchId || !options.runtime) throw new Error("Startup identity required");
+	if (!options.launchId || !options.runtime)
+		throw new Error("Startup identity required");
 	const runtime = options.runtime;
 	const expectedSession = options.expectedSession;
 	const launchId = options.launchId;
@@ -70,7 +89,11 @@ export function createPresentationStartup(options: {
 	let epoch = 0;
 	const changed = () => {
 		// A renderer failure must not change admission state or trigger a retry.
-		try { options.changed(); } catch { /* presentation only */ }
+		try {
+			options.changed();
+		} catch {
+			/* presentation only */
+		}
 	};
 	async function drain() {
 		if (phase !== "ready" || !binding || !pending || sending) return;
@@ -87,9 +110,12 @@ export function createPresentationStartup(options: {
 			return;
 		}
 		try {
-			const result = await options.dispatch(Object.freeze({ ...item, binding: target }));
+			const result = await options.dispatch(
+				Object.freeze({ ...item, binding: target }),
+			);
 			if (dispatchEpoch !== epoch || phase !== "ready") return;
-			if (result !== "accepted" && result !== "rejected") throw new Error("Invalid admission response");
+			if (result !== "accepted" && result !== "rejected")
+				throw new Error("Invalid admission response");
 			status = result === "accepted" ? "ready" : "failed";
 			if (result === "rejected") {
 				retained.set(item.requestId, item);
@@ -109,18 +135,37 @@ export function createPresentationStartup(options: {
 	}
 	const input = Object.freeze({
 		view(): PresentationStartupView {
-			return Object.freeze({ phase, draft, queued: pending !== undefined, sending: sending !== undefined, status, retained: Object.freeze([...retained.values()]) });
+			return Object.freeze({
+				phase,
+				draft,
+				queued: pending !== undefined,
+				sending: sending !== undefined,
+				status,
+				retained: Object.freeze([...retained.values()]),
+			});
 		},
 		edit(text: string) {
 			if (phase === "closed") return;
-			if (text.length > 1024 * 1024) throw new Error("Startup draft exceeds limit");
+			if (text.length > 1024 * 1024)
+				throw new Error("Startup draft exceeds limit");
 			draft = text;
 			changed();
 		},
 		submit() {
-			if (phase === "failed" || phase === "closed" || pending || sending || status === "uncertain" || retained.size >= 64) return false;
+			if (
+				phase === "failed" ||
+				phase === "closed" ||
+				pending ||
+				sending ||
+				status === "uncertain" ||
+				retained.size >= 64
+			)
+				return false;
 			if (!draft.trim()) return false;
-			pending = Object.freeze({ requestId: `${launchId}:${++sequence}`, text: draft });
+			pending = Object.freeze({
+				requestId: `${launchId}:${++sequence}`,
+				text: draft,
+			});
 			draft = "";
 			status = "queued";
 			changed();
@@ -142,9 +187,13 @@ export function createPresentationStartup(options: {
 	return Object.freeze({
 		input,
 		ready(candidate: PresentationBinding) {
-			if (phase !== "loading") throw new Error("Startup is not awaiting readiness");
+			if (phase !== "loading")
+				throw new Error("Startup is not awaiting readiness");
 			const target = copyBinding(candidate);
-			if (target.runtime !== runtime || (expectedSession !== undefined && target.session !== expectedSession))
+			if (
+				target.runtime !== runtime ||
+				(expectedSession !== undefined && target.session !== expectedSession)
+			)
 				throw new Error("Startup target changed");
 			binding = target;
 			phase = "ready";
