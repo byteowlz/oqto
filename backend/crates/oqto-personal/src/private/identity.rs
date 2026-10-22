@@ -62,7 +62,7 @@ fn filesystem(file: &File) -> Result<String> {
     let result = unsafe {
         libc::fgetattrlist(
             file.as_raw_fd(),
-            &mut request,
+            (&mut request as *mut libc::attrlist).cast(),
             (&mut value as *mut VolumeUuid).cast(),
             std::mem::size_of::<VolumeUuid>(),
             0,
