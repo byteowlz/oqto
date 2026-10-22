@@ -311,7 +311,7 @@ impl super::Runner {
             {
                 Ok(task) => task,
                 Err(error) => {
-                    log::error!("Stored pairing listener unavailable: {error}");
+                    log::error!("Stored pairing listener unavailable: {error:#}");
                     ListenerTask(None)
                 }
             };
@@ -341,8 +341,15 @@ impl super::Runner {
                             if let Request::Enable{plan}=request {
                                 plan.validate()?;
                                 if let Some((current,task))=&active {
-                                    ensure!(!task.is_finished(),"personal listener stopped; inspect runner logs");
                                     ensure!(current==&plan,"listener already configured differently; refusing to widen existing Device scope");
+                                    if task.is_finished() {
+                                        // Owner explicitly requested this exact saved plan. Fully retire
+                                        // the old task before reopening the same singleton identity.
+                                        if let Some((_, old)) = active.take() { old.stop().await; }
+                                        active = Some((plan.clone(), ListenerTask(None)));
+                                        let task = self.clone().start_pair_listener(plan.clone(), &home, &state).await?;
+                                        active = Some((plan, task));
+                                    }
                                 }else{
                                     ensure!(!home.join(".local/share/oqto/personal").try_exists()?,"existing manual personal identity preserved; explicit migration required before managed pairing");
                                     ensure!(!state.try_exists()?,"uncommitted personal identity preserved; inspect prior activation failure before retrying");
@@ -355,7 +362,9 @@ impl super::Runner {
                         }.await;
                         let response = match outcome {
                             Ok(status) => serde_json::json!({"ok":true,"data":status}),
-                            Err(error) => serde_json::json!({"ok":false,"error":error.to_string()}),
+                            Err(error) => {
+                                serde_json::json!({"ok":false,"error":format!("{error:#}")})
+                            }
                         };
                         let mut bytes = serde_json::to_vec(&response)?;
                         bytes.push(b'\n');
@@ -399,16 +408,20 @@ impl super::Runner {
         }
         let (ready, receive) = tokio::sync::oneshot::channel();
         let options = plan.options(state.to_owned());
-        let task = ListenerTask(Some(tokio::spawn(self.run_personal_hot(options, ready))));
-        if tokio::time::timeout(std::time::Duration::from_secs(8), receive)
-            .await
-            .is_ok_and(|r| r.is_ok())
-        {
-            return Ok(task);
+        let mut task = ListenerTask(Some(tokio::spawn(self.run_personal_hot(options, ready))));
+        match tokio::time::timeout(std::time::Duration::from_secs(8), receive).await {
+            Ok(Ok(())) => Ok(task),
+            Ok(Err(_)) => {
+                let handle = task.0.take().context("missing personal listener task")?;
+                match handle.await.context("personal listener task failed")? {
+                    Err(error) => Err(error.context("personal listener startup failed")),
+                    Ok(()) => anyhow::bail!("personal listener exited before readiness"),
+                }
+            }
+            Err(_) => {
+                task.stop().await;
+                anyhow::bail!("personal listener readiness timed out; task fully retired")
+            }
         }
-        task.stop().await;
-        anyhow::bail!(
-            "could not enable pairing listener; check selected address, port and private host state"
-        )
     }
 }

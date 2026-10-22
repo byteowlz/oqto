@@ -9,7 +9,18 @@ pub mod http;
 mod identity;
 pub mod owner;
 pub use identity::TransportIdentity;
+/// Explicit host-owner migration of a legacy inode marker, under the authority
+/// singleton lock. Preserves a private backup; does not open SQLite or issue tickets.
+pub fn repair_store_owner(
+    root: &std::path::Path,
+    expected_marker_sha256: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    private::repair_owner(root, expected_marker_sha256)
+}
+
 mod private;
+#[cfg(test)]
+mod private_tests;
 use anyhow::{Context, Result, ensure};
 pub use grants::{Access, FileGrant, Grants, SessionAccess};
 use oqto_personal_wire::OQTO_PERSONAL_V1;

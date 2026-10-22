@@ -6,7 +6,31 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod identity;
+
 pub(crate) fn open_state(path: &Path) -> Result<(PathBuf, PathBuf, fs::File)> {
+    open_state_impl(path, None)
+}
+
+pub(crate) fn repair_owner(path: &Path, expected_sha256: &str) -> Result<PathBuf> {
+    ensure!(
+        expected_sha256.len() == 64 && expected_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+        "expected marker SHA256 required"
+    );
+    let (root, _, _lock) = open_state_impl(path, Some(expected_sha256))?;
+    Ok(root.join(format!("store-owner-{expected_sha256}.backup")))
+}
+
+fn open_state_impl(path: &Path, repair: Option<&str>) -> Result<(PathBuf, PathBuf, fs::File)> {
+    if repair.is_some() {
+        ensure!(
+            path.is_dir()
+                && path.join("personal.sqlite3").is_file()
+                && path.join("store-owner.json").exists()
+                && path.join("authority.lock").is_file(),
+            "repair requires an existing private store and marker"
+        );
+    }
     ensure!(
         path.is_absolute(),
         "personal state directory must be absolute"
@@ -86,11 +110,16 @@ pub(crate) fn open_state(path: &Path) -> Result<(PathBuf, PathBuf, fs::File)> {
     // Only the exact inode recorded by this private marker may recover that state.
     let marker = root.join("store-owner.json");
     let metadata = database.metadata()?;
-    let ownership = format!(
-        "{{\"purpose\":\"oqto.personal-store.v1\",\"dev\":{},\"ino\":{}}}\n",
-        metadata.dev(),
-        metadata.ino()
+    let database_file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&database)?;
+    ensure!(
+        database_file.metadata()?.is_file(),
+        "database must be a regular file"
     );
+    let persistent = identity::StoreIdentity::for_file(&database_file)?;
+    let ownership = persistent.encode()?;
     let mut recognized_header = metadata.len() == 0;
     if metadata.len() > 0 {
         use std::io::Read;
@@ -123,10 +152,88 @@ pub(crate) fn open_state(path: &Path) -> Result<(PathBuf, PathBuf, fs::File)> {
             );
             let mut contents = String::new();
             file.read_to_string(&mut contents)?;
-            ensure!(
-                contents == ownership,
-                "store ownership marker does not match database inode"
-            );
+            if let Some(expected) = repair {
+                use sha2::{Digest, Sha256};
+                ensure!(
+                    format!("{:x}", Sha256::digest(contents.as_bytes())) == expected,
+                    "marker changed since approval; refusing repair"
+                );
+                let legacy: identity::LegacyIdentity = serde_json::from_str(&contents)
+                    .context("only legacy ownership markers can be repaired")?;
+                ensure!(
+                    legacy.purpose == "oqto.personal-store.v1" && legacy.ino == metadata.ino(),
+                    "repair refuses foreign database inode or marker"
+                );
+                ensure!(
+                    recognized_header && metadata.len() >= 100,
+                    "repair requires a recognized initialized personal database"
+                );
+                let backup = root.join(format!("store-owner-{expected}.backup"));
+                match fs::hard_link(&marker, &backup) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Resume only our exact hard-linked backup after an interrupted
+                        // pre-publication migration. Unknown backup files are preserved.
+                        let saved = fs::OpenOptions::new()
+                            .read(true)
+                            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                            .open(&backup)?;
+                        let saved_meta = saved.metadata()?;
+                        ensure!(
+                            saved_meta.is_file()
+                                && saved_meta.dev() == meta.dev()
+                                && saved_meta.ino() == meta.ino(),
+                            "existing ownership backup is not the original marker; preserving it"
+                        );
+                    }
+                    Err(error) => return Err(error).context("preserve old ownership marker"),
+                }
+                fs::File::open(&root)?.sync_all()?;
+                let staged = root.join(format!("store-owner-{}.new", uuid::Uuid::new_v4()));
+                let result = (|| -> Result<()> {
+                    use std::io::Write;
+                    let mut output = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(&staged)?;
+                    output.write_all(ownership.as_bytes())?;
+                    output.sync_all()?;
+                    let current = fs::symlink_metadata(&marker)?;
+                    ensure!(
+                        current.dev() == meta.dev() && current.ino() == meta.ino(),
+                        "marker replaced during repair"
+                    );
+                    let current_database = fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                        .open(&database)?;
+                    ensure!(
+                        identity::StoreIdentity::for_file(&current_database)? == persistent,
+                        "database replaced during repair"
+                    );
+                    let mut current_marker = fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                        .open(&marker)?;
+                    let mut current_contents = String::new();
+                    std::io::Read::take(&mut current_marker, 257)
+                        .read_to_string(&mut current_contents)?;
+                    ensure!(
+                        current_contents == contents,
+                        "marker contents changed during repair"
+                    );
+                    fs::rename(&staged, &marker)?;
+                    fs::File::open(&root)?.sync_all()?;
+                    Ok(())
+                })();
+                if staged.try_exists()? {
+                    fs::remove_file(&staged)?;
+                }
+                result?;
+            } else {
+                identity::validate(&contents, &persistent, metadata.dev())?;
+            }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             use std::io::Write;

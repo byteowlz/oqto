@@ -34,6 +34,13 @@ pub struct PairOptions {
     /// Print non-secret controller status as JSON; never start or change a Runner.
     #[arg(long, conflicts_with_all = ["workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
     pub status: bool,
+    /// Explicitly migrate a stopped listener's legacy store marker, pinning its SHA256.
+    /// No ticket, key rotation or database reset. A private backup is retained.
+    #[arg(long, conflicts_with_all = ["status", "recover_listener", "workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
+    pub repair_owner_marker: Option<String>,
+    /// Restart only the saved stopped listener, with exactly its existing scope. No ticket.
+    #[arg(long, conflicts_with_all = ["status", "workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
+    pub recover_listener: bool,
     /// Select Workspaces; repeat for each directory.
     #[arg(long = "workspace")]
     pub workspaces: Vec<PathBuf>,
@@ -67,7 +74,7 @@ pub struct PairOptions {
 }
 impl PairOptions {
     pub fn mode(&self, tty: bool) -> std::result::Result<bool, String> {
-        if self.status {
+        if self.status || self.repair_owner_marker.is_some() || self.recover_listener {
             return Ok(false);
         }
         if self.interactive && !tty {
@@ -183,6 +190,26 @@ pub async fn run(mut options: PairOptions, wizard: bool) -> Result<()> {
     let home = dirs::home_dir()
         .context("home unavailable")?
         .canonicalize()?;
+    if let Some(expected) = &options.repair_owner_marker {
+        let status = runtime::status(&home, options.runner_home.as_deref()).await?;
+        ensure!(
+            !status.active && status.plan.is_some(),
+            "repair requires the saved listener to be stopped"
+        );
+        let backup = oqto_personal::repair_store_owner(&status.state, expected)?;
+        println!(
+            "{}",
+            serde_json::json!({"schema":1,"repaired":true,"backup":backup,"ticket_issued":false})
+        );
+        return Ok(());
+    }
+    if options.recover_listener {
+        let before = runtime::status(&home, options.runner_home.as_deref()).await?;
+        let plan = before.plan.context("no saved listener to recover")?;
+        let status = runtime::enable(&home, options.runner_home.as_deref(), &plan).await?;
+        println!("{}", serde_json::to_string(&status)?);
+        return Ok(());
+    }
     if options.status {
         use std::io::Write;
         let status = runtime::status(&home, options.runner_home.as_deref()).await?;

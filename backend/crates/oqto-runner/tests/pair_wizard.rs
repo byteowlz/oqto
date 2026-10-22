@@ -417,3 +417,8 @@ fn real_headless_cli_errors_are_usage_errors_and_do_not_create_state() -> Result
     ensure!(!home.path().join(".local").exists());
     Ok(())
 }
+
+#[path = "pair_wizard/recovery.rs"]
+mod recovery;
+#[path = "pair_wizard/transient.rs"]
+mod transient;
