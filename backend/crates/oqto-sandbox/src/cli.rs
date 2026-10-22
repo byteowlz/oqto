@@ -8,7 +8,9 @@ use std::process::Command;
 use std::os::unix::process::CommandExt;
 
 use crate::landlock_shim::maybe_run_shim;
-use crate::{SandboxConfig, SandboxConfigFile, build_sandbox_command, configure_bwrap_pre_exec};
+use crate::{
+    SandboxConfig, SandboxConfigFile, build_sandbox_command_with_cwd, configure_bwrap_pre_exec,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -25,6 +27,15 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
+    /// Restriction-only TOML applied after the normal trusted config chain.
+    /// Not a grant interface or an authenticated parent-session ceiling.
+    #[arg(long, conflicts_with_all = ["config", "profile", "no_sandbox"])]
+    overlay: Option<PathBuf>,
+
+    /// Explicit JSON presentation for --print-effective (already the default).
+    #[arg(long, requires = "print_effective")]
+    json: bool,
+
     /// Profile to use. Overrides the profile named by any config file; when
     /// omitted the config file's own profile (or "development") is used.
     #[arg(short, long)]
@@ -33,8 +44,20 @@ struct Args {
     #[arg(short, long)]
     workspace: Option<PathBuf>,
 
+    /// Initial directory inside --workspace; does not add filesystem grants.
+    #[arg(long)]
+    cwd: Option<PathBuf>,
+
     #[arg(long)]
     dry_run: bool,
+
+    /// Validate and compile policy without launching a child.
+    #[arg(long, conflicts_with_all = ["dry_run", "no_sandbox"])]
+    check_config: bool,
+
+    /// Print versioned effective-policy JSON without launching a child.
+    #[arg(long, conflicts_with_all = ["dry_run", "no_sandbox"])]
+    print_effective: bool,
 
     #[arg(long)]
     no_sandbox: bool,
@@ -42,7 +65,7 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    #[arg(trailing_var_arg = true, required = true)]
+    #[arg(trailing_var_arg = true, required_unless_present_any = ["check_config", "print_effective"])]
     command: Vec<String>,
 }
 
@@ -67,12 +90,12 @@ fn load_config(args: &Args) -> Result<SandboxConfig> {
         if let Some(profile) = &args.profile {
             profile.clone_into(&mut file.profile);
         }
-        file.into()
+        checked_config(file)?
     } else {
         load_config_from_chain(args.profile.as_deref())?
     };
 
-    config.enabled = !args.no_sandbox;
+    config.enabled = config.enabled && !args.no_sandbox;
     Ok(config)
 }
 
@@ -96,7 +119,7 @@ fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
             info!("Overriding system config profile with '{}'", profile);
             profile.clone_into(&mut file.profile);
         }
-        return Ok(file.into());
+        return checked_config(file);
     }
 
     let user_path = dirs::config_dir()
@@ -106,8 +129,13 @@ fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
 
     if user_path.exists() {
         info!("Loading sandbox config from user path: {:?}", user_path);
-        return SandboxConfig::load_user_config()
-            .context("user sandbox config exists but failed to parse");
+        let content = std::fs::read_to_string(&user_path).context("reading user sandbox config")?;
+        let mut file: SandboxConfigFile =
+            toml::from_str(&content).context("parsing user sandbox config")?;
+        if let Some(profile) = profile {
+            profile.clone_into(&mut file.profile);
+        }
+        return checked_config(file);
     }
 
     let profile = profile.unwrap_or(crate::default_profile_name());
@@ -115,7 +143,21 @@ fn load_config_from_chain(profile: Option<&str>) -> Result<SandboxConfig> {
         "No config file found, using hardcoded profile '{}'",
         profile
     );
+    anyhow::ensure!(
+        crate::SandboxProfile::builtin(profile).is_some(),
+        "unknown sandbox profile: {profile}"
+    );
     Ok(SandboxConfig::from_profile(profile))
+}
+
+fn checked_config(file: SandboxConfigFile) -> Result<SandboxConfig> {
+    anyhow::ensure!(
+        crate::SandboxProfile::builtin(&file.profile).is_some()
+            || file.profiles.contains_key(&file.profile),
+        "unknown sandbox profile: {}",
+        file.profile
+    );
+    Ok(file.into())
 }
 
 #[cfg(unix)]
@@ -132,12 +174,14 @@ fn exec_sandboxed(
     config: &SandboxConfig,
     command: &[String],
     workspace: &std::path::Path,
+    cwd: &std::path::Path,
     dry_run: bool,
 ) -> Result<()> {
     let (program, args) = command.split_first().context("missing sandbox command")?;
-    let mut cmd = build_sandbox_command(
+    let mut cmd = build_sandbox_command_with_cwd(
         config,
         workspace,
+        cwd,
         std::path::Path::new(program),
         args,
         crate::SandboxStdin::Inherited,
@@ -190,8 +234,36 @@ pub fn run_cli() -> Result<()> {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
 
+    let canonical_workspace = workspace
+        .canonicalize()
+        .context("resolving sandbox workspace")?;
+    let cwd = crate::command::resolve_cwd(
+        &canonical_workspace,
+        args.cwd.as_deref().unwrap_or(std::path::Path::new(".")),
+    )?;
+
     // Merge workspace config on top (can only add restrictions, never weaken)
-    let config = config.with_workspace_config(&workspace);
+    let config = match SandboxConfig::try_load_from_workspace(&workspace, &config.profiles)? {
+        Some(local) => config.merge_with_workspace(&local),
+        None => config,
+    };
+
+    let config = if let Some(path) = &args.overlay {
+        let overlay = crate::overlay::load_private_overlay(path, &canonical_workspace)?;
+        let narrowed = overlay.apply(&config, &canonical_workspace)?;
+        info!("Applied restriction-only overlay; no grants added");
+        narrowed
+    } else {
+        config
+    };
+
+    if args.check_config || args.print_effective {
+        let report = crate::effective::inspect_effective_policy(&config, &workspace, &cwd)?;
+        if args.print_effective {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        return Ok(());
+    }
 
     info!(
         "oqto-sandbox: platform={}, profile={}, workspace={:?}, command={:?}",
@@ -207,8 +279,8 @@ pub fn run_cli() -> Result<()> {
             println!("Would execute: {:?}", args.command);
             return Ok(());
         }
-        return exec_direct(&args.command, &workspace);
+        return exec_direct(&args.command, &cwd);
     }
 
-    exec_sandboxed(&config, &args.command, &workspace, args.dry_run)
+    exec_sandboxed(&config, &args.command, &workspace, &cwd, args.dry_run)
 }

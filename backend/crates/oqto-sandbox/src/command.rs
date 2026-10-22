@@ -23,6 +23,19 @@ pub fn build_sandbox_command(
     args: &[String],
     stdin: SandboxStdin,
 ) -> Result<Command> {
+    build_sandbox_command_with_cwd(config, workspace, Path::new("."), program, args, stdin)
+}
+
+/// Select cwd without changing workspace or mount authority. Relative paths are
+/// resolved under workspace; outside-workspace cwd is rejected.
+pub fn build_sandbox_command_with_cwd(
+    config: &SandboxConfig,
+    workspace: &Path,
+    cwd: &Path,
+    program: &Path,
+    args: &[String],
+    stdin: SandboxStdin,
+) -> Result<Command> {
     ensure!(
         config.enabled,
         "sandbox command requested with sandbox disabled"
@@ -34,13 +47,32 @@ pub fn build_sandbox_command(
         workspace.is_dir(),
         "sandbox work directory is not a directory"
     );
-    platform_command(config, &workspace, program, args, stdin)
+    let cwd = resolve_cwd(&workspace, cwd)?;
+    platform_command(config, &workspace, &cwd, program, args, stdin)
+}
+
+pub(crate) fn resolve_cwd(workspace: &Path, cwd: &Path) -> Result<std::path::PathBuf> {
+    let cwd = if cwd.is_absolute() {
+        cwd.to_path_buf()
+    } else {
+        workspace.join(cwd)
+    };
+    let cwd = cwd
+        .canonicalize()
+        .context("resolving sandbox execution directory")?;
+    ensure!(cwd.is_dir(), "sandbox cwd is not a directory");
+    ensure!(
+        cwd.starts_with(workspace),
+        "sandbox cwd must remain inside the authorized workspace"
+    );
+    Ok(cwd)
 }
 
 #[cfg(target_os = "linux")]
 fn platform_command(
     config: &SandboxConfig,
     workspace: &Path,
+    cwd: &Path,
     program: &Path,
     args: &[String],
     _stdin: SandboxStdin,
@@ -49,9 +81,18 @@ fn platform_command(
         SandboxConfig::is_bwrap_available(),
         "bubblewrap (bwrap) is not installed or not runnable; refusing unsandboxed execution"
     );
-    let sandbox_args = config
+    let mut sandbox_args = config
         .build_bwrap_args_for_user(workspace, None)
         .context("sandbox policy rejected; refusing unsandboxed execution")?;
+    let cwd_value = cwd.to_str().context("sandbox cwd must be UTF-8")?;
+    let chdir = sandbox_args
+        .iter()
+        .position(|arg| arg == "--chdir")
+        .context("compiled sandbox command lacks cwd")?;
+    let slot = sandbox_args
+        .get_mut(chdir + 1)
+        .context("compiled sandbox cwd lacks value")?;
+    *slot = cwd_value.to_owned();
     let mut command = Command::new("bwrap");
     command.args(sandbox_args).arg(program).args(args);
     Ok(command)
@@ -61,6 +102,7 @@ fn platform_command(
 fn platform_command(
     config: &SandboxConfig,
     workspace: &Path,
+    cwd: &Path,
     program: &Path,
     args: &[String],
     stdin: SandboxStdin,
@@ -96,7 +138,7 @@ fn platform_command(
         .arg(profile)
         .arg(program)
         .args(args)
-        .current_dir(workspace);
+        .current_dir(cwd);
     command.env(
         "PATH",
         SandboxConfig::sandbox_path(dirs::home_dir().as_deref()),
@@ -114,6 +156,7 @@ fn platform_command(
     _: &SandboxConfig,
     _: &Path,
     _: &Path,
+    _: &Path,
     _: &[String],
     _: SandboxStdin,
 ) -> Result<Command> {
@@ -127,6 +170,7 @@ fn platform_command(
     _: &SandboxConfig,
     _: &Path,
     _: &Path,
+    _: &Path,
     _: &[String],
     _: SandboxStdin,
 ) -> Result<Command> {
@@ -136,6 +180,72 @@ fn platform_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cwd_resolves_inside_workspace_without_widening() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = temp.path().canonicalize()?;
+        std::fs::create_dir(workspace.join("nested"))?;
+        assert_eq!(
+            resolve_cwd(&workspace, Path::new("nested"))?,
+            workspace.join("nested")
+        );
+        assert!(resolve_cwd(&workspace, Path::new("..")).is_err());
+        assert!(resolve_cwd(&workspace, Path::new("missing")).is_err());
+        std::fs::write(workspace.join("file"), b"not a directory")?;
+        assert!(resolve_cwd(&workspace, Path::new("file")).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_symlink_cannot_escape_workspace() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let workspace = temp.path().canonicalize()?;
+        std::os::unix::fs::symlink(outside.path(), workspace.join("escape"))?;
+        assert!(resolve_cwd(&workspace, Path::new("escape")).is_err());
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cwd_changes_only_chdir_not_mount_grants() -> Result<()> {
+        if !SandboxConfig::is_bwrap_available() {
+            return Ok(());
+        }
+        let temp = tempfile::tempdir()?;
+        std::fs::create_dir(temp.path().join("nested"))?;
+        let config = SandboxConfig::from_profile("minimal");
+        let base = build_sandbox_command(
+            &config,
+            temp.path(),
+            Path::new("/bin/true"),
+            &[],
+            SandboxStdin::Redirected,
+        )?;
+        let changed = build_sandbox_command_with_cwd(
+            &config,
+            temp.path(),
+            Path::new("nested"),
+            Path::new("/bin/true"),
+            &[],
+            SandboxStdin::Redirected,
+        )?;
+        let base: Vec<_> = base.get_args().map(|arg| arg.to_os_string()).collect();
+        let mut changed: Vec<_> = changed.get_args().map(|arg| arg.to_os_string()).collect();
+        let index = base
+            .iter()
+            .position(|arg| arg == "--chdir")
+            .context("missing chdir")?;
+        assert_eq!(
+            changed[index + 1],
+            temp.path().canonicalize()?.join("nested")
+        );
+        changed[index + 1] = base[index + 1].clone();
+        assert_eq!(base, changed);
+        Ok(())
+    }
 
     #[test]
     fn never_turns_disabled_policy_into_direct_execution() {
