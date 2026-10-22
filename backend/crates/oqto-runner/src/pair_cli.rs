@@ -38,6 +38,9 @@ pub struct PairOptions {
     /// No ticket, key rotation or database reset. A private backup is retained.
     #[arg(long, conflicts_with_all = ["status", "recover_listener", "workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
     pub repair_owner_marker: Option<String>,
+    /// Restore the exact private legacy marker backup by its approved SHA256. No database writes.
+    #[arg(long, conflicts_with_all = ["status", "repair_owner_marker", "recover_listener", "workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
+    pub restore_owner_marker: Option<String>,
     /// Restart only the saved stopped listener, with exactly its existing scope. No ticket.
     #[arg(long, conflicts_with_all = ["status", "workspaces", "access", "network", "interactive", "non_interactive", "yes", "sessions", "files", "terminal", "port"])]
     pub recover_listener: bool,
@@ -74,7 +77,11 @@ pub struct PairOptions {
 }
 impl PairOptions {
     pub fn mode(&self, tty: bool) -> std::result::Result<bool, String> {
-        if self.status || self.repair_owner_marker.is_some() || self.recover_listener {
+        if self.status
+            || self.repair_owner_marker.is_some()
+            || self.restore_owner_marker.is_some()
+            || self.recover_listener
+        {
             return Ok(false);
         }
         if self.interactive && !tty {
@@ -190,6 +197,19 @@ pub async fn run(mut options: PairOptions, wizard: bool) -> Result<()> {
     let home = dirs::home_dir()
         .context("home unavailable")?
         .canonicalize()?;
+    if let Some(expected) = &options.restore_owner_marker {
+        let status = runtime::status(&home, options.runner_home.as_deref()).await?;
+        ensure!(
+            !status.active && status.plan.is_some(),
+            "restore requires the saved listener to be stopped"
+        );
+        oqto_personal::restore_store_owner(&status.state, expected)?;
+        println!(
+            "{}",
+            serde_json::json!({"schema":1,"restored":true,"ticket_issued":false})
+        );
+        return Ok(());
+    }
     if let Some(expected) = &options.repair_owner_marker {
         let status = runtime::status(&home, options.runner_home.as_deref()).await?;
         ensure!(

@@ -7,6 +7,8 @@ use std::{
 };
 
 mod identity;
+mod restore;
+pub(crate) use restore::restore_owner;
 
 pub(crate) fn open_state(path: &Path) -> Result<(PathBuf, PathBuf, fs::File)> {
     open_state_impl(path, None)

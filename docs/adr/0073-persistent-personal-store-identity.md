@@ -51,7 +51,12 @@ startup failures retain the child error chain in owner diagnostics/logs.
 
 ## Rollback and verification
 
-A private old marker backup remains beside the store. Binary/marker rollback must
+A private old marker backup remains beside the store. The explicit
+`oqto pair --restore-owner-marker <backup-SHA256>` operation validates the current
+v2 identity, singleton lock and exact private legacy backup, preserves the v2
+marker too, and atomically restores the original legacy marker inode without
+opening SQLite for writes. It is only available for the saved stopped listener.
+Binary/marker rollback must
 be coherent and occur only while the authority is stopped; restoring the exact
 old marker on a changed mount intentionally restores the previous refusal, not
 false success. Do not copy a backup database inode into place under either marker.

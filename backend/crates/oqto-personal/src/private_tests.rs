@@ -49,6 +49,16 @@ async fn approved_legacy_migration_preserves_database_identity_and_backup() -> R
         repair_store_owner(&root, &digest).is_err(),
         "live authority must exclude repair"
     );
+    assert!(restore_store_owner(&root, &digest).is_err());
+    reopened.pool.close().await;
+    drop(reopened);
+    let before_restore = std::fs::read(&db)?;
+    restore_store_owner(&root, &digest)?;
+    assert_eq!(std::fs::read_to_string(&marker)?, legacy);
+    assert_eq!(std::fs::read(&db)?, before_restore);
+    assert!(PairingAuthority::open_private(&root).await.is_err());
+    repair_store_owner(&root, &digest)?;
+    assert!(PairingAuthority::open_private(&root).await.is_ok());
     Ok(())
 }
 

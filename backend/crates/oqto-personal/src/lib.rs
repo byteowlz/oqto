@@ -18,6 +18,15 @@ pub fn repair_store_owner(
     private::repair_owner(root, expected_marker_sha256)
 }
 
+/// Restore the exact approved legacy marker backup while no authority is active.
+/// Does not alter SQLite. Restoring an obsolete mount ID restores its refusal too.
+pub fn restore_store_owner(
+    root: &std::path::Path,
+    expected_backup_sha256: &str,
+) -> anyhow::Result<()> {
+    private::restore_owner(root, expected_backup_sha256)
+}
+
 mod private;
 #[cfg(test)]
 mod private_tests;
