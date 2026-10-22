@@ -64,6 +64,34 @@ if [[ "$VERIFY_CURRENT" == "true" ]]; then
   exit 0
 fi
 
+# A release-installed runner with the default executable resolves only its own
+# bundled Pi (see bundled_pi_runtime in oqto-runner). Installing into the user
+# channel would change nothing and the follow-up restart would only interrupt
+# live sessions. Refuse before any download.
+release_owned_runner() {
+  local pid exe configured
+  pid="$(systemctl --user show oqto-runner -p MainPID --value 2>/dev/null || true)"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null)" || return 1
+  [[ "$exe" == */immutable/bin/oqto-runner ]] || return 1
+  configured="$(python3 - "${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}/oqto/config.toml" <<'PY'
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as stream:
+        print(tomllib.load(stream).get("pi", {}).get("executable", "pi"))
+except FileNotFoundError:
+    print("pi")
+PY
+)" || return 1
+  [[ "$configured" == "pi" ]] || return 1
+  RELEASE_PI="${exe%/bin/oqto-runner}/pi-runtime/pi/pi"
+}
+if [[ "$INSTALL_USER" == "true" ]] && release_owned_runner; then
+  echo "agent-check: oqto-runner uses its release-bundled Pi ($RELEASE_PI, $("$RELEASE_PI" --version 2>/dev/null || echo unknown)); the user channel is not used, so nothing was installed or restarted" >&2
+  echo "agent-check: to upgrade, run 'just check-pi-stable' and qualify a new release pin" >&2
+  exit 1
+fi
+
 headers=(-H 'Accept: application/vnd.github+json')
 [[ -n "${GITHUB_TOKEN:-}" ]] && headers+=(-H "Authorization: Bearer $GITHUB_TOKEN")
 release_json="$(mktemp)"; sums="$(mktemp)"

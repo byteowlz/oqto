@@ -414,7 +414,8 @@ check-agent-updates:
 promote-agent-update:
     ./scripts/dist/check-agent-runtime.sh --update-lock
 
-# Rootless local channel: verify and atomically promote latest, without Git changes
+# Rootless local channel for source-run runners: verify and promote latest Pi.
+# Refuses (no download/restart) when oqto-runner uses a release-bundled Pi.
 update-pi-local:
     ./scripts/dist/check-agent-runtime.sh --install-user
     systemctl --user try-restart oqto-runner
