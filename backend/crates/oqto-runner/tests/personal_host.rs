@@ -41,6 +41,7 @@ fn command(home: &Path) -> Command {
         )
         .env("PATH", "/usr/bin:/bin")
         .env("SHELL", "/bin/sh")
+        .current_dir(home)
         .stdin(Stdio::null())
         .kill_on_drop(true);
     command
@@ -68,11 +69,21 @@ impl Host {
         std::fs::create_dir_all(home.join("tmp"))?;
         std::fs::create_dir_all(&work)?;
         let config = root.join("config.toml");
+        let sentinel = home.join("pi-sentinel");
+        std::fs::write(
+            &sentinel,
+            format!(
+                "#!/bin/sh\nprintf invoked >> '{}'\nexit 97\n",
+                home.join("pi-invocations").display()
+            ),
+        )?;
+        std::fs::set_permissions(&sentinel, std::fs::Permissions::from_mode(0o700))?;
         std::fs::write(
             &config,
             format!(
-                "[local]\nsingle_user=true\nterminal_enabled=true\nworkspace_dir={}\n[local.linux_users]\nenabled=false\n[runner]\nrunner_id=\"personal-disposable-fixture\"\n[pi]\nexecutable=\"/nonexistent-do-not-spawn-pi\"\n",
-                serde_json::to_string(&work)?
+                "[local]\nsingle_user=true\nterminal_enabled=true\nworkspace_dir={}\n[local.linux_users]\nenabled=false\n[runner]\nrunner_id=\"personal-disposable-fixture\"\n[pi]\nexecutable={}\n",
+                serde_json::to_string(&work)?,
+                serde_json::to_string(&sentinel)?
             ),
         )?;
         std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))?;
@@ -211,12 +222,18 @@ impl Host {
     async fn stop(mut self) -> Result<()> {
         self.child.start_kill()?;
         self.child.wait().await?;
+        assert!(
+            !self.home.join("pi-invocations").exists(),
+            "Startup/owner/native actions must execute zero Pi candidates"
+        );
         Ok(())
     }
 }
 
 #[path = "personal_host/sessions.rs"]
 mod sessions;
+#[path = "personal_host/split_source.rs"]
+mod split_source;
 
 #[tokio::test]
 async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()> {
@@ -407,7 +424,10 @@ async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()
         .0,
         403
     );
-    let input = "stty size; printf 'oqto-pty-fixture\\n'; printf '%s' \"$$\" > shell.pid\n";
+    // Publish the fixture-owned PID atomically. Existence of a redirection
+    // target alone is not readiness: it can still be empty before printf runs.
+    // Delaying the temporary write exercises polling before publication.
+    let input = "stty size; printf 'oqto-pty-fixture\\n'; : > shell.pid.tmp; sleep 0.05; printf '%s' \"$$\" > shell.pid.tmp; mv shell.pid.tmp shell.pid\n";
     assert_eq!(
         host.action(
             &device,
@@ -445,7 +465,9 @@ async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(String::from_utf8_lossy(&output).contains("31 91"));
-    let pid: i32 = std::fs::read_to_string(host.work.join("shell.pid"))?.parse()?;
+    let pid: i32 = std::fs::read_to_string(host.work.join("shell.pid"))?
+        .parse()
+        .context("atomically published fixture shell PID")?;
     let pid = rustix::process::Pid::from_raw(pid).context("owned shell PID")?;
     assert_eq!(host.owner(&["revoke", &device]).await?["revoked"], true);
     assert_eq!(

@@ -304,6 +304,7 @@ async fn authenticated_real_selection_gateway() -> Result<()> {
             fileserver_binary: "/bin/false".into(),
             ttyd_binary: "/bin/false".into(),
             pi_binary: root.join("pi-private").display().to_string(),
+            personal_source: None,
             runner_id: "private-auth-selection".into(),
             workspace_dir: root.clone(),
             pi_sessions_dir: home.join(".pi/agent/sessions"),

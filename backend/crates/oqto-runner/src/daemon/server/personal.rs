@@ -18,6 +18,7 @@ pub struct PersonalBackend {
     files: Arc<Mutex<()>>,
     terminals: Arc<crate::personal_terminal::Terminals>,
     sessions: Arc<crate::personal_sessions::Sessions>,
+    ingest: super::super::jsonl_ingest::IngestHandle,
     reaper: tokio::task::JoinHandle<()>,
 }
 impl Drop for PersonalBackend {
@@ -34,7 +35,9 @@ impl PersonalBackend {
     ) -> Self {
         let terminals = Arc::new(crate::personal_terminal::Terminals::default());
         let weak = Arc::downgrade(&terminals);
-        let sessions = Arc::new(crate::personal_sessions::Sessions::with_ingest(ingest));
+        let sessions = Arc::new(crate::personal_sessions::Sessions::with_ingest(
+            ingest.clone(),
+        ));
         let weak_sessions = Arc::downgrade(&sessions);
         let reaper = tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -61,6 +64,7 @@ impl PersonalBackend {
             files: Arc::new(Mutex::new(())),
             terminals,
             sessions,
+            ingest,
             reaper,
         }
     }
@@ -78,7 +82,7 @@ impl super::Runner {
         self: Arc<Self>,
         options: crate::personal_cli::ServerOptions,
     ) -> anyhow::Result<()> {
-        self.run_personal_inner(options, true).await
+        self.run_personal_inner(options, true, None).await
     }
     /// One Runner, one Pi manager and one serialized ingest writer. The existing
     /// authenticated transport keeps its own grants; pairing confers none there.
@@ -105,7 +109,7 @@ impl super::Runner {
         options: crate::personal_cli::ServerOptions,
     ) -> anyhow::Result<()> {
         tokio::pin!(transport);
-        let personal = self.clone().run_personal_inner(options, false);
+        let personal = self.clone().run_personal_inner(options, false, None);
         tokio::pin!(personal);
         tokio::select! {
             result = &mut personal => {
@@ -131,10 +135,18 @@ impl super::Runner {
             }
         }
     }
+    pub(crate) async fn run_personal_hot(
+        self: Arc<Self>,
+        options: crate::personal_cli::ServerOptions,
+        ready: tokio::sync::oneshot::Sender<()>,
+    ) -> anyhow::Result<()> {
+        self.run_personal_inner(options, false, Some(ready)).await
+    }
     async fn run_personal_inner(
         self: Arc<Self>,
         options: crate::personal_cli::ServerOptions,
         owns_lifecycle: bool,
+        ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<()> {
         use anyhow::{Context, ensure};
         use oqto_personal::PairingAuthority;
@@ -170,8 +182,24 @@ impl super::Runner {
             options.workspace_roots.len() <= 32,
             "too many personal Workspace roots"
         );
-        let home = dirs::home_dir().context("personal history home unavailable")?;
+        let home = if let Some(source) = &self.user_config.personal_source {
+            source.validate()?;
+            ensure!(
+                source.workspace_roots() == options.workspace_roots,
+                "Personal Workspace source mismatch"
+            );
+            source.home.clone()
+        } else {
+            ensure!(
+                options.personal_native_session_root.is_none()
+                    && options.personal_native_socket_root.is_none(),
+                "Native source must be resolved before starting Runner workers"
+            );
+            dirs::home_dir().context("personal history home unavailable")?
+        };
         crate::runtime_guard::ensure_history_state_owner(&home)?;
+        // Reserve the endpoint before creating any identity or grant store.
+        let listener = tokio::net::TcpListener::bind(address).await?;
         let authority = Arc::new(
             PairingAuthority::open_private(&crate::personal_cli::state_path(
                 options.personal_state.as_ref(),
@@ -180,7 +208,6 @@ impl super::Runner {
         );
         let identity = authority.transport_identity().await?;
         let config = identity.server_config()?;
-        let listener = tokio::net::TcpListener::bind(address).await?;
         let owner_listener = authority.bind_owner_socket()?;
         let owner_path = authority.owner_socket();
         let owner_meta = std::fs::symlink_metadata(&owner_path)?;
@@ -228,6 +255,9 @@ impl super::Runner {
         if owns_lifecycle {
             super::sd_notify_ready();
         }
+        if let Some(ready) = ready {
+            let _ = ready.send(());
+        }
         let result = tokio::select! {
             result=oqto_personal::http::serve_personal_tls(listener,config,router,async {let _=network_shutdown.recv().await;})=>result,
             result=oqto_personal::owner::serve_owner(owner_listener,authority,origin,identity.leaf_der().to_vec(),supported,async {let _=owner_shutdown.recv().await;})=>result,
@@ -263,6 +293,23 @@ impl ActionBackend for PersonalBackend {
         action: HostAction,
         authorization: AuthorizedAction,
     ) -> Result<Value, ActionFailure> {
+        // Existing r13c wire remains strict/unchanged. A failed/incomplete global
+        // authority is a standard 503/unavailable, not a falsely complete list
+        // or new capability/enrollment field. Cleanup remains usable.
+        if (matches!(
+            action,
+            HostAction::SessionsList | HostAction::SessionHistory { .. }
+        ) && !self.ingest.catalog_ready())
+            || (matches!(
+                action,
+                HostAction::SessionAttach { .. }
+                    | HostAction::SessionRead { .. }
+                    | HostAction::SessionRequestControl { .. }
+                    | HostAction::SessionInput { .. }
+            ) && !self.ingest.native_available())
+        {
+            return Err(ActionFailure::Unavailable);
+        }
         match action {
             HostAction::Capabilities => {
                 let grants = authorization.grants();
@@ -335,7 +382,10 @@ impl ActionBackend for PersonalBackend {
             )
             .await
             .map(|response| response.data)
-            .map_err(|_| ActionFailure::Unavailable),
+            .map_err(|_| {
+                self.ingest.mark_authority_failed();
+                ActionFailure::Unavailable
+            }),
             HostAction::SessionHistory { session_id, before } => {
                 crate::history_read::read_native_authorized_history(
                     &self.home,

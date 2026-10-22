@@ -89,6 +89,20 @@ struct Args {
 
 #[derive(clap::Subcommand, Debug)]
 enum MaintenanceCommand {
+    /// Pair your phone: optional interactive selection, existing Runner reuse and QR.
+    Pair(oqto_runner::pair_cli::PairOptions),
+    /// Prepare an immutable owner-selected source for the next managed Runner start.
+    /// Does not restart a process, change HOME, issue grants or copy native history.
+    ConfigureNativeSource {
+        #[arg(long)]
+        runner_home: PathBuf,
+        #[arg(long)]
+        session_root: PathBuf,
+        #[arg(long)]
+        socket_root: PathBuf,
+        #[arg(long, required = true)]
+        workspace_root: Vec<PathBuf>,
+    },
     /// Qualify native Pi RPC in an explicit workdir; no listener or prompt.
     /// This is not sandbox, provider-auth or chat-readiness acceptance.
     CheckPi {
@@ -116,6 +130,33 @@ async fn main() -> Result<()> {
     let mut args = Args::parse();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
     match args.command.take() {
+        Some(MaintenanceCommand::Pair(options)) => {
+            return oqto_runner::pair_cli::execute(options).await;
+        }
+        Some(MaintenanceCommand::ConfigureNativeSource {
+            runner_home,
+            session_root,
+            socket_root,
+            workspace_root,
+        }) => {
+            let home = runner_home
+                .canonicalize()
+                .context("resolving managed Runner HOME")?;
+            oqto_runner::personal_source::binding::install(
+                &home,
+                &oqto_runner::personal_source::binding::Binding {
+                    schema: 1,
+                    session_root,
+                    socket_root,
+                    workspaces: workspace_root,
+                },
+            )?;
+            println!(
+                "{}",
+                serde_json::json!({"schema":1,"configured":true,"activation":"on_next_start"})
+            );
+            return Ok(());
+        }
         Some(MaintenanceCommand::CheckPi { workdir }) => {
             let config = args
                 .config
@@ -201,7 +242,7 @@ async fn main() -> Result<()> {
     load_env_file();
     oqto_runner::runtime_guard::ensure_launch_identity()?;
 
-    let user_config = args
+    let mut user_config = args
         .config
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
@@ -209,6 +250,40 @@ async fn main() -> Result<()> {
     // Files/terminal/observation-only hosts do not require or execute Pi.
     // Pi readiness is checked in its actual sandbox/workdir at session admission;
     // explicit native-only preflight is available through check-pi.
+
+    if let Some(root) = &args.personal.personal_native_session_root {
+        ensure!(
+            user_config.single_user && !user_config.linux_users_enabled,
+            "personal native source requires the dedicated host-user Runner"
+        );
+        let home = dirs::home_dir().context("personal canonical HOME unavailable")?;
+        let sockets = args
+            .personal
+            .personal_native_socket_root
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| std::env::temp_dir().canonicalize())?;
+        user_config.personal_source =
+            Some(Arc::new(oqto_runner::personal_source::PersonalSource::new(
+                home,
+                root.clone(),
+                sockets,
+                args.personal.workspace_roots.clone(),
+            )?));
+    }
+
+    let canonical_home = dirs::home_dir()
+        .context("canonical HOME unavailable")?
+        .canonicalize()?;
+    user_config.personal_source = oqto_runner::personal_source::binding::for_startup(
+        &canonical_home,
+        user_config.personal_source.take(),
+    )?;
+    ensure!(
+        user_config.personal_source.is_none()
+            || (user_config.single_user && !user_config.linux_users_enabled),
+        "persisted native source requires a dedicated host-user Runner"
+    );
 
     // Validate ownership before any worker can touch configured private state.
     // Endpoint bridges fail closed: a granted endpoint that cannot be parsed
@@ -241,6 +316,17 @@ async fn main() -> Result<()> {
         args.sandbox_config.as_ref(),
         allow_user_sandbox_fallback,
     )?;
+    let private_pairing_paths = if user_config.single_user && !user_config.linux_users_enabled {
+        let pairing_home = dirs::home_dir()
+            .context("pairing home unavailable")?
+            .canonicalize()?;
+        vec![
+            oqto_runner::pair_control::root(&pairing_home),
+            pairing_home.join(".local/share/oqto/personal"),
+        ]
+    } else {
+        Vec::new()
+    };
     // Every sandboxed child, including provider-auth workers, must be unable
     // to read or mutate runner transport capabilities.
     if let Some(policy) = sandbox_config.as_mut() {
@@ -248,6 +334,7 @@ async fn main() -> Result<()> {
             .chain(args.tls_key.iter())
             .chain(args.tls_client_ca.iter())
             .chain(args.personal.personal_state.iter())
+            .chain(private_pairing_paths.iter())
         {
             let path = path.to_string_lossy().into_owned();
             if !policy.deny_read.contains(&path) {
@@ -328,6 +415,7 @@ async fn main() -> Result<()> {
         credentials: user_config.credentials.clone(),
         provider_login: user_config.provider_login.clone(),
         history_read: user_config.history_read.clone(),
+        personal_source: user_config.personal_source.clone(),
         fileserver_binary: user_config.fileserver_binary.clone(),
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),
@@ -385,50 +473,59 @@ async fn main() -> Result<()> {
         pi_manager,
         args.expose_dir.clone(),
     ));
-    if args.personal.personal_listen.is_some() {
-        ensure!(
-            inherited_unix_listener()?.is_none(),
-            "personal mode conflicts with socket activation"
-        );
-        if args.listen_tls.is_none() && args.socket.is_none() {
-            return runner.run_personal(args.personal).await;
-        }
-    }
-    if let Some(inherited) = inherited_unix_listener()? {
-        if args.listen_tls.is_some() {
-            anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
-        }
-        info!("Using socket-activated listener (LISTEN_FDS)");
-        return runner.run_inherited(inherited).await;
-    }
-    if let Some(address) = args.listen_tls {
-        let certificate = args
-            .tls_cert
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-cert is required with --listen-tls"))?;
-        let key = args
-            .tls_key
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-key is required with --listen-tls"))?;
-        let client_ca = args
-            .tls_client_ca
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
-        let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
-        let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
+    let dynamic_pairing = args.personal.personal_listen.is_none();
+    let pairing_host = Arc::clone(&runner);
+    let transport = async move {
         if args.personal.personal_listen.is_some() {
+            ensure!(
+                inherited_unix_listener()?.is_none(),
+                "personal mode conflicts with socket activation"
+            );
+            if args.listen_tls.is_none() && args.socket.is_none() {
+                return runner.run_personal(args.personal).await;
+            }
+        }
+        if let Some(inherited) = inherited_unix_listener()? {
+            if args.listen_tls.is_some() {
+                anyhow::bail!("socket activation (LISTEN_FDS) conflicts with --listen-tls");
+            }
+            info!("Using socket-activated listener (LISTEN_FDS)");
+            return runner.run_inherited(inherited).await;
+        }
+        if let Some(address) = args.listen_tls {
+            let certificate = args
+                .tls_cert
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-cert is required with --listen-tls"))?;
+            let key = args
+                .tls_key
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-key is required with --listen-tls"))?;
+            let client_ca = args
+                .tls_client_ca
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--tls-client-ca is required with --listen-tls"))?;
+            let config = oqto_runner::tls::server_config(client_ca, certificate, key)?;
+            let listener = oqto_runner::tls::TcpTlsRunnerListener::bind(address, config).await?;
+            if args.personal.personal_listen.is_some() {
+                runner
+                    .run_transport_with_personal(&listener, remote_access, args.personal)
+                    .await
+            } else {
+                runner.run_transport(&listener, remote_access).await
+            }
+        } else if args.personal.personal_listen.is_some() {
             runner
-                .run_transport_with_personal(&listener, remote_access, args.personal)
+                .run_socket_with_personal(&socket_path, args.personal)
                 .await
         } else {
-            runner.run_transport(&listener, remote_access).await
+            runner.run(&socket_path).await
         }
-    } else if args.personal.personal_listen.is_some() {
-        runner
-            .run_socket_with_personal(&socket_path, args.personal)
-            .await
+    };
+    if dynamic_pairing {
+        pairing_host.with_pairing_control(transport).await
     } else {
-        runner.run(&socket_path).await
+        transport.await
     }
 }
 

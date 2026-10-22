@@ -18,6 +18,24 @@ Pi owns native JSONL; oqto-log owns canonical Chat/history. Existing-session ado
 
 The CLI, native clients, Webbench and headless clients share semantic contracts. A pairing QR is sensitive enrollment material, emitted only intentionally, not a log receipt. Preserve unknown user configuration, existing state, native profiles, sessions and credentials. Do not replace a running transport-only checkpoint until the required functional slice is qualified.
 
+## Explicit native source selection
+
+A personal listener may additionally select one immutable native JSONL root and
+one trusted native socket root through owner startup flags. These are not
+Account history settings, device paths, Files grants or a HOME override. The
+existing canonical HOME/store and default ingest source remain unchanged.
+Only the existing serialized writer discovers eligible native headers and
+persists exact public/native/source bindings; reads do not bootstrap identities.
+Source-root/file identity, header/cwd, UID, peer and current grant checks fail
+closed on replacement or ambiguity. Cold discovery reads only bounded header
+lines, not external transcript bodies. A live, freshly evidenced native head is
+still required to project history or control terminal-owned Pi. Details and
+limits: [personal source contract](../development/personal-host-pairing.md#explicit-native-source-contract).
+
+Configuration selection must not execute Pi. Version/RPC execution qualification
+belongs at explicit managed-launch seams; personal startup, owner commands and
+existing-session attachment have no such authority.
+
 ## Verification and remaining scope
 
 Shared crypto tests are not service, Mac or phone acceptance. Require real pinned-TLS enrollment and direct client operation, single-use/expiry/nonce/domain denial, concurrent enroll/revoke tests, independent grant checks before filesystem/socket access, rooted file escape/stale-write tests, native PTY resize/reconnect/ownership tests, actual existing-Pi adoption/control/history/reload without duplicate writer, and preserve-first Mac/iOS deployment receipts. Implementation remains incomplete until these pass; this decision does not assert those results.
