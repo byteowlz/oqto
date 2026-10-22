@@ -6,7 +6,7 @@
  * device-locally; every change is a semantic transaction.
  */
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -80,18 +80,19 @@ export function CompositorShell({
 		configuredTheme,
 	);
 	const snapshotQuery = useQuery({
-		queryKey: ["oqto-ui-compositor", platform.id, sessionId],
+		queryKey: ["oqto-ui", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
-		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 	});
 	const snapshot = snapshotQuery.data;
-	if (!snapshot) {
+	const identityMismatch =
+		!!snapshot && !!sessionId && snapshot.activeSessionId !== sessionId;
+	if (!snapshot || identityMismatch) {
 		return (
 			<div className="wb-shell" data-state="loading" ref={rootRef}>
 				<Splash
 					schemeId={schemeId}
-					error={snapshotQuery.isError}
+					error={snapshotQuery.isError || identityMismatch}
 					onRetry={() => void snapshotQuery.refetch()}
 				/>
 			</div>
@@ -104,10 +105,9 @@ export function CompositorShell({
 			item.sessions.some((session) => session.id === snapshot.activeSessionId),
 		) ??
 		directories[0];
-	const session =
-		directory?.sessions.find(
-			(item) => item.id === (sessionId ?? snapshot.activeSessionId),
-		) ?? directory?.sessions[0];
+	const session = directory?.sessions.find(
+		(item) => item.id === (sessionId ?? snapshot.activeSessionId),
+	);
 	if (!directory || !session) {
 		return (
 			<div className="wb-shell" data-state="empty" ref={rootRef}>

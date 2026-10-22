@@ -719,6 +719,9 @@
 .wb-composer__model-menu {
 	display: grid;
 	min-width: 140px;
+	max-width: calc(100vw - 32px);
+	max-height: min(60dvh, 24rem);
+	overflow: auto;
 }
 
 .wb-composer__model-menu button {

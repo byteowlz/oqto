@@ -110,7 +110,7 @@ export function createContentRenderer(
 		if (content.kind === "sessions") {
 			return (
 				<NavigationRail
-					runnerTargets={platform.runnerTargets}
+					platform={platform}
 					workDirectories={snapshot.workDirectories}
 					workDirectoryId={context.directory.id}
 					sessionId={context.session.id}
@@ -226,6 +226,7 @@ export function createContentRenderer(
 					status={snapshot.environment.statusBar}
 					session={context.session}
 					models={snapshot.environment.models}
+					platform={platform}
 					settingsOpen={settings.open}
 					onToggleSettings={settings.toggle}
 				/>

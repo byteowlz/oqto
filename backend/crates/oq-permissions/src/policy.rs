@@ -164,6 +164,58 @@ impl Policy {
         Ok(())
     }
 
+    /// Attribute only proven policy denials. Explicit target rules take the
+    /// same precedence as admission; malformed/unclassified resources stay unknown.
+    pub fn denial_code(&self, target: &Target) -> crate::DenialCode {
+        use crate::DenialCode;
+        if self.mode(target) != RuleMode::Deny {
+            return DenialCode::Unknown;
+        }
+        if let Some(rule) = self.rules.iter().find(|rule| rule.target == *target) {
+            return if rule.mode == RuleMode::Deny {
+                DenialCode::ConfiguredCeiling
+            } else {
+                DenialCode::Unknown
+            };
+        }
+        if target.capability == Capability::Execute
+            && let Some(prefix) = target
+                .resource_id
+                .strip_prefix(crate::ceiling::SHELL_PREFIX)
+            && crate::ceiling::valid_shell_prefix(prefix)
+        {
+            return self.denial_code(&Target {
+                capability: Capability::Execute,
+                resource_id: crate::ceiling::WORKSPACE_SHELL.into(),
+            });
+        }
+        if matches!(
+            target.capability,
+            Capability::FileRead | Capability::FileWrite
+        ) && let Some(raw) = target.resource_id.strip_prefix("path:")
+        {
+            let path = std::path::Path::new(raw);
+            if !matches!(crate::ceiling::normalize(path), Ok(normal) if normal == path) {
+                return DenialCode::Unknown;
+            }
+            if self
+                .paths
+                .iter()
+                .any(|layer| layer.builtin && layer.explicitly_denies(path))
+            {
+                return DenialCode::ProtectedSafety;
+            }
+            if self
+                .paths
+                .iter()
+                .any(|layer| !layer.builtin && layer.mode(path) == RuleMode::Deny)
+            {
+                return DenialCode::ConfiguredCeiling;
+            }
+        }
+        DenialCode::Unknown
+    }
+
     pub fn mode(&self, target: &Target) -> RuleMode {
         if let Some(rule) = self.rules.iter().find(|rule| rule.target == *target) {
             return rule.mode;

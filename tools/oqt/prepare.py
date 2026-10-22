@@ -31,7 +31,7 @@ import source_patches
 from profile_namespace import workspace_profile_key
 owner = sys.argv[4] if len(sys.argv) > 4 else os.environ.get('OQT_OWNER_AGENT_DIR') or os.environ.get('PI_CODING_AGENT_DIR') or str(Path.home()/'.pi/agent')
 profile_key = workspace_profile_key(workdir, mode, owner)
-files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / 'tools/oqt/preparation_lock.py', repo / 'tools/oqt/profile_namespace.py', repo / 'tools/oqt/source_patches.py', *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
+files = [repo / "oqt", Path(__file__).resolve(), repo / "tools/oqt/build-assets.py", repo / 'tools/oqt/preparation_lock.py', repo / 'tools/oqt/profile_namespace.py', repo / 'tools/oqt/source_patches.py', repo / 'tools/oqt/tool_presentation_patches.py', *runtime_modules, *sorted((repo / "tools/oqt/plugin").rglob("*"))]
 files = [file for file in files if file.is_file()]
 identity = hashlib.sha256(PIN.encode())
 for file in files:

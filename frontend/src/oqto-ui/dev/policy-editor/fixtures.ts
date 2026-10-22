@@ -1,0 +1,110 @@
+import type { PolicyNode, Snapshot } from "../../policy-editor/model";
+/** Synthetic projection only; deliberately no fake policy compiler. */
+export const fixture: Snapshot = {
+	projection: "containment_only",
+	identity: "synthetic-host/workspace/config",
+	revision: "fixture-r1",
+	nodes: [
+		{
+			id: "repo",
+			parentId: null,
+			name: "example-repo",
+			path: "/synthetic/example-repo",
+			effective: "readwrite",
+			origin: "owner/global",
+			inherited: false,
+			mixed: true,
+			locked: false,
+			containsLockedDescendant: true,
+			provenance: { decisive: [], decisions: [] },
+			scope: "workspace subtree",
+			duration: "persistent config",
+			allowedChoices: ["read", "readwrite", "deny", "inherit"],
+			workDirectoryId: "synthetic-workdir",
+		},
+		{
+			id: "src",
+			parentId: "repo",
+			name: "src",
+			path: "/synthetic/example-repo/src",
+			effective: "readwrite",
+			origin: "repo",
+			inherited: true,
+			mixed: false,
+			locked: false,
+			containsLockedDescendant: false,
+			provenance: { decisive: [], decisions: [] },
+			scope: "subtree",
+			duration: "persistent config",
+			allowedChoices: ["read", "deny", "inherit"],
+		},
+		{
+			id: "secrets",
+			parentId: "repo",
+			name: "protected",
+			path: "/synthetic/example-repo/protected",
+			effective: "deny",
+			origin: "owner/global",
+			inherited: false,
+			mixed: false,
+			locked: true,
+			containsLockedDescendant: false,
+			provenance: { decisive: [], decisions: [] },
+			lockReason: "Protected owner ceiling",
+			scope: "subtree",
+			duration: "permanent",
+			allowedChoices: ["read", "deny"],
+		},
+	],
+};
+
+const boundary = (
+	id: string,
+	parentId: string | null,
+	name: string,
+	effective: PolicyNode["effective"],
+	locked = false,
+): PolicyNode => ({
+	id,
+	parentId,
+	name,
+	path: `/synthetic/home/${name}`,
+	effective,
+	origin: "owner/global",
+	inherited: true,
+	mixed: false,
+	locked,
+	containsLockedDescendant: false,
+	provenance: { decisive: [], decisions: [] },
+	scope: "subtree",
+	duration: "persistent config",
+	allowedChoices: locked ? [] : ["read", "readwrite", "deny", "inherit"],
+	...(locked ? { lockReason: "Protected owner ceiling" } : {}),
+});
+
+/** Rich display fixture. These are example observations, not evaluated policy. */
+export const graphFixture: Snapshot = {
+	...fixture,
+	nodes: [
+		{
+			...boundary("home", null, "~ / home", "read"),
+			mixed: true,
+			containsLockedDescendant: true,
+		},
+		{ ...boundary("projects", "home", "projects", "read"), mixed: true },
+		...fixture.nodes.map((node) =>
+			node.id === "repo"
+				? { ...node, parentId: "projects", name: "example-repo" }
+				: node,
+		),
+		boundary("docs", "repo", "docs", "read"),
+		boundary("tests", "repo", "tests", "readwrite"),
+		boundary("components", "src", "components", "readwrite"),
+		boundary("lib", "src", "lib", "readwrite"),
+		boundary("other-project", "projects", "another-project", "deny"),
+		boundary("skills", "home", ".agents", "read"),
+		boundary("skill-files", "skills", "skills", "read"),
+		boundary("keys", "home", ".ssh", "deny", true),
+		boundary("documents", "home", "Documents", "deny"),
+	],
+};

@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	PresentationUI,
 	SlashCommands,
+	ToolPresentation,
 } from "@earendil-works/pi-coding-agent/experimental/plugin";
 import { OperatorResults } from "../../../../src/experimental/operator-receipts.ts";
 import { Models } from "../../../../src/experimental/services/models.ts";
@@ -18,6 +19,11 @@ import {
 	type PendingInputControl,
 } from "./guard-client.ts";
 import { installModelCommands } from "./models.ts";
+import {
+	permissionDisplayText,
+	permissionHelpCommand,
+	renderPermission,
+} from "./permission-render.ts";
 
 type Choice = "once" | "session" | "always" | "deny";
 
@@ -44,7 +50,7 @@ function menu(request: PendingPermission, coding: boolean) {
 	const scope =
 		request.category === "shell"
 			? request.prefix
-				? `\`${request.prefix}\` commands`
+				? `\`${permissionDisplayText(request.prefix)}\` commands`
 				: "all shell commands"
 			: request.category === "edit"
 				? "file changes"
@@ -63,7 +69,16 @@ function menu(request: PendingPermission, coding: boolean) {
 	];
 }
 
-function title(request: PendingPermission, coding: boolean) {
+function title(raw: PendingPermission, coding: boolean) {
+	// Escape fields before inserting host-authored newlines (no forged headings).
+	const request = {
+		...raw,
+		capability: permissionDisplayText(raw.capability),
+		resource: permissionDisplayText(raw.resource),
+		argumentsText: permissionDisplayText(raw.argumentsText),
+		session: permissionDisplayText(raw.session),
+		preview: raw.preview?.split("\n").map(permissionDisplayText).join("\n"),
+	};
 	if (!coding)
 		return `DEMO permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`;
 	const header = HEADERS[request.category ?? ""] ?? "Permission";
@@ -99,7 +114,30 @@ export default defineFacet({
 				? guard.state.value
 				: (demo?.state.value as OperatorState | undefined);
 		const commands = env.use(SlashCommands);
-		const ui = env.use(PresentationUI);
+		const nativeUI = env.use(PresentationUI);
+		// This boundary covers errors, rules, paths, remote labels and shell output.
+		// Host-authored line separators stay readable; each external line is escaped.
+		const safeLines = (text: string) =>
+			text.split("\n").map(permissionDisplayText).join("\n");
+		const ui: PresentationUI = {
+			select: (heading, items, selected, context) =>
+				nativeUI.select(
+					safeLines(heading),
+					items.map((item) => ({
+						...item,
+						label: permissionDisplayText(item.label),
+						description:
+							item.description === undefined
+								? undefined
+								: permissionDisplayText(item.description),
+					})),
+					selected,
+					context,
+				),
+			showStatus: (message, context) =>
+				nativeUI.showStatus(safeLines(message), context),
+		};
+		const presentation = env.use(ToolPresentation);
 		const models = env.use(Models);
 		const shown = new Set<string>();
 		const reportedInterrupted = new Set<string>();
@@ -133,7 +171,7 @@ export default defineFacet({
 			shown.add(`input:${request.id}`);
 			try {
 				const choice = await ui.select(
-					`Remote input control\nSession: ${request.session}\nClient label (unverified): ${request.label}\n\nAllow prompt, steer and abort for up to one minute? Tool approvals and access grants stay separate. Submitting input or aborting at this terminal reclaims control.`,
+					`Remote input control\nSession: ${permissionDisplayText(request.session)}\nClient label (unverified): ${permissionDisplayText(request.label)}\n\nAllow prompt, steer and abort for up to one minute? Tool approvals and access grants stay separate. Submitting input or aborting at this terminal reclaims control.`,
 					[
 						{ value: "deny", label: "Deny" },
 						{ value: "allow", label: "Allow for one minute" },
@@ -215,7 +253,10 @@ export default defineFacet({
 					context,
 				);
 			} catch (error) {
-				ui.showStatus(`Permission decision failed: ${String(error)}`, context);
+				ui.showStatus(
+					`Permission decision failed: ${permissionDisplayText(String(error))}`,
+					context,
+				);
 			} finally {
 				selecting = false;
 				// Input control never doubles as a tool approval.
@@ -316,6 +357,8 @@ export default defineFacet({
 			);
 		};
 		env.onActivate(() => {
+			env.own(presentation.register("request_access", renderPermission));
+			env.own(commands.replace(permissionHelpCommand(commands, ui)));
 			installModelCommands({
 				commands,
 				ui,

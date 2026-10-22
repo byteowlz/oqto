@@ -127,6 +127,26 @@ warnings, and the effect gate the same four unrelated effects. The prior explici
 `oqto-d0pc.1` deferral remains; no full-gate success is claimed. Live
 deploy/microphone acceptance is still separate.
 
+## Strict-CSP static hosts (Flash, `oqto-7rq1.18`)
+
+Flash reuses the existing capture hook, STTService, controls and vendored SDK;
+there is no separate Flash recognizer. Its build calls the same verified runtime
+stager and preserves the module tree/notices. The pinned Emscripten loader needs
+JavaScript binding compilation inside the speech workers: exact response policies
+for `stt-worker.js` and `moonshine.mjs` permit this, while the document and agent
+runtime worker remain strict. Static host rules must replace, not intersect,
+those CSP values. This is not origin-storage isolation from trusted speech code.
+
+The existing capture processor now lives in `lib/voice/capture-worklet.js`, loaded
+with a non-inlined same-origin asset URL instead of a Blob; the same processor is
+used by both Oqto and Flash. This avoids expanding document script permissions.
+WebAudio can emit tiny finite overshoots (observed1.0000076293945312); STTService
+clips finite values to the SDK's normalized range while preserving NaN/Infinity
+for the existing error path (`oqto-7rq1.18.1`). No SDK inference code is forked or
+its validation relaxed. Flash's public-audio/fake-device browser proof exercises
+actual local recognition, provisional exclusion, Finish without send and Cancel
+with stopped capture. It is not physical-microphone or Firefox/mobile acceptance.
+
 ## Composer lifecycle follow-up
 
 `oqto-qyh4` binds recognition to the unsanitized workspace/session composer

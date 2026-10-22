@@ -15,6 +15,10 @@
 		"incremental": true,
 		"types": ["vite/client"],
 		"paths": {
+			"@oqto-flash/types": [
+				"../../oqto-flash/node_modules/@earendil-works/pi-durable/dist/index.d.ts"
+			],
+			"@oqto-flash/*": ["../../oqto-flash/src/*"],
 			"@/*": ["./*"],
 			"@byteowlz/design-system": ["./vendor/design-system/src/index.ts"]
 		}

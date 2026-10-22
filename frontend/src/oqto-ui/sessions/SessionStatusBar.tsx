@@ -2,6 +2,7 @@ import { Activity, SlidersHorizontal, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
 	ModelOption,
+	OqtoUiPlatform,
 	SessionOverview,
 	StatusBarData,
 } from "../platform/contracts";
@@ -11,6 +12,7 @@ type SessionStatusBarProps = {
 	status: StatusBarData | null;
 	session: SessionOverview;
 	models: ModelOption[];
+	platform?: Pick<OqtoUiPlatform, "id" | "selectModel">;
 	settingsOpen: boolean;
 	onToggleSettings: () => void;
 };
@@ -19,6 +21,7 @@ export function SessionStatusBar({
 	status,
 	session,
 	models,
+	platform,
 	settingsOpen,
 	onToggleSettings,
 }: SessionStatusBarProps) {
@@ -35,7 +38,12 @@ export function SessionStatusBar({
 						{status.runningSessions}
 					</span>
 				) : null}
-				<SessionMeta key={session.id} session={session} models={models} />
+				<SessionMeta
+					key={`${platform?.id ?? "readonly"}:${session.id}`}
+					session={session}
+					models={models}
+					platform={platform}
+				/>
 			</div>
 			<div className="wb-statusbar__group">
 				{status ? (

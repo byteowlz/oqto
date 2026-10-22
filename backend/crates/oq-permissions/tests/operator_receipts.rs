@@ -141,11 +141,10 @@ async fn bounded_receipt_capacity_denies_before_new_effect_admission() -> Result
             .complete_operator_result("owner", &op.request_id, DIGEST)
             .await?;
     }
-    assert!(
-        authority
-            .begin_operator("owner", &operation(128), 2)
-            .await
-            .is_err()
-    );
+    let error = authority
+        .begin_operator("owner", &operation(128), 2)
+        .await
+        .unwrap_err();
+    assert!(error.is::<oq_permissions::ReceiptCapacity>());
     Ok(())
 }

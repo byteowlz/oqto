@@ -78,8 +78,8 @@ const scriptedTransport = createChatTransport({
 	},
 	outbox: { load: () => [], save: () => {} },
 	clock: {
-		schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-		cancel: (handle) => clearTimeout(handle),
+		schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+		cancel: (handle) => window.clearTimeout(handle),
 		now: () => Date.now(),
 	},
 });

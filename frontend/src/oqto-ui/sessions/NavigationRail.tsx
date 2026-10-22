@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ChevronDown,
@@ -13,14 +14,18 @@ import {
 	Shield,
 	Sun,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { UiNavigation, WorkDirectory } from "../platform/contracts";
-import type { RunnerTargetsPort } from "../platform/runner-targets";
+import type {
+	OqtoUiPlatform,
+	UiNavigation,
+	WorkDirectory,
+} from "../platform/contracts";
 import { RunnerTargets } from "./RunnerTargets";
 
 type NavigationRailProps = {
+	platform: OqtoUiPlatform;
 	workDirectories: WorkDirectory[];
 	workDirectoryId: string;
 	sessionId: string;
@@ -30,10 +35,10 @@ type NavigationRailProps = {
 	onCollapse?: () => void;
 	/** The Container's own controls, placed in this pane's header. */
 	chrome?: ReactNode;
-	runnerTargets?: RunnerTargetsPort;
 };
 
 export function NavigationRail({
+	platform,
 	workDirectories,
 	workDirectoryId,
 	sessionId,
@@ -41,9 +46,33 @@ export function NavigationRail({
 	onNavigate,
 	onCollapse,
 	chrome,
-	runnerTargets,
 }: NavigationRailProps) {
 	const { t, i18n } = useTranslation();
+	const queryClient = useQueryClient();
+	const creating = useRef(false);
+	const [pending, setPending] = useState(false);
+	const [creationFailed, setCreationFailed] = useState(false);
+	const createSession = async () => {
+		if (!platform.createSession || creating.current) return;
+		creating.current = true;
+		setPending(true);
+		setCreationFailed(false);
+		try {
+			const result = await platform.createSession(workDirectoryId, sessionId);
+			onNavigate({
+				workDirectoryId: result.workDirectoryId,
+				sessionId: result.sessionId,
+			});
+		} catch {
+			setCreationFailed(true);
+		} finally {
+			void queryClient.invalidateQueries({
+				queryKey: ["oqto-ui", platform.id],
+			});
+			creating.current = false;
+			setPending(false);
+		}
+	};
 	const [disclosedIds, setDisclosedIds] = useState<ReadonlySet<string>>(
 		() => new Set([workDirectoryId]),
 	);
@@ -84,7 +113,9 @@ export function NavigationRail({
 				{chrome}
 			</header>
 			<div className="wb-sidebar__rule" aria-hidden="true" />
-			{runnerTargets ? <RunnerTargets source={runnerTargets} /> : null}
+			{platform.runnerTargets ? (
+				<RunnerTargets source={platform.runnerTargets} />
+			) : null}
 
 			<div className="wb-sidebar__search">
 				<button
@@ -111,6 +142,14 @@ export function NavigationRail({
 						className="wb-icon-button"
 						type="button"
 						aria-label={t("oqtoUi.navigation.newSession")}
+						title={t(
+							platform.createSession
+								? "oqtoUi.navigation.newSession"
+								: "oqtoUi.navigation.newSessionUnsupported",
+						)}
+						disabled={!platform.createSession || pending}
+						aria-busy={pending}
+						onClick={() => void createSession()}
 					>
 						<Plus aria-hidden="true" />
 					</button>
@@ -131,6 +170,12 @@ export function NavigationRail({
 				</span>
 			</div>
 
+			{pending ? (
+				<output>{t("oqtoUi.navigation.newSessionPending")}</output>
+			) : null}
+			{creationFailed ? (
+				<p role="alert">{t("oqtoUi.navigation.newSessionFailed")}</p>
+			) : null}
 			<nav
 				className="wb-session-tree"
 				aria-label={t("oqtoUi.navigation.workDirectories")}

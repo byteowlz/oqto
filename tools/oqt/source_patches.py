@@ -791,4 +791,7 @@ def apply(snapshot):
             raise SystemExit(f"Upstream changed; refusing unreviewed patch {patch['id']}")
         path.write_text(text.replace(patch["old"], patch["new"]))
         applied.append(path)
+    # A real local presentation service, not classic extension or transcript shims.
+    from tool_presentation_patches import apply as apply_tool_presentations
+    applied.extend(apply_tool_presentations(snapshot))
     return applied

@@ -1,5 +1,56 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Carrier } from "./carrier.ts";
+import { GuardOperationalError, operationalFeedback } from "./guard-errors.ts";
+
+export type PermissionCode =
+	| "protected_safety"
+	| "configured_ceiling"
+	| "operator_denied"
+	| "expired"
+	| "stale"
+	| "cancelled"
+	| "unavailable"
+	| "unknown";
+export interface PermissionFeedback {
+	code: PermissionCode;
+}
+const permissionMessages: Record<PermissionCode, string> = {
+	protected_safety:
+		"Built-in safety protection blocks this scope. Request a narrower directory that does not contain protected resources.",
+	configured_ceiling:
+		"The configured permission ceiling blocks this operation. Ask the owner to review policy or request a narrower scope.",
+	operator_denied:
+		"The operator declined this permission request. Discuss the scope with the operator before making a new request.",
+	expired:
+		"Permission expired. Review the current state before requesting permission again; do not replay effects.",
+	stale:
+		"Permission is no longer current. Review the current state before making a new request.",
+	cancelled:
+		"Permission waiting was cancelled. No operator denial was recorded by this result.",
+	unavailable:
+		"The permission authority is unavailable. No operator denial is established; restore the authority before retrying.",
+	unknown:
+		"Permission was not authorized; the cause is unknown. Ask the owner to inspect the request and policy.",
+};
+export function permissionFeedback(
+	value: unknown,
+): PermissionFeedback | undefined {
+	if (
+		!object(value) ||
+		typeof value.code !== "string" ||
+		!Object.hasOwn(permissionMessages, value.code)
+	)
+		return undefined;
+	return { code: value.code as PermissionCode };
+}
+export class PermissionDeniedError extends Error {
+	readonly feedback: PermissionFeedback;
+	constructor(feedback: PermissionFeedback) {
+		super(permissionMessages[feedback.code]);
+		this.name = "PermissionDeniedError";
+		this.feedback = { code: feedback.code };
+	}
+}
 
 /** Any guarded operation: workspace tools, external paths or network. */
 export interface Operation {
@@ -105,7 +156,7 @@ export class CodingAuthority {
 		signal?.throwIfAborted();
 		await this.#transition;
 		signal?.throwIfAborted();
-		if (this.#frozen) throw new Error("Authority remains frozen");
+		if (this.#frozen) throw new GuardOperationalError("unavailable");
 	}
 	/** Owner-only: live journal rows from a dead owner become interrupted and
 	 * every overlay is revoked. Call before admitting work. */
@@ -173,25 +224,30 @@ export class CodingAuthority {
 			for (;;) {
 				await this.ready(signal);
 				const result = await this.tools.call({ command: "prepare", operation });
-				if (!object(result)) throw new Error("Invalid admission response");
+				if (!object(result))
+					throw new PermissionDeniedError({ code: "unknown" });
 				if (result.status === "allowed") {
 					if (
 						typeof result.expires_at !== "number" ||
 						!Number.isFinite(result.expires_at)
 					)
-						throw new Error("Missing protected invocation deadline");
+						throw new PermissionDeniedError({ code: "unknown" });
 					return { expiresAt: result.expires_at };
 				}
 				const admission = result.admission;
 				if (!object(admission) || admission.status !== "pending")
-					throw new Error("Permission denied");
+					throw new PermissionDeniedError(
+						object(admission) && admission.status === "denied"
+							? (permissionFeedback(admission.value) ?? { code: "unknown" })
+							: { code: "unknown" },
+					);
 				const request = admission.value;
 				if (
 					!object(request) ||
 					typeof request.digest !== "string" ||
 					typeof request.revision !== "number"
 				)
-					throw new Error("Invalid pending request");
+					throw new PermissionDeniedError({ code: "unknown" });
 				this.pending.set(operation.request_id, {
 					id: operation.request_id,
 					digest: request.digest,
@@ -201,19 +257,33 @@ export class CodingAuthority {
 				this.publish([...this.pending.values()]);
 				await sleep(100, undefined, { signal });
 			}
+		} catch (error) {
+			if (error instanceof PermissionDeniedError) throw error;
+			throw new PermissionDeniedError({
+				code: signal.aborted ? "cancelled" : "unavailable",
+			});
 		} finally {
 			if (this.pending.delete(operation.request_id))
 				this.publish([...this.pending.values()]);
 		}
 	}
 	async check(operation: Operation) {
-		if (this.#frozen) throw new Error("Authority delivery is frozen");
-		const result = await this.tools.call({ command: "check", operation });
+		if (this.#frozen) throw new PermissionDeniedError({ code: "unavailable" });
+		let result: unknown;
+		try {
+			result = await this.tools.call({ command: "check", operation });
+		} catch {
+			throw new PermissionDeniedError({ code: "unavailable" });
+		}
 		if (!object(result) || result.checked !== true)
-			throw new Error("Delivery not authorized");
+			throw new PermissionDeniedError(
+				object(result)
+					? (permissionFeedback(result.feedback) ?? { code: "unknown" })
+					: { code: "unknown" },
+			);
 	}
 	async operatorBegin(id: string, command: string) {
-		await this.operator.call({
+		const result = await this.operator.call({
 			command: "operator_begin",
 			operation: {
 				request_id: id,
@@ -221,6 +291,12 @@ export class CodingAuthority {
 				arguments: { tool: "bash", input: { command } },
 			},
 		});
+		if (object(result)) {
+			const operational = operationalFeedback(result.operational_error);
+			if (operational) throw new GuardOperationalError(operational.code);
+			if (result.journaled === true) return;
+		}
+		throw new GuardOperationalError("unknown");
 	}
 	async operatorSeal(id: string, digest: string) {
 		await this.operator.call({ command: "operator_seal", id, digest });

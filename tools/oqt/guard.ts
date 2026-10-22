@@ -42,6 +42,7 @@ import {
 	type Operation,
 	type ResourceGrant,
 } from "./coding-authority.ts";
+import { GuardOperationalError } from "./guard-errors.ts";
 import { type Peer, serve } from "./guard-wire.ts";
 import { HandsClient } from "./hands-client.ts";
 import { HandsSupervisor } from "./hands-supervisor.ts";
@@ -68,7 +69,7 @@ function codingOperation(value: unknown): Operation {
 		!object(value.arguments) ||
 		typeof value.arguments.tool !== "string"
 	)
-		throw new Error("Invalid coding operation");
+		throw new GuardOperationalError("invalid_request");
 	const { resource } = classify(value.arguments.tool, value.arguments.input);
 	return {
 		request_id: value.request_id,
@@ -85,7 +86,7 @@ function privateDirectory(path: string) {
 		meta.uid !== userInfo().uid ||
 		(meta.mode & 0o077) !== 0
 	)
-		throw new Error(`Guard directory must be private and owned: ${path}`);
+		throw new GuardOperationalError("invalid_binding");
 }
 
 function summarize(input: unknown) {
@@ -194,7 +195,7 @@ export class RulesStore {
 		};
 	}
 	save(rules: Remembered) {
-		if (!this.path) throw new Error("No rules store configured");
+		if (!this.path) throw new GuardOperationalError("unavailable");
 		const pending = `${this.path}.tmp`;
 		writeFileSync(pending, JSON.stringify(rules, null, 2), { mode: 0o600 });
 		chmodSync(pending, 0o600);
@@ -208,7 +209,7 @@ export class RulesStore {
 			if (!rules.shell_prefixes.includes(prefix))
 				rules.shell_prefixes.push(prefix);
 		} else if (category === "shell") rules.shell = true;
-		else throw new Error("Nothing to remember for this request");
+		else throw new GuardOperationalError("invalid_request");
 		this.save(rules);
 		return rules;
 	}
@@ -354,7 +355,7 @@ export class GuardSession {
 	): Promise<void> {
 		const peer = this.#receiptPeer;
 		if (!peer || peer.closed.aborted)
-			throw new Error("Native operator receipt worker unavailable");
+			throw new GuardOperationalError("receipt_unavailable");
 		const digest = digestOperatorResult(receipt);
 		await this.authority.operatorSeal(receipt.id, digest);
 		signal.throwIfAborted();
@@ -370,13 +371,10 @@ export class GuardSession {
 					reject,
 				});
 				cancel = () =>
-					reject(new Error("Operator receipt publication interrupted"));
+					reject(new GuardOperationalError("receipt_unacknowledged"));
 				signal.addEventListener("abort", cancel, { once: true });
 				timer = setTimeout(
-					() =>
-						reject(
-							new Error("Native operator receipt acknowledgment unavailable"),
-						),
+					() => reject(new GuardOperationalError("receipt_unacknowledged")),
 					10_000,
 				);
 				if (signal.aborted) {
@@ -393,9 +391,7 @@ export class GuardSession {
 	}
 	assertAdmission(): void {
 		if (!canAdmitSession(this.id))
-			throw new Error(
-				"Session import staging: effects and input are unavailable until publication",
-			);
+			throw new GuardOperationalError("unavailable");
 	}
 	async acquire(id: string, signal: AbortSignal) {
 		let acquired!: () => void;
@@ -466,9 +462,7 @@ export class GuardSession {
 			this.#selection ||
 			this.#operatorReserved
 		)
-			throw new Error(
-				"Operator destination is stale, changing, or busy; command not started",
-			);
+			throw new GuardOperationalError("destination_busy");
 		// Capture before the first await/effect, and fence even queued invocations.
 		const destination = conversationId;
 		this.#operatorReserved = true;
@@ -480,9 +474,7 @@ export class GuardSession {
 			await this.syncResources(true);
 			signal.throwIfAborted();
 			if (!this.#receiptPeer || this.#receiptPeer.closed.aborted)
-				throw new Error(
-					"Native operator receipt worker unavailable; command not started",
-				);
+				throw new GuardOperationalError("receipt_unavailable");
 			const invocation = `${this.id}:operator:${randomUUID()}`;
 			// Validate bounded command/identity before any effect.
 			validateOperatorResult({
@@ -540,7 +532,7 @@ export class GuardSession {
 				await this.authority.ready(signal);
 				await this.syncResources(true);
 				if (epoch !== this.supervisor.epoch)
-					throw new Error("Operator invocation revoked");
+					throw new GuardOperationalError("operation_revoked");
 				resultData = !result.ok
 					? {
 							exitCode: -1,
@@ -567,8 +559,8 @@ export class GuardSession {
 				await this.authority.ready(signal);
 				await this.syncResources(true);
 				if (resourceKey !== this.#resourceKey)
-					throw new Error("Operator resources expired before publication");
-				if (!resultData) throw new Error("Operator result unavailable");
+					throw new GuardOperationalError("receipt_unacknowledged");
+				if (!resultData) throw new GuardOperationalError("result_unavailable");
 				let receipt: OperatorResult = {
 					version: 2,
 					session: this.id,
@@ -586,7 +578,7 @@ export class GuardSession {
 						break;
 					} catch {
 						if (!receipt.output.length)
-							throw new Error("Operator receipt exceeds its bound");
+							throw new GuardOperationalError("receipt_bound");
 						receipt = {
 							...receipt,
 							output: receipt.output.slice(
@@ -612,9 +604,7 @@ export class GuardSession {
 			} catch {
 				this.interrupted = await this.authority.recover();
 				this.guard.emit();
-				throw new Error(
-					"Operator result was not acknowledged; effects must not be replayed. Reconnect and inspect /shell-results or /permissions.",
-				);
+				throw new GuardOperationalError("receipt_unacknowledged");
 			} finally {
 				this.#operatorInvocation = undefined;
 			}
@@ -707,9 +697,7 @@ export class GuardSession {
 					if (this.#selection?.peer === peer) this.#selection = undefined;
 					for (const publication of this.#publications.values())
 						if (publication.peer === peer)
-							publication.reject(
-								new Error("Native receipt worker disconnected"),
-							);
+							publication.reject(new GuardOperationalError("unavailable"));
 					const lost = this.#live.get(peer) ?? new Set();
 					this.#live.delete(peer);
 					void this.brainLost(lost).catch(() => {});
@@ -726,7 +714,7 @@ export class GuardSession {
 	): Promise<unknown> {
 		await this.ready;
 		const live = this.#live.get(peer);
-		if (!live) throw new Error("Unknown brain connection");
+		if (!live) throw new GuardOperationalError("invalid_binding");
 		switch (method) {
 			case "operator_results_ready": {
 				if (
@@ -734,15 +722,15 @@ export class GuardSession {
 					this.#receiptPeer !== peer &&
 					!this.#receiptPeer.closed.aborted
 				)
-					throw new Error("Native receipt worker already registered");
+					throw new GuardOperationalError("invalid_binding");
 				if (
 					!validReceiptConversation(params.conversationId) ||
 					(params.recovering !== undefined &&
 						typeof params.recovering !== "boolean")
 				)
-					throw new Error("Invalid receipt consumer destination");
+					throw new GuardOperationalError("invalid_binding");
 				if (this.#selection || this.#operatorReserved)
-					throw new Error("Operator destination is busy");
+					throw new GuardOperationalError("destination_busy");
 				this.#receiptPeer = peer;
 				this.#receiptConversation = params.conversationId;
 				this.#receiptReady = params.recovering !== true;
@@ -758,13 +746,13 @@ export class GuardSession {
 					!validReceiptConversation(params.conversationId) ||
 					params.conversationId !== this.#receiptConversation
 				)
-					throw new Error("Invalid or stale receipt selection consumer");
+					throw new GuardOperationalError("invalid_binding");
 				if (
 					this.#operatorReserved ||
 					this.#operatorInvocation ||
 					this.#selection
 				)
-					throw new Error("Operator invocation or navigation is live");
+					throw new GuardOperationalError("navigation_live");
 				const token = randomUUID();
 				this.#selection = { peer, token, previous: params.conversationId };
 				return { token };
@@ -777,7 +765,7 @@ export class GuardSession {
 					selection.token !== params.token ||
 					!validReceiptConversation(params.conversationId)
 				)
-					throw new Error("Invalid receipt selection completion");
+					throw new GuardOperationalError("invalid_request");
 				this.#receiptConversation = params.conversationId;
 				this.#selection = undefined;
 				return { conversationId: this.#receiptConversation };
@@ -789,7 +777,7 @@ export class GuardSession {
 					typeof params.digest !== "string" ||
 					!validReceiptConversation(params.conversationId)
 				)
-					throw new Error("Invalid receipt acknowledgment");
+					throw new GuardOperationalError("invalid_request");
 				const publication = this.#publications.get(params.id);
 				if (
 					publication &&
@@ -797,7 +785,7 @@ export class GuardSession {
 						publication.digest !== params.digest ||
 						publication.conversationId !== params.conversationId)
 				)
-					throw new Error("Receipt acknowledgment binding changed");
+					throw new GuardOperationalError("invalid_binding");
 				await this.authority.ready(signal);
 				await this.authority.operatorFinish(params.id, params.digest);
 				this.interrupted = this.interrupted.filter(
@@ -813,7 +801,9 @@ export class GuardSession {
 						? this.#publications.get(params.id)
 						: undefined;
 				if (publication?.peer === peer)
-					publication.reject(new Error("Native result admission failed"));
+					publication.reject(
+						new GuardOperationalError("receipt_unacknowledged"),
+					);
 				return { recorded: true };
 			}
 			case "prepare": {
@@ -856,17 +846,17 @@ export class GuardSession {
 				const operation = codingOperation(params.operation);
 				const admitted = this.#admitted.get(operation.request_id);
 				if (!live.has(operation.request_id) || !admitted)
-					throw new Error("No live invocation on this brain connection");
+					throw new GuardOperationalError("no_live_invocation");
 				if (JSON.stringify(admitted) !== JSON.stringify(operation))
-					throw new Error("Invocation changed after admission");
+					throw new GuardOperationalError("invalid_binding");
 				await this.authority.check(admitted);
 				return { checked: true };
 			}
 			case "finish": {
 				if (typeof params.id !== "string" || !live.has(params.id))
-					throw new Error("No live invocation on this brain connection");
+					throw new GuardOperationalError("no_live_invocation");
 				if (!this.#drained.has(params.id))
-					throw new Error("Invocation teardown not confirmed");
+					throw new GuardOperationalError("teardown_unconfirmed");
 				await this.authority.finish(params.id);
 				this.#drained.delete(params.id);
 				live.delete(params.id);
@@ -876,7 +866,7 @@ export class GuardSession {
 			}
 			case "drain": {
 				if (![...live].some((id) => this.#releases.has(id)))
-					throw new Error("No executing invocation on this brain connection");
+					throw new GuardOperationalError("no_live_invocation");
 				// Retire the executor (and any detached descendants) before delivery.
 				await this.authority.transition(() => this.supervisor.replace());
 				await this.authority.ready(signal);
@@ -889,7 +879,8 @@ export class GuardSession {
 				return { epoch: this.supervisor.epoch };
 			case "identity":
 				// The worker must report the host pid the manager spawned and will signal.
-				if (this.brainPid === undefined) throw new Error("No spawned brain");
+				if (this.brainPid === undefined)
+					throw new GuardOperationalError("unavailable");
 				return { pid: this.brainPid };
 			case "context":
 				return boundedContext(
@@ -897,12 +888,12 @@ export class GuardSession {
 				);
 			case "credential":
 				if (typeof params.provider !== "string")
-					throw new Error("Provider required");
+					throw new GuardOperationalError("invalid_request");
 				return (await this.guard.options.broker.read(params.provider)) ?? null;
 			case "credentials":
 				return await this.guard.options.broker.list();
 			default:
-				throw new Error("Method unavailable on the tool channel");
+				throw new GuardOperationalError("tool_method_unavailable");
 		}
 	}
 	async #resourceOperation(
@@ -910,10 +901,10 @@ export class GuardSession {
 	): Promise<Operation> {
 		const id = params.request_id;
 		if (typeof id !== "string" || !id.startsWith(`${this.id}:store:`))
-			throw new Error("Request is not bound to the public Session");
+			throw new GuardOperationalError("invalid_binding");
 		const reason =
 			typeof params.reason === "string" ? params.reason.slice(0, 500) : "";
-		if (!reason) throw new Error("A reason is required for access requests");
+		if (!reason) throw new GuardOperationalError("invalid_request");
 		if (params.network === true)
 			return {
 				request_id: id,
@@ -922,9 +913,9 @@ export class GuardSession {
 			};
 		const access = params.access;
 		if (access !== "read" && access !== "write")
-			throw new Error('access must be "read" or "write"');
+			throw new GuardOperationalError("invalid_request");
 		if (typeof params.path !== "string" || !params.path)
-			throw new Error("path required");
+			throw new GuardOperationalError("invalid_request");
 		const requested = isAbsolute(params.path)
 			? params.path
 			: resolve(this.workspace, params.path);
@@ -933,7 +924,7 @@ export class GuardSession {
 			// Mount what the path resolves to now; symlinks are not followed later.
 			real = await realpath(requested);
 		} catch {
-			throw new Error("Requested path does not exist");
+			throw new GuardOperationalError("invalid_request");
 		}
 		return {
 			request_id: id,
@@ -1107,7 +1098,7 @@ export class Guard {
 		const existing = this.sessions.get(id);
 		if (existing) {
 			if (existing.workspace !== workspace)
-				throw new Error("Session work directory changed; refusing rebinding");
+				throw new GuardOperationalError("invalid_binding");
 			return existing;
 		}
 		const session = new GuardSession(this, id, workspace, ++this.#index);
@@ -1115,7 +1106,8 @@ export class Guard {
 		return session;
 	}
 	input(session: string): SessionInputLeases {
-		if (!this.sessions.has(session)) throw new Error("Unknown input Session");
+		if (!this.sessions.has(session))
+			throw new GuardOperationalError("invalid_binding");
 		let input = this.#inputs.get(session);
 		if (!input) {
 			input = new SessionInputLeases(() => this.emit());
@@ -1169,9 +1161,10 @@ export class Guard {
 		}
 	}
 	#find(params: Record<string, unknown>) {
-		if (typeof params.session !== "string") throw new Error("Session required");
+		if (typeof params.session !== "string")
+			throw new GuardOperationalError("invalid_request");
 		const session = this.sessions.get(params.session);
-		if (!session) throw new Error("Unknown session");
+		if (!session) throw new GuardOperationalError("invalid_binding");
 		return session;
 	}
 	async #operate(
@@ -1181,7 +1174,7 @@ export class Guard {
 		signal: AbortSignal,
 	): Promise<unknown> {
 		if (peer.closed.aborted || signal.aborted)
-			throw new Error("Operator disconnected");
+			throw new GuardOperationalError("unavailable");
 		switch (method) {
 			case "import_classic_begin":
 			case "import_classic_chunk":
@@ -1203,7 +1196,7 @@ export class Guard {
 					typeof params.attachment !== "string" ||
 					typeof params.label !== "string"
 				)
-					throw new Error("Invalid input request");
+					throw new GuardOperationalError("invalid_request");
 				return this.input(session.id).request(
 					peer,
 					params.attachment,
@@ -1219,13 +1212,21 @@ export class Guard {
 					typeof params.id !== "string" ||
 					typeof params.allow !== "boolean"
 				)
-					throw new Error("Invalid terminal decision");
-				await this.input(session.id).decide(peer, params.id, params.allow);
+					throw new GuardOperationalError("invalid_input_decision");
+				try {
+					await this.input(session.id).decide(peer, params.id, params.allow);
+				} catch {
+					throw new GuardOperationalError("invalid_input_decision");
+				}
 				return { decided: true };
 			}
 			case "input_release": {
 				const session = this.#find(params);
-				this.input(session.id).release(peer);
+				try {
+					this.input(session.id).release(peer);
+				} catch {
+					throw new GuardOperationalError("input_lease_owner");
+				}
 				return { released: true };
 			}
 			case "subscribe":
@@ -1243,18 +1244,16 @@ export class Guard {
 					typeof params.allow !== "boolean" ||
 					(params.lifetime !== "once" && params.lifetime !== "session")
 				)
-					throw new Error("Invalid decision");
+					throw new GuardOperationalError("invalid_request");
 				// "Always here": remember the rule (applies from the next session
 				// start via the ceiling) and grant it for this session now.
 				let remember: ReturnType<typeof describe> | undefined;
 				if (params.allow && params.remember === true) {
 					const request = session.pending.find((row) => row.id === params.id);
-					if (!request) throw new Error("Request is no longer pending");
+					if (!request) throw new GuardOperationalError("request_stale");
 					const described = describe(request.operation);
 					if (described.kind !== "tool")
-						throw new Error(
-							"Resource access is granted per session, never always",
-						);
+						throw new GuardOperationalError("resource_session_only");
 					remember = described;
 				}
 				await session.authority.decide(
@@ -1295,14 +1294,14 @@ export class Guard {
 					params.command.trim() === "" ||
 					params.command.length > 8192
 				)
-					throw new Error("Invalid command");
+					throw new GuardOperationalError("invalid_request");
 				if (
 					params.excluded !== undefined &&
 					typeof params.excluded !== "boolean"
 				)
-					throw new Error("Invalid shell context policy");
+					throw new GuardOperationalError("invalid_request");
 				if (!validReceiptConversation(params.conversationId))
-					throw new Error("Invalid shell conversation");
+					throw new GuardOperationalError("invalid_request");
 				return session.operatorShell(
 					params.command,
 					signal,
@@ -1317,7 +1316,7 @@ export class Guard {
 				return { acknowledged: true };
 			}
 			default:
-				throw new Error("Unknown operator method");
+				throw new GuardOperationalError("unknown_operator_method");
 		}
 	}
 	/** Synchronous replacement for upstream's unconfined worker spawn. */
@@ -1329,7 +1328,7 @@ export class Guard {
 		env: Record<string, string>,
 	): ChildProcess {
 		const brain = this.options.brain;
-		if (!brain) throw new Error("Guard has no brain confinement configured");
+		if (!brain) throw new GuardOperationalError("unavailable");
 		const workspace = resolve(options.metadata.cwd);
 		const trusted = resolve(brain.trustedSource);
 		if (workspace === trusted || workspace.startsWith(trusted + sep))

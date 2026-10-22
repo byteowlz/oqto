@@ -22,6 +22,7 @@ const LAYERS = [
 	"issues",
 	"git",
 	"terminal",
+	"policy-editor",
 	"theme",
 	"platform",
 	"dev",
@@ -38,9 +39,10 @@ const ALLOWED_DIRECT_IMPORTS = {
 	git: new Set(["git", "platform"]),
 	terminal: new Set(["terminal", "platform"]),
 	gallery: new Set(["gallery", "platform"]),
+	"policy-editor": new Set(["policy-editor", "platform"]),
 	theme: new Set(["theme", "chat", "platform"]),
 	platform: new Set(["engine", "platform"]),
-	dev: new Set(["dev", "engine", "platform"]),
+	dev: new Set(["dev", "engine", "platform", "policy-editor"]),
 };
 
 const ALLOWED_PROJECT_ALIASES = {
@@ -70,6 +72,7 @@ const ALLOWED_PROJECT_ALIASES = {
 	git: ["@/hooks/use-mount-effect"],
 	terminal: ["@/hooks/use-mount-effect"],
 	gallery: [],
+	"policy-editor": [],
 	theme: [],
 	platform: [
 		"@/src/generated",

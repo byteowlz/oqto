@@ -3,6 +3,28 @@
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import {
+	PermissionDeniedError,
+	permissionFeedback,
+} from "./coding-authority.ts";
+
+import { GuardOperationalError, operationalFeedback } from "./guard-errors.ts";
+
+function failure(error: unknown) {
+	const feedback = permissionFeedback(
+		error !== null && typeof error === "object" && "feedback" in error
+			? error.feedback
+			: undefined,
+	);
+	if (feedback) return { permissionFeedback: feedback };
+	const operational = operationalFeedback(
+		error !== null && typeof error === "object" && "operational" in error
+			? error.operational
+			: undefined,
+	);
+	return { operationalError: operational ?? { code: "unknown" } };
+}
+
 export const MAX_FRAME = 64 * 1024;
 
 export type Handler = (
@@ -47,12 +69,12 @@ function frames(socket: Socket, onFrame: (value: unknown) => void) {
 function write(socket: Socket, value: unknown) {
 	const line = `${JSON.stringify(value)}\n`;
 	if (Buffer.byteLength(line) > MAX_FRAME)
-		throw new Error("Guard frame exceeds limit");
+		throw new GuardOperationalError("invalid_request");
 	if (
 		socket.destroyed ||
 		socket.writableLength + Buffer.byteLength(line) > MAX_FRAME * 4
 	)
-		throw new Error("Guard peer closed or output bound exceeded");
+		throw new GuardOperationalError("unavailable");
 	socket.write(line);
 }
 
@@ -128,14 +150,15 @@ export function serve(
 					return;
 				}
 				running++;
-				handler(method, params, call.signal, peer)
+				Promise.resolve()
+					.then(() => handler(method, params, call.signal, peer))
 					.then(
 						(result) => write(socket, { id, ok: true, result }),
 						(error: unknown) =>
 							write(socket, {
 								id,
 								ok: false,
-								error: error instanceof Error ? error.message : String(error),
+								...failure(error),
 							}),
 					)
 					.catch(() => socket.destroy())
@@ -173,7 +196,7 @@ export class WireClient {
 		this.closed = new Promise((resolve) =>
 			socket.once("close", () => {
 				for (const call of this.#calls.values())
-					call.reject(new Error("Guard connection closed"));
+					call.reject(new GuardOperationalError("unavailable"));
 				this.#calls.clear();
 				resolve();
 			}),
@@ -192,12 +215,19 @@ export class WireClient {
 			this.#calls.delete(value.id);
 			if ("ok" in value && value.ok === true)
 				call.resolve("result" in value ? value.result : undefined);
-			else
-				call.reject(
-					new Error(
-						"error" in value ? String(value.error) : "Guard call failed",
-					),
+			else {
+				const feedback = permissionFeedback(
+					"permissionFeedback" in value ? value.permissionFeedback : undefined,
 				);
+				const operational = operationalFeedback(
+					"operationalError" in value ? value.operationalError : undefined,
+				);
+				call.reject(
+					feedback
+						? new PermissionDeniedError(feedback)
+						: new GuardOperationalError(operational?.code ?? "unknown"),
+				);
+			}
 		});
 	}
 	static async connect(path: string, deadlineMs = 10_000): Promise<WireClient> {
@@ -213,8 +243,9 @@ export class WireClient {
 					socket.once("error", reject);
 				});
 				return new WireClient(socket);
-			} catch (error) {
-				if (Date.now() >= deadline) throw error;
+			} catch {
+				if (Date.now() >= deadline)
+					throw new GuardOperationalError("unavailable");
 				await sleep(25);
 			}
 		}
@@ -234,8 +265,9 @@ export class WireClient {
 		signal?: AbortSignal,
 	): Promise<unknown> {
 		if (this.socket.destroyed)
-			return Promise.reject(new Error("Guard connection closed"));
-		signal?.throwIfAborted();
+			return Promise.reject(new GuardOperationalError("unavailable"));
+		if (signal?.aborted)
+			return Promise.reject(new GuardOperationalError("cancelled"));
 		const id = ++this.#next;
 		return new Promise((resolve, reject) => {
 			const abort = () => {
@@ -243,7 +275,7 @@ export class WireClient {
 				try {
 					write(this.socket, { id, method: "cancel" });
 				} catch {}
-				reject(signal?.reason ?? new Error("Aborted"));
+				reject(new GuardOperationalError("cancelled"));
 			};
 			signal?.addEventListener("abort", abort, { once: true });
 			this.#calls.set(id, {
@@ -261,7 +293,11 @@ export class WireClient {
 			} catch (error) {
 				this.#calls.delete(id);
 				signal?.removeEventListener("abort", abort);
-				reject(error);
+				reject(
+					error instanceof GuardOperationalError
+						? error
+						: new GuardOperationalError("unknown"),
+				);
 			}
 		});
 	}

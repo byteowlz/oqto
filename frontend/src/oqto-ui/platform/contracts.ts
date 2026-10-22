@@ -254,6 +254,16 @@ export type OqtoUiPlatform = {
 	/** Writable chat engine; scripted adapters provide a deterministic fake. */
 	chat: ChatEngineHandle;
 	selections?: SelectionHost;
+	/** Resolve only after native model-selection ACK; load() remains authoritative. */
+	selectModel?: (sessionId: string, modelId: string) => Promise<void>;
+	/** Create durably without starting a turn; resolve only with committed public IDs.
+	 * sourceSessionId is the explicit sidebar Session whose model is inherited.
+	 * Rejection may mean an unknown outcome: callers must refresh the catalog.
+	 */
+	createSession?: (
+		workDirectoryId: string,
+		sourceSessionId?: string,
+	) => Promise<{ sessionId: string; workDirectoryId: string }>;
 	load: (sessionId: string | null) => Promise<OqtoUiSnapshot>;
 	loadUiConfig: () => Promise<OqtoUiConfigResolution>;
 	/**
