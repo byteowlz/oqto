@@ -189,3 +189,91 @@ async fn equal_count_head_switch_preserves_siblings_ids_legacy_provenance_and_re
     );
     Ok(())
 }
+#[tokio::test]
+async fn live_branch_pages_equal_the_imported_projection_and_follow_the_live_head() -> Result<()> {
+    use crate::oqto_log::projector::{
+        project_native_branch_page, project_session_messages_page_for_workspace,
+    };
+    let home = tempfile::tempdir()?;
+    let native = "22222222-3333-4444-5555-666666666666";
+    let public = platform_id_for_external_id(native);
+    let workspace = "/synthetic";
+    // A longer session: twelve turns after the fork point, plus an aborted reply
+    // that the stored projection hides.
+    let mut lines: Vec<serde_json::Value> =
+        vec![serde_json::json!({"type":"session","id":native,"cwd":workspace})];
+    let mut parent = serde_json::Value::Null;
+    for n in 0..12 {
+        let id = format!("m{n}");
+        let role = if n % 2 == 0 { "user" } else { "assistant" };
+        lines.push(serde_json::json!({"type":"message","id":id,"parentId":parent,"message":{"role":role,"content":[{"type":"text","text":format!("turn {n}")}],"timestamp":1_700_000_000_000_u64 + n}}));
+        parent = serde_json::json!(id);
+    }
+    lines.push(serde_json::json!({"type":"message","id":"aborted","parentId":"m11","message":{"role":"assistant","content":[{"type":"text","text":"cut"}],"stopReason":"aborted","timestamp":1_700_000_000_100_u64}}));
+    lines.push(serde_json::json!({"type":"message","id":"side","parentId":"m5","message":{"role":"user","content":[{"type":"text","text":"other branch"}],"timestamp":1_700_000_000_200_u64}}));
+    let bytes = lines
+        .iter()
+        .map(|v| format!("{v}\n"))
+        .collect::<String>()
+        .into_bytes();
+    // The live head is "aborted", not the last line ("side").
+    let graph = NativeGraph::parse(&bytes, native, workspace, Some("aborted"))?;
+    let branch = graph.branch_messages(&public);
+    assert_eq!(branch.len(), 13);
+    merge(home.path(), "owner", &public, &graph).await?;
+    let stored =
+        project_session_messages_page_for_workspace(home.path(), workspace, &public, 5, None)
+            .await?
+            .context("stored page")?;
+    let live = project_native_branch_page(&public, &branch, 5, None)?;
+    let shape = |page: &oqto_protocol::projection::ProjectedChatMessagePage| -> Vec<(String, String, Option<String>, Vec<String>)> {
+        page.messages
+            .iter()
+            .map(|m| (m.id.clone(), m.role.clone(), m.parent_id.clone(), m.parts.iter().map(|p| format!("{}:{:?}", p.part_type, p.text)).collect()))
+            .collect()
+    };
+    assert_eq!(
+        shape(&live),
+        shape(&stored),
+        "live page must equal the imported projection"
+    );
+    assert!(
+        live.messages
+            .iter()
+            .all(|m| !m.parts.iter().any(|p| p.text.as_deref() == Some("cut")))
+    );
+    assert!(live.messages.iter().all(|m| {
+        !m.parts
+            .iter()
+            .any(|p| p.text.as_deref() == Some("other branch"))
+    }));
+    assert_eq!(
+        live.messages.last().map(|m| m.created_at),
+        Some(1_700_000_000_011)
+    );
+    // Older pages walk back to the start without overlap.
+    let mut seen: Vec<String> = live.messages.iter().map(|m| m.id.clone()).collect();
+    let mut cursor = live.next_before.clone();
+    while let Some(before) = cursor {
+        let older = project_native_branch_page(&public, &branch, 5, Some(&before))?;
+        let mut ids: Vec<String> = older.messages.iter().map(|m| m.id.clone()).collect();
+        ids.extend(seen);
+        seen = ids;
+        cursor = older.next_before;
+    }
+    assert_eq!(seen.len(), 12);
+    assert_eq!(
+        seen.iter().collect::<std::collections::HashSet<_>>().len(),
+        12
+    );
+    assert!(project_native_branch_page(&public, &branch, 5, Some("native:99")).is_err());
+    assert!(project_native_branch_page(&public, &branch, 5, Some("12:0")).is_err());
+    // A known empty head has no messages.
+    let empty = NativeGraph::parse(&bytes, native, workspace, None)?;
+    assert!(
+        project_native_branch_page(&public, &empty.branch_messages(&public), 5, None)?
+            .messages
+            .is_empty()
+    );
+    Ok(())
+}

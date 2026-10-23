@@ -140,6 +140,134 @@ pub(crate) async fn enrich(
     });
 }
 
+const LIVE_PAGE: usize = 50;
+const LIVE_BYTES: u64 = 64 * 1024 * 1024;
+/// Parsed live branches, reused while the file and head are unchanged (the phone
+/// polls every few seconds; a large session file must not be re-parsed each time).
+const BRANCH_CACHE: usize = 8;
+type BranchKey = (PathBuf, u64, u64, u64, i64, i64, Option<String>);
+type Branch = std::sync::Arc<Vec<oqto_history::oqto_log::projector::NativeBranchMessage>>;
+static BRANCHES: LazyLock<Mutex<Vec<(BranchKey, String, Branch)>>> =
+    LazyLock::new(Default::default);
+
+/// History straight from the Pi that has this Session open, read from its session
+/// file along the head it reports, so a live Session needs no prior import. The
+/// same catalog row and native-source pin authorize it as attaching does. `None`
+/// when no live Pi has it open (the caller falls back to canonical history).
+pub(crate) async fn live_history(
+    home: &Path,
+    roots: &NativeRoots,
+    workspace_roots: &[PathBuf],
+    source: Option<&crate::personal_source::PersonalSource>,
+    session_id: &str,
+    before: Option<&str>,
+) -> anyhow::Result<Option<Value>> {
+    use anyhow::{Context, ensure};
+    let row =
+        crate::history_read::resolve_authorized_session(home, workspace_roots, session_id).await?;
+    let external = row.external_id.context("Native identity unavailable")?;
+    let workspace = row.workspace_id.context("Workspace unavailable")?;
+    let live = live(roots).await;
+    let Some(pi) = live.get(&external) else {
+        return Ok(None);
+    };
+    ensure!(
+        pi.session_file.starts_with(&roots.session_root),
+        "Live source outside root"
+    );
+    if let Some(source) = source {
+        let header = source.header(&pi.session_file)?;
+        ensure!(
+            header.external_id == external && header.workspace.to_str() == Some(workspace.as_str()),
+            "Live source identity mismatch"
+        );
+        oqto_history::oqto_log::ops::native_source::validate(
+            home,
+            session_id,
+            &external,
+            &workspace,
+            &header.accepted_pins(),
+        )
+        .await?;
+    }
+    let path = pi.session_file.clone();
+    let leaf = pi.leaf.clone();
+    let public = session_id.to_owned();
+    let (native, cwd) = (external.clone(), workspace.clone());
+    let branch: Branch = tokio::task::spawn_blocking(move || -> anyhow::Result<Branch> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)?;
+        let meta = file.metadata()?;
+        ensure!(
+            meta.is_file() && meta.uid() == rustix::process::geteuid().as_raw(),
+            "Unsafe live source"
+        );
+        ensure!(
+            meta.len() <= LIVE_BYTES,
+            "Live source exceeds the history bound"
+        );
+        let key: BranchKey = (
+            path.clone(),
+            meta.dev(),
+            meta.ino(),
+            meta.len(),
+            meta.mtime(),
+            meta.mtime_nsec(),
+            leaf.clone(),
+        );
+        if let Some((_, _, branch)) = BRANCHES.lock().ok().and_then(|cache| {
+            cache
+                .iter()
+                .find(|(k, id, _)| *k == key && *id == public)
+                .cloned()
+        }) {
+            return Ok(branch);
+        }
+        let mut bytes = Vec::new();
+        (&file).take(LIVE_BYTES + 1).read_to_end(&mut bytes)?;
+        let graph = oqto_history::oqto_log::store::native_graph::NativeGraph::parse(
+            &bytes,
+            &native,
+            &cwd,
+            leaf.as_deref(),
+        )?;
+        let branch: Branch = std::sync::Arc::new(graph.branch_messages(&public));
+        if let Ok(mut cache) = BRANCHES.lock() {
+            cache.retain(|(k, id, _)| !(k.0 == key.0 && *id == public));
+            if cache.len() >= BRANCH_CACHE {
+                cache.remove(0);
+            }
+            cache.push((key, public, branch.clone()));
+        }
+        Ok(branch)
+    })
+    .await??;
+    let page = oqto_history::oqto_log::projector::project_native_branch_page(
+        session_id, &branch, LIVE_PAGE, before,
+    )?;
+    let mut data = serde_json::to_value(page)?;
+    // The phone fences paging on this head. Same branch and message identities
+    // as the imported graph; the revision is a digest of the live head.
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(
+        format!("{}\n{}", external, pi.leaf.as_deref().unwrap_or("")).as_bytes(),
+    );
+    let revision = u64::from_be_bytes(digest[..8].try_into()?) >> 11;
+    data.as_object_mut().context("Invalid live page")?.insert(
+        "native_graph".into(),
+        serde_json::json!({
+            "source": "pi-native-graph-v1",
+            "branch_id": format!("branch:{session_id}:pi-native-graph-v1"),
+            "native_leaf_id": pi.leaf,
+            "revision": revision,
+            "live": true,
+        }),
+    );
+    Ok(Some(data))
+}
+
 async fn live(roots: &NativeRoots) -> LiveMap {
     let mut cached = LIVE.lock().await;
     if let Some((root, at, live)) = cached.as_ref()

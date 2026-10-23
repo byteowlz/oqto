@@ -556,6 +556,8 @@ pub(crate) struct LiveSession {
     pub session_file: PathBuf,
     pub name: Option<String>,
     pub streaming: bool,
+    /// The live head (`leafId`); `None` is a known empty head.
+    pub leaf: Option<String>,
 }
 
 /// Catalog-only liveness: which native Sessions a same-user pi-tui-rpc Pi has
@@ -654,12 +656,18 @@ async fn probe_live(pid: u32, path: &Path, uid: u32) -> Result<(String, LiveSess
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(|name| name.chars().take(240).collect());
+        let leaf = match &data["leafId"] {
+            Value::Null => None,
+            Value::String(leaf) if !leaf.is_empty() && leaf.len() <= 256 => Some(leaf.clone()),
+            _ => bail!("Invalid live head"),
+        };
         return Ok((
             session.to_owned(),
             LiveSession {
                 session_file: file,
                 name,
                 streaming: data["isStreaming"] == true,
+                leaf,
             },
         ));
     }

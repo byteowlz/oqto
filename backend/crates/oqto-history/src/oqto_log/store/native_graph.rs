@@ -125,6 +125,66 @@ impl NativeGraph {
         })
     }
 }
+impl NativeGraph {
+    /// The messages on the branch ending at the live head, oldest first, in exactly
+    /// the form `merge` stores them; empty for a known empty head.
+    pub fn branch_messages(
+        &self,
+        public_id: &str,
+    ) -> Vec<crate::oqto_log::projector::NativeBranchMessage> {
+        let by_id: HashMap<&str, &Entry> = self
+            .entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry))
+            .collect();
+        let mut chain = Vec::new();
+        let mut next = self.head_message.as_deref();
+        while let Some(id) = next {
+            let Some(entry) = by_id.get(id) else { break };
+            chain.push(*entry);
+            next = entry.parent_message.as_deref();
+            if chain.len() > self.entries.len() {
+                break;
+            }
+        }
+        chain.reverse();
+        chain
+            .into_iter()
+            .filter_map(|entry| {
+                let message = entry.message.as_ref()?;
+                Some(crate::oqto_log::projector::NativeBranchMessage {
+                    message_id: stable_id("message", public_id, &entry.id),
+                    parent_turn_id: entry
+                        .parent_message
+                        .as_deref()
+                        .map(|id| stable_id("turn", public_id, id)),
+                    role: normalize_role(&message.role).to_owned(),
+                    content: extract_text(&message.content),
+                    json_payload: serde_json::to_string(message).ok()?,
+                    created_at_ms: message
+                        .timestamp
+                        .and_then(|value| i64::try_from(value).ok())
+                        .filter(|value| *value > 0)
+                        .map(|value| {
+                            if value < 1_000_000_000_000 {
+                                value * 1000
+                            } else {
+                                value
+                            }
+                        })
+                        .or_else(|| {
+                            entry.raw["timestamp"]
+                                .as_str()
+                                .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+                                .map(|time| time.timestamp_millis())
+                        })
+                        .unwrap_or(0),
+                })
+            })
+            .collect()
+    }
+}
+
 fn stable_id(kind: &str, session: &str, native_entry: &str) -> String {
     // Length-framed tuple: no text/ordinal/array-order reconciliation.
     let value = serde_json::json!([SOURCE, kind, session, native_entry]).to_string();

@@ -164,6 +164,18 @@ None of this is identity, history or control authority: canonical `title` and
 the existing fields are unchanged, and older clients ignore the additions.
 History for a Session never synchronized from a live Pi still returns `503`.
 
+History for a Session that a live pi-tui-rpc Pi has open is read from that Pi's
+session file along the head it reports (`leafId` from `get_state`), so it needs no
+prior import (`personal_catalog::live_history`). The same catalog row and
+native-source pin authorize it as attachment does. Pages use the importer's
+message IDs, roles and visibility rules (`NativeGraph::branch_messages`,
+`project_native_branch_page`; a parity test compares them with the stored
+projection), carry `native_graph` with `"live": true` and a head-digest revision,
+and page with `native:<n>` cursors. Parsed branches are cached until the file or
+head changes. Files over 64 MiB, or a Session no Pi has open, fall back to
+canonical history; a `native:` cursor after the Pi has gone returns 503 and the
+client refreshes the newest page.
+
 Native-source pins (`extensions_json.personal_native_source`) record the Session file's
 path, inode and persistent filesystem identity: the volume UUID on macOS, where
 `st_dev` is a mount-instance ID that changes after a reboot. Validation accepts that

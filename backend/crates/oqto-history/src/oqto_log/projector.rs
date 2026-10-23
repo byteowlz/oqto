@@ -1216,3 +1216,103 @@ mod tests {
         );
     }
 }
+
+/// One message on a live native branch, in the form the importer would store it.
+#[derive(Debug, Clone)]
+pub struct NativeBranchMessage {
+    pub message_id: String,
+    pub parent_turn_id: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub json_payload: String,
+    pub created_at_ms: i64,
+}
+
+/// Cursors for live native pages; distinct from stored-page cursors.
+const NATIVE_CURSOR: &str = "native:";
+
+pub fn is_native_page_cursor(cursor: &str) -> bool {
+    cursor.starts_with(NATIVE_CURSOR)
+}
+
+/// A page of a live native branch, newest page unless `before`. Matches the stored
+/// projection: same IDs and parts, aborted and bash-execution assistant turns hidden.
+pub fn project_native_branch_page(
+    session_id: &str,
+    branch: &[NativeBranchMessage],
+    limit: usize,
+    before: Option<&str>,
+) -> Result<ProjectedChatMessagePage> {
+    let visible: Vec<&NativeBranchMessage> = branch
+        .iter()
+        .filter(|message| {
+            if message.role != "assistant" {
+                return true;
+            }
+            let payload: serde_json::Value =
+                serde_json::from_str(&message.json_payload).unwrap_or_default();
+            payload["role"] != "bashExecution" && payload["stopReason"] != "aborted"
+        })
+        .collect();
+    let end = match before {
+        None => visible.len(),
+        Some(cursor) => cursor
+            .strip_prefix(NATIVE_CURSOR)
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index <= visible.len())
+            .context("invalid native page cursor")?,
+    };
+    let start = end.saturating_sub(limit.max(1));
+    let messages = visible[start..end]
+        .iter()
+        .map(|message| {
+            let mut client_id = extract_client_id_from_payload_json(&message.json_payload);
+            let mut parts = projected_parts_from_payload(
+                &message.message_id,
+                &message.role,
+                Some(message.content.clone()),
+                Some(&message.json_payload),
+            );
+            if message.role == "user"
+                && let Some(part) = parts.iter_mut().rev().find(|part| part.part_type == "text")
+                && let Some((visible_text, suffix)) =
+                    part.text.as_deref().and_then(user_text_client_id_suffix)
+            {
+                part.text = Some(visible_text.to_string());
+                client_id.get_or_insert(suffix);
+            }
+            native_projected_message(session_id, message, parts, client_id)
+        })
+        .collect();
+    Ok(ProjectedChatMessagePage {
+        messages,
+        has_more: start > 0,
+        next_before: (start > 0).then(|| format!("{NATIVE_CURSOR}{start}")),
+    })
+}
+
+fn native_projected_message(
+    session_id: &str,
+    message: &NativeBranchMessage,
+    parts: Vec<ProjectedChatMessagePart>,
+    client_id: Option<String>,
+) -> ProjectedChatMessage {
+    ProjectedChatMessage {
+        id: message.message_id.clone(),
+        session_id: session_id.to_string(),
+        role: message.role.clone(),
+        created_at: message.created_at_ms,
+        completed_at: Some(message.created_at_ms),
+        parent_id: message.parent_turn_id.clone(),
+        model_id: None,
+        provider_id: None,
+        agent: None,
+        summary_title: None,
+        tokens_input: None,
+        tokens_output: None,
+        tokens_reasoning: None,
+        cost: None,
+        client_id,
+        parts,
+    }
+}

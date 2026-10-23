@@ -428,6 +428,43 @@ impl ActionBackend for PersonalBackend {
                 .map_err(|_| ActionFailure::Unavailable)?
                 .ok_or(ActionFailure::Invalid)
             }
+            HostAction::SessionHistory { session_id, before }
+                if before
+                    .as_deref()
+                    .is_none_or(oqto_history::oqto_log::projector::is_native_page_cursor) =>
+            {
+                // A live Pi serves its own history; otherwise the canonical store does.
+                let live = crate::personal_catalog::live_history(
+                    &self.home,
+                    &self.native,
+                    &self.workspace_roots,
+                    self.ingest.source.as_deref(),
+                    &session_id,
+                    before.as_deref(),
+                )
+                .await;
+                // Newest page: a failed live read (e.g. a file over the bound) falls
+                // back to canonical history. A live cursor needs the live source.
+                let live = match (live, &before) {
+                    (Ok(page), _) => page,
+                    (Err(_), None) => None,
+                    (Err(_), Some(_)) => return Err(ActionFailure::Unavailable),
+                };
+                match (live, before) {
+                    (Some(page), _) => Ok(page),
+                    // A live cursor is meaningless once the Pi has gone; the phone refreshes.
+                    (None, Some(_)) => Err(ActionFailure::Unavailable),
+                    (None, None) => crate::history_read::read_native_authorized_history(
+                        &self.home,
+                        &self.workspace_roots,
+                        session_id,
+                        None,
+                    )
+                    .await
+                    .map(|response| response.data)
+                    .map_err(|_| ActionFailure::Unavailable),
+                }
+            }
             HostAction::SessionHistory { session_id, before } => {
                 crate::history_read::read_native_authorized_history(
                     &self.home,
