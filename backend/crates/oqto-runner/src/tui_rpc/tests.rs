@@ -495,3 +495,96 @@ async fn catalog_liveness_reads_state_only_and_ignores_foreign_files() -> Result
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn snapshot_drains_a_long_streamed_reply_and_keeps_only_a_display_preview() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let path = fixture
+        .authority
+        .binding
+        .socket_root
+        .join(format!("pi-tui-rpc-{}.sock", std::process::id()));
+    let listener = UnixListener::bind(&path)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let streaming = fixture.native_state();
+    let mut idle = streaming.clone();
+    idle["isStreaming"] = false.into();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut reader = BufReader::new(stream);
+        send(&mut reader, &json!({"type":"hello","v":1,"pid":std::process::id(),"lease":"tui","commands":["get_state"]})).await?;
+        answer(&mut reader, streaming.clone(), vec![]).await?;
+        // Far more than the old 1024-frame drain, each re-sending the whole message
+        // so far, the way Pi does. A tool runs in between.
+        let mut backlog = vec![
+            json!({"type":"event","event":"message_start","data":{"message":{"role":"assistant"}}}),
+        ];
+        let mut text = String::new();
+        for n in 0..3000 {
+            text.push_str(&format!("w{n} "));
+            backlog.push(json!({"type":"event","event":"message_update","data":{"message":{"role":"assistant",
+                "content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":text}]}}}));
+        }
+        backlog.push(
+            json!({"type":"event","event":"tool_execution_start","data":{"toolName":"bash"}}),
+        );
+        answer(&mut reader, streaming.clone(), backlog).await?;
+        answer(
+            &mut reader,
+            idle,
+            vec![json!({"type":"event","event":"message_end","data":{}})],
+        )
+        .await?;
+        anyhow::Ok(())
+    });
+    let mut observer =
+        TuiObserver::attach_snapshots(fixture.authority.clone(), "alice", "public-id").await?;
+    assert_eq!(observer.preview(), &LivePreview::default());
+    let state = observer.snapshot_state().await?;
+    assert!(state.streaming);
+    let preview = observer.preview().clone();
+    let text = preview.text.context("preview text")?;
+    assert!(
+        text.starts_with("w0 ") && text.ends_with("w2999 "),
+        "newest full text, text parts only"
+    );
+    assert!(!text.contains("hidden"));
+    assert_eq!(preview.tool.as_deref(), Some("bash"));
+    let state = observer.snapshot_state().await?;
+    assert!(!state.streaming);
+    assert_eq!(
+        observer.preview(),
+        &LivePreview::default(),
+        "cleared once the reply is finished"
+    );
+    server.await??;
+    fixture.unchanged()
+}
+
+async fn answer(
+    reader: &mut BufReader<UnixStream>,
+    state: Value,
+    before: Vec<Value>,
+) -> Result<()> {
+    let command = read_frame(reader).await?;
+    for frame in &before {
+        send(reader, frame).await?;
+    }
+    send(reader, &json!({"type":"response","id":command["id"],"command":"get_state","success":true,"data":state})).await
+}
+
+#[test]
+fn preview_keeps_the_tail_of_a_very_long_reply_on_a_char_boundary() {
+    let long = "é".repeat(PREVIEW_LIMIT);
+    let frame =
+        json!({"data":{"message":{"role":"assistant","content":[{"type":"text","text":long}]}}});
+    let text = preview_text(&frame).unwrap();
+    assert!(text.starts_with('…'));
+    assert!(text.len() <= PREVIEW_LIMIT + '…'.len_utf8());
+    assert!(
+        preview_text(
+            &json!({"data":{"message":{"role":"user","content":[{"type":"text","text":"x"}]}}})
+        )
+        .is_none()
+    );
+}

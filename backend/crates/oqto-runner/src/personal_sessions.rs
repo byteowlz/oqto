@@ -359,7 +359,8 @@ impl Sessions {
             HostAction::SessionRead { .. } => {
                 let state = attachment.observer.snapshot_state().await.map_err(|_| ActionFailure::Unavailable)?;
                 let sync_requested = self.nudge(&attachment, &state).map_err(|_| ActionFailure::Unavailable)?;
-                Ok(json!({"session_id": attachment.observer.public_session_id(), "streaming": state.streaming, "compacting": state.compacting, "input_held": attachment.observer.input_held(), "containment_verified": false, "native_leaf_id": state.head.leaf_id().map_err(|_| ActionFailure::Unavailable)?, "sync_requested": sync_requested}))
+                let preview = attachment.observer.preview();
+                Ok(json!({"session_id": attachment.observer.public_session_id(), "streaming": state.streaming, "compacting": state.compacting, "input_held": attachment.observer.input_held(), "containment_verified": false, "native_leaf_id": state.head.leaf_id().map_err(|_| ActionFailure::Unavailable)?, "sync_requested": sync_requested, "preview": {"text": preview.text, "tool": preview.tool, "canonical": false}}))
             }
             HostAction::SessionRequestControl { .. } => {
                 let permit = ControlPermit::from_paired_device(&admission, attachment.observer.public_session_id().into()).map_err(|_| ActionFailure::Denied)?;

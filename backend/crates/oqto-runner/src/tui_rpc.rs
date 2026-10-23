@@ -28,6 +28,11 @@ const MAX_ENTRIES: usize = 8192;
 const MAX_CANDIDATES: usize = 64;
 const MAX_PENDING: usize = 16;
 const RPC_DEADLINE: Duration = Duration::from_millis(500);
+/// A snapshot drains every event queued since the previous one; a long streamed
+/// reply re-sends the whole message with each update, so allow the backlog time.
+const SNAPSHOT_DEADLINE: Duration = Duration::from_secs(2);
+/// Preview text kept per attachment (the tail of a longer reply).
+const PREVIEW_LIMIT: usize = 256 * 1024;
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Supplied by trusted host authority after resolving the durable public/native
@@ -97,6 +102,17 @@ pub struct ObservedState {
 
 /// Native input for the runner's translator; contains private session data.
 /// A socket timestamp is NOT a canonical event ID or application replay cursor.
+/// Display-only view of the reply Pi is writing right now, from `message_update`
+/// events. NOT canonical chat: the finished message comes from history once Pi
+/// writes it, and the preview is cleared at `message_end`/`agent_end`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LivePreview {
+    /// Text parts of the assistant message being streamed.
+    pub text: Option<String>,
+    /// Tool currently executing, by name.
+    pub tool: Option<String>,
+}
+
 pub struct ObservedEvent {
     pub name: String,
     pub data: Value,
@@ -134,8 +150,12 @@ pub struct TuiObserver {
     connection_leases: bool,
     snapshot_only: bool,
     input_lease: Option<control::InputLease>,
+    preview: LivePreview,
 }
 impl TuiObserver {
+    pub fn preview(&self) -> &LivePreview {
+        &self.preview
+    }
     pub fn public_session_id(&self) -> &str {
         &self.binding.public_session_id
     }
@@ -338,6 +358,7 @@ impl TuiObserver {
             binding,
             reader: Some(reader),
             pending,
+            preview: LivePreview::default(),
             state,
             connection_leases,
             snapshot_only,
@@ -354,14 +375,48 @@ impl TuiObserver {
         let mut reader = self.reader.take().context("TUI attachment disconnected")?;
         let lease = self.input_lease.take();
         let id = uuid::Uuid::new_v4().to_string();
-        let result = tokio::time::timeout(RPC_DEADLINE, async {
+        let mut preview = self.preview.clone();
+        let result = tokio::time::timeout(SNAPSHOT_DEADLINE, async {
             let request = serde_json::to_vec(&json!({"id":id,"type":"get_state"}))?;
             reader.get_mut().write_all(&request).await?;
             reader.get_mut().write_all(b"\n").await?;
             self.pending.clear();
-            for _ in 0..1024 {
-                self.authority.revalidate(&self.binding)?;
-                let frame = read_frame(&mut reader).await?;
+            // Only the newest message_update matters: earlier ones are skimmed
+            // (frame kind only) and the newest is parsed when the state arrives.
+            let mut latest_update: Option<Vec<u8>> = None;
+            for count in 0..usize::MAX {
+                if count % 256 == 0 {
+                    self.authority.revalidate(&self.binding)?;
+                }
+                let line = read_line(&mut reader).await?;
+                let kind: FrameKind = serde_json::from_slice(&line)
+                    .map_err(|_| anyhow::anyhow!("Invalid TUI JSON frame"))?;
+                if kind.kind.as_deref() == Some("event") {
+                    match kind.event.as_deref() {
+                        Some("message_update") => latest_update = Some(line),
+                        Some("message_end" | "agent_end") => {
+                            latest_update = None;
+                            preview = LivePreview::default();
+                        }
+                        Some("message_start") => latest_update = None,
+                        Some("tool_execution_start" | "tool_execution_end") => {
+                            let native = event(serde_json::from_slice(&line)?)?;
+                            preview.tool = (native.name == "tool_execution_start")
+                                .then(|| {
+                                    native.data["toolName"]
+                                        .as_str()
+                                        .map(|name| name.chars().take(80).collect())
+                                })
+                                .flatten();
+                        }
+                        _ => {
+                            let _ = event(serde_json::from_slice(&line)?)?;
+                        }
+                    }
+                    continue;
+                }
+                let frame: Value = serde_json::from_slice(&line)
+                    .map_err(|_| anyhow::anyhow!("Invalid TUI JSON frame"))?;
                 match frame["type"].as_str() {
                     Some("lease") => {
                         if frame["owner"] == "tui" && lease.is_some() {
@@ -386,6 +441,12 @@ impl TuiObserver {
                             "TUI Session binding changed"
                         );
                         self.authority.revalidate(&self.binding)?;
+                        if let Some(line) = latest_update.take() {
+                            preview.text = preview_text(&serde_json::from_slice(&line)?);
+                        }
+                        if !state.streaming {
+                            preview = LivePreview::default();
+                        }
                         return Ok(ObservedState {
                             streaming: state.streaming,
                             compacting: state.compacting,
@@ -404,6 +465,7 @@ impl TuiObserver {
                 self.reader = Some(reader);
                 self.input_lease = lease;
                 self.state = state.clone();
+                self.preview = preview;
                 Ok(state)
             }
             Err(error) => {
@@ -686,6 +748,55 @@ fn socket_candidate(name: &str, path: &Path, uid: u32) -> Option<(u32, PathBuf)>
         (pid.parse::<u32>().ok()?, path.join("control.sock"))
     };
     (pid > 0 && pid <= i32::MAX as u32).then_some((pid, path))
+}
+
+/// Frame kind only, so skimmed frames are not materialized.
+#[derive(Deserialize)]
+struct FrameKind {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    event: Option<String>,
+}
+
+/// Text parts of the streamed assistant message in a `message_update` frame,
+/// keeping the tail when it is longer than the preview limit.
+fn preview_text(frame: &Value) -> Option<String> {
+    let message = &frame["data"]["message"];
+    if message["role"] != "assistant" {
+        return None;
+    }
+    let text: String = message["content"]
+        .as_array()?
+        .iter()
+        .filter(|part| part["type"] == "text")
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    if text.trim().is_empty() {
+        return None;
+    }
+    if text.len() <= PREVIEW_LIMIT {
+        return Some(text);
+    }
+    let mut start = text.len() - PREVIEW_LIMIT;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(format!("…{}", &text[start..]))
+}
+
+async fn read_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
+    let mut line = Vec::new();
+    reader
+        .take(FRAME_LIMIT + 1)
+        .read_until(b'\n', &mut line)
+        .await
+        .context("TUI frame unavailable")?;
+    ensure!(
+        line.len() <= FRAME_LIMIT as usize && line.last() == Some(&b'\n'),
+        "Invalid/oversized TUI frame"
+    );
+    Ok(line)
 }
 
 async fn read_frame<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Value> {

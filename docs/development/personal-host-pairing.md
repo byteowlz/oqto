@@ -164,6 +164,12 @@ None of this is identity, history or control authority: canonical `title` and
 the existing fields are unchanged, and older clients ignore the additions.
 History for a Session never synchronized from a live Pi still returns `503`.
 
+While Pi writes a reply, `SessionRead` also returns `preview` (`text`, `tool`,
+`"canonical": false`): the newest `message_update` text parts and the running tool
+from the events each read drains (only the newest update is parsed; the drain may take
+2 s for a long backlog instead of failing after 1024 frames). It is display-only, cleared
+at `message_end`/`agent_end` or when Pi is idle, and never written to history.
+
 History for a Session that a live pi-tui-rpc Pi has open is read from that Pi's
 session file along the head it reports (`leafId` from `get_state`), so it needs no
 prior import (`personal_catalog::live_history`). The same catalog row and
