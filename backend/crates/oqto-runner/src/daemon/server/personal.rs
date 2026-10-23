@@ -19,6 +19,7 @@ pub struct PersonalBackend {
     terminals: Arc<crate::personal_terminal::Terminals>,
     sessions: Arc<crate::personal_sessions::Sessions>,
     ingest: super::super::jsonl_ingest::IngestHandle,
+    native: crate::personal_catalog::NativeRoots,
     reaper: tokio::task::JoinHandle<()>,
 }
 impl Drop for PersonalBackend {
@@ -27,11 +28,12 @@ impl Drop for PersonalBackend {
     }
 }
 impl PersonalBackend {
-    pub fn new(
+    pub(crate) fn new(
         home: PathBuf,
         workspace_roots: Vec<PathBuf>,
         terminal_enabled: bool,
         ingest: super::super::jsonl_ingest::IngestHandle,
+        native: crate::personal_catalog::NativeRoots,
     ) -> Self {
         let terminals = Arc::new(crate::personal_terminal::Terminals::default());
         let weak = Arc::downgrade(&terminals);
@@ -65,6 +67,7 @@ impl PersonalBackend {
             terminals,
             sessions,
             ingest,
+            native,
             reaper,
         }
     }
@@ -182,20 +185,30 @@ impl super::Runner {
             options.workspace_roots.len() <= 32,
             "too many personal Workspace roots"
         );
-        let home = if let Some(source) = &self.user_config.personal_source {
+        let (home, native) = if let Some(source) = &self.user_config.personal_source {
             source.validate()?;
             ensure!(
                 source.workspace_roots() == options.workspace_roots,
                 "Personal Workspace source mismatch"
             );
-            source.home.clone()
+            let native = crate::personal_catalog::NativeRoots {
+                session_root: source.session_root().to_owned(),
+                socket_root: source.socket_root().to_owned(),
+            };
+            (source.home.clone(), native)
         } else {
             ensure!(
                 options.personal_native_session_root.is_none()
                     && options.personal_native_socket_root.is_none(),
                 "Native source must be resolved before starting Runner workers"
             );
-            dirs::home_dir().context("personal history home unavailable")?
+            let home = dirs::home_dir().context("personal history home unavailable")?;
+            // pi-tui-rpc defaults to the OS temporary directory.
+            let native = crate::personal_catalog::NativeRoots {
+                session_root: home.join(".pi/agent/sessions"),
+                socket_root: std::env::temp_dir().canonicalize()?,
+            };
+            (home, native)
         };
         crate::runtime_guard::ensure_history_state_owner(&home)?;
         // Reserve the endpoint before creating any identity or grant store.
@@ -221,6 +234,7 @@ impl super::Runner {
             options.workspace_roots,
             self.user_config.terminal_enabled,
             self.jsonl_ingest.clone(),
+            native,
         ));
         let supported = backend.supported();
         let router = oqto_personal::http::enrollment_router(Arc::clone(&authority)).merge(
@@ -375,17 +389,32 @@ impl ActionBackend for PersonalBackend {
                     .await
                     .map_err(|_| ActionFailure::OutcomeUnknown)?
             }
-            HostAction::SessionsList => crate::history_read::read_authorized_source(
-                &self.home,
-                &self.workspace_roots,
-                crate::history_read::HistoryReadOperation::List {},
-            )
-            .await
-            .map(|response| response.data)
-            .map_err(|_| {
-                self.ingest.mark_authority_failed();
-                ActionFailure::Unavailable
-            }),
+            HostAction::SessionsList => {
+                let listed = async {
+                    let mut data = crate::history_read::read_authorized_source(
+                        &self.home,
+                        &self.workspace_roots,
+                        crate::history_read::HistoryReadOperation::List {},
+                    )
+                    .await?
+                    .data;
+                    let rows =
+                        crate::history_read::authorized_rows(&self.home, &self.workspace_roots)
+                            .await?;
+                    crate::personal_catalog::enrich(
+                        &mut data,
+                        &rows,
+                        &self.native,
+                        &self.workspace_roots,
+                    )
+                    .await;
+                    anyhow::Ok(data)
+                };
+                listed.await.map_err(|_| {
+                    self.ingest.mark_authority_failed();
+                    ActionFailure::Unavailable
+                })
+            }
             HostAction::SessionHistory { session_id, before } => {
                 crate::history_read::read_native_authorized_history(
                     &self.home,

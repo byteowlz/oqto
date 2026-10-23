@@ -118,6 +118,14 @@ pub(crate) async fn invalidate_catalog(home: &std::path::Path) {
     cache.retain(|(cached_home, _), _| cached_home != home);
 }
 
+/// The same cached, root-filtered rows the catalog lists from.
+pub(crate) async fn authorized_rows(
+    home: &std::path::Path,
+    workspace_roots: &[PathBuf],
+) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
+    catalog_source(home, workspace_roots).await
+}
+
 async fn catalog_source(
     home: &std::path::Path,
     workspace_roots: &[PathBuf],

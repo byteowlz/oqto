@@ -550,6 +550,122 @@ fn validate_peer(uid: u32, peer_uid: u32, peer_pid: Option<i32>, expected_pid: u
     Ok(())
 }
 
+/// What a live Pi reports about the Session it currently has open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LiveSession {
+    pub session_file: PathBuf,
+    pub name: Option<String>,
+    pub streaming: bool,
+}
+
+/// Catalog-only liveness: which native Sessions a same-user pi-tui-rpc Pi has
+/// open, keyed by native Session ID. Read-only `get_state`, with the same
+/// socket and peer checks as attachment; it binds, leases and controls nothing,
+/// and a socket that fails any check or deadline is simply not live.
+pub(crate) async fn live_sessions(
+    socket_root: &Path,
+    session_root: &Path,
+) -> std::collections::HashMap<String, LiveSession> {
+    let uid = rustix::process::geteuid().as_raw();
+    let mut candidates = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(socket_root).await {
+        let mut count = 0;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            count += 1;
+            if count > MAX_ENTRIES || candidates.len() >= MAX_CANDIDATES {
+                break;
+            }
+            if let Some(candidate) =
+                socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
+            {
+                candidates.push(candidate);
+            }
+        }
+    }
+    let mut probes = tokio::task::JoinSet::new();
+    for (pid, path) in candidates {
+        probes.spawn(async move {
+            tokio::time::timeout(RPC_DEADLINE, probe_live(pid, &path, uid))
+                .await
+                .ok()
+                .and_then(Result::ok)
+        });
+    }
+    let mut live = std::collections::HashMap::new();
+    let mut ambiguous = std::collections::HashSet::new();
+    while let Some(result) = probes.join_next().await {
+        let Ok(Some((id, session))) = result else {
+            continue;
+        };
+        if !session.session_file.starts_with(session_root) {
+            continue;
+        }
+        // Two Pi processes claiming one Session is not a live identity.
+        if ambiguous.contains(&id) || live.insert(id.clone(), session).is_some() {
+            live.remove(&id);
+            ambiguous.insert(id);
+        }
+    }
+    live
+}
+
+async fn probe_live(pid: u32, path: &Path, uid: u32) -> Result<(String, LiveSession)> {
+    let pid_value = rustix::process::Pid::from_raw(pid as i32).context("Invalid TUI PID")?;
+    rustix::process::test_kill_process(pid_value).context("Stale TUI process")?;
+    let before = tokio::fs::symlink_metadata(path).await?;
+    ensure!(
+        before.file_type().is_socket() && before.uid() == uid && before.mode() & 0o022 == 0,
+        "Unsafe TUI socket"
+    );
+    let stream = UnixStream::connect(path).await?;
+    let peer = stream.peer_cred()?;
+    validate_peer(uid, peer.uid(), peer.pid(), pid)?;
+    let mut reader = BufReader::new(stream);
+    let hello = read_frame(&mut reader).await?;
+    ensure!(
+        hello["type"] == "hello"
+            && hello["v"].as_u64() == Some(1)
+            && hello["pid"].as_u64() == Some(u64::from(pid)),
+        "Unsupported TUI hello"
+    );
+    let id = uuid::Uuid::new_v4().to_string();
+    let request = serde_json::to_vec(&json!({"id":id,"type":"get_state"}))?;
+    reader.get_mut().write_all(&request).await?;
+    reader.get_mut().write_all(b"\n").await?;
+    for _ in 0..=MAX_PENDING {
+        let frame = read_frame(&mut reader).await?;
+        if frame["type"] != "response" {
+            continue;
+        }
+        ensure!(
+            frame["id"] == id && frame["command"] == "get_state" && frame["success"] == true,
+            "TUI state response rejected"
+        );
+        let data = &frame["data"];
+        let session = data["sessionId"]
+            .as_str()
+            .filter(|id| !id.is_empty() && id.len() <= 256);
+        let file = data["sessionFile"].as_str().map(PathBuf::from);
+        let (Some(session), Some(file)) = (session, file) else {
+            bail!("Live Pi has no Session open");
+        };
+        let name = data["sessionName"]
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| name.chars().take(240).collect());
+        return Ok((
+            session.to_owned(),
+            LiveSession {
+                session_file: file,
+                name,
+                streaming: data["isStreaming"] == true,
+            },
+        ));
+    }
+    bail!("TUI state response missing")
+}
+
 fn socket_candidate(name: &str, path: &Path, uid: u32) -> Option<(u32, PathBuf)> {
     let rest = name.strip_prefix("pi-tui-rpc-")?;
     let (pid, path) = if let Some(pid) = rest.strip_suffix(".sock") {

@@ -149,6 +149,21 @@ requires explicit owner-reviewed reconciliation, not silent rebinding or a
 symlink workaround. Filesystem identity pins are not a defense against arbitrary
 unsandboxed execution by the same Principal.
 
+Header-only discovery records identities without titles or activity. Each
+listed Session therefore also carries display-only metadata
+(`personal_catalog.rs`): `display_title` (canonical title, else the live Pi's
+name, else the latest native `session_info` name without its readable-id suffix,
+else the first prompt), `activity_at_ms` (native file modification time),
+`workspace_root` (longest matching designated root) and `live`/`streaming`. The
+list is ordered live first, then by recent activity. Only the 400 most recently
+modified files are read, 64 KiB from each end and complete lines only, cached by
+file identity and size/mtime. Liveness sends one read-only `get_state` per
+pi-tui-rpc socket with attachment's socket and peer checks, cached for three
+seconds; a Pi claimed by two sockets or outside the Session root is not live.
+None of this is identity, history or control authority: canonical `title` and
+the existing fields are unchanged, and older clients ignore the additions.
+History for a Session never synchronized from a live Pi still returns `503`.
+
 List/attach/history resolve against the original service HOME. Catalog reads
 are read-only; writer identity commits and legacy ingestion invalidate the
 30-second catalog cache, including in-flight cache-fill fencing. Explicit native

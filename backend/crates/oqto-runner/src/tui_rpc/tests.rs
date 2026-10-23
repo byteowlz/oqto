@@ -469,3 +469,29 @@ fn socket_names_and_peer_credentials_are_not_authority_shortcuts() {
         .is_none()
     );
 }
+
+#[tokio::test]
+async fn catalog_liveness_reads_state_only_and_ignores_foreign_files() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let mut state = fixture.native_state();
+    state["sessionName"] = json!("  Release prep [red-fox-den] ");
+    fixture.listen(false, 1, state, vec![delta()], vec![])?;
+    let binding = &fixture.authority.binding;
+    let live = live_sessions(&binding.socket_root, &binding.session_root).await;
+    let session = live.get("native-id").context("live Pi missing")?;
+    assert_eq!(live.len(), 1);
+    assert_eq!(session.session_file, binding.session_file);
+    assert_eq!(session.name.as_deref(), Some("Release prep [red-fox-den]"));
+    assert!(session.streaming);
+    fixture.unchanged()?;
+    // A Pi whose file is outside the designated Session root is not listed.
+    let elsewhere = live_sessions(&binding.socket_root, &binding.work_directory).await;
+    assert!(elsewhere.is_empty());
+    // No socket root, no live Sessions, no error.
+    assert!(
+        live_sessions(&binding.socket_root.join("missing"), &binding.session_root)
+            .await
+            .is_empty()
+    );
+    Ok(())
+}

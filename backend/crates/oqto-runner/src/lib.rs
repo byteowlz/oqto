@@ -16,6 +16,7 @@ pub mod iroh_transport;
 pub mod pair_cli;
 pub mod personal_cli;
 pub use daemon::server::pair_control;
+mod personal_catalog;
 mod personal_files;
 mod personal_sessions;
 pub mod personal_source;
