@@ -28,6 +28,8 @@ impl From<Sessions> for SessionAccess {
 pub enum Output {
     #[default]
     Terminal,
+    /// Copyable full pairing payload on stdout; readable expiry hints on stderr.
+    Code,
     Json,
     Svg,
 }
@@ -134,12 +136,20 @@ pub fn emit_pair(value: serde_json::Value, output: Output) -> Result<()> {
     let qr = oqto_personal_wire::PairingQr::parse(&json, now)?;
     let text = match output {
         Output::Json => String::from_utf8(qr.to_json()?)?,
+        Output::Code => {
+            writeln!(
+                std::io::stderr().lock(),
+                "Copy the complete pairing payload. Keep it private.\n{}\nSingle use. Pairing is not a tool approval.",
+                human_expiry(qr.expires_at(), now)?
+            )?;
+            String::from_utf8(qr.to_json()?)?
+        }
         Output::Svg => qr.render_svg()?,
         Output::Terminal => format!(
-            "Personal host: {}\n{}\nSingle-use QR expires at Unix {}. Pairing is not a tool approval.\n",
+            "Personal host: {}\n{}\n{}\nSingle use. Pairing is not a tool approval.\n",
             qr.origin(),
             qr.render_terminal()?,
-            qr.expires_at()
+            human_expiry(qr.expires_at(), now)?
         ),
     };
     std::io::stdout()
@@ -147,6 +157,21 @@ pub fn emit_pair(value: serde_json::Value, output: Output) -> Result<()> {
         .write_all(format!("{text}\n").as_bytes())?;
     Ok(())
 }
+fn human_expiry(expires: i64, now: i64) -> Result<String> {
+    use chrono::TimeZone;
+    let local = chrono::Local
+        .timestamp_opt(expires, 0)
+        .single()
+        .context("pairing expiry is outside supported local time")?;
+    let remaining = expires.saturating_sub(now).max(0);
+    Ok(format!(
+        "Expires: {} ({}m {:02}s remaining).",
+        local.format("%Y-%m-%d %H:%M:%S %:z"),
+        remaining / 60,
+        remaining % 60
+    ))
+}
+
 pub async fn owner(command: OwnerCli) -> Result<()> {
     let (state, command, output) = match command {
         OwnerCli::Pair {

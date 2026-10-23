@@ -34,6 +34,32 @@ unknown unsafe declarations, and reports activation on the next Runner start.
 It does not restart the service, enroll a Device, grant permissions, or copy data.
 The public user entrypoint remains **`oqto pair`**.
 
+## QR or copyable pairing payload
+
+```sh
+oqto pair                  # terminal QR (default)
+oqto pair --output code    # complete copyable payload; readable hints on stderr
+oqto pair --output json    # unchanged machine-readable payload only
+```
+
+On macOS, to put the complete payload on the clipboard after normal confirmation:
+
+```sh
+oqto pair --output code | pbcopy
+```
+
+`code` is the same canonical JSON encoded in the QR, not a short PIN or a new
+wire format. Copy the **entire** payload: endpoint, certificate pin, host identity,
+full-strength single-use token and expiry are all required. Treat it as a secret;
+it has the same five-minute lifetime and scopes as the QR. The receiver must
+support personal-host pairing JSON; an EAVS invitation field is a different flow.
+This CLI option does not itself add or prove a phone paste/import UI.
+
+Terminal QR and code hints display expiry in the **operator machine's local
+clock**, including date, time, UTC offset and remaining minutes/seconds. JSON and
+SVG wire data retain the original Unix `expires_at` for protocol compatibility.
+No grant, token lifetime or enrollment behavior changes.
+
 ## Interactive
 
 ```sh

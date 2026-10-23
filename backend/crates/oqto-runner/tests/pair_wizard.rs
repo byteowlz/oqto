@@ -418,6 +418,8 @@ fn real_headless_cli_errors_are_usage_errors_and_do_not_create_state() -> Result
     Ok(())
 }
 
+#[path = "pair_wizard/output.rs"]
+mod output;
 #[path = "pair_wizard/recovery.rs"]
 mod recovery;
 #[path = "pair_wizard/transient.rs"]
