@@ -380,6 +380,19 @@ async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()
         host.action(&reader, 2, HostAction::SessionsList).await?.0,
         403
     );
+    // Project logos are Session-observe reads too: no grant, no icons.
+    assert_eq!(
+        host.action(
+            &reader,
+            2,
+            HostAction::ProjectIcons {
+                directories: vec![host.work.to_string_lossy().into()]
+            }
+        )
+        .await?
+        .0,
+        403
+    );
     // Actual OS PTY: resize, output, reconnect-by-ID, no retransmission of input.
     let (status, terminal) = host
         .action(

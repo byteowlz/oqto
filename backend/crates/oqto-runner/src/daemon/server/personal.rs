@@ -312,7 +312,9 @@ impl ActionBackend for PersonalBackend {
         // or new capability/enrollment field. Cleanup remains usable.
         if (matches!(
             action,
-            HostAction::SessionsList | HostAction::SessionHistory { .. }
+            HostAction::SessionsList
+                | HostAction::ProjectIcons { .. }
+                | HostAction::SessionHistory { .. }
         ) && !self.ingest.catalog_ready())
             || (matches!(
                 action,
@@ -414,6 +416,17 @@ impl ActionBackend for PersonalBackend {
                     self.ingest.mark_authority_failed();
                     ActionFailure::Unavailable
                 })
+            }
+            HostAction::ProjectIcons { directories } => {
+                let rows = crate::history_read::authorized_rows(&self.home, &self.workspace_roots)
+                    .await
+                    .map_err(|_| ActionFailure::Unavailable)?;
+                tokio::task::spawn_blocking(move || {
+                    crate::personal_icons::project_icons(&directories, &rows)
+                })
+                .await
+                .map_err(|_| ActionFailure::Unavailable)?
+                .ok_or(ActionFailure::Invalid)
             }
             HostAction::SessionHistory { session_id, before } => {
                 crate::history_read::read_native_authorized_history(

@@ -77,6 +77,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::TerminalResize { .. }
         | HostAction::TerminalClose { .. } => Access::FullUserTerminal,
         HostAction::SessionsList
+        | HostAction::ProjectIcons { .. }
         | HostAction::SessionHistory { .. }
         | HostAction::SessionAttach { .. }
         | HostAction::SessionRead { .. }

@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 pub const ACTION_PATH: &str = "/personal/v1/action";
 pub const MAX_ACTION_BYTES: usize = 1024 * 1024;
 pub const MAX_FILE_CHUNK: usize = 256 * 1024;
+/// Per request: the phone asks for visible tiles in batches.
+pub const MAX_PROJECT_ICON_DIRECTORIES: usize = 16;
+/// Per returned logo; larger files are absent, never resized or cropped.
+pub const MAX_PROJECT_ICON_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -59,6 +63,11 @@ pub enum HostAction {
         terminal_id: String,
     },
     SessionsList,
+    /// Raster project logos for catalog Work directories, at most
+    /// `MAX_PROJECT_ICON_DIRECTORIES` per request. Read-only, Session-observe.
+    ProjectIcons {
+        directories: Vec<String>,
+    },
     SessionHistory {
         session_id: String,
         before: Option<String>,
