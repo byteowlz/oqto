@@ -54,6 +54,9 @@ pub struct PersonalSource {
     workspaces: Vec<DirectoryIdentity>,
     workspace_paths: Vec<PathBuf>,
 }
+/// Version 1 pin: st_dev is a mount-instance ID on macOS, so these stop matching
+/// after a remount (reboot). Still accepted while the device number is unchanged;
+/// `repair_pins` upgrades them with explicit owner approval.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct SourceIdentity {
     root: DirectoryIdentity,
@@ -63,14 +66,40 @@ struct SourceIdentity {
     native_id: String,
     workspace: PathBuf,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct PinnedDirectory {
+    path: PathBuf,
+    filesystem: String,
+    ino: u64,
+}
+/// Version 2 pin: the persistent volume identity survives remounts.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct SourcePin {
+    pin: u8,
+    root: PinnedDirectory,
+    file: PathBuf,
+    filesystem: String,
+    ino: u64,
+    native_id: String,
+    workspace: PathBuf,
+}
 #[derive(Debug)]
 pub(crate) struct NativeHeader {
     pub external_id: String,
     pub workspace: PathBuf,
     pub path: PathBuf,
+    /// The pin written by discovery (version 2).
     pub identity: String,
+    /// The same source in the version 1 encoding, for pins written before version 2.
+    pub legacy_identity: String,
     pub dev: u64,
     pub ino: u64,
+}
+impl NativeHeader {
+    /// Pins that prove this exact source today.
+    pub(crate) fn accepted_pins(&self) -> [&str; 2] {
+        [&self.identity, &self.legacy_identity]
+    }
 }
 impl PersonalSource {
     pub fn new(
@@ -222,10 +251,28 @@ impl PersonalSource {
                 && DirectoryIdentity::read(parent.to_owned())? == parent_identity,
             "Native header directory changed"
         );
-        let identity = serde_json::to_string(&SourceIdentity {
+        let legacy_identity = serde_json::to_string(&SourceIdentity {
             root: self.session.clone(),
             file: path.to_owned(),
             dev: before.dev(),
+            ino: before.ino(),
+            native_id: header.id.clone(),
+            workspace: header.cwd.clone(),
+        })?;
+        let root_dir = std::fs::File::open(self.session_root())?;
+        ensure!(
+            root_dir.metadata()?.ino() == self.session.ino,
+            "Native session root replaced"
+        );
+        let identity = serde_json::to_string(&SourcePin {
+            pin: 2,
+            root: PinnedDirectory {
+                path: self.session.path.clone(),
+                filesystem: oqto_personal::persistent_filesystem(&root_dir)?,
+                ino: self.session.ino,
+            },
+            file: path.to_owned(),
+            filesystem: oqto_personal::persistent_filesystem(&file)?,
             ino: before.ino(),
             native_id: header.id.clone(),
             workspace: header.cwd.clone(),
@@ -235,6 +282,7 @@ impl PersonalSource {
             workspace: header.cwd,
             path: path.to_owned(),
             identity,
+            legacy_identity,
             dev: before.dev(),
             ino: before.ino(),
         })
@@ -297,11 +345,93 @@ impl PersonalSource {
                 .workspace
                 .to_str()
                 .context("Invalid native Workspace")?,
-            &header.identity,
+            &header.accepted_pins(),
         )
         .await?;
         Ok(header)
     }
+
+    /// Owner-approved upgrade of version 1 pins that stopped matching only because
+    /// macOS assigned a new device number after a remount. A pin is upgraded only
+    /// when its file path, inode, native ID, Workspace and session-root path and
+    /// inode all equal today's source; anything else is left for the owner to
+    /// inspect. `apply` false reports without writing.
+    pub(crate) async fn repair_pins(&self, apply: bool) -> Result<PinRepair> {
+        let mut report = PinRepair::default();
+        let mut pins: std::collections::HashMap<
+            String,
+            Vec<oqto_history::oqto_log::ops::native_source::NativePin>,
+        > = std::collections::HashMap::new();
+        for header in self.headers()? {
+            let Some(workspace) = header.workspace.to_str() else {
+                continue;
+            };
+            if !pins.contains_key(workspace) {
+                let found =
+                    oqto_history::oqto_log::ops::native_source::native_pins(&self.home, workspace)
+                        .await?;
+                pins.insert(workspace.to_owned(), found);
+            }
+            for row in pins[workspace]
+                .iter()
+                .filter(|row| row.external == header.external_id)
+            {
+                report.examined += 1;
+                if header.accepted_pins().contains(&row.pin.as_str()) {
+                    report.current += 1;
+                    continue;
+                }
+                let (Ok(old), Ok(now)) = (
+                    serde_json::from_str::<SourceIdentity>(&row.pin),
+                    serde_json::from_str::<SourceIdentity>(&header.legacy_identity),
+                ) else {
+                    report.unrecognized += 1;
+                    continue;
+                };
+                let same_source = old.file == now.file
+                    && old.ino == now.ino
+                    && old.native_id == now.native_id
+                    && old.workspace == now.workspace
+                    && old.root.path == now.root.path
+                    && old.root.ino == now.root.ino;
+                if !same_source {
+                    report.mismatched += 1;
+                    continue;
+                }
+                if !apply {
+                    report.upgradable += 1;
+                    continue;
+                }
+                if oqto_history::oqto_log::ops::native_source::repin(
+                    &self.home,
+                    workspace,
+                    &row.public,
+                    &row.external,
+                    &row.pin,
+                    &header.identity,
+                )
+                .await?
+                {
+                    report.upgraded += 1;
+                } else {
+                    report.changed_concurrently += 1;
+                }
+            }
+        }
+        Ok(report)
+    }
+}
+
+/// Counts only; no paths or identities are reported.
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+pub struct PinRepair {
+    pub examined: usize,
+    pub current: usize,
+    pub upgradable: usize,
+    pub upgraded: usize,
+    pub mismatched: usize,
+    pub unrecognized: usize,
+    pub changed_concurrently: usize,
 }
 fn eligible_workspace(workspace: &Path, root: &Path) -> bool {
     workspace.strip_prefix(root).is_ok_and(|relative| {

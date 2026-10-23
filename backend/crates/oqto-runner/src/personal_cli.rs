@@ -118,6 +118,16 @@ pub enum OwnerCli {
         state: Option<PathBuf>,
         device_id: String,
     },
+    /// Re-pin native Sessions whose pin stopped matching only because macOS gave the
+    /// volume a new device number (for example after a reboot). Reports counts; writes
+    /// only with --apply. Safe while the Runner runs: each pin is compare-and-swapped.
+    RepairNativePins {
+        /// The Runner service HOME holding the canonical history and native-source binding.
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        apply: bool,
+    },
 }
 pub fn state_path(selected: Option<&PathBuf>) -> Result<PathBuf> {
     selected
@@ -173,6 +183,19 @@ fn human_expiry(expires: i64, now: i64) -> Result<String> {
 }
 
 pub async fn owner(command: OwnerCli) -> Result<()> {
+    if let OwnerCli::RepairNativePins { home, apply } = command {
+        let home = home
+            .canonicalize()
+            .context("Runner service HOME unavailable")?;
+        let source = crate::personal_source::binding::load(&home)?
+            .context("No native-source binding in this HOME")?;
+        let report = source.repair_pins(apply).await?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({"applied": apply, "report": report}))?
+        );
+        return Ok(());
+    }
     let (state, command, output) = match command {
         OwnerCli::Pair {
             state,
@@ -181,6 +204,7 @@ pub async fn owner(command: OwnerCli) -> Result<()> {
         } => (state, grants.command(), Some(output)),
         OwnerCli::Devices { state, after } => (state, OwnerCommand::Devices { after }, None),
         OwnerCli::Revoke { state, device_id } => (state, OwnerCommand::Revoke { device_id }, None),
+        OwnerCli::RepairNativePins { .. } => unreachable!("handled above"),
     };
     let value = oqto_personal::owner::request_owner(&state_path(state.as_ref())?, &command).await?;
     if let Some(output) = output {

@@ -164,6 +164,16 @@ None of this is identity, history or control authority: canonical `title` and
 the existing fields are unchanged, and older clients ignore the additions.
 History for a Session never synchronized from a live Pi still returns `503`.
 
+Native-source pins (`extensions_json.personal_native_source`) record the Session file's
+path, inode and persistent filesystem identity: the volume UUID on macOS, where
+`st_dev` is a mount-instance ID that changes after a reboot. Validation accepts that
+pin, or a version 1 pin (with `dev`) whose device number still matches. Pins
+written before a remount stop matching; `oqto-runner personal repair-native-pins
+--home <service HOME>` reports them, and with `--apply` re-pins (compare-and-swap,
+safe while the Runner runs) only those whose path, inode, native ID, Workspace and
+session-root path and inode all still match. Replaced files are left for the owner.
+Discovery never re-pins an existing Session on its own.
+
 List/attach/history resolve against the original service HOME. Catalog reads
 are read-only; writer identity commits and legacy ingestion invalidate the
 30-second catalog cache, including in-flight cache-fill fencing. Explicit native

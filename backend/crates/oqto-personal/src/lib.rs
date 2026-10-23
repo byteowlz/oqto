@@ -28,6 +28,7 @@ pub fn restore_store_owner(
 }
 
 mod private;
+pub use private::persistent_filesystem;
 #[cfg(test)]
 mod private_tests;
 use anyhow::{Context, Result, ensure};

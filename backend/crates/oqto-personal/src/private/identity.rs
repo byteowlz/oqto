@@ -31,13 +31,15 @@ impl StoreIdentity {
     }
 }
 
+/// Persistent filesystem identity for a file or directory: the volume UUID on
+/// macOS (st_dev changes with each mount), the device number elsewhere.
 #[cfg(not(target_os = "macos"))]
-fn filesystem(file: &File) -> Result<String> {
+pub fn filesystem(file: &File) -> Result<String> {
     Ok(format!("unix-device:{}", file.metadata()?.dev()))
 }
 
 #[cfg(target_os = "macos")]
-fn filesystem(file: &File) -> Result<String> {
+pub fn filesystem(file: &File) -> Result<String> {
     use std::os::fd::AsRawFd;
     #[repr(C)]
     struct VolumeUuid {

@@ -136,7 +136,7 @@ fn operation(home: PathBuf, catalog: bool) -> tokio::task::JoinHandle<Result<()>
                 "oqto-retained",
                 "retained",
                 "/synthetic/retained",
-                "pin",
+                &["pin"],
             )
             .await?;
         }

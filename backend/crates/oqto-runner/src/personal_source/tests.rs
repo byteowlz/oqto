@@ -117,7 +117,7 @@ async fn fresh_header_only_split_home_identity_is_immutable_and_preserves_owner(
             &row.platform_id,
             &header.external_id,
             ws,
-            &changed.identity
+            &[changed.identity.as_str()]
         )
         .await
         .is_err()
@@ -159,7 +159,7 @@ async fn conflicting_public_native_bindings_are_never_repaired() -> Result<()> {
             &public,
             &header.external_id,
             work.to_str().context("Workspace")?,
-            &header.identity
+            &[header.identity.as_str()]
         )
         .await
         .is_err()
@@ -227,5 +227,127 @@ fn strict_roots_headers_symlinks_and_discovery_bounds() -> Result<()> {
     std::fs::rename(source.session_root(), &old)?;
     std::fs::create_dir_all(source.session_root())?;
     assert!(source.validate().is_err());
+    Ok(())
+}
+#[tokio::test]
+async fn remounted_pins_are_accepted_today_and_repaired_only_for_the_same_source() -> Result<()> {
+    use oqto_history::oqto_log::ops::native_source::{discover, repin, validate};
+    let (_dir, source, work) = fixture()?;
+    let ws = work.to_str().context("workspace")?;
+    let mut sessions = Vec::new();
+    for native in ["remounted", "replaced"] {
+        let header = source.header(&write(&source, &work, native)?)?;
+        assert!(
+            discover(
+                &source.home,
+                "owner",
+                ws,
+                &header.external_id,
+                &header.identity
+            )
+            .await?
+        );
+        let public =
+            oqto_history::oqto_log::store::platform_id_for_external_id(&header.external_id);
+        // A version 1 pin with today's device number keeps working.
+        assert!(
+            repin(
+                &source.home,
+                ws,
+                &public,
+                &header.external_id,
+                &header.identity,
+                &header.legacy_identity
+            )
+            .await?
+        );
+        validate(
+            &source.home,
+            &public,
+            &header.external_id,
+            ws,
+            &header.accepted_pins(),
+        )
+        .await?;
+        // A remount assigns a new device number; "replaced" also has another inode.
+        let mut stale: serde_json::Value = serde_json::from_str(&header.legacy_identity)?;
+        let bump = |value: &serde_json::Value| {
+            serde_json::Value::from(value.as_u64().unwrap_or_default() + 1)
+        };
+        stale["dev"] = bump(&stale["dev"]);
+        stale["root"]["dev"] = bump(&stale["root"]["dev"]);
+        if native == "replaced" {
+            stale["ino"] = bump(&stale["ino"]);
+        }
+        let stale = serde_json::to_string(&stale)?;
+        assert!(
+            repin(
+                &source.home,
+                ws,
+                &public,
+                &header.external_id,
+                &header.legacy_identity,
+                &stale
+            )
+            .await?
+        );
+        assert!(
+            validate(
+                &source.home,
+                &public,
+                &header.external_id,
+                ws,
+                &header.accepted_pins()
+            )
+            .await
+            .is_err()
+        );
+        sessions.push((public, header));
+    }
+    let dry = source.repair_pins(false).await?;
+    assert_eq!(
+        (dry.examined, dry.upgradable, dry.mismatched, dry.upgraded),
+        (2, 1, 1, 0)
+    );
+    // The dry run wrote nothing.
+    let (public, header) = &sessions[0];
+    assert!(
+        validate(
+            &source.home,
+            public,
+            &header.external_id,
+            ws,
+            &header.accepted_pins()
+        )
+        .await
+        .is_err()
+    );
+    let applied = source.repair_pins(true).await?;
+    assert_eq!(
+        (applied.upgraded, applied.mismatched, applied.unrecognized),
+        (1, 1, 0)
+    );
+    validate(
+        &source.home,
+        public,
+        &header.external_id,
+        ws,
+        &[header.identity.as_str()],
+    )
+    .await?;
+    let (public, header) = &sessions[1];
+    assert!(
+        validate(
+            &source.home,
+            public,
+            &header.external_id,
+            ws,
+            &header.accepted_pins()
+        )
+        .await
+        .is_err()
+    );
+    let again = source.repair_pins(true).await?;
+    assert_eq!((again.current, again.upgraded, again.mismatched), (1, 0, 1));
     Ok(())
 }

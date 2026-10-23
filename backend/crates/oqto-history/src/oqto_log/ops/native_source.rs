@@ -403,12 +403,13 @@ pub async fn is_bound(home: &Path, external: &str) -> Result<bool> {
         .map_err(|error| AuthorityUnavailable(error).into())
 }
 
+/// `sources`: every pin encoding that proves today's source (current and legacy).
 pub async fn validate(
     home: &Path,
     public: &str,
     external: &str,
     workspace: &str,
-    source: &str,
+    sources: &[&str],
 ) -> Result<()> {
     let found = identities(home, public, external).await?;
     ensure!(
@@ -420,10 +421,78 @@ pub async fn validate(
         row.platform == public
             && row.external.as_deref() == Some(external)
             && row.workspace == workspace
-            && row.source.as_deref() == Some(source),
+            && row
+                .source
+                .as_deref()
+                .is_some_and(|pin| sources.contains(&pin)),
         "Native source binding mismatch"
     );
     Ok(())
+}
+
+/// A pinned native Session in one Workspace shard.
+#[derive(Debug, Clone)]
+pub struct NativePin {
+    pub public: String,
+    pub external: String,
+    pub pin: String,
+}
+
+/// Read-only: every pinned native Session in a Workspace's shard.
+pub async fn native_pins(home: &Path, workspace: &str) -> Result<Vec<NativePin>> {
+    let db = crate::oqto_log::paths::existing_user_home_workspace_db_path(home, workspace);
+    if !db.exists() {
+        return Ok(Vec::new());
+    }
+    let mut shard = reader::ReadShard::open(&db).await?;
+    let rows = sqlx::query(
+        "SELECT platform_id, external_id, json_extract(extensions_json,'$.personal_native_source') AS pin \
+         FROM native_identity.oqto_log_sessions WHERE workspace_id=? AND external_id IS NOT NULL \
+         AND json_extract(extensions_json,'$.personal_native_source') IS NOT NULL",
+    )
+    .bind(workspace)
+    .fetch_all(shard.connection())
+    .await?;
+    shard.finish().await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(NativePin {
+                public: row.try_get("platform_id")?,
+                external: row.try_get("external_id")?,
+                pin: row.try_get("pin")?,
+            })
+        })
+        .collect()
+}
+
+/// Compare-and-swap one pin: changes nothing unless the row still holds `old`.
+pub async fn repin(
+    home: &Path,
+    workspace: &str,
+    public: &str,
+    external: &str,
+    old: &str,
+    new: &str,
+) -> Result<bool> {
+    let db = crate::oqto_log::paths::existing_user_home_workspace_db_path(home, workspace);
+    ensure!(db.exists(), "Native shard unavailable");
+    let pool = open_migrated_pool(&db, "native pin repair").await?;
+    let changed = sqlx::query(
+        "UPDATE oqto_log_sessions SET extensions_json=json_set(extensions_json,'$.personal_native_source',?) \
+         WHERE platform_id=? AND external_id=? AND workspace_id=? \
+         AND json_extract(extensions_json,'$.personal_native_source')=?",
+    )
+    .bind(new)
+    .bind(public)
+    .bind(external)
+    .bind(workspace)
+    .bind(old)
+    .execute(&pool)
+    .await?
+    .rows_affected();
+    pool.close().await;
+    ensure!(changed <= 1, "Ambiguous native pin");
+    Ok(changed == 1)
 }
 
 #[cfg(test)]
@@ -480,7 +549,7 @@ mod tests {
                 "oqto-retained-public",
                 "retained-native",
                 workspace,
-                "pin",
+                &["pin"],
             )
             .await?;
             let rows = list_sessions(temp.path(), None).await?;
@@ -538,7 +607,7 @@ mod tests {
                     "oqto-old-owner-a",
                     "conflict",
                     "/synthetic/legacy",
-                    "pin"
+                    &["pin"]
                 )
                 .await
                 .is_err()

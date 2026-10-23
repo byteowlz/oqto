@@ -34,9 +34,9 @@ async fn many_shards_and_overlapping_validators_share_two_sqlite_workers() -> Re
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..12 {
         let (home, public) = (temp.path().to_owned(), public.clone());
-        tasks.spawn(
-            async move { validate(&home, &public, "active", "/synthetic/active", "pin").await },
-        );
+        tasks.spawn(async move {
+            validate(&home, &public, "active", "/synthetic/active", &["pin"]).await
+        });
     }
     while let Some(result) = tasks.join_next().await {
         result??;
@@ -187,7 +187,14 @@ async fn failed_post_upgrade_reopen_poisons_batch_without_omitting_conflict_fact
                 .await
                 .is_err()
         );
-        validate(temp.path(), "oqto-retained", "retained", workspace, "pin").await?;
+        validate(
+            temp.path(),
+            "oqto-retained",
+            "retained",
+            workspace,
+            &["pin"],
+        )
+        .await?;
         assert!(
             recovered
                 .discover("new-owner", "/synthetic/fresh", "fresh", "fresh-pin")
