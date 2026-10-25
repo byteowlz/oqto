@@ -1,6 +1,6 @@
 use super::*;
 
-fn source(native: &str, workspace: &str) -> Vec<u8> {
+pub(super) fn source(native: &str, workspace: &str) -> Vec<u8> {
     [
         serde_json::json!({"type":"session","id":native,"cwd":workspace}),
         serde_json::json!({"type":"message","id":"root","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"same"}],"timestamp":1}}),

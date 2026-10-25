@@ -741,11 +741,12 @@ async fn probe_live(pid: u32, path: &Path, uid: u32) -> Result<(String, LiveSess
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(|name| name.chars().take(240).collect());
-        let leaf = match &data["leafId"] {
-            Value::Null => None,
-            Value::String(leaf) if !leaf.is_empty() && leaf.len() <= 256 => Some(leaf.clone()),
-            _ => bail!("Invalid live head"),
-        };
+        let head = deserialize_head(
+            data.get("leafId")
+                .context("Live head evidence missing")?
+                .clone(),
+        )?;
+        let leaf = head.leaf_id()?.map(str::to_owned);
         return Ok((
             session.to_owned(),
             LiveSession {

@@ -189,10 +189,16 @@ native-source pin authorize it as attachment does. Pages use the importer's
 message IDs, roles and visibility rules (`NativeGraph::branch_messages`,
 `project_native_branch_page`; a parity test compares them with the stored
 projection), carry `native_graph` with `"live": true` and a head-digest revision,
-and page with `native:<n>` cursors. Parsed branches are cached until the file or
-head changes. Files over 64 MiB, or a Session no Pi has open, fall back to
-canonical history; a `native:` cursor after the Pi has gone returns 503 and the
-client refreshes the newest page.
+and page with opaque `native:v2:` cursors bound to a public-message ancestor.
+The Runner caches bounded ID/parent/offset metadata for unchanged file snapshots
+and seeks only the requested payloads, instead of allocating the entire file.
+Large live Sessions no longer fail merely because they exceed the old 64 MiB
+whole-graph bound. Source changes invalidate the index; branch switches are
+fenced by the cursor. A Session no Pi has open still falls back to canonical
+history; a `native:` cursor after the Pi has gone returns 503 and the client
+refreshes the newest page. See [native history reader](personal-native-history-reader.md)
+for cold-scan behavior, exact resource bounds, cursor migration and regression
+proof. This does not make unsynchronized archived Sessions readable.
 
 The current large-history fix is scoped to Pi classic: the Runner owns bounded
 native-file reading, selected-branch traversal, indexing/caching and paging behind

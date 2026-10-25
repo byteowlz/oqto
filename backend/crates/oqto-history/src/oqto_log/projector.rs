@@ -1229,7 +1229,7 @@ pub struct NativeBranchMessage {
 }
 
 /// Cursors for live native pages; distinct from stored-page cursors.
-const NATIVE_CURSOR: &str = "native:";
+pub(crate) const NATIVE_CURSOR: &str = "native:";
 
 pub fn is_native_page_cursor(cursor: &str) -> bool {
     cursor.starts_with(NATIVE_CURSOR)

@@ -1084,6 +1084,10 @@ test-personal-host:
     cd backend && cargo test --locked -p oqto-runner --lib -- --test-threads=1
     cd backend && cargo test --locked -p oqto-runner --test personal_host
 
+# Opt-in synthetic 328MB native index/page probe; no real Sessions or services.
+test-personal-native-history-bench:
+    cd backend && cargo test --release --locked -p oqto-history --lib synthetic_large_index_and_cached_page_timings -- --ignored --nocapture
+
 # =============================================================================
 # Agent Quality Gate
 # =============================================================================

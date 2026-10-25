@@ -471,10 +471,25 @@ fn socket_names_and_peer_credentials_are_not_authority_shortcuts() {
 }
 
 #[tokio::test]
+async fn catalog_missing_head_is_not_an_explicit_empty_history() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.listen(false, 1, fixture.native_state(), vec![], vec![])?;
+    let binding = &fixture.authority.binding;
+    assert!(
+        live_sessions(&binding.socket_root, &binding.session_root)
+            .await
+            .is_empty()
+    );
+    fixture.unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn catalog_liveness_reads_state_only_and_ignores_foreign_files() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let mut state = fixture.native_state();
     state["sessionName"] = json!("  Release prep [red-fox-den] ");
+    state["leafId"] = Value::Null; // Known empty is explicit, never a missing field.
     fixture.listen(false, 1, state, vec![delta()], vec![])?;
     let binding = &fixture.authority.binding;
     let live = live_sessions(&binding.socket_root, &binding.session_root).await;

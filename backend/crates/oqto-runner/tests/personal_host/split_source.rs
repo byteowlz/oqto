@@ -932,6 +932,9 @@ async fn synthetic_3821_header_discovery_yields_to_queued_native_head() -> Resul
     Ok(())
 }
 
+#[path = "split_source/large_history.rs"]
+mod large_history;
+
 #[tokio::test]
 async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_zero_pi_exec()
 -> Result<()> {
