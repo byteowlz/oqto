@@ -194,6 +194,15 @@ head changes. Files over 64 MiB, or a Session no Pi has open, fall back to
 canonical history; a `native:` cursor after the Pi has gone returns 503 and the
 client refreshes the newest page.
 
+The current large-history fix is scoped to Pi classic: the Runner owns bounded
+native-file reading, selected-branch traversal, indexing/caching and paging behind
+the existing client history surface. This supplements, rather than replaces,
+`oqto-log` history in Server mode; personal identity/source-pin authorization also
+continues to use `oqto-log`. Clients do not parse native files or reconstruct
+branches. Pi-Durable, oq and oqt history/storage integration remains a separate
+future decision; this fix does not prescribe their storage or add client-specific
+history implementations. See `oqto-24hw` for the large-file regression and bounds.
+
 Native-source pins (`extensions_json.personal_native_source`) record the Session file's
 path, inode and persistent filesystem identity: the volume UUID on macOS, where
 `st_dev` is a mount-instance ID that changes after a reboot. Validation accepts that
