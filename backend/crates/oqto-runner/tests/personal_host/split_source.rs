@@ -463,7 +463,14 @@ impl Peer {
             leases.clone(),
             active_leases.clone(),
         );
-        let (source, cwd) = (fixture.source.clone(), fixture.host.work.clone());
+        // Pi retains its logical directory spelling while the owner configures
+        // the canonical native root. The entire signed HTTPS history/control
+        // process proof must work through that runtime-only alias.
+        let native_root = fixture.user.join(".pi/agent/sessions");
+        let alias = fixture.root.join("runtime-sessions");
+        std::os::unix::fs::symlink(&native_root, &alias)?;
+        let source = alias.join(fixture.source.strip_prefix(&native_root)?);
+        let cwd = fixture.host.work.clone();
         let task = tokio::spawn(async move {
             let mut children = tokio::task::JoinSet::new();
             loop {

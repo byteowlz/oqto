@@ -138,6 +138,24 @@ struct NativeState {
     compacting: bool,
 }
 
+impl NativeState {
+    /// Pi may retain a logical home-directory alias. Compare its absolute paths
+    /// to the canonical, independently authorized binding, never to a prefix of
+    /// the reported alias. All file reads still use the pinned binding itself.
+    async fn matches_binding(&self, binding: &ObservationBinding) -> Result<bool> {
+        if self.session_id != binding.external_session_id
+            || !self.session_file.is_absolute()
+            || !self.cwd.is_absolute()
+        {
+            return Ok(false);
+        }
+        Ok(
+            tokio::fs::canonicalize(&self.session_file).await? == binding.session_file
+                && tokio::fs::canonicalize(&self.cwd).await? == binding.work_directory,
+        )
+    }
+}
+
 /// Dropping this handle only closes OUR socket. The terminal owns Pi's lifecycle.
 /// Any read error poisons/closes the attachment: reconnect requires a fresh host
 /// binding and canonical snapshot; there is no transparent gap-hiding reconnect.
@@ -338,9 +356,7 @@ impl TuiObserver {
                     let state: NativeState = serde_json::from_value(frame["data"].clone())
                         .map_err(|_| anyhow::anyhow!("Invalid TUI state"))?;
                     ensure!(
-                        state.session_id == binding.external_session_id
-                            && state.session_file == binding.session_file
-                            && state.cwd == binding.work_directory,
+                        state.matches_binding(&binding).await?,
                         "TUI Session binding mismatch"
                     );
                     break ObservedState {
@@ -435,9 +451,7 @@ impl TuiObserver {
                         );
                         let state: NativeState = serde_json::from_value(frame["data"].clone())?;
                         ensure!(
-                            state.session_id == self.binding.external_session_id
-                                && state.session_file == self.binding.session_file
-                                && state.cwd == self.binding.work_directory,
+                            state.matches_binding(&self.binding).await?,
                             "TUI Session binding changed"
                         );
                         self.authority.revalidate(&self.binding)?;
@@ -658,9 +672,18 @@ pub(crate) async fn live_sessions(
     let mut live = std::collections::HashMap::new();
     let mut ambiguous = std::collections::HashSet::new();
     while let Some(result) = probes.join_next().await {
-        let Ok(Some((id, session))) = result else {
+        let Ok(Some((id, mut session))) = result else {
             continue;
         };
+        // Normalize only the runtime report. Configured roots remain canonical;
+        // the history/attachment paths still validate the exact file and pin.
+        if !session.session_file.is_absolute() {
+            continue;
+        }
+        let Ok(file) = tokio::fs::canonicalize(&session.session_file).await else {
+            continue;
+        };
+        session.session_file = file;
         if !session.session_file.starts_with(session_root) {
             continue;
         }

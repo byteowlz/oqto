@@ -497,6 +497,51 @@ async fn catalog_liveness_reads_state_only_and_ignores_foreign_files() -> Result
 }
 
 #[tokio::test]
+async fn canonical_runtime_alias_is_live_and_attachable_but_retargeting_is_denied() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let binding = fixture.authority.binding.clone();
+    let root = binding.session_root.parent().context("fixture root")?;
+    let alias = root.join("logical-sessions");
+    let cwd_alias = root.join("logical-work");
+    std::os::unix::fs::symlink(&binding.session_root, &alias)?;
+    std::os::unix::fs::symlink(&binding.work_directory, &cwd_alias)?;
+    let mut state = fixture.native_state();
+    state["sessionFile"] = json!(alias.join("native.jsonl"));
+    state["cwd"] = json!(cwd_alias);
+    state["leafId"] = json!("selected-leaf");
+    fixture.listen(false, 1, state, vec![], vec![])?;
+    let live = live_sessions(&binding.socket_root, &binding.session_root).await;
+    let session = live
+        .get("native-id")
+        .context("canonical-equivalent alias rejected")?;
+    assert_eq!(session.session_file, binding.session_file);
+    assert_eq!(session.leaf.as_deref(), Some("selected-leaf"));
+    let observer = fixture.attach().await?;
+    assert_eq!(
+        observer.initial_state().head,
+        NativeHead::Entry("selected-leaf".into())
+    );
+    drop(observer);
+    fixture.unchanged()?;
+
+    // Same header, different file: canonical equality is required, not just a
+    // matching native ID or a logical prefix under an alias.
+    let outside = root.join("elsewhere");
+    std::fs::create_dir(&outside)?;
+    std::fs::write(outside.join("native.jsonl"), &fixture.sentinel)?;
+    std::fs::remove_file(&alias)?;
+    std::os::unix::fs::symlink(&outside, &alias)?;
+    assert!(
+        live_sessions(&binding.socket_root, &binding.session_root)
+            .await
+            .is_empty()
+    );
+    assert!(fixture.attach().await.is_err());
+    fixture.unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn snapshot_drains_a_long_streamed_reply_and_keeps_only_a_display_preview() -> Result<()> {
     let fixture = Fixture::new()?;
     let path = fixture
@@ -506,7 +551,16 @@ async fn snapshot_drains_a_long_streamed_reply_and_keeps_only_a_display_preview(
         .join(format!("pi-tui-rpc-{}.sock", std::process::id()));
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    let streaming = fixture.native_state();
+    // Exercise both initial and repeated snapshot validation through the same
+    // logical directory alias used by real Pi installations.
+    let alias = fixture
+        .authority
+        .binding
+        .session_root
+        .with_file_name("logical-sessions");
+    std::os::unix::fs::symlink(&fixture.authority.binding.session_root, &alias)?;
+    let mut streaming = fixture.native_state();
+    streaming["sessionFile"] = json!(alias.join("native.jsonl"));
     let mut idle = streaming.clone();
     idle["isStreaming"] = false.into();
     let server = tokio::spawn(async move {

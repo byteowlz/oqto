@@ -162,7 +162,19 @@ pi-tui-rpc socket with attachment's socket and peer checks, cached for three
 seconds; a Pi claimed by two sockets or outside the Session root is not live.
 None of this is identity, history or control authority: canonical `title` and
 the existing fields are unchanged, and older clients ignore the additions.
-History for a Session never synchronized from a live Pi still returns `503`.
+An archived Session with no previously synchronized native head still returns `503`.
+
+Pi can report a logical directory alias while the owner designates its canonical
+target. Catalog discovery canonicalizes the reported absolute Session file before
+root filtering; attachment and subsequent snapshots compare canonicalized absolute
+file/cwd reports to the exact existing authority binding. Configured roots must
+still be canonical. All reads use the pinned canonical source, never the alias;
+peer/socket checks, header identity, duplicate detection and grant revalidation
+remain in force. Retargeting an alias to another file fails even if the native
+header ID matches. This does not admit old sockets outside the selected socket
+root, infer an archived branch head, reload Pi or grant any input authority.
+The synthetic full-process split-source HTTPS history/control fixtures report
+runtime-only directory aliases as well as exercising strict canonical startup.
 
 While Pi writes a reply, `SessionRead` also returns `preview` (`text`, `tool`,
 `"canonical": false`): the newest `message_update` text parts and the running tool
