@@ -153,6 +153,9 @@ pub trait ControlAuthority: Send + Sync {
 pub enum InputAction {
     Prompt { message: String },
     Steer { message: String },
+    FollowUp { message: String },
+    SetModel { provider: String, model_id: String },
+    SetThinkingLevel { level: String },
     Abort,
 }
 impl InputAction {
@@ -160,6 +163,33 @@ impl InputAction {
         let (kind, message) = match self {
             Self::Prompt { message } => ("prompt", Some(message)),
             Self::Steer { message } => ("steer", Some(message)),
+            Self::FollowUp { message } => ("follow_up", Some(message)),
+            Self::SetModel { provider, model_id } => {
+                for part in [provider, model_id] {
+                    ensure!(
+                        !part.trim().is_empty()
+                            && part.len() <= 512
+                            && !part.chars().any(char::is_control),
+                        "Invalid model identity"
+                    );
+                }
+                return Ok(
+                    json!({"type":"set_model","id":uuid::Uuid::new_v4().to_string(),"provider":provider,"modelId":model_id}),
+                );
+            }
+            Self::SetThinkingLevel { level } => {
+                ensure!(
+                    !level.trim().is_empty()
+                        && level.len() <= 32
+                        && level
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+                    "Invalid thinking level"
+                );
+                return Ok(
+                    json!({"type":"set_thinking_level","id":uuid::Uuid::new_v4().to_string(),"level":level}),
+                );
+            }
             Self::Abort => ("abort", None),
         };
         let mut packet = json!({"type":kind,"id":uuid::Uuid::new_v4().to_string()});
@@ -304,6 +334,7 @@ impl TuiObserver {
     /// No automatic retries: timeout/EOF after write has an uncertain outcome.
     /// Accepted actions may already have effects; lease revoke is not rollback.
     pub async fn input(&mut self, action: InputAction) -> Result<InputReceipt> {
+        self.validate_setting(&action).await?;
         let packet = action.packet()?;
         let request_id = packet["id"]
             .as_str()
@@ -427,5 +458,7 @@ async fn exchange(
     }
 }
 
+#[cfg(test)]
+mod personal_options_test;
 #[cfg(test)]
 mod tests;

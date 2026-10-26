@@ -81,6 +81,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::SessionHistory { .. }
         | HostAction::SessionAttach { .. }
         | HostAction::SessionRead { .. }
+        | HostAction::SessionModels { .. }
         | HostAction::SessionDetach { .. } => Access::SessionObserve,
         HostAction::SessionRequestControl { .. }
         | HostAction::SessionReleaseControl { .. }

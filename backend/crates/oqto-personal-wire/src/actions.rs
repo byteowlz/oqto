@@ -78,6 +78,10 @@ pub enum HostAction {
     SessionRead {
         attachment_id: String,
     },
+    /// Read the attached Pi's filtered model catalog; never acquires input.
+    SessionModels {
+        attachment_id: String,
+    },
     SessionRequestControl {
         attachment_id: String,
     },
@@ -98,6 +102,9 @@ pub enum HostAction {
 pub enum SessionInput {
     Prompt { message: String },
     Steer { message: String },
+    FollowUp { message: String },
+    SetModel { provider: String, model_id: String },
+    SetThinkingLevel { level: String },
     Abort,
 }
 

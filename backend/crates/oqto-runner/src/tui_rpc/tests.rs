@@ -1,5 +1,7 @@
 use super::*;
 
+mod personal_options;
+
 #[test]
 fn native_head_requires_explicit_runtime_evidence_including_empty_head() -> Result<()> {
     let base = json!({"sessionId":"native","sessionFile":"/synthetic/source","cwd":"/synthetic"});

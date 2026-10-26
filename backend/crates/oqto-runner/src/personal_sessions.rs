@@ -332,6 +332,7 @@ impl Sessions {
         }
         let id = match &action {
             HostAction::SessionRead { attachment_id }
+            | HostAction::SessionModels { attachment_id }
             | HostAction::SessionRequestControl { attachment_id }
             | HostAction::SessionReleaseControl { attachment_id }
             | HostAction::SessionInput { attachment_id, .. }
@@ -360,8 +361,9 @@ impl Sessions {
                 let state = attachment.observer.snapshot_state().await.map_err(|_| ActionFailure::Unavailable)?;
                 let sync_requested = self.nudge(&attachment, &state).map_err(|_| ActionFailure::Unavailable)?;
                 let preview = attachment.observer.preview();
-                Ok(json!({"session_id": attachment.observer.public_session_id(), "streaming": state.streaming, "compacting": state.compacting, "input_held": attachment.observer.input_held(), "containment_verified": false, "native_leaf_id": state.head.leaf_id().map_err(|_| ActionFailure::Unavailable)?, "sync_requested": sync_requested, "preview": {"text": preview.text, "tool": preview.tool, "canonical": false}}))
+                Ok(json!({"session_id": attachment.observer.public_session_id(), "streaming": state.streaming, "compacting": state.compacting, "input_held": attachment.observer.input_held(), "containment_verified": false, "native_leaf_id": state.head.leaf_id().map_err(|_| ActionFailure::Unavailable)?, "sync_requested": sync_requested, "preview": {"text": preview.text, "tool": preview.tool, "canonical": false}, "details": attachment.observer.details()}))
             }
+            HostAction::SessionModels { .. } => attachment.observer.model_options().await,
             HostAction::SessionRequestControl { .. } => {
                 let permit = ControlPermit::from_paired_device(&admission, attachment.observer.public_session_id().into()).map_err(|_| ActionFailure::Denied)?;
                 let binding = attachment.binding.clone();
@@ -372,6 +374,9 @@ impl Sessions {
                 let input = match input {
                     SessionInput::Prompt { message } => crate::tui_rpc::InputAction::Prompt { message },
                     SessionInput::Steer { message } => crate::tui_rpc::InputAction::Steer { message },
+                    SessionInput::FollowUp { message } => crate::tui_rpc::InputAction::FollowUp { message },
+                    SessionInput::SetModel { provider, model_id } => crate::tui_rpc::InputAction::SetModel { provider, model_id },
+                    SessionInput::SetThinkingLevel { level } => crate::tui_rpc::InputAction::SetThinkingLevel { level },
                     SessionInput::Abort => crate::tui_rpc::InputAction::Abort,
                 };
                 let receipt = attachment.observer.input(input).await.map_err(|_| ActionFailure::OutcomeUnknown)?;

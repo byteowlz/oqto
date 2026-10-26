@@ -125,6 +125,8 @@ impl std::fmt::Debug for ObservedEvent {
 
 #[derive(Deserialize)]
 struct NativeState {
+    #[serde(flatten)]
+    details: options::Details,
     #[serde(rename = "sessionId")]
     session_id: String,
     #[serde(rename = "sessionFile")]
@@ -169,7 +171,11 @@ pub struct TuiObserver {
     snapshot_only: bool,
     input_lease: Option<control::InputLease>,
     preview: LivePreview,
+    details: options::Details,
+    commands: Vec<String>,
+    active_tools: std::collections::BTreeMap<String, String>,
 }
+mod options;
 impl TuiObserver {
     pub fn preview(&self) -> &LivePreview {
         &self.preview
@@ -332,7 +338,7 @@ impl TuiObserver {
         reader.get_mut().write_all(&request).await?;
         reader.get_mut().write_all(b"\n").await?;
         let mut pending = VecDeque::new();
-        let state = loop {
+        let (state, details) = loop {
             let frame = read_frame(&mut reader).await?;
             match frame["type"].as_str() {
                 Some("lease") => {} // A lease notification is never authority.
@@ -359,11 +365,14 @@ impl TuiObserver {
                         state.matches_binding(&binding).await?,
                         "TUI Session binding mismatch"
                     );
-                    break ObservedState {
-                        streaming: state.streaming,
-                        compacting: state.compacting,
-                        head: state.head,
-                    };
+                    break (
+                        ObservedState {
+                            streaming: state.streaming,
+                            compacting: state.compacting,
+                            head: state.head,
+                        },
+                        state.details,
+                    );
                 }
                 _ => bail!("Unexpected TUI frame"),
             }
@@ -375,6 +384,16 @@ impl TuiObserver {
             reader: Some(reader),
             pending,
             preview: LivePreview::default(),
+            active_tools: Default::default(),
+            details,
+            commands: hello["commands"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .take(128)
+                .map(str::to_owned)
+                .collect(),
             state,
             connection_leases,
             snapshot_only,
@@ -392,6 +411,8 @@ impl TuiObserver {
         let lease = self.input_lease.take();
         let id = uuid::Uuid::new_v4().to_string();
         let mut preview = self.preview.clone();
+        let mut details = self.details.clone();
+        let mut tools = self.active_tools.clone();
         let result = tokio::time::timeout(SNAPSHOT_DEADLINE, async {
             let request = serde_json::to_vec(&json!({"id":id,"type":"get_state"}))?;
             reader.get_mut().write_all(&request).await?;
@@ -410,20 +431,21 @@ impl TuiObserver {
                 if kind.kind.as_deref() == Some("event") {
                     match kind.event.as_deref() {
                         Some("message_update") => latest_update = Some(line),
-                        Some("message_end" | "agent_end") => {
+                        Some("message_end") => {
+                            latest_update = None;
+                            preview.text = None;
+                        }
+                        Some("agent_end" | "agent_settled") => {
                             latest_update = None;
                             preview = LivePreview::default();
+                            tools.clear();
                         }
                         Some("message_start") => latest_update = None,
                         Some("tool_execution_start" | "tool_execution_end") => {
-                            let native = event(serde_json::from_slice(&line)?)?;
-                            preview.tool = (native.name == "tool_execution_start")
-                                .then(|| {
-                                    native.data["toolName"]
-                                        .as_str()
-                                        .map(|name| name.chars().take(80).collect())
-                                })
-                                .flatten();
+                            preview.tool = update_tool_activity(
+                                &mut tools,
+                                event(serde_json::from_slice(&line)?)?,
+                            )?;
                         }
                         _ => {
                             let _ = event(serde_json::from_slice(&line)?)?;
@@ -460,7 +482,9 @@ impl TuiObserver {
                         }
                         if !state.streaming {
                             preview = LivePreview::default();
+                            tools.clear();
                         }
+                        details = state.details;
                         return Ok(ObservedState {
                             streaming: state.streaming,
                             compacting: state.compacting,
@@ -480,6 +504,8 @@ impl TuiObserver {
                 self.input_lease = lease;
                 self.state = state.clone();
                 self.preview = preview;
+                self.details = details;
+                self.active_tools = tools;
                 Ok(state)
             }
             Err(error) => {
@@ -784,6 +810,36 @@ struct FrameKind {
 
 /// Text parts of the streamed assistant message in a `message_update` frame,
 /// keeping the tail when it is longer than the preview limit.
+/// Keep parallel calls distinct; an end notification must not hide other tools.
+fn update_tool_activity(
+    tools: &mut std::collections::BTreeMap<String, String>,
+    native: ObservedEvent,
+) -> Result<Option<String>> {
+    if let Some(name) = native.data["toolName"].as_str() {
+        let id = native.data["toolCallId"].as_str().unwrap_or(name);
+        ensure!(id.len() <= 512, "Native tool identity bound exceeded");
+        if native.name == "tool_execution_start" {
+            ensure!(
+                tools.len() < 64 || tools.contains_key(id),
+                "Native tool activity bound exceeded"
+            );
+            tools.insert(id.to_owned(), name.chars().take(80).collect());
+        } else {
+            tools.remove(id);
+        }
+    }
+    Ok((!tools.is_empty()).then(|| {
+        tools
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+            .chars()
+            .take(180)
+            .collect()
+    }))
+}
+
 fn preview_text(frame: &Value) -> Option<String> {
     let message = &frame["data"]["message"];
     if message["role"] != "assistant" {

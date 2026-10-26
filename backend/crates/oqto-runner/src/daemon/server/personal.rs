@@ -320,6 +320,7 @@ impl ActionBackend for PersonalBackend {
                 action,
                 HostAction::SessionAttach { .. }
                     | HostAction::SessionRead { .. }
+                    | HostAction::SessionModels { .. }
                     | HostAction::SessionRequestControl { .. }
                     | HostAction::SessionInput { .. }
             ) && !self.ingest.native_available())
@@ -483,6 +484,7 @@ impl ActionBackend for PersonalBackend {
             }
             action @ (HostAction::SessionAttach { .. }
             | HostAction::SessionRead { .. }
+            | HostAction::SessionModels { .. }
             | HostAction::SessionRequestControl { .. }
             | HostAction::SessionReleaseControl { .. }
             | HostAction::SessionInput { .. }
