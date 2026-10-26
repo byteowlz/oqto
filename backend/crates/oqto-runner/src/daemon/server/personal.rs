@@ -445,6 +445,11 @@ impl ActionBackend for PersonalBackend {
                 .await;
                 // Newest page: a failed live read (e.g. a file over the bound) falls
                 // back to canonical history. A live cursor needs the live source.
+                // Log the reason: the fallback's 503 alone hides why a live Session
+                // shows no history. Errors name the failed check, not message content.
+                if let Err(error) = &live {
+                    log::warn!("Live history unavailable for Session {session_id}: {error:#}");
+                }
                 let live = match (live, &before) {
                     (Ok(page), _) => page,
                     (Err(_), None) => None,

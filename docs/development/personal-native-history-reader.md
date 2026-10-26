@@ -20,7 +20,11 @@ The canonical importer's existing graph parser and Server path are unchanged.
 `oqto-history::oqto_log::store::native_graph::reader::NativeFileIndex` scans a
 captured file length into bounded ID/parent/offset/digest metadata. It checks
 complete record syntax and UTF-8, unique IDs, already-present parent links and
-known `AgentMessage` metadata types. Arbitrary parent containers are rejected
+known `AgentMessage` metadata types. As in Pi's session manager, an entry whose
+parent was never written starts its branch (Pi treats orphans as roots and stops
+the path there); real files contain such gaps. A parent written later in the file,
+or an entry naming itself, is a link Pi would follow and is refused, never cut.
+The canonical importer applies the same rule. Arbitrary parent containers are rejected
 without allocating a JSON tree. Unknown payloads are not materialized as Values. Partial final records are
 not facts and cannot provide a selected head. A cold request still scans metadata
 across the file; this is not an unvalidated EOF slice or a zero-I/O cold open.

@@ -36,6 +36,28 @@ fn source_identity_parents_and_actual_head_are_not_guessed() -> Result<()> {
     assert!(NativeGraph::parse(cyclic.as_bytes(), "native", "/synthetic", Some("a")).is_err());
     Ok(())
 }
+#[test]
+fn an_unwritten_parent_is_imported_as_a_branch_root_like_pi() -> Result<()> {
+    let mut bytes = source("native", "/synthetic");
+    bytes.extend_from_slice(
+        format!(
+            "{}\n",
+            serde_json::json!({"type":"message","id":"orphan","parentId":"never-written","message":{"role":"assistant","content":[{"type":"text","text":"after the gap"}],"timestamp":4}})
+        )
+        .as_bytes(),
+    );
+    let graph = NativeGraph::parse(&bytes, "native", "/synthetic", Some("orphan"))?;
+    let branch = graph.branch_messages("public");
+    assert_eq!(branch.len(), 1);
+    assert_eq!(branch[0].parent_turn_id, None);
+    assert_eq!(
+        NativeGraph::parse(&bytes, "native", "/synthetic", Some("a"))?
+            .branch_messages("public")
+            .len(),
+        2
+    );
+    Ok(())
+}
 #[tokio::test]
 async fn equal_count_head_switch_preserves_siblings_ids_legacy_provenance_and_rejects_mutation()
 -> Result<()> {

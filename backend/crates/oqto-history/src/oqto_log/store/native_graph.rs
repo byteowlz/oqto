@@ -66,6 +66,7 @@ impl NativeGraph {
         );
         let mut entries = Vec::new();
         let mut nearest: HashMap<String, Option<String>> = HashMap::new();
+        let mut unwritten_parents = std::collections::HashSet::new();
         for line in lines {
             ensure!(entries.len() < MAX_ENTRIES, "Native entry bound exceeded");
             let raw: Value = serde_json::from_str(line)?;
@@ -83,13 +84,22 @@ impl NativeGraph {
                 Some(Value::String(parent)) => Some(parent.as_str()),
                 _ => bail!("Native parent evidence missing"),
             };
+            // As in Pi, a parent that was never written starts a branch; one
+            // written later (or the entry itself) would be followed, so refuse it.
             let parent_message = match parent {
                 None => None,
-                Some(parent) => nearest
-                    .get(parent)
-                    .context("Native parent absent or cyclic")?
-                    .clone(),
+                Some(parent) => match nearest.get(parent) {
+                    Some(nearest) => nearest.clone(),
+                    None => {
+                        unwritten_parents.insert(parent.to_owned());
+                        None
+                    }
+                },
             };
+            ensure!(
+                !unwritten_parents.contains(&id),
+                "Native parent absent or cyclic"
+            );
             let message = if raw["type"] == "message" {
                 Some(serde_json::from_value(raw["message"].clone())?)
             } else {

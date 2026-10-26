@@ -33,6 +33,7 @@ struct IndexedEntry {
 pub struct NativeFileIndex {
     entries: Vec<IndexedEntry>,
     ids: HashMap<Arc<str>, usize>,
+    unwritten_parents: std::collections::HashSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -127,6 +128,7 @@ impl NativeFileIndex {
         let mut index = Self {
             entries: Vec::new(),
             ids: HashMap::new(),
+            unwritten_parents: Default::default(),
         };
         let deadline = Instant::now() + SCAN_TIME;
         let mut offset = header.len() as u64;
@@ -156,18 +158,23 @@ impl NativeFileIndex {
             !self.ids.contains_key(raw.id.as_str()),
             "Duplicate native entry identity"
         );
+        // Pi starts a branch at an entry whose parent was never written. A parent
+        // written later (or the entry itself) is a link Pi would follow: refuse it.
         let parent = match &raw.parent {
             Parent::Root => None,
             Parent::Id(id) => {
                 token(id)?;
-                Some(
-                    *self
-                        .ids
-                        .get(id.as_str())
-                        .context("Native parent absent or cyclic")?,
-                )
+                let parent = self.ids.get(id.as_str()).copied();
+                if parent.is_none() {
+                    self.unwritten_parents.insert(id.clone());
+                }
+                parent
             }
         };
+        ensure!(
+            !self.unwritten_parents.contains(&raw.id),
+            "Native parent absent or cyclic"
+        );
         let parent_message = parent.and_then(|i| self.entries[i].nearest_message);
         let parent_visible = parent.and_then(|i| self.entries[i].nearest_visible);
         let message = raw.kind == "message";

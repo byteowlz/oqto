@@ -87,8 +87,8 @@ fn malformed_graphs_wrong_headers_partial_heads_and_stale_records_fail_closed() 
     let text = std::str::from_utf8(&original)?;
     for bad in [
         text.replace("\"id\":\"b\"", "\"id\":\"a\""),
-        text.replace("\"parentId\":\"meta\"", "\"parentId\":\"missing\""),
         text.replace("\"parentId\":\"meta\"", "\"parentId\":\"b\""),
+        text.replace("\"parentId\":\"meta\"", "\"parentId\":\"a\""),
         text.replace("\"parentId\":null,", ""),
         text.replace("\"parentId\":null", "\"parentId\":[null]"),
         text.replace("\"parentId\":null", "\"parentId\":true"),
@@ -122,6 +122,59 @@ fn malformed_graphs_wrong_headers_partial_heads_and_stale_records_fail_closed() 
             .page(&mut Cursor::new(changed), "public", Some("a"), 50, None)
             .is_err()
     );
+    Ok(())
+}
+
+/// Pi starts a branch at an entry whose parent was never written (its tree treats
+/// orphans as roots and path building stops there). A parent written later, or the
+/// entry itself, is a link Pi would follow, so it is refused rather than cut.
+#[test]
+fn an_unwritten_parent_starts_the_branch_like_pi_but_a_later_parent_is_refused() -> Result<()> {
+    let mut bytes = crate::oqto_log::store::native_graph::tests::source("native", "/synthetic");
+    for value in [
+        serde_json::json!({"type":"message","id":"orphan","parentId":"never-written","message":{"role":"assistant","content":[{"type":"text","text":"after the gap"}],"timestamp":4}}),
+        serde_json::json!({"type":"message","id":"next","parentId":"orphan","message":{"role":"user","content":[{"type":"text","text":"continue"}],"timestamp":5}}),
+    ] {
+        bytes.extend_from_slice(format!("{value}\n").as_bytes());
+    }
+    let mut file = Cursor::new(&bytes);
+    let index = NativeFileIndex::read(&mut file, bytes.len() as u64, "native", "/synthetic")?;
+    let expected = project_native_branch_page(
+        "public",
+        &NativeGraph::parse(&bytes, "native", "/synthetic", Some("next"))?
+            .branch_messages("public"),
+        50,
+        None,
+    )?;
+    let actual = index.page(&mut file, "public", Some("next"), 50, None)?;
+    assert_eq!(
+        serde_json::to_value(&actual.messages)?,
+        serde_json::to_value(&expected.messages)?
+    );
+    assert_eq!(actual.messages.len(), 2);
+    assert!(!actual.has_more);
+    // The earlier, connected branch is still readable at its own head.
+    assert_eq!(
+        index
+            .page(&mut file, "public", Some("a"), 50, None)?
+            .messages
+            .len(),
+        2
+    );
+    let text = std::str::from_utf8(&bytes)?;
+    for refused in [
+        text.replace("\"parentId\":\"never-written\"", "\"parentId\":\"next\""),
+        text.replace("\"parentId\":\"never-written\"", "\"parentId\":\"orphan\""),
+    ] {
+        let mut file = Cursor::new(refused.as_bytes());
+        assert!(
+            NativeFileIndex::read(&mut file, refused.len() as u64, "native", "/synthetic").is_err(),
+            "{refused}"
+        );
+        assert!(
+            NativeGraph::parse(refused.as_bytes(), "native", "/synthetic", Some("next")).is_err()
+        );
+    }
     Ok(())
 }
 
