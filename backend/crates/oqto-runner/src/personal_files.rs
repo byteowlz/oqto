@@ -70,6 +70,46 @@ fn baseline(dir: &Dir, path: &Path, expected: Option<&str>) -> Result<(), Action
     }
 }
 
+/// The caller resolves the exact authorized Session, never a phone-supplied cwd.
+pub(crate) fn session_context(
+    admission: &AuthorizedAction,
+    session_id: &str,
+    cwd: &Path,
+) -> Result<Value, ActionFailure> {
+    let (root, path) = cwd_context(&admission.grants().files, cwd)?;
+    Ok(
+        json!({"session_id":session_id,"root":{"id":root.id(),"label":root.path().file_name().map(|s|s.to_string_lossy()).unwrap_or_default(),"writable":root.writable()},"path":path}),
+    )
+}
+
+fn cwd_context<'a>(
+    grants: &'a [oqto_personal::FileGrant],
+    cwd: &Path,
+) -> Result<(&'a oqto_personal::FileGrant, String), ActionFailure> {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::unix::fs::MetadataExt;
+    if !cwd.is_absolute() {
+        return Err(ActionFailure::Invalid);
+    }
+    let cwd = cwd.canonicalize().map_err(io_error)?;
+    let expected = cwd.metadata().map_err(io_error)?;
+    let root = grants
+        .iter()
+        .filter(|r| cwd.starts_with(r.path()))
+        .max_by_key(|r| r.path().components().count())
+        .ok_or(ActionFailure::Denied)?;
+    let path = cwd.strip_prefix(root.path()).map_err(invalid)?;
+    let dir = Dir::from_std_file(root.open_root().map_err(invalid)?);
+    let opened = dir
+        .open_dir(relative(path.to_str().ok_or(ActionFailure::Invalid)?)?)
+        .map_err(io_error)?;
+    let actual = opened.dir_metadata().map_err(io_error)?;
+    if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+        return Err(ActionFailure::Denied);
+    }
+    Ok((root, path.to_str().ok_or(ActionFailure::Invalid)?.into()))
+}
+
 /// The embedding backend serializes Files operations. SHA preconditions detect
 /// stale snapshots and competing API writes. POSIX cannot offer a global CAS
 /// against unrelated native writers that do not participate in its lock.
@@ -224,5 +264,33 @@ pub(crate) fn execute(
             result
         }
         _ => Err(ActionFailure::Invalid),
+    }
+}
+
+#[cfg(test)]
+mod cwd_tests {
+    use super::*;
+    #[test]
+    fn cwd_is_direct_scoped_most_specific_and_no_prefix_or_symlink_escape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let cwd = root.join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let grants = vec![oqto_personal::FileGrant::select(&root, false).unwrap()];
+        let (_, relative) = cwd_context(&grants, &cwd).unwrap();
+        assert_eq!(relative, "project");
+        let sibling = temp.path().join("root-other");
+        std::fs::create_dir(&sibling).unwrap();
+        assert!(cwd_context(&grants, &sibling).is_err());
+        std::os::unix::fs::symlink(&sibling, root.join("escape")).unwrap();
+        assert!(cwd_context(&grants, &root.join("escape")).is_err());
+        let mut nested = grants.clone();
+        nested.push(oqto_personal::FileGrant::select(&cwd, false).unwrap());
+        let (selected, relative) = cwd_context(&nested, &cwd).unwrap();
+        assert_eq!(selected.id(), nested[1].id());
+        assert!(relative.is_empty());
+        std::fs::rename(&root, temp.path().join("old-root")).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        assert!(cwd_context(&grants, &cwd).is_err());
     }
 }

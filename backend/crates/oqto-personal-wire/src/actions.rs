@@ -63,6 +63,10 @@ pub enum HostAction {
         terminal_id: String,
     },
     SessionsList,
+    /// Host-resolved Session cwd inside an existing Files grant; no attachment.
+    SessionFiles {
+        session_id: String,
+    },
     /// Raster project logos for catalog Work directories, at most
     /// `MAX_PROJECT_ICON_DIRECTORIES` per request. Read-only, Session-observe.
     ProjectIcons {

@@ -313,6 +313,7 @@ impl ActionBackend for PersonalBackend {
         if (matches!(
             action,
             HostAction::SessionsList
+                | HostAction::SessionFiles { .. }
                 | HostAction::ProjectIcons { .. }
                 | HostAction::SessionHistory { .. }
         ) && !self.ingest.catalog_ready())
@@ -391,6 +392,30 @@ impl ActionBackend for PersonalBackend {
                 tokio::task::spawn_blocking(move || terminals.execute(action, authorization))
                     .await
                     .map_err(|_| ActionFailure::OutcomeUnknown)?
+            }
+            HostAction::SessionFiles { session_id } => {
+                let row = crate::history_read::resolve_authorized_session(
+                    &self.home,
+                    &self.workspace_roots,
+                    &session_id,
+                )
+                .await
+                .map_err(|_| ActionFailure::Denied)?;
+                let cwd = row.workspace_id.ok_or(ActionFailure::Unavailable)?;
+                let fence = authorization.fence();
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::personal_files::session_context(
+                        &authorization,
+                        &session_id,
+                        std::path::Path::new(&cwd),
+                    )
+                })
+                .await
+                .map_err(|_| ActionFailure::Unavailable)??;
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                Ok(result)
             }
             HostAction::SessionsList => {
                 let listed = async {
