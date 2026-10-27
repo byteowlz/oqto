@@ -64,3 +64,12 @@ Output loss and unconfirmed input are surfaced, never silently replayed.
 Roll out the runner before the supporting Server. Older Servers remain
 preview-only with an explicit safe-save capability explanation. Do not change
 pairing grants merely to make a client feature available.
+
+2026-10-27 operational follow-up: operator-approved executable-only updates of
+both existing personal runners to 219679a6 are complete, with unchanged grants,
+configuration, service definitions and all 42 Mac / 14 Linux Pi identities.
+Linux fresh-target checks/Clippy, 217 units (two ignored), nine process tests and
+optimized build pass. Multi-user runner and Server were not upgraded. Phone
+r14e/1918e797 installed/query-verified, same identity/data groups, no agent launch.
+Security record: wiki security/changelog/2026-10-27-fleet-personal-session-tools.md
+(f3eb7ed). This is not Server checked-save rollout or physical tool acceptance.
