@@ -12,6 +12,7 @@ pub(super) async fn handle_files_command(
         FilesWsCommand::Tree { id, .. }
         | FilesWsCommand::Read { id, .. }
         | FilesWsCommand::Write { id, .. }
+        | FilesWsCommand::WriteChecked { id, .. }
         | FilesWsCommand::List { id, .. }
         | FilesWsCommand::Stat { id, .. }
         | FilesWsCommand::Delete { id, .. }
@@ -57,6 +58,7 @@ pub(super) async fn handle_files_command(
         FilesWsCommand::Tree { workspace_path, .. }
         | FilesWsCommand::Read { workspace_path, .. }
         | FilesWsCommand::Write { workspace_path, .. }
+        | FilesWsCommand::WriteChecked { workspace_path, .. }
         | FilesWsCommand::List { workspace_path, .. }
         | FilesWsCommand::Stat { workspace_path, .. }
         | FilesWsCommand::Delete { workspace_path, .. }
@@ -468,6 +470,7 @@ pub(super) async fn handle_files_command(
                 Ok(content) => {
                     let encoded = base64::engine::general_purpose::STANDARD.encode(content.content);
                     Some(WsEvent::Files(FilesWsEvent::ReadResult {
+                        checked_write_supported: Some(user_plane.checked_file_writes_supported()),
                         id,
                         path,
                         content: encoded,
@@ -479,6 +482,58 @@ pub(super) async fn handle_files_command(
                     id,
                     error: err.to_string(),
                 })),
+            }
+        }
+        FilesWsCommand::WriteChecked {
+            id,
+            path,
+            content,
+            expected_sha256,
+            ..
+        } => {
+            let error = |message: String| {
+                Some(WsEvent::Files(FilesWsEvent::Error {
+                    id: id.clone(),
+                    error: message,
+                }))
+            };
+            if resolve_workspace_child(&workspace_root, &path).is_err() {
+                return error("file_write_refused".into());
+            }
+            if expected_sha256.len() != 64
+                || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return error("invalid_file_baseline".into());
+            }
+            let data = match base64::engine::general_purpose::STANDARD.decode(content) {
+                Ok(v) if v.len() <= 256 * 1024 => v,
+                _ => return error("invalid_file_content".into()),
+            };
+            match user_plane
+                .write_file_checked(
+                    &workspace_root,
+                    std::path::Path::new(&path),
+                    &data,
+                    &expected_sha256,
+                )
+                .await
+            {
+                Ok(hash) => Some(WsEvent::Files(FilesWsEvent::WriteResult {
+                    id,
+                    path,
+                    success: true,
+                    sha256: Some(hash),
+                })),
+                Err(err) => error(
+                    if err
+                        .chain()
+                        .any(|e| e.to_string().contains("stale_baseline"))
+                    {
+                        "stale_baseline".into()
+                    } else {
+                        "file_write_not_confirmed".into()
+                    },
+                ),
             }
         }
         FilesWsCommand::Write {
@@ -508,6 +563,7 @@ pub(super) async fn handle_files_command(
                 .await
             {
                 Ok(()) => Some(WsEvent::Files(FilesWsEvent::WriteResult {
+                    sha256: None,
                     id,
                     path,
                     success: true,

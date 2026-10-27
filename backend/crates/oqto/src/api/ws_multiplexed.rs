@@ -322,6 +322,15 @@ pub enum FilesWsCommand {
         #[serde(default)]
         workspace_path: Option<String>,
     },
+    WriteChecked {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        path: String,
+        content: String,
+        expected_sha256: String,
+        #[serde(default)]
+        workspace_path: Option<String>,
+    },
     Write {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -575,6 +584,8 @@ pub enum FilesWsEvent {
     },
     ReadResult {
         #[serde(skip_serializing_if = "Option::is_none")]
+        checked_write_supported: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         path: String,
         content: String,
@@ -584,6 +595,8 @@ pub enum FilesWsEvent {
         truncated: Option<bool>,
     },
     WriteResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         path: String,
@@ -1670,6 +1683,7 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             FilesWsCommand::Tree { id, .. }
             | FilesWsCommand::Read { id, .. }
             | FilesWsCommand::Write { id, .. }
+            | FilesWsCommand::WriteChecked { id, .. }
             | FilesWsCommand::List { id, .. }
             | FilesWsCommand::Stat { id, .. }
             | FilesWsCommand::Delete { id, .. }
@@ -1774,6 +1788,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::Tree { .. } => "files.tree",
                 FilesWsCommand::Read { .. } => "files.read",
                 FilesWsCommand::Write { .. } => "files.write",
+                FilesWsCommand::WriteChecked { .. } => "files.write_checked",
                 FilesWsCommand::List { .. } => "files.list",
                 FilesWsCommand::Stat { .. } => "files.stat",
                 FilesWsCommand::Delete { .. } => "files.delete",
@@ -1789,6 +1804,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::Tree { workspace_path, .. }
                 | FilesWsCommand::Read { workspace_path, .. }
                 | FilesWsCommand::Write { workspace_path, .. }
+                | FilesWsCommand::WriteChecked { workspace_path, .. }
                 | FilesWsCommand::List { workspace_path, .. }
                 | FilesWsCommand::Stat { workspace_path, .. }
                 | FilesWsCommand::Delete { workspace_path, .. }

@@ -41,6 +41,12 @@ pub enum HostAction {
         path: String,
     },
     TerminalsList,
+    /// Open or reattach this device's terminal for the exact authorized Session cwd.
+    SessionTerminalOpen {
+        session_id: String,
+        rows: u16,
+        cols: u16,
+    },
     TerminalOpen {
         cwd: String,
         rows: u16,
@@ -132,6 +138,9 @@ pub struct HostCapabilities {
     pub full_user_terminal_granted: bool,
     pub files_supported: bool,
     pub terminal_supported: bool,
+    /// Session-cwd PTY open/reattach; absent on older Hosts, never inferred from raw PTY support.
+    #[serde(default)]
+    pub session_terminal_supported: bool,
     pub session_observe_supported: bool,
     pub session_control_supported: bool,
 }

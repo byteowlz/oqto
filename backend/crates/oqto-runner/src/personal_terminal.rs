@@ -28,6 +28,7 @@ struct Control {
 }
 struct Terminal {
     owner: String,
+    session: Option<String>,
     control: Control,
     output: Arc<Mutex<Output>>,
     reader: tokio::task::JoinHandle<()>,
@@ -39,6 +40,7 @@ impl Drop for Terminal {
 }
 #[derive(Default)]
 pub(crate) struct Terminals {
+    session_opens: Mutex<()>,
     entries: Mutex<HashMap<String, Terminal>>,
 }
 fn denied<T>(_: T) -> ActionFailure {
@@ -56,6 +58,46 @@ fn size(rows: u16, cols: u16) -> Result<PtySize, ActionFailure> {
     })
 }
 impl Terminals {
+    /// A repeated explicit Open reattaches the same live Session PTY, not another shell.
+    pub(crate) fn open_session(
+        &self,
+        session: String,
+        cwd: String,
+        dimensions: (u16, u16),
+        admission: AuthorizedAction,
+    ) -> Result<Value, ActionFailure> {
+        let (rows, cols) = dimensions;
+        let _gate = self.session_opens.lock().map_err(denied)?;
+        if !admission.grants().full_user_terminal
+            || !admission.fence().is_current()
+            || admission.grants().sessions == oqto_personal::SessionAccess::None
+        {
+            return Err(ActionFailure::Denied);
+        }
+        size(rows, cols)?;
+        let owner = admission.fence().device_id().to_owned();
+        {
+            let mut entries = self.entries.lock().map_err(denied)?;
+            for (id, terminal) in entries.iter_mut() {
+                if terminal.owner == owner
+                    && terminal.session.as_deref() == Some(&session)
+                    && terminal.control.child.try_wait().map_err(denied)?.is_none()
+                {
+                    return Ok(json!({"terminal_id":id,"session_id":session,"reattached":true}));
+                }
+            }
+        }
+        let result = self.execute(HostAction::TerminalOpen { cwd, rows, cols }, admission)?;
+        let id = result["terminal_id"]
+            .as_str()
+            .ok_or(ActionFailure::OutcomeUnknown)?;
+        let mut entries = self.entries.lock().map_err(denied)?;
+        entries
+            .get_mut(id)
+            .ok_or(ActionFailure::OutcomeUnknown)?
+            .session = Some(session.clone());
+        Ok(json!({"terminal_id":id,"session_id":session,"reattached":false}))
+    }
     pub(crate) fn reap(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             for terminal in entries.values_mut() {
@@ -151,6 +193,7 @@ impl Terminals {
                 id.clone(),
                 Terminal {
                     owner,
+                    session: None,
                     control: Control {
                         master: pair.master,
                         child,

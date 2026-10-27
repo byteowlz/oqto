@@ -94,6 +94,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
 
         req @ (RunnerRequest::ReadFile(_)
         | RunnerRequest::WriteFile(_)
+        | RunnerRequest::WriteFileChecked(_)
         | RunnerRequest::ListDirectory(_)
         | RunnerRequest::Stat(_)
         | RunnerRequest::DeletePath(_)

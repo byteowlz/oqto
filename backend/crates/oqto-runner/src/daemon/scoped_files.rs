@@ -163,8 +163,33 @@ impl ScopedFiles {
         file.set_len(0)?;
         file.write_all(&bytes)?;
         Ok(RunnerResponse::FileWritten(FileWrittenResponse {
+            sha256: None,
             path: request.path,
             bytes_written: bytes.len() as u64,
+        }))
+    }
+
+    fn write_checked(
+        &self,
+        request: crate::protocol::WriteFileCheckedRequest,
+    ) -> Result<RunnerResponse> {
+        let absolute = request.root.join(&request.path);
+        let (root, relative) = self.resolve(&absolute)?;
+        ensure!(!request.path.is_absolute(), "root-relative path required");
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&request.content_base64)?;
+        let hash =
+            crate::checked_file::replace(root, relative, &bytes, Some(&request.expected_sha256))
+                .map_err(|e| {
+                    anyhow::anyhow!(match e {
+                        crate::checked_file::Failure::Conflict => "stale_baseline",
+                        crate::checked_file::Failure::Unknown => "file_write_outcome_unknown",
+                        _ => "file_write_refused",
+                    })
+                })?;
+        Ok(RunnerResponse::FileWritten(FileWrittenResponse {
+            path: absolute,
+            bytes_written: bytes.len() as u64,
+            sha256: Some(hash),
         }))
     }
 
@@ -275,6 +300,7 @@ impl ScopedFiles {
         let result = match request {
             RunnerRequest::ReadFile(r) => self.read(r),
             RunnerRequest::WriteFile(r) => self.write(r),
+            RunnerRequest::WriteFileChecked(r) => self.write_checked(r),
             RunnerRequest::ListDirectory(r) => self.list(r),
             RunnerRequest::Stat(r) => self.stat(r),
             RunnerRequest::DeletePath(r) => self.delete(r),
@@ -311,6 +337,44 @@ fn timestamp_ms(time: Option<cap_std::time::SystemTime>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_writes_still_require_descriptor_scoped_roots() -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let tmp = tempfile::tempdir()?;
+        let base = tmp.path().canonicalize()?;
+        let root = base.join("allowed");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("note"), b"old")?;
+        let files = ScopedFiles::new(std::slice::from_ref(&root))?;
+        let expected = format!("{:x}", Sha256::digest(b"old"));
+        let request = |root: PathBuf, path: &str| {
+            RunnerRequest::WriteFileChecked(crate::protocol::WriteFileCheckedRequest {
+                root,
+                path: path.into(),
+                content_base64: base64::engine::general_purpose::STANDARD.encode(b"new"),
+                expected_sha256: expected.clone(),
+            })
+        };
+        for req in [
+            request(base.clone(), "outside"),
+            request(root.clone(), "../outside"),
+            request(root.clone(), "/outside"),
+        ] {
+            assert!(matches!(files.execute(req), RunnerResponse::Error(_)));
+        }
+        assert_eq!(std::fs::read(root.join("note"))?, b"old");
+        assert!(matches!(
+            files.execute(request(root.clone(), "note")),
+            RunnerResponse::FileWritten(_)
+        ));
+        assert!(matches!(
+            files.execute(request(root.clone(), "note")),
+            RunnerResponse::Error(_)
+        ));
+        assert_eq!(std::fs::read(root.join("note"))?, b"new");
+        Ok(())
+    }
 
     #[test]
     fn rejects_traversal_relative_paths_and_symlink_escape() -> Result<()> {

@@ -4,6 +4,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
     match req {
         RunnerRequest::ReadFile(r) => runner.read_file(r).await,
         RunnerRequest::WriteFile(r) => runner.write_file(r).await,
+        RunnerRequest::WriteFileChecked(r) => runner.write_file_checked(r).await,
         RunnerRequest::ListDirectory(r) => runner.list_directory(r).await,
         RunnerRequest::Stat(r) => runner.stat(r).await,
         RunnerRequest::DeletePath(r) => runner.delete_path(r).await,

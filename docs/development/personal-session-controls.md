@@ -11,3 +11,7 @@ Personal Sessions remain terminal-owned. No Pi spawn, reload, native transcript 
 The deployed bridge already supports model/thinking/follow-up methods, so this rollout does not need a Pi reload. It does not expose full queues. Optional queue observations are forward-compatible; complete queue lists/clear remain unsupported. Abort is not clear-queue.
 
 Tests: native synthetic peers cover secret projection, scoped catalog/no lease, guarded typed inputs and overlapping tools/bounds. Existing control revocation/switch/outcome tests remain required. Mobile signed synthetic integration covers root IDs, nested previews, no attach/lease for browsing and configuration acknowledgements followed by fresh observations. Real provider mutation/generation is not a qualification step.
+
+For shared baseline-checked file replacement and Session-cwd PTY admission, see
+[Session file saves and Terminal](session-file-save-and-terminal.md). These are
+separate from Pi model/queue controls and do not expand pairing grants.

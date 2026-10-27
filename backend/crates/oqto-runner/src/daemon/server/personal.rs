@@ -284,6 +284,33 @@ impl super::Runner {
     }
 }
 
+impl PersonalBackend {
+    async fn open_session_terminal(
+        &self,
+        session_id: String,
+        dimensions: (u16, u16),
+        authorization: AuthorizedAction,
+    ) -> Result<Value, ActionFailure> {
+        if !self.terminal_enabled || authorization.grants().sessions == SessionAccess::None {
+            return Err(ActionFailure::Denied);
+        }
+        let row = crate::history_read::resolve_authorized_session(
+            &self.home,
+            &self.workspace_roots,
+            &session_id,
+        )
+        .await
+        .map_err(|_| ActionFailure::Denied)?;
+        let cwd = row.workspace_id.ok_or(ActionFailure::Unavailable)?;
+        let terminals = Arc::clone(&self.terminals);
+        tokio::task::spawn_blocking(move || {
+            terminals.open_session(session_id, cwd, dimensions, authorization)
+        })
+        .await
+        .map_err(|_| ActionFailure::OutcomeUnknown)?
+    }
+}
+
 struct OwnerCleanup {
     path: PathBuf,
     dev: u64,
@@ -361,6 +388,7 @@ impl ActionBackend for PersonalBackend {
                     full_user_terminal_granted: grants.full_user_terminal,
                     files_supported: supported.files,
                     terminal_supported: supported.terminal,
+                    session_terminal_supported: supported.terminal && supported.sessions,
                     session_observe_supported: supported.sessions,
                     session_control_supported: supported.control,
                 })
@@ -378,6 +406,14 @@ impl ActionBackend for PersonalBackend {
                 })
                 .await
                 .map_err(|_| ActionFailure::OutcomeUnknown)?
+            }
+            HostAction::SessionTerminalOpen {
+                session_id,
+                rows,
+                cols,
+            } => {
+                self.open_session_terminal(session_id, (rows, cols), authorization)
+                    .await
             }
             action @ (HostAction::TerminalsList
             | HostAction::TerminalOpen { .. }

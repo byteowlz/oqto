@@ -236,6 +236,49 @@ mod sessions;
 mod split_source;
 
 #[tokio::test]
+async fn actual_checked_file_rpc_keeps_baseline_and_returns_digest_without_pi() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let host = Host::start_mode(true).await?;
+    let socket = host.home.join("primary.sock");
+    for _ in 0..100 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let client = oqto_runner::client::RunnerClient::new(socket);
+    std::fs::write(host.work.join("checked.txt"), b"old []\r\n")?;
+    let expected = format!("{:x}", Sha256::digest(b"old []\r\n"));
+    let hash = client
+        .write_file_checked(
+            &host.work,
+            Path::new("checked.txt"),
+            b"new []\r\n",
+            &expected,
+        )
+        .await?;
+    assert_eq!(hash, format!("{:x}", Sha256::digest(b"new []\r\n")));
+    let stale = client
+        .write_file_checked(
+            &host.work,
+            Path::new("checked.txt"),
+            b"must not overwrite",
+            &expected,
+        )
+        .await;
+    assert!(stale.unwrap_err().to_string().contains("stale_baseline"));
+    assert_eq!(std::fs::read(host.work.join("checked.txt"))?, b"new []\r\n");
+    assert!(
+        client
+            .write_file_checked(&host.work, Path::new("../escape"), b"no", &hash)
+            .await
+            .is_err()
+    );
+    host.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn actual_cli_https_files_pty_independent_grants_and_revoke() -> Result<()> {
     let host = Host::start().await?;
     let device = host.enroll(&host.qr, 1).await?;

@@ -91,6 +91,7 @@ pub enum RunnerRequest {
 
     /// Write a file to the user's workspace.
     WriteFile(WriteFileRequest),
+    WriteFileChecked(WriteFileCheckedRequest),
 
     /// List contents of a directory.
     ListDirectory(ListDirectoryRequest),
@@ -688,6 +689,15 @@ pub struct WriteFileRequest {
     /// Whether to create parent directories if they don't exist.
     #[serde(default)]
     pub create_parents: bool,
+}
+
+/// Baseline-checked replacement. The caller's user-plane authority selects root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileCheckedRequest {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub content_base64: String,
+    pub expected_sha256: String,
 }
 
 /// Request to list a directory.
@@ -1565,6 +1575,8 @@ pub struct FileContentResponse {
 /// Response when file is written.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileWrittenResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     /// Path that was written.
     pub path: PathBuf,
     /// Bytes written.

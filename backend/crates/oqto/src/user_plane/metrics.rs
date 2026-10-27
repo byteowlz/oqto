@@ -149,6 +149,23 @@ impl UserPlane for MeteredUserPlane {
         .await
     }
 
+    fn checked_file_writes_supported(&self) -> bool {
+        self.inner.checked_file_writes_supported()
+    }
+    async fn write_file_checked(
+        &self,
+        root: &std::path::Path,
+        path: &std::path::Path,
+        content: &[u8],
+        expected: &str,
+    ) -> Result<String> {
+        self.metered(
+            "write_file_checked",
+            self.inner.write_file_checked(root, path, content, expected),
+        )
+        .await
+    }
+
     async fn list_directory(
         &self,
         path: &std::path::Path,

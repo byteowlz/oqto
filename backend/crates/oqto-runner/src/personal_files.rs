@@ -7,7 +7,7 @@ use oqto_personal_wire::actions::{HostAction, MAX_FILE_CHUNK};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    io::{Read, Write},
+    io::Read,
     path::{Component, Path},
 };
 
@@ -205,63 +205,14 @@ pub(crate) fn execute(
             if data.len() > MAX_FILE_CHUNK {
                 return Err(ActionFailure::Invalid);
             }
-            let name = path.file_name().ok_or(ActionFailure::Invalid)?;
-            let parent = dir
-                .open_dir(
-                    path.parent()
-                        .filter(|p| !p.as_os_str().is_empty())
-                        .unwrap_or(Path::new(".")),
-                )
-                .map_err(io_error)?;
-            let destination = Path::new(name);
-            // cap-std directory capabilities may be O_PATH on Linux. Open a
-            // readable directory descriptor relative to that SAME capability
-            // before committing; fsync on O_PATH would falsely make every
-            // successful write an uncertain outcome.
-            let mut sync_options = OpenOptions::new();
-            sync_options
-                .read(true)
-                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
-            let sync_parent = parent.open_with(".", &sync_options).map_err(io_error)?;
-            baseline(&parent, destination, expected_sha256.as_deref())?;
-            let temp = format!(".oqto-write-{}", uuid::Uuid::new_v4());
-            let result = (|| {
-                let mut options = OpenOptions::new();
-                options.write(true).create_new(true).mode(0o600);
-                let mut file = parent.open_with(&temp, &options).map_err(io_error)?;
-                if expected_sha256.is_some() {
-                    let permissions = parent
-                        .symlink_metadata(destination)
-                        .map_err(io_error)?
-                        .permissions();
-                    file.set_permissions(permissions).map_err(io_error)?;
-                }
-                file.write_all(&data).map_err(io_error)?;
-                file.sync_all().map_err(io_error)?;
-                baseline(&parent, destination, expected_sha256.as_deref())?;
-                if expected_sha256.is_none() {
-                    // Atomic no-clobber creation, including native writers racing admission.
-                    parent
-                        .hard_link(&temp, &parent, destination)
-                        .map_err(|error| {
-                            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                                ActionFailure::StaleBaseline
-                            } else {
-                                io_error(error)
-                            }
-                        })?;
-                } else {
-                    parent
-                        .rename(&temp, &parent, destination)
-                        .map_err(io_error)?;
-                }
-                sync_parent
-                    .sync_all()
-                    .map_err(|_| ActionFailure::OutcomeUnknown)?;
-                Ok(json!({"written":data.len(),"sha256":digest(&data)}))
-            })();
-            let _ = parent.remove_file(&temp);
-            result
+            let hash = crate::checked_file::replace(&dir, path, &data, expected_sha256.as_deref())
+                .map_err(|e| match e {
+                    crate::checked_file::Failure::Invalid => ActionFailure::Invalid,
+                    crate::checked_file::Failure::Conflict => ActionFailure::StaleBaseline,
+                    crate::checked_file::Failure::Unknown => ActionFailure::OutcomeUnknown,
+                    crate::checked_file::Failure::Io(e) => io_error(e),
+                })?;
+            Ok(json!({"written":data.len(),"sha256":hash}))
         }
         _ => Err(ActionFailure::Invalid),
     }

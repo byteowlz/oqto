@@ -76,6 +76,7 @@ impl ConnectionAccess {
             request,
             RunnerRequest::ReadFile(_)
                 | RunnerRequest::WriteFile(_)
+                | RunnerRequest::WriteFileChecked(_)
                 | RunnerRequest::ListDirectory(_)
                 | RunnerRequest::Stat(_)
                 | RunnerRequest::DeletePath(_)
@@ -1288,6 +1289,41 @@ impl Runner {
         }
     }
 
+    async fn write_file_checked(
+        &self,
+        req: crate::protocol::WriteFileCheckedRequest,
+    ) -> RunnerResponse {
+        use base64::Engine;
+        if !req.root.is_absolute() {
+            return error_response(ErrorCode::InvalidRequest, "invalid_file_root");
+        }
+        let result = tokio::task::spawn_blocking(move || {
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(&req.content_base64)
+                .map_err(|_| crate::checked_file::Failure::Invalid)?;
+            let dir = cap_std::fs::Dir::open_ambient_dir(&req.root, cap_std::ambient_authority())
+                .map_err(crate::checked_file::Failure::Io)?;
+            let hash =
+                crate::checked_file::replace(&dir, &req.path, &data, Some(&req.expected_sha256))?;
+            Ok::<_, crate::checked_file::Failure>((req.root.join(req.path), data.len(), hash))
+        })
+        .await;
+        match result {
+            Ok(Ok((path, len, hash))) => RunnerResponse::FileWritten(FileWrittenResponse {
+                path,
+                bytes_written: len as u64,
+                sha256: Some(hash),
+            }),
+            Ok(Err(crate::checked_file::Failure::Conflict)) => {
+                error_response(ErrorCode::InvalidRequest, "stale_baseline")
+            }
+            Ok(Err(crate::checked_file::Failure::Unknown)) | Err(_) => {
+                error_response(ErrorCode::IoError, "file_write_outcome_unknown")
+            }
+            Ok(Err(_)) => error_response(ErrorCode::PermissionDenied, "file_write_refused"),
+        }
+    }
+
     async fn write_file(&self, req: WriteFileRequest) -> RunnerResponse {
         use base64::Engine;
 
@@ -1317,6 +1353,7 @@ impl Runner {
 
         match tokio::fs::write(path, &content).await {
             Ok(()) => RunnerResponse::FileWritten(FileWrittenResponse {
+                sha256: None,
                 path: path.clone(),
                 bytes_written: content.len() as u64,
             }),

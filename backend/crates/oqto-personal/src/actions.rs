@@ -71,6 +71,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::FileRemove { root_id, .. }
         | HostAction::DirectoryCreate { root_id, .. } => Access::FileWrite(root_id),
         HostAction::TerminalsList
+        | HostAction::SessionTerminalOpen { .. }
         | HostAction::TerminalOpen { .. }
         | HostAction::TerminalRead { .. }
         | HostAction::TerminalWrite { .. }

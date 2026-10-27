@@ -534,7 +534,38 @@ impl RunnerClient {
         }
     }
 
-    /// Write a file to the user's workspace.
+    /// Explicit checked replacement. One attempt, no recovery or write replay.
+    pub async fn write_file_checked(
+        &self,
+        root: &std::path::Path,
+        path: &std::path::Path,
+        content: &[u8],
+        expected: &str,
+    ) -> Result<String> {
+        use base64::Engine;
+        let response = self
+            .request_once(&RunnerRequest::WriteFileChecked(WriteFileCheckedRequest {
+                root: root.into(),
+                path: path.into(),
+                content_base64: base64::engine::general_purpose::STANDARD.encode(content),
+                expected_sha256: expected.into(),
+            }))
+            .await?;
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(content));
+        match response {
+            RunnerResponse::FileWritten(value)
+                if value.bytes_written == content.len() as u64
+                    && value.path == root.join(path)
+                    && value.sha256.as_deref() == Some(hash.as_str()) =>
+            {
+                Ok(hash)
+            }
+            RunnerResponse::Error(error) => anyhow::bail!(error.message),
+            _ => anyhow::bail!("invalid checked-write receipt"),
+        }
+    }
+
     pub async fn write_file(
         &self,
         path: impl Into<PathBuf>,

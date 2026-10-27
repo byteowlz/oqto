@@ -36,6 +36,18 @@ pub trait UserPlane: Send + Sync {
 
     /// Write a file to the user's workspace.
     async fn write_file(&self, path: &Path, content: &[u8], create_parents: bool) -> Result<()>;
+    fn checked_file_writes_supported(&self) -> bool {
+        false
+    }
+    async fn write_file_checked(
+        &self,
+        _root: &Path,
+        _path: &Path,
+        _content: &[u8],
+        _expected: &str,
+    ) -> Result<String> {
+        anyhow::bail!("conditional_file_write_unsupported")
+    }
 
     /// List contents of a directory.
     async fn list_directory(&self, path: &Path, include_hidden: bool) -> Result<Vec<DirEntry>>;

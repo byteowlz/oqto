@@ -134,6 +134,22 @@ impl UserPlane for RunnerUserPlane {
         Ok(())
     }
 
+    fn checked_file_writes_supported(&self) -> bool {
+        true
+    }
+    async fn write_file_checked(
+        &self,
+        root: &Path,
+        path: &Path,
+        content: &[u8],
+        expected: &str,
+    ) -> Result<String> {
+        // No readiness recovery, alternate plane or unconditional-write fallback.
+        self.client
+            .write_file_checked(root, path, content, expected)
+            .await
+    }
+
     async fn list_directory(&self, path: &Path, include_hidden: bool) -> Result<Vec<DirEntry>> {
         self.client
             .ensure_ready_with_recovery()
@@ -470,6 +486,7 @@ mod tests {
                             .map(|v| v.len() as u64)
                             .unwrap_or(0);
                         RunnerResponse::FileWritten(FileWrittenResponse {
+                            sha256: None,
                             path,
                             bytes_written,
                         })

@@ -47,6 +47,9 @@ impl Fixture {
         Self::start_with_inventory(0, false).await
     }
     async fn start_with_inventory(shards: usize, broken: bool) -> Result<Self> {
+        Self::start_with_options(shards, broken, false).await
+    }
+    async fn start_with_options(shards: usize, broken: bool, terminal: bool) -> Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix("oqsplit-")
             .tempdir_in("/tmp")?;
@@ -203,7 +206,7 @@ impl Fixture {
         )?;
         std::fs::set_permissions(&sentinel, std::fs::Permissions::from_mode(0o700))?;
         let config = root.join("config.toml");
-        let config_bytes = format!("[local]\nsingle_user=true\nterminal_enabled=false\nworkspace_dir={}\n[runner]\nrunner_id=\"split-fixture\"\n[pi]\nexecutable={}\n[unknown_future]\npreserve=\"opaque synthetic value\"\n", serde_json::to_string(&work)?, serde_json::to_string(&sentinel)?).into_bytes();
+        let config_bytes = format!("[local]\nsingle_user=true\nterminal_enabled={terminal}\nworkspace_dir={}\n[runner]\nrunner_id=\"split-fixture\"\n[pi]\nexecutable={}\n[unknown_future]\npreserve=\"opaque synthetic value\"\n", serde_json::to_string(&work)?, serde_json::to_string(&sentinel)?).into_bytes();
         std::fs::write(&config, &config_bytes)?;
         std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))?;
         let identity = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
@@ -934,6 +937,106 @@ async fn synthetic_3821_header_discovery_yields_to_queued_native_head() -> Resul
 
 #[path = "split_source/large_history.rs"]
 mod large_history;
+
+#[tokio::test]
+async fn session_terminal_uses_authoritative_cwd_reuses_owned_pty_and_requires_both_grants()
+-> Result<()> {
+    let fixture = Fixture::start_with_options(0, false, true).await?;
+    fixture.primary().await?;
+    let host = &fixture.host;
+    let limited = host.enroll(&host.qr, 101).await?;
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(NATIVE);
+    let open = HostAction::SessionTerminalOpen {
+        session_id: public.clone(),
+        rows: 24,
+        cols: 80,
+    };
+    assert_eq!(host.action(&limited, 101, open.clone()).await?.0, 403);
+    let ticket = host
+        .owner(&[
+            "pair",
+            "--sessions",
+            "observe",
+            "--full-user-terminal",
+            "--output",
+            "json",
+        ])
+        .await?;
+    let ticket = PairingQr::parse(&serde_json::to_vec(&ticket)?, now()?)?;
+    let device = host.enroll(&ticket, 102).await?;
+    let (status, reply) = host.action(&device, 102, open.clone()).await?;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["session_id"], public);
+    let id = reply["terminal_id"]
+        .as_str()
+        .context("terminal identity")?
+        .to_owned();
+    let (status, reused) = host.action(&device, 102, open).await?;
+    assert_eq!(status, 200);
+    assert_eq!(reused["terminal_id"], id);
+    assert_eq!(reused["reattached"], true);
+    assert_eq!(
+        host.action(
+            &limited,
+            101,
+            HostAction::TerminalWrite {
+                terminal_id: id.clone(),
+                data_base64: STANDARD.encode(b"not sent")
+            }
+        )
+        .await?
+        .0,
+        403
+    );
+    assert_eq!(
+        host.action(
+            &device,
+            102,
+            HostAction::TerminalWrite {
+                terminal_id: id.clone(),
+                data_base64: STANDARD.encode(b"printf '\\nSYNTHETIC_CWD='; pwd\r")
+            }
+        )
+        .await?
+        .0,
+        200
+    );
+    let mut output = Vec::new();
+    let mut after = 0;
+    for _ in 0..100 {
+        let (status, page) = host
+            .action(
+                &device,
+                102,
+                HostAction::TerminalRead {
+                    terminal_id: id.clone(),
+                    after,
+                },
+            )
+            .await?;
+        assert_eq!(status, 200);
+        output.extend(STANDARD.decode(page["data_base64"].as_str().context("terminal output")?)?);
+        after = page["next"].as_u64().context("cursor")?;
+        if String::from_utf8_lossy(&output)
+            .contains(&format!("SYNTHETIC_CWD={}", host.work.display()))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        String::from_utf8_lossy(&output)
+            .contains(&format!("SYNTHETIC_CWD={}", host.work.display()))
+    );
+    assert_eq!(
+        host.action(&device, 102, HostAction::TerminalClose { terminal_id: id })
+            .await?
+            .0,
+        200
+    );
+    fixture.host.stop().await?;
+    Ok(())
+}
 
 #[tokio::test]
 async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_zero_pi_exec()
