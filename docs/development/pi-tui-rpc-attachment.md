@@ -17,6 +17,7 @@ The external terminal continues to own Pi. Unmanaged external Pi remains unverif
 - Same-UID socket ownership does not prove a process is confined or defend against a malicious same-Principal actor. These checks fence routing/identity, not process containment. Native macOS and actual foreign-UID kernel behavior remain separate platform qualification; synthetic tests do not establish those results.
 - Authority revalidation occurs before admission and delivery, and during a silent observation. Revocation, malformed/oversized frames, pending-event overflow, EOF, timeout and session switch poison the attachment. Cancellation takes ownership of the socket into the read future, so dropping that future closes the socket instead of leaving a partial frame reusable.
 - Directory scans, candidates, frames, pending events, per-probe and total discovery have explicit bounds. There are no hidden reader/reconnect/relaunch paths. Active control has a bounded idle revocation watchdog that closes only the attachment, never the terminal-owned Pi.
+- A socket root is a shared temporary directory, so the scan bound counts what it examines, never unrelated files: unrelated entries never fail discovery or consume a candidate slot, `pi-tui-rpc` names whose PID is gone are skipped before probing, and live candidates are probed with bounded concurrency inside the discovery deadline. A crowded root with tens of thousands of entries must still find the matching Pi, so the outcome cannot depend on directory order.
 
 ## History and event authority
 
