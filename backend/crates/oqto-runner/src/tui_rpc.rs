@@ -165,6 +165,8 @@ impl NativeState {
 /// Dropping this handle only closes OUR socket. The terminal owns Pi's lifecycle.
 /// Any read error poisons/closes the attachment: reconnect requires a fresh host
 /// binding and canonical snapshot; there is no transparent gap-hiding reconnect.
+/// The one exception is `snapshot_state_reconnecting`: a snapshot-only, lease-free
+/// attachment has no stream to hide a gap in and re-runs full admission instead.
 pub struct TuiObserver {
     authority: Arc<dyn ObservationAuthority>,
     binding: ObservationBinding,
@@ -525,6 +527,33 @@ impl TuiObserver {
                 Err(error)
             }
         }
+    }
+    /// `snapshot_state` for a snapshot-only, lease-free attachment that survives
+    /// pi-tui-rpc dropping its socket. pi disconnects every client when one frame
+    /// exceeds its backlog cap; treating that as fatal made every phone attachment
+    /// reattach once per turn. A snapshot has no event stream that a reconnect
+    /// could hide a gap in (chat content comes from oqto-log), so re-run the full
+    /// admission discovery for the same binding, once, and read again. Authority
+    /// and identity are revalidated exactly as for a new attachment. An attachment
+    /// holding an input lease never reconnects: control is not silently reacquired.
+    pub async fn snapshot_state_reconnecting(&mut self) -> Result<ObservedState> {
+        let first = match self.snapshot_state().await {
+            Ok(state) => return Ok(state),
+            Err(error) => error,
+        };
+        if !self.snapshot_only || self.input_lease.is_some() {
+            return Err(first);
+        }
+        let fresh = tokio::time::timeout(
+            DISCOVERY_DEADLINE,
+            Self::discover(self.authority.clone(), self.binding.clone(), true),
+        )
+        .await
+        .context("TUI rediscovery deadline exceeded")
+        .and_then(|result| result)
+        .map_err(|error| error.context(format!("Native read failed: {first:#}")))?;
+        *self = fresh;
+        self.snapshot_state().await
     }
     pub fn input_held(&self) -> bool {
         self.input_lease

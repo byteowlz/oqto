@@ -703,3 +703,73 @@ fn preview_keeps_the_tail_of_a_very_long_reply_on_a_char_boundary() {
         .is_none()
     );
 }
+
+/// pi-tui-rpc disconnects every client when one frame exceeds its backlog cap
+/// (for example a turn_end that carried the whole conversation). Serve one
+/// connection that is dropped after its first answer, then healthy ones.
+fn listen_dropping_first(fixture: &mut Fixture) -> Result<()> {
+    let root = &fixture.authority.binding.socket_root;
+    let pid = std::process::id();
+    let path = root.join(format!("pi-tui-rpc-{pid}.sock"));
+    let listener = UnixListener::bind(&path)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let connected = fixture.connected.clone();
+    let state = fixture.native_state();
+    fixture.tasks.push(tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else { break; };
+            let first = connected.fetch_add(1, Ordering::SeqCst) == 0;
+            let state = state.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                let hello = json!({"type":"hello","v":1,"pid":pid,"lease":"tui","commands":["get_state"]});
+                let _ = send(&mut reader, &hello).await;
+                while let Ok(command) = read_frame(&mut reader).await {
+                    let reply = json!({"type":"response","id":command["id"],"command":"get_state","success":true,"data":state});
+                    let _ = send(&mut reader, &reply).await;
+                    if first {
+                        return; // Dropped like an over-cap pi-tui-rpc client.
+                    }
+                }
+            });
+        }
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn lease_free_snapshot_read_reconnects_once_after_native_drop() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    listen_dropping_first(&mut fixture)?;
+    let mut observer =
+        TuiObserver::attach_snapshots(fixture.authority.clone(), "alice", "public-id").await?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let state = observer.snapshot_state_reconnecting().await?;
+    assert!(state.streaming);
+    assert_eq!(
+        fixture.connected.load(Ordering::SeqCst),
+        2,
+        "exactly one fresh admission"
+    );
+    // The replacement connection keeps serving ordinary reads.
+    observer.snapshot_state_reconnecting().await?;
+    assert_eq!(fixture.connected.load(Ordering::SeqCst), 2);
+    fixture.unchanged()
+}
+
+#[tokio::test]
+async fn revoked_authority_is_not_hidden_by_a_snapshot_reconnect() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    listen_dropping_first(&mut fixture)?;
+    let mut observer =
+        TuiObserver::attach_snapshots(fixture.authority.clone(), "alice", "public-id").await?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    fixture.authority.active.store(false, Ordering::SeqCst);
+    assert!(observer.snapshot_state_reconnecting().await.is_err());
+    assert_eq!(
+        fixture.connected.load(Ordering::SeqCst),
+        1,
+        "no admission after revocation"
+    );
+    fixture.unchanged()
+}
