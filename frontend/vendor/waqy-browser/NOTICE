@@ -1,0 +1,36 @@
+waqy
+Copyright 2026 byteowlz
+
+This product includes software and model assets developed by third parties:
+
+1. Google speech_embedding (Apache License 2.0)
+   The speech-embedding front end (embedding_model.onnx) is the openWakeWord
+   re-implementation of Google's speech_embedding model, proven layer by layer
+   against the Apache-2.0 TF Hub release (google/speech_embedding/1) with batch
+   norm folded into the convolutions.
+   https://tfhub.dev/google/speech_embedding/1
+
+2. openWakeWord (Apache License 2.0 code; mel spectrogram front end reproduced here)
+   The mel front end (melspectrogram_raw.onnx) is generated from formulas in
+   training/provenance/build_mel_onnx.py (periodic Hann 400 in a 512-point DFT,
+   hop 160, Slaney mel 32 bands 60-3800 Hz, 10*log10) and matches
+   openWakeWord v0.5.1's melspectrogram.onnx within 1.5e-5 dB. No openWakeWord
+   code is vendored.
+   https://github.com/dscripka/openWakeWord
+
+3. livekit-wakeword (Apache License 2.0)
+   Training utilities and the streaming layout follow livekit/livekit-wakeword,
+   pinned at commit cdb82b8ebc179b216e1c5bf360dbdc1ccd5288f2 and used as a
+   Python dependency of the training pipeline only. Its shipped default data
+   (ACAV100M features, CC BY-NC-SA 4.0) is deliberately NOT used.
+
+4. Qwen3-TTS VoiceDesign (Apache License 2.0)
+   Synthetic training speech was generated with Qwen3-TTS VoiceDesign
+   (Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign, GGUF conversion) through spqx.
+   Voices are fictional and described in text; no reference recording of a real
+   person is used. Generated audio is training data, not redistributed.
+
+Training audio and negatives come from MUSAN (public domain / Creative Commons
+without NC), VoxPopuli (CC0), FLEURS (CC BY 4.0), Thorsten-Voice (CC0) and
+procedurally generated noise. Owner recordings are used only with explicit
+consent and are not distributed.

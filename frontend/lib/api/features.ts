@@ -29,6 +29,13 @@ export type VoiceFeatureConfig = {
 	interrupt_word_count: number;
 	interrupt_backoff_ms: number;
 	visualizer_voices: Record<string, VisualizerVoiceConfig>;
+	/** Wake-phrase release; null/absent means the operator configured none. */
+	wake?: WakeFeatureConfig | null;
+};
+
+export type WakeFeatureConfig = {
+	manifest_url: string;
+	files_url: string;
 };
 
 export type SessionAutoAttachMode = "off" | "attach" | "resume";

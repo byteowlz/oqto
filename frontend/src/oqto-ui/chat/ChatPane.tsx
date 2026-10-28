@@ -24,6 +24,7 @@ import {
 	appendCompletedDraft,
 	readChatDraft,
 	useDictation,
+	useVoiceFeatures,
 	writeChatDraft,
 } from "../platform/composer-dictation";
 import type {
@@ -213,11 +214,12 @@ function ScopedChatPane({
 		setStreaming(true);
 		updatePrompt("");
 	};
+	const voiceConfig = useVoiceFeatures(true);
 	const dictation = useDictation({
 		scopeKey,
-		// This host-neutral platform has no voice configuration capability.
-		// Local recognition works independently; remote is explicitly unavailable.
-		config: null,
+		// Same capability document as the legacy UI; local recognition needs no server.
+		config: voiceConfig,
+		wakeRelease: voiceConfig?.wake ?? null,
 		autoSendOnFinal: false,
 		onTranscript: (text) => {
 			if (!currentRef.current) return;

@@ -230,6 +230,9 @@ fn create_router_with_config_and_auth(
         // Voice mode WebSocket proxies
         .route("/voice/stt", get(proxy::proxy_voice_stt_ws))
         .route("/voice/tts", get(proxy::proxy_voice_tts_ws))
+        // Wake-phrase release (verified on every request; oqto-623a)
+        .route("/voice/wake/manifest", get(handlers::wake_manifest))
+        .route("/voice/wake/files/{key}", get(handlers::wake_file))
         .route("/browser/start", post(handlers::start_browser))
         .route("/browser/action", post(handlers::browser_action))
         .route(

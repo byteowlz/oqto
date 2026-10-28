@@ -52,7 +52,7 @@ function Fixture() {
 				? "Model download failed. Check your connection and retry."
 				: null,
 		dismissError: () => setState("idle"),
-		recognition: { provider: "moonshine", language: "en" },
+		recognition: { provider: "moonshine", language: "en", wakeEnabled: false, wakePhrase: "hey_oqto" },
 		remoteAvailable: false,
 		setRecognitionProvider: noop,
 		setRecognitionLanguage: noop,
@@ -61,6 +61,9 @@ function Fixture() {
 		start: async () => setState("download"),
 		stop: () => setState("finishing"),
 		cancel: () => setState("idle"),
+		wakeState: "off",
+		setWakePhrase: noop,
+		setWakePlayback: noop,
 	};
 	return (
 		<main

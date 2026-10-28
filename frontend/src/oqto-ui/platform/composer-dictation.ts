@@ -6,6 +6,7 @@ export {
 	DictationStatus,
 } from "@/components/voice/ComposerDictation";
 export { useDictation } from "@/features/voice/hooks/useDictation";
+export { useVoiceFeatures } from "@/features/voice/hooks/useVoiceFeatures";
 export { appendCompletedDraft, writeChatDraft } from "@/lib/chat-draft-storage";
 
 export function readChatDraft(key: string): string {

@@ -336,7 +336,7 @@ describe("dictation surface", () => {
 		const language = vi.fn();
 		render(
 			<RecognitionControls
-				recognition={{ provider: "moonshine", language: "en" }}
+				recognition={{ provider: "moonshine", language: "en", wakeEnabled: false, wakePhrase: "hey_oqto" }}
 				remoteAvailable={false}
 				onProviderChange={vi.fn()}
 				onLanguageChange={language}

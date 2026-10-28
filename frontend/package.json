@@ -7,8 +7,8 @@
 		"sync:visual-runtime-assets": "node scripts/sync-visual-runtime-assets.mjs",
 		"sync:ears-browser-sdk": "bun scripts/sync-ears-browser-sdk.mjs",
 		"sync:speech-runtime-assets": "bun scripts/sync-speech-runtime-assets.mjs",
-		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite",
-		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && vite build",
+		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && vite",
+		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && vite build",
 		"preview": "vite preview",
 		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail && bun run typecheck:oqto-ui && bun run lint:oqto-ui-guardrails",
 		"lint:useeffect-guardrail": "bun scripts/check-useeffect-guardrail.mjs",
@@ -19,7 +19,9 @@
 		"tauri:build": "bunx tauri build",
 		"test": "mkdir -p .tmp && TMPDIR=$PWD/.tmp vitest --maxWorkers=1",
 		"test:run": "mkdir -p .tmp && TMPDIR=$PWD/.tmp vitest run --maxWorkers=1",
-		"format:generated-types": "bunx biome format --write src/generated"
+		"format:generated-types": "bunx biome format --write src/generated",
+		"sync:wake-assets": "bun scripts/sync-wake-assets.mjs",
+		"sync:wake-browser": "bun scripts/sync-wake-browser.mjs"
 	},
 	"dependencies": {
 		"@byteowlz/ears-browser": "file:vendor/ears-browser",
@@ -78,6 +80,7 @@
 		"mermaid": "^11.12.0",
 		"morphdom": "^2.7.7",
 		"next-themes": "^0.4.6",
+		"onnxruntime-web": "1.23.2",
 		"pixi.js": "^8.19.0",
 		"qrcode": "^1.5.4",
 		"react": "^19.0.0",
@@ -117,5 +120,7 @@
 		"vite": "^5.4.10",
 		"vitest": "^3.2.4"
 	},
-	"trustedDependencies": ["@byteowlz/oqto-app-sdk"]
+	"trustedDependencies": [
+		"@byteowlz/oqto-app-sdk"
+	]
 }

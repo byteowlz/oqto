@@ -63,6 +63,9 @@ pub struct VoiceState {
     pub interrupt_backoff_ms: u32,
     /// Per-visualizer voice/speed settings.
     pub visualizer_voices: std::collections::HashMap<String, VisualizerVoiceState>,
+    /// Verified waqy release folder, if the operator configured one. Browsers
+    /// opt in; a detection is evidence only (oqto-623a).
+    pub wake_release: Option<std::path::PathBuf>,
 }
 
 /// Per-visualizer voice settings.
@@ -105,6 +108,7 @@ impl Default for VoiceState {
             ]
             .into_iter()
             .collect(),
+            wake_release: None,
         }
     }
 }
