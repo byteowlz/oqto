@@ -938,7 +938,7 @@
 			"answers": "Antworten",
 			"answersHint": "Was der Agent gesagt hat, Arbeitsschritte eingeklappt",
 			"summary": "Zusammenfassung",
-			"summaryHint": "Antworten plus eine Zeile pro Schritt",
+			"summaryHint": "Antworten plus eingeklappte Schritte, eine Zeile \"N Schritte\" zum Aufklappen",
 			"everything": "Alles",
 			"everythingHint": "Jeder Tool-Aufruf und Gedanke, ausgeklappt"
 		},

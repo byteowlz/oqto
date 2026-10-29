@@ -32,14 +32,14 @@ describe("chat detail", () => {
 				.map((option) => option.closest("label")?.textContent),
 		).toEqual([
 			"AnswersWhat the agent said, with its work folded away",
-			"SummaryAnswers plus a line per step it took",
+			'SummaryAnswers plus folded steps, one "N steps" line you can open',
 			"EverythingEvery tool call and thought, expanded",
 		]);
 	});
 
-	it("starts at everything, the setting the renderer defaults to", () => {
+	it("starts at Summary: collapsed activity, like Desktop and Mobile", () => {
 		render(<ChatDetail />);
-		expect(screen.getByRole("radio", { name: /^Everything/ })).toBeChecked();
+		expect(screen.getByRole("radio", { name: /^Summary/ })).toBeChecked();
 	});
 
 	it("writes the host-wide setting the shared renderer reads", () => {

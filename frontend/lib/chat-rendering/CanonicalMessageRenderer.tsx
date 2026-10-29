@@ -128,6 +128,50 @@ type Segment =
 /** Gutter icon for collapsed tool calls in minimal mode (verbosity=1).
  *  Shows a single collapsed icon; click opens a popover listing each tool + summary. */
 /**
+ * A run of tool calls in the default detail level: one quiet "N steps" line,
+ * expandable to the rows. Matches the Desktop/Mobile collapse: the reader sees
+ * what happened without every call in the flow, and nothing becomes unreachable.
+ * Presentation only; parts, ids and copy are untouched.
+ */
+function CollapsedToolGroup({
+	steps,
+	children,
+}: {
+	steps: Array<
+		| Extract<Segment, { type: "tool_call" }>
+		| Extract<Segment, { type: "tool_result_only" }>
+	>;
+	children: React.ReactNode;
+}) {
+	const { t } = useTranslation();
+	const shown = steps.slice(0, 3);
+	return (
+		<details className="chat-activity chat-activity--collapsed">
+			<summary>
+				<span className="chat-activity__icons">
+					{shown.map((step, index) => (
+						<span key={`${step.key}-${index}`}>
+							{getToolIcon(
+								step.type === "tool_call"
+									? step.part.name
+									: step.part.name || "result",
+								step.type === "tool_call"
+									? (step.part.input as Record<string, unknown> | undefined)
+									: undefined,
+							)}
+						</span>
+					))}
+				</span>
+				<span className="chat-activity__count">
+					{t("chat.activitySteps", { count: steps.length })}
+				</span>
+			</summary>
+			{children}
+		</details>
+	);
+}
+
+/**
  * Everything the agent did, condensed to one quiet line.
  *
  * This is what the lowest detail level shows in place of thinking blocks and
@@ -1123,11 +1167,13 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 								key={segment.key}
 								className={needsTopMargin ? "mt-2" : undefined}
 							>
-								<ToolCallGroup
-									key={`${segment.key}-verbosity-${verbosity}`}
-									mode="tabs"
-									items={toolItems}
-								/>
+								<CollapsedToolGroup steps={visibleToolSegments}>
+									<ToolCallGroup
+										key={`${segment.key}-verbosity-${verbosity}`}
+										mode="tabs"
+										items={toolItems}
+									/>
+								</CollapsedToolGroup>
 							</div>
 						);
 					}

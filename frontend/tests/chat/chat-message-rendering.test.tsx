@@ -185,6 +185,50 @@ describe("chat message rendering", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("collapses a run of tool calls by default, expandable to every step", () => {
+		// No stored level: the default must be the collapsed Summary, like Desktop/Mobile.
+		stored = {};
+		const RUN = group("assistant", [
+			{ type: "text", text: "Ich prüfe beide Dateien." },
+			{
+				type: "tool_call",
+				toolCallId: "call-1",
+				name: "read",
+				input: { filePath: "a.yaml" },
+				status: "completed",
+			},
+			{
+				type: "tool_call",
+				toolCallId: "call-2",
+				name: "grep",
+				input: { pattern: "fuse" },
+				status: "completed",
+			},
+			{ type: "text", text: "Beide Dateien passen zusammen." },
+		] as unknown as MessageGroup["messages"][number]["parts"]);
+		const { container } = render(
+			<MessageGroupCard group={RUN} messageId="assistant-run" />,
+		);
+		const details = container.querySelector("details.chat-activity--collapsed");
+		expect(details).not.toBeNull();
+		expect(details?.querySelector("summary")?.textContent).toMatch(/2 steps?/);
+		expect(details?.hasAttribute("open")).toBe(false);
+		// Expanding reaches the individual calls.
+		const rows = details?.querySelectorAll("[role='tab'], button");
+		expect((rows?.length ?? 0) > 0).toBe(true);
+		// The answer itself is never folded away.
+		expect(screen.getByText(/Beide Dateien passen zusammen/)).toBeInTheDocument();
+	});
+
+	it("keeps a single call as a plain row, like Desktop and Mobile", () => {
+		stored = {};
+		const { container } = render(
+			<MessageGroupCard group={ANSWER} messageId="assistant-1" />,
+		);
+		expect(container.querySelector("details.chat-activity--collapsed")).toBeNull();
+		expect(container.querySelector("[data-part='tool_call']") ?? container.textContent).toBeTruthy();
+	});
+
 	it("shows every step at the highest detail level", () => {
 		stored["oqto:chatVerbosity"] = "3";
 		const { container } = render(
