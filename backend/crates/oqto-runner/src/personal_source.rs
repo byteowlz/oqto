@@ -356,7 +356,16 @@ impl PersonalSource {
     /// when its file path, inode, native ID, Workspace and session-root path and
     /// inode all equal today's source; anything else is left for the owner to
     /// inspect. `apply` false reports without writing.
-    pub(crate) async fn repair_pins(&self, apply: bool) -> Result<PinRepair> {
+    ///
+    /// `accept_replaced` (explicit owner choice) also re-pins a file that was
+    /// replaced in place: same path, native ID in its header, Workspace and session
+    /// root, but a new inode, as after a restore or copy. Counted as `replaced`
+    /// either way so the owner sees what they would accept.
+    pub(crate) async fn repair_pins(
+        &self,
+        apply: bool,
+        accept_replaced: bool,
+    ) -> Result<PinRepair> {
         let mut report = PinRepair::default();
         let mut pins: std::collections::HashMap<
             String,
@@ -388,17 +397,21 @@ impl PersonalSource {
                     report.unrecognized += 1;
                     continue;
                 };
-                let same_source = old.file == now.file
-                    && old.ino == now.ino
+                let same_place = old.file == now.file
                     && old.native_id == now.native_id
                     && old.workspace == now.workspace
                     && old.root.path == now.root.path
                     && old.root.ino == now.root.ino;
-                if !same_source {
+                if !same_place {
                     report.mismatched += 1;
                     continue;
                 }
-                if !apply {
+                if old.ino != now.ino {
+                    report.replaced += 1;
+                    if !(apply && accept_replaced) {
+                        continue;
+                    }
+                } else if !apply {
                     report.upgradable += 1;
                     continue;
                 }
@@ -430,6 +443,8 @@ pub struct PinRepair {
     pub upgradable: usize,
     pub upgraded: usize,
     pub mismatched: usize,
+    /// Same path, native ID, Workspace and session root, new inode.
+    pub replaced: usize,
     pub unrecognized: usize,
     pub changed_concurrently: usize,
 }

@@ -304,10 +304,16 @@ async fn remounted_pins_are_accepted_today_and_repaired_only_for_the_same_source
         );
         sessions.push((public, header));
     }
-    let dry = source.repair_pins(false).await?;
+    let dry = source.repair_pins(false, false).await?;
     assert_eq!(
-        (dry.examined, dry.upgradable, dry.mismatched, dry.upgraded),
-        (2, 1, 1, 0)
+        (
+            dry.examined,
+            dry.upgradable,
+            dry.replaced,
+            dry.mismatched,
+            dry.upgraded
+        ),
+        (2, 1, 1, 0, 0)
     );
     // The dry run wrote nothing.
     let (public, header) = &sessions[0];
@@ -322,10 +328,15 @@ async fn remounted_pins_are_accepted_today_and_repaired_only_for_the_same_source
         .await
         .is_err()
     );
-    let applied = source.repair_pins(true).await?;
+    let applied = source.repair_pins(true, false).await?;
     assert_eq!(
-        (applied.upgraded, applied.mismatched, applied.unrecognized),
-        (1, 1, 0)
+        (
+            applied.upgraded,
+            applied.replaced,
+            applied.mismatched,
+            applied.unrecognized
+        ),
+        (1, 1, 0, 0)
     );
     validate(
         &source.home,
@@ -347,7 +358,28 @@ async fn remounted_pins_are_accepted_today_and_repaired_only_for_the_same_source
         .await
         .is_err()
     );
-    let again = source.repair_pins(true).await?;
-    assert_eq!((again.current, again.upgraded, again.mismatched), (1, 0, 1));
+    // Without the owner's explicit acceptance a replaced file stays refused.
+    let again = source.repair_pins(true, false).await?;
+    assert_eq!((again.current, again.upgraded, again.replaced), (1, 0, 1));
+    // Owner-accepted: same path, native ID, Workspace and session root, new inode
+    // (a restore or copy rewrote the file). The header still names the same Session.
+    let accepted = source.repair_pins(true, true).await?;
+    assert_eq!(
+        (accepted.upgraded, accepted.replaced, accepted.mismatched),
+        (1, 1, 0)
+    );
+    validate(
+        &source.home,
+        public,
+        &header.external_id,
+        ws,
+        &header.accepted_pins(),
+    )
+    .await?;
+    let settled = source.repair_pins(true, true).await?;
+    assert_eq!(
+        (settled.current, settled.upgraded, settled.replaced),
+        (2, 0, 0)
+    );
     Ok(())
 }

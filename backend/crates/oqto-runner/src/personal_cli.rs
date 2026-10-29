@@ -127,6 +127,10 @@ pub enum OwnerCli {
         home: PathBuf,
         #[arg(long)]
         apply: bool,
+        /// Also re-pin Session files replaced in place (same path, native ID,
+        /// Workspace and session root, new inode), as after a restore or copy.
+        #[arg(long)]
+        accept_replaced: bool,
     },
 }
 pub fn state_path(selected: Option<&PathBuf>) -> Result<PathBuf> {
@@ -183,16 +187,23 @@ fn human_expiry(expires: i64, now: i64) -> Result<String> {
 }
 
 pub async fn owner(command: OwnerCli) -> Result<()> {
-    if let OwnerCli::RepairNativePins { home, apply } = command {
+    if let OwnerCli::RepairNativePins {
+        home,
+        apply,
+        accept_replaced,
+    } = command
+    {
         let home = home
             .canonicalize()
             .context("Runner service HOME unavailable")?;
         let source = crate::personal_source::binding::load(&home)?
             .context("No native-source binding in this HOME")?;
-        let report = source.repair_pins(apply).await?;
+        let report = source.repair_pins(apply, accept_replaced).await?;
         println!(
             "{}",
-            serde_json::to_string(&serde_json::json!({"applied": apply, "report": report}))?
+            serde_json::to_string(
+                &serde_json::json!({"applied": apply, "accept_replaced": accept_replaced, "report": report})
+            )?
         );
         return Ok(());
     }
