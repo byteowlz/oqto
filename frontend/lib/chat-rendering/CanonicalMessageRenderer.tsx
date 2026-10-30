@@ -19,6 +19,7 @@ import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
 import type { StreamingPresentationMode } from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
+import { OpenUIPart, readOpenUIPart } from "@/src/oqto-ui/chat/OpenUIPart";
 import {
 	Check,
 	Copy,
@@ -1259,6 +1260,20 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 /**
  * Renders a single part of a Pi message.
  */
+/** The @Answer value from an openui tool result, if the agent's tool reported one. */
+function extractOpenUIAnswer(output: unknown): unknown {
+	if (!output || typeof output !== "object") return undefined;
+	const details = (output as { details?: unknown }).details;
+	if (
+		details &&
+		typeof details === "object" &&
+		(details as { outcome?: unknown }).outcome === "answered"
+	) {
+		return (details as { answer?: unknown }).answer;
+	}
+	return undefined;
+}
+
 function PiPartRenderer({
 	part,
 	toolResult,
@@ -1542,6 +1557,16 @@ function PiPartRenderer({
 		}
 
 		case "tool_call": {
+			// An OpenUI part is UI, not a tool log: render the program itself.
+			const openui = part.name === "openui" ? readOpenUIPart(part.input) : null;
+			if (openui) {
+				return (
+					<OpenUIPart
+						input={part.input}
+						answered={extractOpenUIAnswer(toolResult?.output)}
+					/>
+				);
+			}
 			const hasResult = Boolean(toolResult);
 			const toolStatus = hasResult ? "completed" : "running";
 			return (
