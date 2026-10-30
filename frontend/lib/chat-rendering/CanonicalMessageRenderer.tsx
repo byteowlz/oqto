@@ -664,6 +664,10 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		return latest;
 	})();
 
+	/** An agent-emitted UI part is output, not a tool log: keep it in the flow. */
+	const isOpenUISegment = (segment: Segment): boolean =>
+		segment.type === "tool_call" && segment.part.name === "openui";
+
 	const displaySegments = normalizedSegments.filter((segment, index) => {
 		if (segment.type === "error" && segment.retrying) {
 			return index === latestRetryingErrorIndex;
@@ -733,6 +737,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		if (next?.type !== "tool_call" && next?.type !== "tool_result_only") {
 			continue;
 		}
+		if (next && isOpenUISegment(next)) continue;
 		const announcement = segment.text.trim();
 		// Conservative on purpose: a colon, or one short line. A paragraph of
 		// answer that happens to sit before a call stays in the answer.
@@ -758,7 +763,9 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 					): segment is
 						| Extract<Segment, { type: "tool_call" }>
 						| Extract<Segment, { type: "tool_result_only" }> =>
-						segment.type === "tool_call" || segment.type === "tool_result_only",
+						(segment.type === "tool_call" ||
+							segment.type === "tool_result_only") &&
+						!isOpenUISegment(segment),
 				)
 			: [];
 
@@ -766,10 +773,11 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		if (verbosity === 1) {
 			const flow = displaySegments.filter(
 				(segment) =>
-					segment.type !== "thinking" &&
-					segment.type !== "tool_call" &&
-					segment.type !== "tool_result_only" &&
-					!preambleKeys.has(segment.key),
+					isOpenUISegment(segment) ||
+					(segment.type !== "thinking" &&
+						segment.type !== "tool_call" &&
+						segment.type !== "tool_result_only" &&
+						!preambleKeys.has(segment.key)),
 			);
 			// A turn that was nothing but announcements and calls would render
 			// as an empty answer, so the last announcement stands in for one.
@@ -821,6 +829,11 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		};
 
 		for (const segment of displaySegments) {
+			if (isOpenUISegment(segment)) {
+				flushRun();
+				grouped.push(segment);
+				continue;
+			}
 			if (segment.type === "tool_call" || segment.type === "tool_result_only") {
 				toolBuffer.push(segment);
 				continue;

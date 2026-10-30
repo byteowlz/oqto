@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { MessageGroupCard } from "@/lib/chat-rendering/CanonicalMessageRenderer";
+import type { MessageGroup } from "@/lib/chat-rendering/group-messages";
 import { OpenUIPart, readOpenUIPart } from "@/src/oqto-ui/chat/OpenUIPart";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -112,6 +114,45 @@ describe("openui web rendering", () => {
 		expect(container.querySelector("input")).toBeNull();
 		expect(screen.getByText("Owner")).toBeInTheDocument();
 		expect(screen.getByText("Qualify Mac runner")).toBeInTheDocument();
+	});
+
+	it("is never folded into a collapsed step group, at any detail level", () => {
+		// The default level collapses tool runs into "N steps"; a UI part must stay visible
+		// in both the legacy UI and OqtoUI, which share MessageGroupCard.
+		const program = fixture("plan-approve");
+		const toolCall = {
+			type: "tool_call",
+			toolCallId: "call-openui",
+			name: "openui",
+			input: { program, fallback: "Approve the plan?", wait: true },
+			status: "completed",
+		} as unknown as MessageGroup["messages"][number]["parts"][number];
+		const group = {
+			role: "assistant",
+			messages: [
+				{
+					id: "m1",
+					role: "assistant",
+					parts: [
+						{ type: "text", text: "Hier ist der Plan." },
+						toolCall,
+						{ type: "text", text: "Sag Bescheid." },
+					],
+					timestamp: Date.now(),
+				},
+			],
+		} as unknown as MessageGroup;
+		for (const level of ["1", "2", "3"]) {
+			window.localStorage.setItem("oqto:chatVerbosity", level);
+			const { container, unmount } = render(
+				<MessageGroupCard group={group} messageId="m1" />,
+			);
+			expect(screen.getByText("Migrate pairing store")).toBeInTheDocument();
+			expect(container.querySelector(".wb-openui")).not.toBeNull();
+			// No step group swallowed it: the only activity summary would be a different tool.
+			unmount();
+		}
+		window.localStorage.removeItem("oqto:chatVerbosity");
 	});
 
 	it("marks components the web host does not draw yet instead of hiding them silently", () => {
