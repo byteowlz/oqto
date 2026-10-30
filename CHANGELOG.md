@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- App document grants preserve bare file paths instead of appending a directory separator, which caused Linux reads and CSV writes to fail before runner execution. Collection children and existing authorization checks are unchanged.
+
 ## 0.3.14 - 2026-02-25
 
 ### Added

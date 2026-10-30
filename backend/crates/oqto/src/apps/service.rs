@@ -855,7 +855,8 @@ impl AppRuntimeService {
             return Ok(None);
         }
         let resource_root = work_directory.root.join(resource.path);
-        Ok(Some((resource_root.join(relative), resource_root)))
+        let path = app_resource_path(&resource_root, &relative);
+        Ok(Some((path, resource_root)))
     }
 
     pub async fn file_list(
@@ -1457,6 +1458,41 @@ fn rejection_code_name(code: AppRejectionCode) -> &'static str {
         AppRejectionCode::InstanceUnavailable => "instance_unavailable",
         AppRejectionCode::LaunchUnavailable => "launch_unavailable",
         AppRejectionCode::DataCopyUnsupported => "data_copy_unsupported",
+    }
+}
+
+fn app_resource_path(root: &Path, relative: &Path) -> PathBuf {
+    // Joining an empty path appends a separator. Linux then treats a document
+    // grant as a directory (file.json/), so preserve bare resource references.
+    if relative.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    }
+}
+
+#[cfg(test)]
+mod resource_path_tests {
+    use super::*;
+
+    #[test]
+    fn bare_documents_and_collection_children_resolve_without_a_trailing_slash() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path();
+        let document = root.join("snapshot.json");
+        std::fs::write(&document, b"synthetic")?;
+        let bare = app_resource_path(&document, Path::new(""));
+        // Path equality normalizes separators; OsStr equality catches the Linux
+        // failure even when macOS canonicalization accepts a trailing slash.
+        assert_eq!(bare.as_os_str(), document.as_os_str());
+        assert_eq!(bare.canonicalize()?, document.canonicalize()?);
+        assert_eq!(std::fs::read(bare)?, b"synthetic");
+        let collection = app_resource_path(root, Path::new(""));
+        assert_eq!(collection.as_os_str(), root.as_os_str());
+        let child = app_resource_path(root, Path::new("snapshot.json"));
+        assert!(child.canonicalize()?.starts_with(root.canonicalize()?));
+        assert_eq!(std::fs::read(child)?, b"synthetic");
+        Ok(())
     }
 }
 
