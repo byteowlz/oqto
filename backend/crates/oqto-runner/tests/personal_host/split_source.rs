@@ -1335,3 +1335,167 @@ async fn full_startup_split_home_cold_catalog_native_graph_cohost_restart_and_ze
     fixture.host.stop().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn session_media_is_scoped_pinned_and_revocable_over_real_https() -> Result<()> {
+    use oqto_personal_wire::actions::SessionMediaVariant;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    let fixture = Fixture::start().await?;
+    let mut image = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(1200, 900).write_to(&mut image, image::ImageFormat::Png)?;
+    let mut bytes = image.into_inner();
+    bytes.resize(1024 * 1024, 0);
+    let hash = hex::encode(Sha256::digest(&bytes));
+    let mut native = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&fixture.source)?;
+    writeln!(
+        native,
+        "{}",
+        serde_json::json!({"type":"message","id":"image-entry","parentId":"b",
+        "message":{"role":"user","content":[{"type":"image","data":STANDARD.encode(&bytes),"mimeType":"image/png"}]}})
+    )?;
+    drop(native);
+    let before = std::fs::read(&fixture.source)?;
+    let host = &fixture.host;
+    let ticket = host
+        .owner(&["pair", "--sessions", "observe", "--output", "json"])
+        .await?;
+    let qr = PairingQr::parse(&serde_json::to_vec(&ticket)?, now()?)?;
+    let device = host.enroll(&qr, 111).await?;
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(NATIVE);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let (status, list) = host.action(&device, 111, HostAction::SessionsList).await?;
+            if status == 200
+                && list["sessions"]
+                    .as_array()
+                    .is_some_and(|rows| rows.iter().any(|row| row["id"] == public))
+            {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+    let action = |session: &str, hash: &str, variant| HostAction::SessionMedia {
+        session_id: session.into(),
+        sha256: hash.into(),
+        variant,
+    };
+    let ticket = host.owner(&["pair", "--output", "json"]).await?;
+    let qr = PairingQr::parse(&serde_json::to_vec(&ticket)?, now()?)?;
+    let no_observe = host.enroll(&qr, 112).await?;
+    assert_ne!(
+        host.action(
+            &no_observe,
+            112,
+            action(&public, &hash, SessionMediaVariant::Full)
+        )
+        .await?
+        .0,
+        200,
+        "pairing alone must not grant media access"
+    );
+    let (status, full) = host
+        .action(
+            &device,
+            111,
+            action(&public, &hash, SessionMediaVariant::Full),
+        )
+        .await?;
+    assert_eq!(status, 200, "{full}");
+    assert_eq!(
+        STANDARD.decode(full["data_base64"].as_str().context("bytes")?)?,
+        bytes
+    );
+    let (status, thumb) = host
+        .action(
+            &device,
+            111,
+            action(&public, &hash, SessionMediaVariant::Thumb),
+        )
+        .await?;
+    assert_eq!(status, 200, "{thumb}");
+    assert!(serde_json::to_vec(&thumb)?.len() < 64 * 1024);
+    let cache_dir = host.home.join("media-cache");
+    assert_eq!(
+        std::fs::read_dir(&cache_dir)?.count(),
+        1,
+        "thumbnail cache must be populated before foreign/refusal/revoke checks"
+    );
+    let cached_path = std::fs::read_dir(&cache_dir)?
+        .next()
+        .context("cached thumbnail")??
+        .path();
+    let cached_before = std::fs::read(&cached_path)?;
+    let cached_inode = std::fs::metadata(&cached_path)?.ino();
+    let (_, again) = host
+        .action(
+            &device,
+            111,
+            action(&public, &hash, SessionMediaVariant::Thumb),
+        )
+        .await?;
+    assert_eq!(again, thumb);
+    assert_eq!(std::fs::read(&cached_path)?, cached_before);
+    assert_eq!(
+        std::fs::metadata(&cached_path)?.ino(),
+        cached_inode,
+        "warm hit should not regenerate or republish thumbnail"
+    );
+    let foreign = oqto_history::oqto_log::store::platform_id_for_external_id(FRESH);
+    assert_ne!(
+        host.action(
+            &device,
+            111,
+            action(&foreign, &hash, SessionMediaVariant::Full)
+        )
+        .await?
+        .0,
+        200
+    );
+    assert_ne!(
+        host.action(
+            &device,
+            111,
+            action(&public, &"a".repeat(64), SessionMediaVariant::Full)
+        )
+        .await?
+        .0,
+        200
+    );
+    assert_eq!(std::fs::read(&fixture.source)?, before);
+    let backup = fixture.source.with_extension("saved");
+    std::fs::rename(&fixture.source, &backup)?;
+    std::fs::copy(&backup, &fixture.source)?;
+    let replaced = host
+        .action(
+            &device,
+            111,
+            action(&public, &hash, SessionMediaVariant::Thumb),
+        )
+        .await?
+        .0;
+    std::fs::remove_file(&fixture.source)?;
+    std::fs::rename(&backup, &fixture.source)?;
+    assert_ne!(
+        replaced, 200,
+        "warm cache must not bypass source pin replacement"
+    );
+    host.owner(&["revoke", &device]).await?;
+    assert_ne!(
+        host.action(
+            &device,
+            111,
+            action(&public, &hash, SessionMediaVariant::Thumb)
+        )
+        .await?
+        .0,
+        200
+    );
+    fixture.host.stop().await?;
+    Ok(())
+}

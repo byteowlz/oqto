@@ -16,6 +16,7 @@ integration-tests = []
 iroh-transport = ["dep:iroh"]
 
 [dependencies]
+oqto-media = { path = "../oqto-media" }
 oqto-credential-http = { path = "../oqto-credential-http" }
 rand = { workspace = true }
 anyhow.workspace = true
@@ -39,6 +40,7 @@ tokio-rustls.workspace = true
 rustls-pemfile.workspace = true
 sha2.workspace = true
 hex.workspace = true
+image.workspace = true
 rustix = { version = "1", features = ["process", "fs"] }
 toml.workspace = true
 tracing.workspace = true

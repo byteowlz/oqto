@@ -20,6 +20,7 @@ mod checked_file;
 mod personal_catalog;
 mod personal_files;
 mod personal_icons;
+mod personal_media;
 mod personal_sessions;
 pub mod personal_source;
 mod personal_terminal;

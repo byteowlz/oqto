@@ -81,6 +81,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::SessionFiles { .. }
         | HostAction::ProjectIcons { .. }
         | HostAction::SessionHistory { .. }
+        | HostAction::SessionMedia { .. }
         | HostAction::SessionAttach { .. }
         | HostAction::SessionRead { .. }
         | HostAction::SessionModels { .. }

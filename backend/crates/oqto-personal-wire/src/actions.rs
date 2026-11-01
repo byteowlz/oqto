@@ -2,6 +2,13 @@
 //! owner-selected root IDs; they are never authority or host filesystem roots.
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMediaVariant {
+    Thumb,
+    Full,
+}
+
 pub const ACTION_PATH: &str = "/personal/v1/action";
 pub const MAX_ACTION_BYTES: usize = 1024 * 1024;
 pub const MAX_FILE_CHUNK: usize = 256 * 1024;
@@ -77,6 +84,11 @@ pub enum HostAction {
     /// `MAX_PROJECT_ICON_DIRECTORIES` per request. Read-only, Session-observe.
     ProjectIcons {
         directories: Vec<String>,
+    },
+    SessionMedia {
+        session_id: String,
+        sha256: String,
+        variant: SessionMediaVariant,
     },
     SessionHistory {
         session_id: String,

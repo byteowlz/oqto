@@ -32,6 +32,8 @@ fn command(home: &Path) -> Command {
     command
         .env_clear()
         .env("HOME", home)
+        .env("OQTO_MEDIA_CACHE_DIR", home.join("media-cache"))
+        .env("OQTO_MEDIA_CACHE_ENABLED", "true")
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", home.join(".local/state"))
         .env("TMPDIR", home.join("tmp"))
@@ -230,6 +232,8 @@ impl Host {
     }
 }
 
+#[path = "personal_host/media_cache.rs"]
+mod media_cache;
 #[path = "personal_host/sessions.rs"]
 mod sessions;
 #[path = "personal_host/split_source.rs"]

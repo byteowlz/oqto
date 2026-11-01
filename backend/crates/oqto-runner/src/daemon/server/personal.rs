@@ -211,6 +211,7 @@ impl super::Runner {
             (home, native)
         };
         crate::runtime_guard::ensure_history_state_owner(&home)?;
+        oqto_media::cache::validate_config()?;
         // Reserve the endpoint before creating any identity or grant store.
         let listener = tokio::net::TcpListener::bind(address).await?;
         let authority = Arc::new(
@@ -343,6 +344,7 @@ impl ActionBackend for PersonalBackend {
                 | HostAction::SessionFiles { .. }
                 | HostAction::ProjectIcons { .. }
                 | HostAction::SessionHistory { .. }
+                | HostAction::SessionMedia { .. }
         ) && !self.ingest.catalog_ready())
             || (matches!(
                 action,
@@ -490,6 +492,41 @@ impl ActionBackend for PersonalBackend {
                 .map_err(|_| ActionFailure::Unavailable)?
                 .ok_or(ActionFailure::Invalid)
             }
+            HostAction::SessionMedia {
+                session_id,
+                sha256,
+                variant,
+            } => {
+                let fence = authorization.fence();
+                // Decode/scan workers may queue. Never hold the admission lock
+                // across that wait and prevent destination-owner revocation.
+                drop(authorization);
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                let source = self
+                    .ingest
+                    .source
+                    .as_deref()
+                    .ok_or(ActionFailure::Unavailable)?;
+                let result = crate::personal_media::read(
+                    &self.home,
+                    &self.workspace_roots,
+                    source,
+                    &session_id,
+                    sha256,
+                    matches!(
+                        variant,
+                        oqto_personal_wire::actions::SessionMediaVariant::Thumb
+                    ),
+                )
+                .await
+                .map_err(|_| ActionFailure::NotFound)?;
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                Ok(result)
+            }
             HostAction::SessionHistory { session_id, before }
                 if before
                     .as_deref()
@@ -518,7 +555,11 @@ impl ActionBackend for PersonalBackend {
                     (Err(_), Some(_)) => return Err(ActionFailure::Unavailable),
                 };
                 match (live, before) {
-                    (Some(page), _) => Ok(page),
+                    (Some(mut page), _) => {
+                        crate::personal_media::project(&mut page)
+                            .map_err(|_| ActionFailure::Unavailable)?;
+                        Ok(page)
+                    }
                     // A live cursor is meaningless once the Pi has gone; the phone refreshes.
                     (None, Some(_)) => Err(ActionFailure::Unavailable),
                     (None, None) => crate::history_read::read_native_authorized_history(
@@ -528,7 +569,11 @@ impl ActionBackend for PersonalBackend {
                         None,
                     )
                     .await
-                    .map(|response| response.data)
+                    .and_then(|response| {
+                        let mut data = response.data;
+                        crate::personal_media::project(&mut data)?;
+                        Ok(data)
+                    })
                     .map_err(|_| ActionFailure::Unavailable),
                 }
             }
@@ -540,7 +585,11 @@ impl ActionBackend for PersonalBackend {
                     before,
                 )
                 .await
-                .map(|response| response.data)
+                .and_then(|response| {
+                    let mut data = response.data;
+                    crate::personal_media::project(&mut data)?;
+                    Ok(data)
+                })
                 .map_err(|_| ActionFailure::Unavailable)
             }
             action @ (HostAction::SessionAttach { .. }

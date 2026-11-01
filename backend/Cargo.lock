@@ -5160,6 +5160,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "oqto-media"
+version = "0.5.11"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cap-std",
+ "dirs 5.0.1",
+ "hex",
+ "image",
+ "libc",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tracing",
+ "uuid 1.21.0",
+]
+
+[[package]]
 name = "oqto-personal"
 version = "0.5.11"
 dependencies = [
@@ -5271,6 +5291,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "env_logger",
  "hex",
+ "image",
  "iroh",
  "libc",
  "log",
@@ -5279,6 +5300,7 @@ dependencies = [
  "oqto-apps",
  "oqto-credential-http",
  "oqto-history",
+ "oqto-media",
  "oqto-personal",
  "oqto-personal-wire",
  "oqto-pi",
