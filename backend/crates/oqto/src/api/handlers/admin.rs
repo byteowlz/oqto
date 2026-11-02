@@ -1909,7 +1909,7 @@ fn remove_provider_in_config(config_content: &str, name: &str) -> Result<String,
 mod eavs_config_tests {
     use super::*;
 
-    // Config that reproduces the octo-azure outage shape: a provider with an
+    // Config that reproduces the team-host outage shape: a provider with an
     // existing [providers.X.compat] sub-table, surrounded by other providers.
     const CONFIG: &str = r#"[providers.foundry]
 type = "openai-compatible"

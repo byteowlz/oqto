@@ -8,7 +8,7 @@ set -euo pipefail
 # - Optionally exercises media URL fetch + play/seek attempt
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/octo-azure-reliability.local.secrets.toml"
+DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/team-host-reliability.local.secrets.toml"
 DEFAULT_PROFILE="octo_azure"
 DISPLAY_VAR="${DISPLAY:-:0}"
 SESSION_NAME="reliability-journey-$(date -u +%Y%m%dT%H%M%SZ)-$$"

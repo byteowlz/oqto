@@ -5,7 +5,7 @@
 # Proxmox Connection
 # =============================================================================
 [proxmox]
-host = "wismut"                          # Proxmox node name or IP
+host = "example"                          # Proxmox node name or IP
 ssh_user = "root"                        # SSH user for Proxmox (needs root)
 storage = "local-lvm"                    # Storage for VM disks
 iso_storage = "local"                    # Storage for ISOs and cloud images

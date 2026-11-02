@@ -38,7 +38,7 @@ pub fn generate_users_md(workspace_name: &str, members: &[SharedWorkspaceMemberI
     md.push_str(
         "1. When you see `@sender: Name`, that tells you WHO sent the message that follows.\n",
     );
-    md.push_str("2. Address users by their name. Say \"Hi Wismut\" not \"Hi there\".\n");
+    md.push_str("2. Address users by their name. Say \"Hi Alice\" not \"Hi there\".\n");
     md.push_str("3. NEVER write `@sender:` in your own responses. Only the system adds that.\n");
     md.push_str("4. Different people may ask different things. Keep track of who asked what.\n");
     md.push_str(

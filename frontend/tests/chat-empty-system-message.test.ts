@@ -18,7 +18,7 @@ describe("messages without visible content", () => {
 			{
 				id: "a-1",
 				role: "assistant",
-				content: "Hi Wismut! Wie kann ich helfen?",
+				content: "Hi Alice! Wie kann ich helfen?",
 				timestamp: 1_002,
 			},
 		] as unknown as RawMessage[];

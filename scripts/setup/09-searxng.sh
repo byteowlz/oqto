@@ -129,7 +129,7 @@ migrate_legacy_searxng_path() {
 
   local candidates=(
     "/home/octo/.local/share/searxng"
-    "/home/tommy/.local/share/searxng"
+    "/home/${user}/.local/share/searxng"
   )
 
   for legacy in "${candidates[@]}"; do

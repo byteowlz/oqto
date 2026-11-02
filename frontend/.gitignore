@@ -123,6 +123,8 @@ web_modules/
 *.tgz
 # Reviewed canonical SDK distribution; integrity checked by app-sdk-snapshot.test.
 !vendor/oqto-app-sdk/byteowlz-oqto-app-sdk-0.4.0.tgz
+# Reviewed OpenUI distribution; integrity checked by openui-package.test.ts.
+!vendor/oqto-openui/byteowlz-oqto-openui-0.2.2.tgz
 # Yarn Integrity file
 .yarn-integrity
 # dotenv environment variable files

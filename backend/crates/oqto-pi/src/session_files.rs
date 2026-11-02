@@ -234,8 +234,8 @@ mod tests {
             "--home-user-projects-app--"
         );
         assert_eq!(
-            cwd_to_safe_dirname(Path::new("/home/wismut/byteowlz/oqto")),
-            "--home-wismut-byteowlz-oqto--"
+            cwd_to_safe_dirname(Path::new("/home/example/byteowlz/oqto")),
+            "--home-example-byteowlz-oqto--"
         );
         // Edge case: root
         assert_eq!(cwd_to_safe_dirname(Path::new("/")), "----");

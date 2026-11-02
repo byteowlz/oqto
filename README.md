@@ -271,7 +271,7 @@ If you want to actively contribute to the codebase, I would appreciate you start
 ## Documentation
 
 - [SETUP.md](./SETUP.md) -- Installation guide
-- [AGENTS.md](./AGENTS.md) -- Agent development guidelines
+- [Build and deployment](./docs/reference/build-and-deploy.md) -- Reproducible source and artifact workflow
 - [backend/crates/oqto/examples/config.toml](./backend/crates/oqto/examples/config.toml) -- Full configuration reference
 
 ## Acknowledgements

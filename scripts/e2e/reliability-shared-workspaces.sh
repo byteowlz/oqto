@@ -5,7 +5,7 @@ set -euo pipefail
 # Creates, updates, validates, and deletes temporary shared workspaces.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/octo-azure-reliability.local.secrets.toml"
+DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/team-host-reliability.local.secrets.toml"
 
 SECRETS_FILE="$DEFAULT_SECRETS_FILE"
 PROFILE="octo_azure"

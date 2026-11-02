@@ -19,7 +19,7 @@ import uuid
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--mac', default='mac')
 parser.add_argument('--mac-peer', required=True, help='Absolute isolated oqto-runner build on Mac')
-parser.add_argument('--address', default='100.64.0.6')
+parser.add_argument('--address', required=True)
 parser.add_argument('--runner', default='backend/target/debug/oqto-runner')
 parser.add_argument('--bpf', default='backend/target/oqt-prepared/bpf/default-x86_64.bpf')
 parser.add_argument('--shim', default='backend/target/debug/examples/oqt_shim')

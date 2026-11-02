@@ -7,7 +7,7 @@ python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 BUILD_FIRST="${1:-}"
 if [[ "$BUILD_FIRST" == "--build" ]]; then
-  (cd frontend && bun run build)
+  (cd frontend && bun install --frozen-lockfile && bun run build)
 fi
 
 SRC="frontend/dist"

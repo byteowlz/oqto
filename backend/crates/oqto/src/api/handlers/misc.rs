@@ -976,7 +976,7 @@ mod feed_guard_tests {
             "http://172.16.0.1/feed",
             "http://192.168.1.1/feed",
             "http://169.254.169.254/latest/meta-data/",
-            "http://100.64.0.12:4782/agents.md",
+            "http://100.64.0.0:4782/agents.md",
             "http://[::1]/feed",
             "http://[fd00::1]/feed",
             "http://[fe80::1]/feed",

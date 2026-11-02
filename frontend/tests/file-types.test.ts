@@ -184,7 +184,7 @@ describe("file-types", () => {
 		it("ignores @ inside email addresses", () => {
 			expect(
 				extractFileReferenceDetails(
-					"Email quarantine notification (ironport@fraunhofer.de)",
+					"Email quarantine notification (notifications@example.invalid)",
 				),
 			).toEqual([]);
 		});

@@ -188,7 +188,7 @@ mod password_aging_tests {
     fn rejects_invalid_usernames_before_exec() {
         // Must fail closed on validation and never reach chage with an
         // unvalidated name (defense in depth: callers validate too).
-        for bad in ["", "wismut", "oqto_ bad", "oqto_;rm", "oqto_\n"] {
+        for bad in ["", "example", "oqto_ bad", "oqto_;rm", "oqto_\n"] {
             assert!(
                 disable_password_aging(bad).is_err(),
                 "must reject invalid username {bad:?}"

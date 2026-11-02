@@ -477,7 +477,7 @@ export function extractFileReferenceDetails(
 	) {
 		const previousChar =
 			match.index > 0 ? withoutInlineCode.charAt(match.index - 1) : "";
-		// Ignore @ inside emails/user handles (e.g. ironport@fraunhofer.de).
+		// Ignore @ inside emails/user handles (e.g. notifications@example.invalid).
 		if (!/[A-Za-z0-9._%+-]/.test(previousChar)) addReference(match[1]);
 	}
 

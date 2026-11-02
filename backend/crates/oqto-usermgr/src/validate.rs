@@ -483,7 +483,7 @@ mod tests {
         let prefixes = &["/run/oqto/runner-sockets/", "/home/oqto_"];
         assert!(validate_path("/etc/passwd", prefixes).is_err());
         assert!(validate_path("/root/.ssh/authorized_keys", prefixes).is_err());
-        assert!(validate_path("/home/tommy", prefixes).is_err());
+        assert!(validate_path("/home/example", prefixes).is_err());
         assert!(validate_path("/home/root", prefixes).is_err());
         assert!(validate_path("/tmp/evil", prefixes).is_err());
         assert!(validate_path("/var/lib/oqto", prefixes).is_err());

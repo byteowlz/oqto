@@ -2,7 +2,7 @@
 # Sudoers Security Audit Script for Oqto Multi-User Mode
 # Tests that sudoers regex patterns properly restrict privilege escalation
 #
-# NOTE: If you have full sudo access (e.g., "wismut ALL=(ALL) ALL"), all commands
+# NOTE: If you have full sudo access (e.g., "example ALL=(ALL) ALL"), all commands
 # will be allowed at runtime. This script tests the PATTERNS themselves to verify
 # they would restrict a dedicated service user that ONLY has these rules.
 set -euo pipefail
@@ -206,8 +206,8 @@ echo "--- CHOWN: Path Security Tests ---"
 echo "(These should be BLOCKED)"
 echo ""
 
-test_chown_blocked "Block chown /home/wismut (other user)" \
-    "-R octo_test:oqto /home/wismut"
+test_chown_blocked "Block chown /home/example (other user)" \
+    "-R octo_test:oqto /home/example"
 
 test_chown_blocked "Block chown /home/root" \
     "-R octo_test:oqto /home/root"
@@ -219,7 +219,7 @@ test_chown_blocked "Block chown /root" \
     "-R octo_test:oqto /root"
 
 test_chown_blocked "Block chown with path traversal" \
-    "-R octo_test:oqto /home/octo_test/../wismut"
+    "-R octo_test:oqto /home/octo_test/../example"
 
 test_chown_blocked "Block chown hidden dir at root" \
     "-R octo_test:oqto /home/octo_test/.ssh"

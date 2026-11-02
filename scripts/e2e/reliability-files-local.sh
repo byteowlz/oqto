@@ -5,7 +5,7 @@ set -euo pipefail
 # Uses bun script scripts/e2e/reliability-files-mux.ts.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/octo-azure-reliability.local.secrets.toml"
+DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/team-host-reliability.local.secrets.toml"
 
 SECRETS_FILE="$DEFAULT_SECRETS_FILE"
 PROFILE="octo_azure"

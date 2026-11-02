@@ -96,6 +96,10 @@ cp "$ROOT_DIR/$migration" "$checkout/$migration"
 git -C "$checkout" init -q
 git -C "$checkout" -c user.email=t@example.invalid -c user.name=t add -A
 git -C "$checkout" -c user.email=t@example.invalid -c user.name=t commit -qm fixture
+# Public snapshots have no publish.toml and may never auto-commit updated pins.
+# Refusal happens before authentication, compilation or host contact.
+expect_fail "public source pin mutation" "Published source pins are immutable" \
+  "$checkout/scripts/deploy.sh" --dev --host test-local
 printf 'scratch\n' > "$checkout/untracked.txt"
 expect_fail "dirty build" "uncommitted or untracked" "$checkout/scripts/deploy.sh" --host test-local --dry-run
 

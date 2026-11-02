@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 test_binary="${1:?Pass the cargo-built oqto_runner lib test executable}"
 pi_binary="${2:-/tmp/oqto-pi-1-evidence/pi/pi}"
-extensions="${3:-/home/wismut/byteowlz/pi-selection-development}"
+extensions="${3:-$HOME/byteowlz/pi-selection-development}"
 root="$(mktemp -d /tmp/oqto-selection-real-runner.XXXXXX)"
 home="$root/home"
 mkdir -p "$home/.pi/agent" "$home/.config" "$home/.cache" "$home/.local/state" "$home/.local/share"

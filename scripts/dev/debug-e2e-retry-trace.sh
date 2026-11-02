@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="http://localhost:3000"
-USERNAME="wismut"
+USERNAME="example"
 PASSWORD="dev"
 WAIT_SHORT=6
 WAIT_LONG=30
@@ -17,7 +17,7 @@ Usage:
 
 Options:
   --base-url URL        Frontend URL (default: http://localhost:3000)
-  --username USER       Login username (default: wismut)
+  --username USER       Login username (default: example)
   --password PASS       Login password (default: dev)
   --models CSV          Comma-separated models (default: mock/mock/server-error,mock/mock/rate-limit)
   --trace-dir DIR       Runner trace dir to harvest (default: /tmp/oqto-stream-traces)

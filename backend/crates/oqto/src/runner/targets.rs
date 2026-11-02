@@ -438,18 +438,18 @@ mod tests {
 
         cfg.execution = Some(RemoteExecutionGrant {
             principal: "tommy".into(),
-            roots: vec!["/Users/tommy/work".into()],
+            roots: vec!["/Users/example/work".into()],
         });
         let targets = RunnerTargets::new(vec![cfg.clone()]).unwrap();
         let grant = targets.execution_grant("alice", "mac").unwrap();
         assert!(targets.execution_grant("bob", "mac").is_err());
         assert!(targets.execution_grant("alice", "other").is_err());
 
-        assert!(grant.permits(std::path::Path::new("/Users/tommy/work")));
-        assert!(grant.permits(std::path::Path::new("/Users/tommy/work/project")));
-        assert!(!grant.permits(std::path::Path::new("/Users/tommy")));
-        assert!(!grant.permits(std::path::Path::new("/Users/tommy/work-other")));
-        assert!(!grant.permits(std::path::Path::new("/Users/tommy/work/../.ssh")));
+        assert!(grant.permits(std::path::Path::new("/Users/example/work")));
+        assert!(grant.permits(std::path::Path::new("/Users/example/work/project")));
+        assert!(!grant.permits(std::path::Path::new("/Users/example")));
+        assert!(!grant.permits(std::path::Path::new("/Users/example/work-other")));
+        assert!(!grant.permits(std::path::Path::new("/Users/example/work/../.ssh")));
         assert!(!grant.permits(std::path::Path::new("relative/path")));
 
         let mut shared = cfg.clone();
@@ -459,7 +459,7 @@ mod tests {
             vec![],
             vec![std::path::PathBuf::from("relative")],
             vec![std::path::PathBuf::from("/")],
-            vec![std::path::PathBuf::from("/Users/tommy/../root")],
+            vec![std::path::PathBuf::from("/Users/example/../root")],
         ] {
             let mut invalid = cfg.clone();
             invalid.execution = Some(RemoteExecutionGrant {
@@ -472,7 +472,7 @@ mod tests {
         peer.id = "mac2".into();
         peer.execution = Some(RemoteExecutionGrant {
             principal: "tommy".into(),
-            roots: vec!["/Users/tommy/work/nested".into()],
+            roots: vec!["/Users/example/work/nested".into()],
         });
         assert!(
             RunnerTargets::new(vec![cfg.clone(), peer]).is_err(),
@@ -481,13 +481,13 @@ mod tests {
 
         assert_eq!(
             targets
-                .machine_for_path("alice", std::path::Path::new("/Users/tommy/work/project"))
+                .machine_for_path("alice", std::path::Path::new("/Users/example/work/project"))
                 .map(|(id, _)| id),
             Some("mac".to_string())
         );
         assert!(
             targets
-                .machine_for_path("bob", std::path::Path::new("/Users/tommy/work/project"))
+                .machine_for_path("bob", std::path::Path::new("/Users/example/work/project"))
                 .is_none()
         );
         assert!(
@@ -499,7 +499,7 @@ mod tests {
         let mut bad_principal = cfg.clone();
         bad_principal.execution = Some(RemoteExecutionGrant {
             principal: "root; rm -rf".into(),
-            roots: vec!["/Users/tommy/work".into()],
+            roots: vec!["/Users/example/work".into()],
         });
         assert!(RunnerTargets::new(vec![bad_principal]).is_err());
     }

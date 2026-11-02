@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 test_binary="${1:?Pass the existing oqto lib test executable}"
 pi_binary="${2:-/tmp/oqto-pi-1-evidence/pi/pi}"
-extensions="${3:-/home/wismut/byteowlz/pi-selection-development}"
+extensions="${3:-$HOME/byteowlz/pi-selection-development}"
 hold="${OQTO_SELECTION_GATEWAY_HOLD_SECS:-0}"
 [[ "$hold" =~ ^[0-9]{1,4}$ ]] && ((hold <= 7200)) || { printf '%s\n' 'Hold must be 0..7200 seconds' >&2; exit 2; }
 root="$(mktemp -d /tmp/oqto-selection-auth-gateway.XXXXXX)"

@@ -498,14 +498,14 @@ Use the helper script to copy common Oqto user data into the dedicated Linux
 user home and fix ownership.
 
 ```bash
-# Example: migrate from current user to octo_wismut
-scripts/migrate/migrate-linux-user.sh --target-user octo_wismut
+# Example: migrate from current user to octo_example
+scripts/migrate/migrate-linux-user.sh --target-user octo_example
 
 # Include a workspace dir (relative to home)
-scripts/migrate/migrate-linux-user.sh --target-user octo_wismut --workspace-dir byteowlz
+scripts/migrate/migrate-linux-user.sh --target-user octo_example --workspace-dir byteowlz
 
 # Auto-detect workspace_dir from config
-scripts/migrate/migrate-linux-user.sh --target-user octo_wismut
+scripts/migrate/migrate-linux-user.sh --target-user octo_example
 ```
 
 ## Service Installation
@@ -977,5 +977,5 @@ Container setup is currently disabled in `setup.sh`. Docker/Podman are not requi
 - [frontend/README.md](./frontend/README.md) - Frontend documentation
 - [deploy/systemd/README.md](./deploy/systemd/README.md) - Systemd service setup
 - [deploy/DEPLOY.md](./deploy/DEPLOY.md) - Release deployment across hosts
-- [AGENTS.md](./AGENTS.md) - Agent development guidelines
-- [backend/examples/config.toml](./backend/examples/config.toml) - Full config reference
+- [Build and deployment](./docs/reference/build-and-deploy.md) - Reproducible source and artifact workflow
+- [backend/crates/oqto/examples/config.toml](./backend/crates/oqto/examples/config.toml) - Full config reference

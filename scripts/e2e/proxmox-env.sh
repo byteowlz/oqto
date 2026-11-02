@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROXMOX_HOST="${PROXMOX_HOST:-proxmox}"
-PROXMOX_NODE="${PROXMOX_NODE:-wismut}"
+PROXMOX_NODE="${PROXMOX_NODE:-pve}"
 
 OQTO_E2E_MODE="${OQTO_E2E_MODE:-lxc}"
 

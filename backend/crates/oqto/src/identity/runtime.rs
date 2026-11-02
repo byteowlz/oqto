@@ -52,8 +52,8 @@ mod tests {
             enabled: false,
             ..LinuxUsersConfig::default()
         };
-        let expected = os_username().unwrap_or_else(|| "wismut-2ev6".to_string());
-        let resolved = effective_linux_username(Some(&cfg), "wismut-2ev6");
+        let expected = os_username().unwrap_or_else(|| "example-2ev6".to_string());
+        let resolved = effective_linux_username(Some(&cfg), "example-2ev6");
         assert_eq!(resolved, expected);
     }
 }

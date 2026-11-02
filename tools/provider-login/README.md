@@ -1,6 +1,6 @@
 # Managed Pi provider login worker
 
-Runner-side implementation for `oqto-7e9y`, integrated with Account-authorized runner operations and the original sidebar's machine provider dialog. See the [deployment and security runbook](../../docs/development/provider-login.md). Both runner configuration and an explicit backend grant are required; this directory's presence is not admission.
+Runner-side implementation for `oqto-7e9y`, integrated with Account-authorized runner operations and the original sidebar's machine provider dialog. See the [deployment and security runbook](../../docs/reference/provider-login.md). Both runner configuration and an explicit backend grant are required; this directory's presence is not admission.
 
 ## Ownership and security checklist
 

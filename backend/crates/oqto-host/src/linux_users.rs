@@ -1432,9 +1432,9 @@ mod tests {
     #[test]
     fn platform_gecos_round_trips_through_the_ownership_parser() {
         for user_id in [
-            "usr_wismut",
-            "oqto_shared_buch-projekt",
-            "oqto_shared_it-i-group",
+            "usr_example",
+            "oqto_shared_project-alpha",
+            "oqto_shared_team-one",
         ] {
             let gecos = platform_gecos(user_id);
             assert_eq!(

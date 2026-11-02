@@ -15,6 +15,7 @@
 # value is either regex-validated or quoted with printf %q first.
 # shellcheck disable=SC2029
 set -euo pipefail
+ORIGINAL_ARGS=("$@")
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${ROOT_DIR}/deploy/hosts.toml"
@@ -88,7 +89,7 @@ Hosts:
   --dry-run                Print the plan, change nothing
 Policy:
   --mode MODE              Tool dependency policy: release (default) or dev
-  --dev                    Fast test build; permits dirty source, no version bump
+  --dev                    Fast test build from a clean pinned snapshot; no version bump
   --allow-dev-shared       Explicitly allow dev builds on multi-user hosts
   --allow-downgrade        Install a release not newer than the active one
   --allow-dirty-source     Install a release recorded as built from a dirty tree
@@ -318,9 +319,9 @@ build_artifact() {
         version="${version}-dev.$(date -u +%Y%m%d%H%M%S).g$(git -C "$ROOT_DIR" rev-parse HEAD | cut -c1-8)"
         [[ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ]] || version+=".dirty"
         export DIST_PROFILE=deploy-fast
-        log "Dev build: deploy-fast profile; dirty source explicitly permitted"
+        log "Dev build: deploy-fast profile; clean pinned source snapshot required"
     fi
-    DEPLOY_ARTIFACT="$ROOT_DIR/dist/out/oqto-${version}-${target}.tar.gz"
+    DEPLOY_ARTIFACT="${OQTO_DEPLOY_ARTIFACT_DIR:-$ROOT_DIR/dist/out}/oqto-${version}-${target}.tar.gz"
     DEPLOY_CHECKSUM="${DEPLOY_ARTIFACT}.sha256"
     log "Building release $version ($target) from $(git -C "$ROOT_DIR" rev-parse --short HEAD)"
     if [[ "$DRY_RUN" == true ]]; then
@@ -337,7 +338,7 @@ build_artifact() {
         DIST_REQUIRE_GLIBC_FLOOR="${DIST_REQUIRE_GLIBC_FLOOR:-1}" just dist-stage-binaries --build
         just dist-stage-frontend --build
         just lint-dist-manifest-strict
-        just dist-package "$version" "$target"
+        OUT_DIR="${OQTO_DEPLOY_ARTIFACT_DIR:-$ROOT_DIR/dist/out}" just dist-package "$version" "$target"
     ) || fail "release build failed"
     # The build itself must not dirty the tree (it would make provenance lie).
     [[ "$DEV" == true ]] || require_clean_source
@@ -650,28 +651,44 @@ if [[ "$DEV" == true ]]; then
     done
 fi
 
-# Authenticate every selected host before a potentially long build or canary.
-# Later calls are noninteractive, including refresh failures and fleet hosts.
-trap stop_sudo_leases EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-start_sudo_leases "${selected[@]}" || fail "initial deployment authorization failed"
-
-# Dev deploys track the newest pi-agent-extensions that passes qualification.
-# The promotion is committed before the build, so the release names it; a
-# failed gate keeps the existing pin and the deploy continues with it.
+# Pin promotion is an explicit preparation phase of --dev, before the source
+# freeze. It may commit the tested pin, but cannot mutate a running build.
 update_extensions_pin() {
     [[ "$DEV" == true && "$SYNC_EXTENSIONS" == true && "$UPDATE_EXTENSIONS" == true ]] || return 0
     [[ "$DRY_RUN" != true ]] || return 0
-    log "Qualifying the newest pi-agent-extensions before the build"
+    [[ -f "$ROOT_DIR/publish.toml" ]] || fail \
+        "Published source pins are immutable: use --no-extension-update; prepare dependency changes in the private working repository and export again"
+    log "Qualifying the newest pi-agent-extensions before freezing build source"
     if python3 -B "$ROOT_DIR/scripts/release/pi-extensions-update.py" --apply --commit; then
         return 0
     fi
     warn "Newest pi-agent-extensions not promoted; deploying the existing pin"
 }
 
+if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" && "$DRY_RUN" != true ]]; then
+    if [[ -n "${OQTO_DEPLOY_SNAPSHOT_ROOT:-}" ]]; then
+        [[ "$ROOT_DIR" == "$OQTO_DEPLOY_SNAPSHOT_ROOT" \
+            && "$(git -C "$ROOT_DIR" rev-parse HEAD)" == "${OQTO_DEPLOY_SNAPSHOT_COMMIT:-}" ]] \
+            || fail "frozen deployment source identity does not match this checkout"
+        require_clean_source
+    else
+        # Never silently omit dirty --dev changes. Promote only from clean
+        # source, then freeze the resulting commit before any long build.
+        require_clean_source
+        update_extensions_pin
+        exec python3 "$ROOT_DIR/scripts/dist/build-source-snapshot.py" \
+            --source "$ROOT_DIR" --config "$CONFIG" -- "${ORIGINAL_ARGS[@]}"
+    fi
+fi
+
+# Authentication remains before the build and every activation. Preparation
+# above needs no root and happens once; the frozen child owns all sudo leases.
+trap stop_sudo_leases EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+start_sudo_leases "${selected[@]}" || fail "initial deployment authorization failed"
+
 if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" ]]; then
-    update_extensions_pin
     build_artifact
 fi
 require_sudo_leases || fail "deployment authorization expired during build"

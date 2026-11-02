@@ -4,7 +4,7 @@ set -euo pipefail
 # Run reliability suite using local gitignored secrets.
 #
 # Default secret file:
-#   scripts/e2e/.secrets/octo-azure-reliability.local.secrets.toml
+#   scripts/e2e/.secrets/team-host-reliability.local.secrets.toml
 #
 # Expected TOML shape:
 # [octo_azure]
@@ -16,7 +16,7 @@ set -euo pipefail
 # media_paths = ["a.mp3", "b.mp4"]   # optional
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/octo-azure-reliability.local.secrets.toml"
+DEFAULT_SECRETS_FILE="${SCRIPT_DIR}/.secrets/team-host-reliability.local.secrets.toml"
 SUITE_SCRIPT="${SCRIPT_DIR}/reliability-suite.sh"
 
 SECRETS_FILE="$DEFAULT_SECRETS_FILE"

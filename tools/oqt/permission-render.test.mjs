@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, symlinkSync, readFileSync, writeFileSync, cpSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
-const source = process.env.OQT_PI_SOURCE ?? '/home/wismut/.local/share/oqt/pi-source';
+const source = process.env.OQT_PI_SOURCE ?? join(homedir(), '.local/share/oqt/pi-source');
 const root = resolve(import.meta.dirname, '../..');
 const pin = 'cdaf6c227d4718a72b59ccd02152c9614df44cfc';
 function run(command, args, options = {}) {

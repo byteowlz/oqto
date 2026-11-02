@@ -87,7 +87,7 @@ fn flags_plan_is_explicit_and_roots_are_canonical() -> Result<()> {
 }
 #[test]
 fn mac_managed_profile_paths_fit_portable_unix_socket_limit() -> Result<()> {
-    let home = Path::new("/Users/tommyfalkowski/.local/share/oqto/mac-runner/home");
+    let home = Path::new("/Users/example/.local/share/oqto/mac-runner/home");
     let root = pair_control::root(home);
     for name in ["control.sock", "native.sock", "host/owner.sock"] {
         pair_control::validate_socket_path(&root.join(name))?;

@@ -465,13 +465,13 @@ async fn a_machine_path_routes_to_its_own_runner_and_nowhere_else() {
             history_read: false,
             execution: Some(RemoteExecutionGrant {
                 principal: "tommy".into(),
-                roots: vec!["/Users/tommy/work".into()],
+                roots: vec!["/Users/example/work".into()],
             }),
         }])
         .unwrap(),
     );
 
-    let granted = "/Users/tommy/work/project";
+    let granted = "/Users/example/work/project";
     assert_eq!(
         resolve_target_for_workspace_path(&state, &owner, granted)
             .await
@@ -490,7 +490,7 @@ async fn a_machine_path_routes_to_its_own_runner_and_nowhere_else() {
         ExecutionTarget::Personal
     );
     assert_eq!(
-        resolve_target_for_workspace_path(&state, &owner, "/Users/tommy/.ssh")
+        resolve_target_for_workspace_path(&state, &owner, "/Users/example/.ssh")
             .await
             .unwrap(),
         ExecutionTarget::Personal
@@ -500,7 +500,7 @@ async fn a_machine_path_routes_to_its_own_runner_and_nowhere_else() {
     // rather than silently falling back to this host's personal runner.
     for (account, path) in [
         ("ungranted-account", granted),
-        (owner.as_str(), "/Users/tommy/.ssh"),
+        (owner.as_str(), "/Users/example/.ssh"),
     ] {
         let forged = ExecutionTarget::RemoteMachine {
             machine_id: "mac".into(),
@@ -561,14 +561,14 @@ async fn validating_a_machine_workspace_does_not_stat_this_host() {
             history_read: false,
             execution: Some(RemoteExecutionGrant {
                 principal: "tommy".into(),
-                roots: vec!["/Users/tommy/work".into()],
+                roots: vec!["/Users/example/work".into()],
             }),
         }])
         .unwrap(),
     );
 
     // Exists on the machine, never on this host.
-    let granted = "/Users/tommy/work/project";
+    let granted = "/Users/example/work/project";
     assert!(!std::path::Path::new(granted).exists());
     assert_eq!(
         validate_workspace_path(&state, &owner, granted)
@@ -580,7 +580,7 @@ async fn validating_a_machine_workspace_does_not_stat_this_host() {
     // The grant still bounds it: outside the ceiling, or another Account, is refused
     // rather than silently validated or resolved against this host.
     assert!(
-        validate_workspace_path(&state, &owner, "/Users/tommy/.ssh")
+        validate_workspace_path(&state, &owner, "/Users/example/.ssh")
             .await
             .is_err()
     );

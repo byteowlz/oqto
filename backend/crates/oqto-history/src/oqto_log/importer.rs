@@ -936,7 +936,7 @@ mod tests {
         std::fs::write(
             &path,
             concat!(
-                r#"{"type":"session","timestamp":"2026-01-16T12:06:53.369Z","cwd":"/home/wismut/.pi/agent/extensions"}"#,
+                r#"{"type":"session","timestamp":"2026-01-16T12:06:53.369Z","cwd":"/home/example/.pi/agent/extensions"}"#,
                 "\n",
                 r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}],"timestamp":1770410509191}}"#,
                 "\n",
@@ -949,7 +949,7 @@ mod tests {
         let metadata = read_pi_jsonl_session_metadata(&path);
         assert_eq!(
             metadata.cwd.as_deref(),
-            Some("/home/wismut/.pi/agent/extensions")
+            Some("/home/example/.pi/agent/extensions")
         );
         assert_eq!(metadata.title.as_deref(), Some("Fix extension loader"));
         assert_eq!(metadata.created_at.as_deref(), Some("2026-01-16 12:06:53"));
@@ -1071,7 +1071,7 @@ mod tests {
         )
         .expect("write Pi JSONL");
 
-        // Seed the archvm oqto-svwp shape: an empty canonical row and a raw
+        // Seed the dev-host oqto-svwp shape: an empty canonical row and a raw
         // self-identified row both claim the Pi id; no binding facts exist.
         let db_path =
             crate::oqto_log::paths::resolve_user_home_workspace_db_path(temp.path(), workspace)
@@ -1272,23 +1272,25 @@ mod tests {
     #[test]
     fn safe_dir_decoder_is_only_a_fallback_for_missing_jsonl_cwd() {
         assert_eq!(
-            decode_workspace_path_from_safe_dirname("--home-wismut-byteowlz-pi-agent-extensions--")
-                .as_deref(),
-            Some("/home/wismut/byteowlz/pi/agent/extensions")
+            decode_workspace_path_from_safe_dirname(
+                "--home-example-byteowlz-pi-agent-extensions--"
+            )
+            .as_deref(),
+            Some("/home/example/byteowlz/pi/agent/extensions")
         );
 
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("2026-02-06T20-41-29-820Z_session-2.jsonl");
         std::fs::write(
             &path,
-            r#"{"type":"session","timestamp":"2026-02-06T20:41:29.820Z","cwd":"/home/wismut/byteowlz/pi-agent-extensions"}"#,
+            r#"{"type":"session","timestamp":"2026-02-06T20:41:29.820Z","cwd":"/home/example/byteowlz/pi-agent-extensions"}"#,
         )
         .expect("write jsonl");
 
         let metadata = read_pi_jsonl_session_metadata(&path);
         assert_eq!(
             metadata.cwd.as_deref(),
-            Some("/home/wismut/byteowlz/pi-agent-extensions")
+            Some("/home/example/byteowlz/pi-agent-extensions")
         );
     }
 }

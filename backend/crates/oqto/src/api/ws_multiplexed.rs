@@ -3091,14 +3091,14 @@ mod tests {
 
     #[test]
     fn test_resolve_workspace_path_for_validation_accepts_relative_dot() {
-        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_example");
         let resolved = resolve_workspace_path_for_validation(".", &user_home);
         assert!(resolved.starts_with(&user_home));
     }
 
     #[test]
     fn test_resolve_workspace_path_for_validation_accepts_relative_child() {
-        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_example");
         let resolved = resolve_workspace_path_for_validation("./oqto/main", &user_home);
         assert!(resolved.starts_with(&user_home));
         assert!(resolved.to_string_lossy().contains("/oqto/main"));
@@ -3106,7 +3106,7 @@ mod tests {
 
     #[test]
     fn test_resolve_workspace_path_for_validation_blocks_parent_escape() {
-        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_example");
         let resolved =
             resolve_workspace_path_for_validation("../oqto_other_user/secret", &user_home);
         assert!(!resolved.starts_with(&user_home));

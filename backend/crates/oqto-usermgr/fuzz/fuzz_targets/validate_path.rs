@@ -41,7 +41,7 @@ fuzz_target!(|data: &str| {
             "Accepted /root path: {data:?}"
         );
         assert!(
-            !data.starts_with("/home/tommy"),
+            !data.starts_with("/home/example"),
             "Accepted non-oqto home path: {data:?}"
         );
     }

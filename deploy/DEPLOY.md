@@ -2,20 +2,24 @@
 
 One complete, verified release per host, activated by `oqto-setup install` inside a
 single root transaction with an in-transaction service check and automatic rollback.
-Design: [ADR-0018](../docs/adr/0018-single-install-update-deploy-engine.md),
-[ADR-0056](../docs/adr/0056-deploy-is-one-root-transaction-and-history-backfill-is-separate.md).
+Source and artifact boundaries: [Build and deployment](../docs/reference/build-and-deploy.md).
 
 ## Quick Start
 
+Create a private host configuration from `deploy/hosts.toml.example`, review it,
+and pass `--config /path/to/hosts.toml`. Actual host inventories are not shipped
+in the public repository. The commands below assume that configuration has been
+provided; source checkouts with no `deploy/hosts.toml` must use `--config`.
+
 ```bash
 just deploy                                  # Build a clean release, deploy to all hosts
-just deploy-host archvm                      # One host
+just deploy-host dev-host                      # One host
 just deploy --artifact oqto-0.5.9-x86_64-unknown-linux-gnu.tar.gz \
             --checksum oqto-0.5.9-x86_64-unknown-linux-gnu.tar.gz.sha256
 just deploy --canary-then-fleet              # Canary hosts first, then the rest
 just deploy --status                         # current / last-good per host
 just deploy-dry-run                          # Print the plan, change nothing
-just deploy-backfill octo-azure              # Protected oqto-log backfill only
+just deploy-backfill team-host              # Protected oqto-log backfill only
 ```
 
 ## What a deploy refuses
@@ -38,12 +42,31 @@ binaries, frontends and runtimes reached `current`.
 
 ## Release build
 
-Without `--artifact`, deploy requires a clean checkout and runs
-`dist-sync → dist-stage-binaries --build → dist-stage-frontend --build →
-lint-dist-manifest-strict → dist-package <Cargo version> <host triple>`, then re-checks
-that the build did not dirty the tree. `package.sh` records `release.version`,
-`source_commit` and `source_dirty` in the bundled `manifest.toml`; `oqto-setup
-check-release` prints them.
+Without `--artifact`, deploy requires clean source, captures one commit and
+re-executes from a private independent checkout. Later commits, edits and branch
+switches in the original checkout cannot change the running build. Host
+configuration is copied separately from product source; caller-relative paths
+keep their original meaning. Authentication happens in the frozen child, before
+compilation or activation.
+
+The build runs `dist-sync → dist-stage-pi-runtime → dist-stage-binaries --build →
+dist-stage-frontend --build → lint-dist-manifest-strict → dist-package`.
+Frontend installation uses the frozen lockfile; Rust compilation uses `--locked`.
+Source, Cargo output, dependency checkouts and distribution staging are private to
+the invocation. Developer `node_modules`, targets, sibling checkouts and ignored
+build outputs are not copied. Download caches may still be shared by their tools.
+
+Build records live under `$XDG_STATE_HOME/oqto/deploy-builds/` (default
+`~/.local/state/oqto/deploy-builds/`). Each private run retains its log and
+`artifacts/`; source and build scratch are removed after the child exits, including
+failure or cancellation. Printed artifact paths replace the old assumption that
+every deploy writes to the caller's `dist/out/`. Retained build records are not
+automatically pruned.
+
+`package.sh` records `release.version`, `source_commit` and `source_dirty` from the
+frozen checkout. The existing provenance and post-build cleanliness checks remain
+in force; `oqto-setup check-release` prints the result. Artifact, status, dry-run
+and backfill-only invocations do not create source snapshots.
 
 ## Per-host transaction
 
@@ -102,8 +125,8 @@ Receipts: `/root/oqto-backfill-*/backfill.json`.
 
 ```toml
 [[host]]
-name = "octo-azure"
-ssh = "octo-azure"
+name = "team-host"
+ssh = "team-host"
 mode = "multi-user"      # personal: "single-user" (or "local"); team: "multi-user"
 canary = true
 user = "tommy"           # personal hosts: the owning, non-root principal
@@ -127,18 +150,29 @@ sudo ln -sfn "$(readlink -f /var/lib/oqto/releases/last-good)" /var/lib/oqto/rel
 
 ## Fast development deployments
 
-`just deploy --dev --host archvm` builds the current tree, including uncommitted
-and untracked source, using Cargo's `deploy-fast` profile (thin LTO, 16 codegen
-units, incremental). It retains the normal frontend build, portable glibc floor,
-checksummed packaging, activation transaction, health checks and rollback.
-Warm Cargo caches help; no measured build-time guarantee is claimed.
+`just deploy --dev --host dev-host` uses Cargo's `deploy-fast` profile (thin LTO,
+16 codegen units, incremental) from a clean frozen source checkout. It retains
+the normal frontend build, portable glibc floor, checksummed packaging, activation
+transaction, health checks and rollback. Compile outputs are isolated per run;
+no warm incremental-cache or measured build-time guarantee is claimed.
 
-Dev archives use `<Cargo version>-dev.<UTC timestamp>.g<sha8>[.dirty]`;
-no `just bump` is required. Manifest provenance records HEAD and dirty state.
-Dirty-source installation is explicitly enabled by `--dev`. Dev builds replace
-the release of the same core version or older dev builds, never a newer core.
-The ordinary release replaces its own dev builds. Same-second builds can be
-rejected; retry later. Dev versions must not be tagged or publicly published.
+In the private working repository, before freezing source, `--dev` qualifies and
+may commit the newest extension pin. Public snapshots must instead use
+`--no-extension-update`: dependency changes belong in the working repository and
+a new checked export, never a hand-edited public checkout. This preparation happens once in the caller checkout; `--no-extension-update`
+keeps the existing pin. The resulting commit is the build's fixed source identity,
+and no pin update runs in the frozen child.
+
+Dirty and untracked source is now refused even with `--dev`, rather than silently
+omitted from a committed snapshot. Commit the intended inputs or explicitly deploy
+a previously produced artifact. `--allow-dirty-source` remains an installation
+policy for an already selected artifact; it does not bypass source isolation.
+
+Dev archives use `<Cargo version>-dev.<UTC timestamp>.g<sha8>`; no `just bump` is
+required. Manifest provenance records the captured commit. Dev builds replace the
+release of the same core version or older dev builds, never a newer core. The
+ordinary release replaces its own dev builds. Same-second builds can be rejected;
+retry later. Dev versions must not be tagged or publicly published.
 
 Multi-user hosts require `--allow-dev-shared` as well. `--dev` cannot be combined
 with `--artifact`. Use `--dry-run` to inspect without building or restarting.

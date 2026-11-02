@@ -3430,7 +3430,7 @@ delegated_fetch = true
             container_id: None,
             container_name: "oqto-test".to_string(),
             user_id: "u_42".to_string(),
-            workspace_path: "/home/wismut/ws".to_string(),
+            workspace_path: "/home/example/ws".to_string(),
             agent: agent.map(ToString::to_string),
             image: "img".to_string(),
             image_digest: None,
@@ -3477,7 +3477,7 @@ delegated_fetch = true
         );
         assert_eq!(
             env.get("AGENT_CTX_WORKSPACE_PATH").map(String::as_str),
-            Some("/home/wismut/ws")
+            Some("/home/example/ws")
         );
         assert_eq!(env.get("AGENT_CTX_HARNESS").map(String::as_str), Some("pi"));
         // PLATFORM_VERSION is set from CARGO_PKG_VERSION (non-empty).

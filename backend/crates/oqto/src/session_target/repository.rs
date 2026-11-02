@@ -256,10 +256,10 @@ mod tests {
         let repo = SessionTargetRepository::new(db.pool().clone());
         let record = SessionTargetRecord {
             session_id: "oqto-machine-session".to_string(),
-            owner_user_id: Some("wismut".to_string()),
+            owner_user_id: Some("example".to_string()),
             scope: SessionTargetScope::RemoteMachine,
             workspace_id: Some("mac".to_string()),
-            workspace_path: Some("/Users/tommy/work/project".to_string()),
+            workspace_path: Some("/Users/example/work/project".to_string()),
         };
         repo.upsert(&record)
             .await
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(stored.workspace_id.as_deref(), Some("mac"));
         assert_eq!(
             stored.workspace_path.as_deref(),
-            Some("/Users/tommy/work/project")
+            Some("/Users/example/work/project")
         );
 
         for missing in [
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn accept_valid_personal_record() {
-        let record = personal_record(Some("/home/oqto_usr_wismut/oqto/project"));
+        let record = personal_record(Some("/home/oqto_usr_example/oqto/project"));
         SessionTargetRepository::validate_record(&record).expect("must accept valid record");
     }
 }

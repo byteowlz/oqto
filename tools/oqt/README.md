@@ -51,8 +51,7 @@ leaving local continuation untouched. Rewrites/truncation require reconciliation
 Catalogs are isolated by canonical workspace, mode and owner profile. This prototype
 also namespaces storage by runtime artifact: changing source/binaries selects a
 separate catalog, not an automatic cross-version migration. Remote MacBook sync,
-portable devices and cross-version handoff are not qualified. See
-[ADR-0065](../../docs/adr/0065-local-classic-import-and-native-conversation-navigation.md).
+portable devices and cross-version handoff are not qualified.
 
 Headless adapters use the same worker `SessionForks` service (`selected`, paged
 `conversations`/`entries`, `select`, `fork`) and observed-view fencing as the TUI;
@@ -119,7 +118,7 @@ The initial bounded contract allows 128 operator invocations/results per Session
 below 28 KiB, with explicit tail truncation. Oversized commands and exhausted
 capacity fail before effects. The permission store holds only sealed effect
 metadata; output belongs to native worker transactions. Hosted canonical
-history remains oqto-log. See [ADR-0064](../../docs/adr/0064-worker-owned-operator-result-receipts.md).
+history remains oqto-log.
 
 Source-only gates (disposable data; no installation or ordinary profiles):
 

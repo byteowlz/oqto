@@ -62,11 +62,11 @@ fi
 
 cargo_build() {
   if $USE_ZIGBUILD; then
-    echo "[dist-stage] ${CARGO_CMD[*]} zigbuild --target ${TARGET_TRIPLE}.${GLIBC_FLOOR} $*"
-    CARGO_HOME="$CARGO_HOME" "${CARGO_CMD[@]}" zigbuild --target "${TARGET_TRIPLE}.${GLIBC_FLOOR}" "$@"
+    echo "[dist-stage] ${CARGO_CMD[*]} zigbuild --locked --target ${TARGET_TRIPLE}.${GLIBC_FLOOR} $*"
+    CARGO_HOME="$CARGO_HOME" "${CARGO_CMD[@]}" zigbuild --locked --target "${TARGET_TRIPLE}.${GLIBC_FLOOR}" "$@"
   else
-    echo "[dist-stage] CARGO_HOME=$CARGO_HOME RUSTUP_HOME=${RUSTUP_HOME:-<unset>} ${CARGO_CMD[*]} build $*"
-    CARGO_HOME="$CARGO_HOME" "${CARGO_CMD[@]}" build "$@"
+    echo "[dist-stage] CARGO_HOME=$CARGO_HOME RUSTUP_HOME=${RUSTUP_HOME:-<unset>} ${CARGO_CMD[*]} build --locked $*"
+    CARGO_HOME="$CARGO_HOME" "${CARGO_CMD[@]}" build --locked "$@"
   fi
 }
 

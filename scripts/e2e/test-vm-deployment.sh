@@ -171,7 +171,7 @@ load_config() {
     KEEP_FAILED=$(parse_toml "$CONFIG_FILE" "keep_failed_vms")
 
     # Set defaults
-    PROXMOX_HOST="${PROXMOX_HOST:-wismut}"
+    PROXMOX_HOST="${PROXMOX_HOST:-example}"
     PROXMOX_USER="${PROXMOX_USER:-root}"
     STORAGE="${STORAGE:-local-lvm}"
     ISO_STORAGE="${ISO_STORAGE:-local}"
