@@ -384,6 +384,12 @@ install-system:
 check-pi-stable:
     python3 -B scripts/release/pi-update.py
 
+# `just deploy --dev` runs this before the build (--no-extension-update skips).
+# Gates: required/ancestry/unit/load; --apply promotes, --commit records it.
+# Qualify the newest pi-agent-extensions and promote the pin if it works
+update-extensions *args:
+    python3 -B scripts/release/pi-extensions-update.py {{args}}
+
 # Private real-sandbox RPC/provider/cold-restore proof; never touches live stores.
 test-sandboxed-bundled-pi runner runtime:
     python3 -B scripts/dist/test-sandboxed-bundled-pi.py "{{runner}}" "{{runtime}}"
@@ -403,6 +409,7 @@ _test-node-canary:
 # Regression gates for isolated exact-pin candidate preparation
 _test-pi-updates:
     python3 -B scripts/tests/test-pi-update.py
+    python3 -B scripts/tests/test-pi-extensions-update.py
     python3 -B scripts/tests/test-pi-node-runtime.py
     bash -n scripts/dist/stage-pi-node-runtime.sh scripts/dist/test-node-pi-cpu.sh scripts/dist/test-node-pi-runner.sh
 

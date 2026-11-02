@@ -38,6 +38,7 @@ ALLOW_DOWNGRADE=false
 ALLOW_DIRTY_SOURCE=false
 ALLOW_BUSY_SESSIONS=false
 SYNC_EXTENSIONS=true
+UPDATE_EXTENSIONS=true
 BACKFILL=false
 BACKFILL_ONLY=false
 BACKFILL_MODES="sync-identities,bootstrap,validate"
@@ -96,6 +97,8 @@ Policy:
   --keep-releases N        Superseded releases kept (default: 3; 0 disables)
   --min-free-mb MB         Required free disk for preflight (default: 1024)
   --skip-extensions        Do not sync the pinned Pi extension set
+  --no-extension-update    With --dev: keep the pin instead of qualifying the
+                           newest pi-agent-extensions first
 History (never part of activation):
   --backfill               After activation, run the protected oqto-log backfill
   --backfill-only          Only run the protected backfill; no binaries change
@@ -127,6 +130,7 @@ while [[ $# -gt 0 ]]; do
         --keep-releases) KEEP_RELEASES="$2"; shift 2 ;;
         --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
         --skip-extensions) SYNC_EXTENSIONS=false; shift ;;
+        --no-extension-update) UPDATE_EXTENSIONS=false; shift ;;
         --backfill) BACKFILL=true; shift ;;
         --backfill-only) BACKFILL_ONLY=true; shift ;;
         --backfill-modes) BACKFILL_MODES="$2"; shift 2 ;;
@@ -653,7 +657,21 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 start_sudo_leases "${selected[@]}" || fail "initial deployment authorization failed"
 
+# Dev deploys track the newest pi-agent-extensions that passes qualification.
+# The promotion is committed before the build, so the release names it; a
+# failed gate keeps the existing pin and the deploy continues with it.
+update_extensions_pin() {
+    [[ "$DEV" == true && "$SYNC_EXTENSIONS" == true && "$UPDATE_EXTENSIONS" == true ]] || return 0
+    [[ "$DRY_RUN" != true ]] || return 0
+    log "Qualifying the newest pi-agent-extensions before the build"
+    if python3 -B "$ROOT_DIR/scripts/release/pi-extensions-update.py" --apply --commit; then
+        return 0
+    fi
+    warn "Newest pi-agent-extensions not promoted; deploying the existing pin"
+}
+
 if [[ "$STATUS_ONLY" != true && "$BACKFILL_ONLY" != true && -z "$DEPLOY_ARTIFACT" ]]; then
+    update_extensions_pin
     build_artifact
 fi
 require_sudo_leases || fail "deployment authorization expired during build"
