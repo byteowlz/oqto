@@ -56,7 +56,7 @@ pi-linux-arm64-sha256 = "7fd2ea14fca390ebf9f47438baaef07c4b3d13db7cc8e4598311183
 # Official Node/npm runtime; standalone archives remain separate explicit acquisition inputs.
 node = "24.14.1"
 node-linux-x64-sha256 = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
-pi-extensions = "e70d7259cb1126eb8ddb4bea59236a390dedad32"  # coherent collection 2.9.0; candidate qualification required
+pi-extensions = "58b7a5e62c5b201cc680bd5d9ef6bc90d9e805ee"  # qualified 2026-11-02 by scripts/release/pi-extensions-update.py
 oqto-templates = "1629eb05f703a2490e19322fef85fa63dd2746d3"  # immutable release defaults revision
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst
 uv = "0.11.29"  # Python package manager: https://github.com/astral-sh/uv
