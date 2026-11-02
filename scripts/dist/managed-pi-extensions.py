@@ -60,9 +60,9 @@ def reconcile(home, source, names, policy):
     for name in names:
         if not (source / name / "index.ts").is_file():
             raise ValueError(f"required extension missing from source: {name}")
-    agent = home / ".pi/agent"
+    pi_root = resolve_pi_root(home)
+    agent = pi_root / "agent"
     for part in [
-        home / ".pi",
         agent,
         agent / "extensions",
         agent / "extension-backups",
@@ -79,6 +79,27 @@ def reconcile(home, source, names, policy):
     with os.fdopen(lock_fd, "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         return reconcile_locked(agent, destination, source, names, policy)
+
+
+def resolve_pi_root(home: Path) -> Path:
+    """~/.pi, or the owner's own directory it links to (e.g. a dotfiles stow).
+
+    Only the top level may be a link, and only to a directory the home owner
+    owns that nobody else can write. Everything below it must be real
+    directories, so archives can never be routed back into autoload.
+    """
+    link = home / ".pi"
+    if not link.is_symlink():
+        link.mkdir(mode=0o700, exist_ok=True)
+        return link
+    target = link.resolve(strict=True)
+    meta = target.stat()
+    if not target.is_dir() or meta.st_uid != os.geteuid() or meta.st_mode & 0o022:
+        raise ValueError(
+            f"refuse symlinked managed destination: {link} -> {target} "
+            "(must be a directory owned by the home owner, not group/world-writable)"
+        )
+    return target
 
 
 def reconcile_locked(agent, destination, source, names, policy):
