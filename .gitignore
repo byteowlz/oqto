@@ -59,14 +59,15 @@ scripts/e2e/.secrets/
 .mmry/mmry.jsonl
 .mmry/index/
 
-# dist generated artifacts (keep source templates + manifest tracked)
+# Generated distribution staging; manifest and mutable-template sources stay tracked.
 dist/out/
 dist/immutable/bin/*
 !dist/immutable/bin/.gitkeep
 
-# Pi extensions are pulled from ../pi-agent-extensions at release time
-# (scripts/dist/sync.sh) and packaged into the tarball; never tracked here.
-dist/immutable/defaults/pi-agent/extensions/
+# Defaults are reconstructed from pinned public template/extension sources.
+# Ignore the whole generated family, not just extensions, so a public source
+# build remains clean after dist-sync and does not falsify release provenance.
+dist/immutable/defaults/
 
 # Frontend bundle is built at release time (scripts/dist/stage-frontend.sh).
 dist/immutable/frontend/

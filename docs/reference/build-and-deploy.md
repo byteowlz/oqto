@@ -9,7 +9,9 @@ agent configuration into a release. The reviewed `src/templates/embedded/` seeds
 are product data: their source files are explicitly allowed in publication policy.
 The agent seed is named `agent-instructions.md` in source and is materialized as
 `AGENTS.md` only in a user's runtime profile. Repository-scoped agent instructions
-remain private.
+remain private. Generated `dist/immutable/defaults/` staging is ignored by Git
+and rebuilt from those pins, not tracked as a second source of defaults. Staging
+must not make an otherwise clean public checkout appear to have source edits.
 
 ## Source builds
 
