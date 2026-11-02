@@ -840,7 +840,9 @@ impl SharedWorkspaceService {
                     }
                 }
             })
-            .unwrap_or_else(|| include_str!("../templates/embedded/AGENTS.md").to_string());
+            .unwrap_or_else(|| {
+                include_str!("../templates/embedded/agent-instructions.md").to_string()
+            });
 
         if multi_user {
             let linux_users = self

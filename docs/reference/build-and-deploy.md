@@ -5,7 +5,11 @@ synthetic tests, runtime schemas, licences and generic installation tooling.
 Development notes, machine inventories, private captures and credentials are not
 build inputs. Required defaults are reconstructed from the public repositories
 and immutable commits declared in `dependencies.toml`; do not copy a developer's
-agent configuration into a release.
+agent configuration into a release. The reviewed `src/templates/embedded/` seeds
+are product data: their source files are explicitly allowed in publication policy.
+The agent seed is named `agent-instructions.md` in source and is materialized as
+`AGENTS.md` only in a user's runtime profile. Repository-scoped agent instructions
+remain private.
 
 ## Source builds
 

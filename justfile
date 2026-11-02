@@ -1008,6 +1008,7 @@ test-pi-extension-supersession binary source output:
 
 # Deploy driver, transaction, provenance and bootstrap regressions (no host changes)
 test-deploy-mode: test-managed-pi-extensions
+    python3 -B scripts/tests/test-public-runtime-inputs.py
     python3 -B scripts/tests/test-build-source-snapshot.py
     python3 -B scripts/tests/test-deploy-sudo.py
     ./scripts/tests/deploy-mode-test.sh

@@ -34,7 +34,7 @@ OPTIONS:
 
 Default source resolution:
   1) ../oqto-templates/dotfiles/.pi/agent/AGENTS.md
-  2) backend/crates/oqto/src/templates/embedded/AGENTS.md
+  2) backend/crates/oqto/src/templates/embedded/agent-instructions.md
 EOF
 }
 
@@ -92,7 +92,7 @@ resolve_source() {
   fi
 
   local candidate1="$REPO_ROOT/../oqto-templates/dotfiles/.pi/agent/AGENTS.md"
-  local candidate2="$REPO_ROOT/backend/crates/oqto/src/templates/embedded/AGENTS.md"
+  local candidate2="$REPO_ROOT/backend/crates/oqto/src/templates/embedded/agent-instructions.md"
 
   if [[ -f "$candidate1" ]]; then
     echo "$candidate1"

@@ -15,7 +15,8 @@ mod embedded {
     pub const ONBOARD: &str = include_str!("embedded/BOOTSTRAP.md");
     pub const PERSONALITY: &str = include_str!("embedded/PERSONALITY.md");
     pub const USER: &str = include_str!("embedded/USER.md");
-    pub const AGENTS: &str = include_str!("embedded/AGENTS.md");
+    // Product seed data, not repository-scoped agent instructions.
+    pub const AGENTS: &str = include_str!("embedded/agent-instructions.md");
 }
 
 /// Template types.
