@@ -8,7 +8,9 @@ import {
 } from "@/lib/voice/recognition-settings";
 import { STTService } from "@/lib/voice/stt-service";
 import type { ModelDownloadProgress } from "@/lib/voice/stt-service";
+import type { WakeRelease } from "@/lib/voice/types";
 import type { VoiceConfig } from "@/lib/voice/types";
+import { WakeService } from "@/lib/voice/wake-service";
 import type {
 	RecognitionLanguage,
 	RecognitionProvider,
@@ -26,6 +28,8 @@ export interface UseDictationOptions {
 	autoSendOnFinal?: boolean;
 	autoSendDelayMs?: number;
 	onAutoSend?: () => void;
+	/** Wake phrases share this hook so the legacy UI and OqtoUI behave identically. */
+	wakeRelease?: WakeRelease | null;
 }
 export interface UseDictationReturn {
 	isActive: boolean;
@@ -44,6 +48,11 @@ export interface UseDictationReturn {
 	setRecognitionLanguage: (language: RecognitionLanguage) => void;
 	autoSendEnabled: boolean;
 	setAutoSendEnabled: (enabled: boolean) => void;
+	/** "off" | "loading" | "listening" | "muted" | "unavailable" | "error". */
+	wakeState: string;
+	setWakePhrase: (phrase: string) => void;
+	/** Half-duplex: call while the app speaks. */
+	setWakePlayback: (active: boolean) => void;
 	start: () => Promise<void>;
 	/** Drain actual engine completion, without promoting a preview. */
 	stop: () => void;
@@ -102,6 +111,8 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 	const [autoSendEnabled, setAutoSend] = useState(
 		options.autoSendOnFinal ?? false,
 	);
+	const wakeRef = useRef<WakeService | null>(null);
+	const [wakeState, setWakeState] = useState("off");
 	const latest = useRef({ options, autoSendEnabled, recognition });
 	latest.current = { options, autoSendEnabled, recognition };
 
@@ -245,6 +256,46 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		(language: RecognitionLanguage) => changeRecognition({ language }),
 		[changeRecognition],
 	);
+	const setWakePhrase = useCallback(
+		(wakePhrase: string) => changeRecognition({ wakePhrase }),
+		[changeRecognition],
+	);
+	const setWakePlayback = useCallback((active: boolean) => {
+		wakeRef.current?.setPlayback(active);
+	}, []);
+
+	// useeffect-guardrail: allow — wake listening is a device resource keyed to these inputs; the effect owns its lifecycle.
+	useEffect(() => {
+		const release = options.wakeRelease;
+		const wanted = recognition.wakeEnabled && Boolean(release) && !isActive;
+		if (!wanted) {
+			const current = wakeRef.current;
+			wakeRef.current = null;
+			void current?.disarm();
+			setWakeState("off");
+			return;
+		}
+		if (!release) return;
+		const service = new WakeService(
+			{ manifestUrl: release.manifest_url, filesUrl: release.files_url },
+			{
+				onState: setWakeState,
+				onError: (message) => setError(message),
+				onDetection: (phrase) => {
+					const current = latest.current.recognition;
+					if (phrase !== current.wakePhrase) return;
+					// A detection does exactly what the microphone button does.
+					void startRef.current?.();
+				},
+			},
+		);
+		wakeRef.current = service;
+		void service.arm();
+		return () => {
+			if (wakeRef.current === service) wakeRef.current = null;
+			void service.disarm();
+		};
+	}, [options.wakeRelease, recognition.wakeEnabled, isActive]);
 
 	// useeffect-guardrail: allow — composer identity changes release the old capture; callbacks also fence synchronously.
 	useEffect(() => {
@@ -263,6 +314,9 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			cancel();
 	}, [recognition.provider, recognition.language, cancel]);
 
+	const startRef = useRef<(() => Promise<void>) | null>(null);
+	startRef.current = start;
+
 	const getInputVolume = useCallback(
 		() => sttRef.current?.getInputVolume() ?? 0,
 		[],
@@ -274,6 +328,7 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 			activeRef.current = false;
 			if (autoSendTimer.current !== null) clearTimeout(autoSendTimer.current);
 			sttRef.current?.disconnect();
+			void wakeRef.current?.disarm();
 		},
 		[],
 	);
@@ -294,6 +349,9 @@ export function useDictation(options: UseDictationOptions): UseDictationReturn {
 		setRecognitionLanguage,
 		autoSendEnabled,
 		setAutoSendEnabled,
+		wakeState,
+		setWakePhrase,
+		setWakePlayback,
 		start,
 		stop,
 		cancel,

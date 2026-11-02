@@ -10,6 +10,14 @@ export interface RecognitionControlsProps {
 	remoteAvailable: boolean;
 	onProviderChange: (provider: RecognitionProvider) => void;
 	onLanguageChange: (language: RecognitionLanguage) => void;
+	/** Present only when the server offers a verified wake release. */
+	wakeAvailable?: boolean;
+	wakeEnabled?: boolean;
+	onWakeChange?: (enabled: boolean) => void;
+	wakePhrases?: string[];
+	wakePhrase?: string;
+	onWakePhraseChange?: (phrase: string) => void;
+	wakeState?: string;
 	disabled?: boolean;
 }
 
@@ -19,6 +27,13 @@ export function RecognitionControls({
 	remoteAvailable,
 	onProviderChange,
 	onLanguageChange,
+	wakeAvailable,
+	wakeEnabled,
+	onWakeChange,
+	wakePhrases,
+	wakePhrase,
+	onWakePhraseChange,
+	wakeState,
 	disabled,
 }: RecognitionControlsProps) {
 	const id = useId();
@@ -71,6 +86,40 @@ export function RecognitionControls({
 					? "Audio stays on this device. First use downloads a speech model."
 					: "Audio is sent to your configured eaRS service."}
 			</p>
+			{wakeAvailable ? (
+				<div className="space-y-1">
+					<label className="flex items-center gap-2 text-xs text-muted-foreground">
+						<input
+							id={`${id}-wake`}
+							type="checkbox"
+							checked={wakeEnabled === true}
+							disabled={disabled}
+							onChange={(event) => onWakeChange?.(event.target.checked)}
+						/>
+						<span>Start dictation on a wake phrase</span>
+					</label>
+					{wakeEnabled && (wakePhrases?.length ?? 0) > 1 ? (
+						<select
+							aria-label="Wake phrase"
+							value={wakePhrase}
+							disabled={disabled}
+							className={selectClass}
+							onChange={(event) => onWakePhraseChange?.(event.target.value)}
+						>
+							{wakePhrases?.map((phrase) => (
+								<option key={phrase} value={phrase}>
+									{phrase.replaceAll("_", " ")}
+								</option>
+							))}
+						</select>
+					) : null}
+					<p className="text-xs text-muted-foreground">
+						{wakeEnabled
+							? `Listening locally${wakeState === "muted" ? " · muted while speaking" : ""}. A heard phrase only starts dictation; it never sends or approves anything.`
+							: "Off by default. Runs on this device; nothing is uploaded."}
+					</p>
+				</div>
+			) : null}
 		</div>
 	);
 }

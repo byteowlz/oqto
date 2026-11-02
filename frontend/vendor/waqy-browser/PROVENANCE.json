@@ -1,0 +1,9 @@
+{
+  "package": "@byteowlz/waqy (browser engine)",
+  "source": "https://forgejo/wismut/waqy",
+  "commit": "386e789ad702bcebf96ceafb096208ce8771c565",
+  "files": ["waqy-engine.mjs", "LICENSE", "NOTICE"],
+  "license": "Apache-2.0",
+  "changed": "none; copied verbatim",
+  "why": "the browser engine loads the same release the native detector does; refresh with scripts/sync-wake-browser.mjs"
+}

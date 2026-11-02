@@ -23,6 +23,7 @@ import {
 import type { StreamingPresentationMode } from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
+import { OpenUIPart, readOpenUIPart } from "@/src/oqto-ui/chat/OpenUIPart";
 import {
 	Check,
 	Copy,
@@ -131,6 +132,50 @@ type Segment =
 
 /** Gutter icon for collapsed tool calls in minimal mode (verbosity=1).
  *  Shows a single collapsed icon; click opens a popover listing each tool + summary. */
+/**
+ * A run of tool calls in the default detail level: one quiet "N steps" line,
+ * expandable to the rows. Matches the Desktop/Mobile collapse: the reader sees
+ * what happened without every call in the flow, and nothing becomes unreachable.
+ * Presentation only; parts, ids and copy are untouched.
+ */
+function CollapsedToolGroup({
+	steps,
+	children,
+}: {
+	steps: Array<
+		| Extract<Segment, { type: "tool_call" }>
+		| Extract<Segment, { type: "tool_result_only" }>
+	>;
+	children: React.ReactNode;
+}) {
+	const { t } = useTranslation();
+	const shown = steps.slice(0, 3);
+	return (
+		<details className="chat-activity chat-activity--collapsed">
+			<summary>
+				<span className="chat-activity__icons">
+					{shown.map((step, index) => (
+						<span key={`${step.key}-${index}`}>
+							{getToolIcon(
+								step.type === "tool_call"
+									? step.part.name
+									: step.part.name || "result",
+								step.type === "tool_call"
+									? (step.part.input as Record<string, unknown> | undefined)
+									: undefined,
+							)}
+						</span>
+					))}
+				</span>
+				<span className="chat-activity__count">
+					{t("chat.activitySteps", { count: steps.length })}
+				</span>
+			</summary>
+			{children}
+		</details>
+	);
+}
+
 /**
  * Everything the agent did, condensed to one quiet line.
  *
@@ -650,6 +695,10 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		return latest;
 	})();
 
+	/** An agent-emitted UI part is output, not a tool log: keep it in the flow. */
+	const isOpenUISegment = (segment: Segment): boolean =>
+		segment.type === "tool_call" && segment.part.name === "openui";
+
 	const displaySegments = normalizedSegments.filter((segment, index) => {
 		if (segment.type === "error" && segment.retrying) {
 			return index === latestRetryingErrorIndex;
@@ -719,6 +768,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		if (next?.type !== "tool_call" && next?.type !== "tool_result_only") {
 			continue;
 		}
+		if (next && isOpenUISegment(next)) continue;
 		const announcement = segment.text.trim();
 		// Conservative on purpose: a colon, or one short line. A paragraph of
 		// answer that happens to sit before a call stays in the answer.
@@ -744,7 +794,9 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 					): segment is
 						| Extract<Segment, { type: "tool_call" }>
 						| Extract<Segment, { type: "tool_result_only" }> =>
-						segment.type === "tool_call" || segment.type === "tool_result_only",
+						(segment.type === "tool_call" ||
+							segment.type === "tool_result_only") &&
+						!isOpenUISegment(segment),
 				)
 			: [];
 
@@ -752,10 +804,11 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		if (verbosity === 1) {
 			const flow = displaySegments.filter(
 				(segment) =>
-					segment.type !== "thinking" &&
-					segment.type !== "tool_call" &&
-					segment.type !== "tool_result_only" &&
-					!preambleKeys.has(segment.key),
+					isOpenUISegment(segment) ||
+					(segment.type !== "thinking" &&
+						segment.type !== "tool_call" &&
+						segment.type !== "tool_result_only" &&
+						!preambleKeys.has(segment.key)),
 			);
 			// A turn that was nothing but announcements and calls would render
 			// as an empty answer, so the last announcement stands in for one.
@@ -807,6 +860,11 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		};
 
 		for (const segment of displaySegments) {
+			if (isOpenUISegment(segment)) {
+				flushRun();
+				grouped.push(segment);
+				continue;
+			}
 			if (segment.type === "tool_call" || segment.type === "tool_result_only") {
 				toolBuffer.push(segment);
 				continue;
@@ -1154,11 +1212,13 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 								key={segment.key}
 								className={needsTopMargin ? "mt-2" : undefined}
 							>
-								<ToolCallGroup
-									key={`${segment.key}-verbosity-${verbosity}`}
-									mode="tabs"
-									items={toolItems}
-								/>
+								<CollapsedToolGroup steps={visibleToolSegments}>
+									<ToolCallGroup
+										key={`${segment.key}-verbosity-${verbosity}`}
+										mode="tabs"
+										items={toolItems}
+									/>
+								</CollapsedToolGroup>
 							</div>
 						);
 					}
@@ -1244,6 +1304,20 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 /**
  * Renders a single part of a Pi message.
  */
+/** The @Answer value from an openui tool result, if the agent's tool reported one. */
+function extractOpenUIAnswer(output: unknown): unknown {
+	if (!output || typeof output !== "object") return undefined;
+	const details = (output as { details?: unknown }).details;
+	if (
+		details &&
+		typeof details === "object" &&
+		(details as { outcome?: unknown }).outcome === "answered"
+	) {
+		return (details as { answer?: unknown }).answer;
+	}
+	return undefined;
+}
+
 function PiPartRenderer({
 	part,
 	toolResult,
@@ -1527,6 +1601,16 @@ function PiPartRenderer({
 		}
 
 		case "tool_call": {
+			// An OpenUI part is UI, not a tool log: render the program itself.
+			const openui = part.name === "openui" ? readOpenUIPart(part.input) : null;
+			if (openui) {
+				return (
+					<OpenUIPart
+						input={part.input}
+						answered={extractOpenUIAnswer(toolResult?.output)}
+					/>
+				);
+			}
 			const hasResult = Boolean(toolResult);
 			const toolStatus = hasResult ? "completed" : "running";
 			return (

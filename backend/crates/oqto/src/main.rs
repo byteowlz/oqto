@@ -822,6 +822,10 @@ pub struct VoiceConfig {
     /// Keys are visualizer IDs (e.g., "orb", "kitt"), values are VisualizerVoice.
     #[serde(default)]
     pub visualizer_voices: std::collections::HashMap<String, VisualizerVoice>,
+    /// Optional waqy release folder (manifest.json + ONNX files). Unset disables
+    /// wake phrases. Weights never live in this repository (`~` is expanded).
+    #[serde(default)]
+    pub wake_release: Option<String>,
 }
 
 /// Per-visualizer voice settings.
@@ -871,6 +875,7 @@ impl Default for VoiceConfig {
             ]
             .into_iter()
             .collect(),
+            wake_release: None,
         }
     }
 }
@@ -2633,6 +2638,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 )
             })
             .collect(),
+        wake_release: ctx
+            .config
+            .voice
+            .wake_release
+            .as_deref()
+            .map(expand_str_path)
+            .transpose()?,
     };
 
     let session_ui_state = api::SessionUiState {

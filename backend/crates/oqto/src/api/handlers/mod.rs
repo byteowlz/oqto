@@ -31,6 +31,7 @@ mod settings;
 mod shared_workspaces;
 pub mod trx;
 mod ui_config;
+pub mod wake;
 
 // Re-export all public types and handlers
 
@@ -109,6 +110,7 @@ pub use misc::{
     search_in_session, search_sessions, ws_debug,
 };
 pub use ui_config::get_oqto_ui_config;
+pub use wake::{wake_file, wake_manifest};
 
 // Shared workspace handlers
 pub use shared_workspaces::{

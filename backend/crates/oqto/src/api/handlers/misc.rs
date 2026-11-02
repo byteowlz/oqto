@@ -93,6 +93,17 @@ pub struct VoiceConfig {
     pub interrupt_backoff_ms: u32,
     /// Per-visualizer voice/speed settings.
     pub visualizer_voices: std::collections::HashMap<String, VisualizerVoice>,
+    /// Wake-phrase release (null unless the operator configured one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake: Option<WakeConfig>,
+}
+
+/// Wake-phrase release availability. The browser opts in per user; this only
+/// says a verified release can be loaded. A detection is evidence only.
+#[derive(Debug, Serialize)]
+pub struct WakeConfig {
+    pub manifest_url: String,
+    pub files_url: String,
 }
 
 /// Per-visualizer voice settings.
@@ -131,6 +142,10 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
                     )
                 })
                 .collect(),
+            wake: state.voice.wake_release.as_ref().map(|_| WakeConfig {
+                manifest_url: "/api/voice/wake/manifest".to_string(),
+                files_url: "/api/voice/wake/files".to_string(),
+            }),
         })
     } else {
         None

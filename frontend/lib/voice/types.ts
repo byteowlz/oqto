@@ -27,6 +27,14 @@ export interface VoiceConfig {
 	interrupt_backoff_ms: number;
 	/** Per-visualizer voice/speed settings */
 	visualizer_voices: Record<string, { voice: string; speed: number }>;
+	/** Wake-phrase release, present only when the operator configured one. */
+	wake?: WakeRelease | null;
+}
+
+/** Where the verified waqy release is served. Detection is evidence only. */
+export interface WakeRelease {
+	manifest_url: string;
+	files_url: string;
 }
 
 /**

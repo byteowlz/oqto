@@ -14,12 +14,14 @@ function clampVerbosity(value: number): ChatVerbosity {
 }
 
 export function readChatVerbosity(): ChatVerbosity {
-	if (typeof window === "undefined") return 3;
+	// Collapsed by default, like Desktop and Mobile: tool activity folds into one
+	// expandable "N steps" line. "Everything" is an explicit opt-in.
+	if (typeof window === "undefined") return 2;
 	try {
 		const stored = window.localStorage.getItem(STORAGE_KEY);
-		if (!stored) return 3;
+		if (!stored) return 2;
 		const parsed = Number.parseInt(stored, 10);
-		if (Number.isNaN(parsed)) return 3;
+		if (Number.isNaN(parsed)) return 2;
 		return clampVerbosity(parsed);
 	} catch {
 		return 3;

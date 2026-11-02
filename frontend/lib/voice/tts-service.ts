@@ -5,6 +5,8 @@
  * Audio is queued and played sequentially for seamless playback.
  */
 
+import { setAppPlayback } from "./playback-gate";
+
 /** Message types from kokorox server */
 interface TTSMessage {
 	type:
@@ -340,6 +342,8 @@ export class TTSService {
 		// Update playing state
 		if (!this.isPlaying) {
 			this.isPlaying = true;
+			// Half-duplex: wake detection ignores the microphone while we speak.
+			setAppPlayback(true);
 			this.callbacks.onPlaying?.();
 		}
 
@@ -392,7 +396,9 @@ export class TTSService {
 			}
 			console.log("[TTS] Audio queue empty, playback finished");
 			this.isPlaying = false;
+			setAppPlayback(false);
 			this.currentSource = null;
+			setAppPlayback(false);
 			this.callbacks.onStopped?.();
 		}, this.stopGraceMs);
 	}
@@ -682,6 +688,7 @@ export class TTSService {
 
 		this.audioQueue = [];
 		this.isPlaying = false;
+		setAppPlayback(false);
 
 		// Collect pending text before clearing
 		const pendingTexts: string[] = [];

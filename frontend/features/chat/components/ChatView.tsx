@@ -1296,6 +1296,7 @@ export function ChatView({
 		]),
 		config: voiceConfig,
 		remoteUrl: voiceConfig?.stt_url ? voiceProxyWsUrl("stt") : undefined,
+		wakeRelease: voiceConfig?.wake ?? null,
 		onTranscript: useCallback(
 			(text: string) => {
 				// A pending typed snapshot must not overwrite completed speech.
