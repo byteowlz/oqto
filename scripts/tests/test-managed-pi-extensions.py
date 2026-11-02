@@ -182,6 +182,28 @@ class Migration(unittest.TestCase):
             self.run_sync()
         self.assertTrue((other / "pi-oqto-todos/index.ts").is_file())
 
+    def test_owner_dotfiles_link_for_pi_root_is_followed(self):
+        # ~/.pi -> dotfiles stow is a supported owner layout; managed dirs below
+        # it are still required to be real directories.
+        stow = self.root / "dotfiles/.pi"
+        stow.parent.mkdir()
+        (self.home / ".pi").rename(stow)
+        (self.home / ".pi").symlink_to(stow, target_is_directory=True)
+        self.run_sync()
+        self.assertTrue((stow / "agent/extensions/pi-todolist/index.ts").is_file())
+        self.assertTrue((self.home / ".pi").is_symlink())
+
+    def test_pi_root_link_to_writable_directory_is_refused(self):
+        shared = self.root / "shared/.pi"
+        shared.parent.mkdir()
+        (self.home / ".pi").rename(shared)
+        (self.home / ".pi").symlink_to(shared, target_is_directory=True)
+        shared.chmod(0o777)
+        self.addCleanup(shared.chmod, 0o700)
+        with self.assertRaisesRegex(ValueError, "symlinked managed"):
+            self.run_sync()
+        self.assertTrue((shared / "agent/extensions/pi-oqto-todos/index.ts").is_file())
+
     def test_backup_symlink_cannot_route_archives_back_into_autoload(self):
         (self.home / ".pi/agent/extension-backups").symlink_to(
             self.dest, target_is_directory=True
