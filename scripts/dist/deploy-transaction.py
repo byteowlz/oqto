@@ -194,7 +194,13 @@ class SystemHost:
         )
         return result.stdout.strip() not in ("", "not-found")
 
-    def processes(self, uid: int, comm: str) -> list[int]:
+    def processes(self, uid: int, comm: str, home: Path | None = None) -> list[int]:
+        """PIDs of `comm` owned by `uid`.
+
+        With `home`, processes whose environment proves a different HOME are
+        skipped: they cannot write state under `home` (e.g. the isolated
+        phone-pairing runner). Unreadable environments still count (fail closed).
+        """
         found = []
         for status in Path("/proc").glob("[0-9]*/status"):
             try:
@@ -209,7 +215,10 @@ class SystemHost:
                 fields.get("Name", "").strip() == comm
                 and int(fields.get("Uid", "-1").split()[0]) == uid
             ):
-                found.append(int(status.parent.name))
+                pid = int(status.parent.name)
+                if home is not None and runs_in_other_home(read_environ(pid), home):
+                    continue
+                found.append(pid)
         return found
 
     def exe(self, pid: int) -> Path:
@@ -359,6 +368,11 @@ def stop_services(host: SystemHost, info: dict, principals: list[Principal]) -> 
 
 
 WATCHDOG_TIMER = "oqto-healthcheck.timer"
+# The timer's oneshot service can already be in flight when the timer is paused.
+# It restarts oqto.service on a failed health probe, and oqto.service has
+# Wants=oqto-runner.service, so an in-flight probe resurrects both units and
+# the activation snapshot would be taken while writers are running.
+WATCHDOG_SERVICE = "oqto-healthcheck.service"
 
 
 def pause_watchdog(host: SystemHost, info: dict, principals: list[Principal]) -> bool:
@@ -370,10 +384,15 @@ def pause_watchdog(host: SystemHost, info: dict, principals: list[Principal]) ->
         if not host.user_unit_active(principals[0], WATCHDOG_TIMER):
             return False
         host.user_unit(principals[0], "stop", WATCHDOG_TIMER)
+        # Stop an in-flight probe too; the timer alone does not cancel it.
+        if host.user_unit_exists(principals[0], WATCHDOG_SERVICE):
+            host.user_unit(principals[0], "stop", WATCHDOG_SERVICE)
         return True
     if not host.system_unit_active(WATCHDOG_TIMER):
         return False
     host.system_unit("stop", WATCHDOG_TIMER)
+    if host.system_unit_exists(WATCHDOG_SERVICE):
+        host.system_unit("stop", WATCHDOG_SERVICE)
     return True
 
 
@@ -384,21 +403,54 @@ def resume_watchdog(host: SystemHost, info: dict, principals: list[Principal]) -
         host.system_unit("start", WATCHDOG_TIMER)
 
 
+def read_environ(pid: int) -> bytes | None:
+    try:
+        return Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return None
+
+
+def runs_in_other_home(environ: bytes | None, home: Path) -> bool:
+    """True only when the environment proves HOME is not `home`."""
+    if environ is None:
+        return False
+    for entry in environ.split(b"\0"):
+        if entry.startswith(b"HOME="):
+            value = Path(os.fsdecode(entry[5:]))
+            return os.path.realpath(value) != os.path.realpath(home)
+    return False
+
+
+def describe_exe(host: SystemHost, pid: int) -> str:
+    try:
+        return str(host.exe(pid))
+    except OSError:
+        return "exe unreadable"
+
+
 def require_writers_stopped(
     host: SystemHost, info: dict, principals: list[Principal]
 ) -> None:
     """The snapshot is only coherent if nothing writes platform state."""
-    watched = [(p.uid, "oqto-runner") for p in principals]
-    watched.append((info["backend_uid"], "oqto"))
+    watched = [(p.uid, "oqto-runner", p.home) for p in principals]
+    backend_home = principals[0].home if info.get("profile") == "personal" else None
+    watched.append((info["backend_uid"], "oqto", backend_home))
     deadline = time.monotonic() + 30
     while True:
-        running = [(uid, comm) for uid, comm in watched if host.processes(uid, comm)]
+        running = [
+            (uid, comm, pid)
+            for uid, comm, home in watched
+            for pid in host.processes(uid, comm, home)
+        ]
         if not running:
             return
         if time.monotonic() > deadline:
             raise TransactionError(
-                "services were restarted while stopped for activation: "
-                + ", ".join(f"{comm} (uid {uid})" for uid, comm in running)
+                "platform-state writers still running after stop for activation: "
+                + ", ".join(
+                    f"{comm} pid {pid} (uid {uid}, {describe_exe(host, pid)})"
+                    for uid, comm, pid in running
+                )
             )
         time.sleep(1)
 
@@ -789,8 +841,8 @@ def backfill_principal(
         host.user_unit(principal, "stop", unit)
     snapshot = stage / "snapshots" / principal.name
     try:
-        if host.processes(principal.uid, "oqto-runner") or (
-            personal and host.processes(principal.uid, "oqto")
+        if host.processes(principal.uid, "oqto-runner", principal.home) or (
+            personal and host.processes(principal.uid, "oqto", principal.home)
         ):
             raise TransactionError(
                 f"{principal.name}: history writers still running after stop"
