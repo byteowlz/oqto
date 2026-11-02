@@ -3,6 +3,7 @@ import type {
 	ToolExecutionApi,
 	ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { permissionFeedback, permissionFeedbackText } from "./permission-feedback.ts";
 
 export interface CodingOperation {
 	request_id: string;
@@ -110,11 +111,16 @@ export function gatedTool(
 				// Provider exceptions may contain data. Never disclose those on a
 				// failed gate, timeout, cancellation, or uncertain effect.
 				if (process.env.OQT_DEBUG) console.error("oqt tool failure:", error);
-				throw new Error(
-					admitted
-						? "Confined operation failed or authorization ended; effects may be uncertain. Inspect before retrying."
-						: "Permission denied or unavailable; confined operation was not started.",
+				const feedback = permissionFeedback(
+					// A provider/tool exception must never supply attributed denial data.
+					admitted ? undefined : error,
+					admitted ? "uncertain" : "not_started",
 				);
+				if (typeof api.details === "function" && !context.abortSignal?.aborted) {
+					try { await api.details({ permissionFeedback: feedback }, context); }
+					catch { /* Presentation failure cannot change the authorization result. */ }
+				}
+				throw new Error(permissionFeedbackText(feedback));
 			} finally {
 				clearTimeout(timer);
 				if (admitted) {

@@ -84,6 +84,29 @@ fn parse_role(role: &str) -> Role {
 
 fn legacy_part_to_canon(part: ChatMessagePart) -> Option<Part> {
     match part.part_type.as_str() {
+        "image" => {
+            let reference = part.media_ref?;
+            let session = reference["session_id"].as_str()?;
+            let hash = reference["sha256"].as_str()?;
+            if session.is_empty()
+                || session.len() > 256
+                || hash.len() != 64
+                || !hash
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return None;
+            }
+            let session = urlencoding::encode(session);
+            Some(Part::Image {
+                id: part.id,
+                source: oqto_protocol::MediaSource::Url {
+                    url: format!("/api/chat-history/{session}/media/{hash}?variant=thumb"),
+                    mime_type: Some("image/jpeg".into()),
+                },
+                alt: None,
+            })
+        }
         "text" => Some(Part::Text {
             id: part.id,
             text: part.text.unwrap_or_default(),

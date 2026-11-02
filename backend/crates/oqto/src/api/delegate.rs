@@ -1,17 +1,18 @@
 //! Pi delegation API endpoints.
 //!
-//! These endpoints allow Pi to delegate tasks to other sessions.
-//! All endpoints are localhost-only for security.
+//! These endpoints allow Pi to delegate tasks to other sessions. They require a
+//! normal authenticated principal and resolve sessions through the per-user
+//! session service; they are mounted on the authenticated router.
 
 use axum::{
     Json,
-    extract::{ConnectInfo, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
-use tracing::{info, warn};
+use tracing::info;
 
+use crate::auth::CurrentUser;
 use crate::session::SessionStatus;
 
 use super::error::{ApiError, ApiResult};
@@ -90,23 +91,19 @@ pub struct SessionMessage {
 }
 
 // ============================================================================
-// Localhost-only guard
+// Session ownership
 // ============================================================================
 
-fn require_localhost(addr: &SocketAddr) -> ApiResult<()> {
-    let ip = addr.ip();
-    if ip.is_loopback() {
-        Ok(())
-    } else {
-        warn!("Delegation API request rejected from non-localhost: {}", ip);
-        Err(ApiError::forbidden(
-            "Delegation API is only accessible from localhost",
-        ))
-    }
-}
-
-fn get_delegate_user_id(_state: &AppState) -> String {
-    "default".to_string()
+/// Resolve a session for the calling principal.
+///
+/// Ownership is enforced by the per-user session service (`for_user`), not by
+/// the transport peer: behind a loopback reverse proxy every remote client looks
+/// like 127.0.0.1, so a peer address is not authorization.
+fn session_for_user<'a>(
+    state: &'a AppState,
+    user: &'a CurrentUser,
+) -> crate::session::UserSessionService<'a> {
+    state.sessions.for_user(user.id())
 }
 
 // ============================================================================
@@ -118,10 +115,9 @@ fn get_delegate_user_id(_state: &AppState) -> String {
 /// POST /api/delegate/start
 pub async fn start_session(
     State(_state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    _user: CurrentUser,
     Json(_request): Json<StartDelegateRequest>,
 ) -> ApiResult<(StatusCode, Json<DelegateResponse>)> {
-    require_localhost(&addr)?;
     Err(ApiError::internal(
         "Delegation via REST is deprecated. Use the multiplexed WebSocket instead.",
     ))
@@ -132,11 +128,10 @@ pub async fn start_session(
 /// POST /api/delegate/prompt/{session_id}
 pub async fn send_prompt(
     State(_state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    _user: CurrentUser,
     Path(_session_id): Path<String>,
     Json(_request): Json<PromptRequest>,
 ) -> ApiResult<Json<DelegateResponse>> {
-    require_localhost(&addr)?;
     Err(ApiError::internal(
         "Delegation via REST is deprecated. Use the multiplexed WebSocket instead.",
     ))
@@ -147,13 +142,10 @@ pub async fn send_prompt(
 /// GET /api/delegate/status/{session_id}
 pub async fn get_status(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<SessionInfo>> {
-    require_localhost(&addr)?;
-
-    let session = state
-        .sessions
+    let session = session_for_user(&state, &user)
         .get_session(&session_id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to get session: {}", e)))?
@@ -176,11 +168,10 @@ pub async fn get_status(
 /// GET /api/delegate/messages/{session_id}
 pub async fn get_messages(
     State(_state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    _user: CurrentUser,
     Path(_session_id): Path<String>,
     Query(_query): Query<MessagesQuery>,
 ) -> ApiResult<Json<Vec<SessionMessage>>> {
-    require_localhost(&addr)?;
     // Messages are now accessed through oqto-log
     Ok(Json(vec![]))
 }
@@ -190,21 +181,16 @@ pub async fn get_messages(
 /// POST /api/delegate/stop/{session_id}
 pub async fn stop_session(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<DelegateResponse>> {
-    require_localhost(&addr)?;
-
-    let user_id = get_delegate_user_id(&state);
-
     info!(
-        user_id = %user_id,
+        user_id = %user.id(),
         session_id = %session_id,
         "Stopping delegated session"
     );
 
-    state
-        .sessions
+    session_for_user(&state, &user)
         .stop_session(&session_id)
         .await
         .map_err(|e| ApiError::internal(format!("Failed to stop session: {}", e)))?;
@@ -221,21 +207,16 @@ pub async fn stop_session(
 /// GET /api/delegate/sessions
 pub async fn list_sessions(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    user: CurrentUser,
 ) -> ApiResult<Json<Vec<SessionInfo>>> {
-    require_localhost(&addr)?;
-
-    let user_id = get_delegate_user_id(&state);
-
-    let all_sessions = state
-        .sessions
+    let all_sessions = session_for_user(&state, &user)
         .list_sessions()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to list sessions: {}", e)))?;
 
     let sessions: Vec<SessionInfo> = all_sessions
         .into_iter()
-        .filter(|s| s.user_id == user_id)
+        .filter(|s| s.user_id == user.id())
         .filter(|s| {
             matches!(
                 s.status,

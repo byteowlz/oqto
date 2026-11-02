@@ -151,6 +151,8 @@ pub enum RunnerRequest {
     GetWorkspaceChatSession(GetWorkspaceChatSessionRequest),
     /// Get workspace Pi chat session messages (oqto-log-backed, parts preserved).
     GetWorkspaceChatSessionMessages(GetWorkspaceChatSessionMessagesRequest),
+    /// Read media from the same selected durable canonical Session, never a global hash lookup.
+    GetWorkspaceSessionMedia(GetWorkspaceSessionMediaRequest),
 
     /// Update a workspace Pi chat session (e.g., rename title).
     UpdateWorkspaceChatSession(UpdateWorkspaceChatSessionRequest),
@@ -456,6 +458,7 @@ pub enum RunnerResponse {
 
     /// Workspace chat session messages.
     WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse),
+    WorkspaceSessionMedia(WorkspaceSessionMediaResponse),
 
     /// Workspace chat session updated.
     WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse),
@@ -676,6 +679,27 @@ pub struct ReadFileRequest {
     /// Optional maximum bytes to read.
     #[serde(default)]
     pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMediaVariant {
+    Thumb,
+    Full,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetWorkspaceSessionMediaRequest {
+    pub session_id: String,
+    pub workspace_scope: oqto_protocol::projection::MediaWorkspaceScope,
+    pub sha256: String,
+    pub variant: WorkspaceMediaVariant,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSessionMediaResponse {
+    pub session_id: String,
+    /// Canonical Workspace association, for controller-side target/root checks.
+    pub workspace_path: Option<String>,
+    pub media: serde_json::Value,
 }
 
 /// Request to write a file.
@@ -1983,6 +2007,7 @@ fn decode_agent_message_parts(
                 .to_string(),
             ),
             tool_title: None,
+            media_ref: None,
         }];
     }
 
@@ -2018,6 +2043,7 @@ fn decode_agent_message_parts(
                         tool_output: None,
                         tool_status: None,
                         tool_title: None,
+                        media_ref: None,
                     });
                 }
                 "thinking" => {
@@ -2040,6 +2066,7 @@ fn decode_agent_message_parts(
                         tool_output: None,
                         tool_status: None,
                         tool_title: None,
+                        media_ref: None,
                     });
                 }
                 "tool_use" | "tool_call" | "toolCall" => {
@@ -2068,6 +2095,7 @@ fn decode_agent_message_parts(
                         tool_output: None,
                         tool_status: Some("success".to_string()),
                         tool_title: None,
+                        media_ref: None,
                     });
                 }
                 "tool_result" | "toolResult" => {
@@ -2103,6 +2131,7 @@ fn decode_agent_message_parts(
                         tool_output: output_text.map(serde_json::Value::String),
                         tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
                         tool_title: None,
+                        media_ref: None,
                     });
                 }
                 _ => {}
@@ -2147,6 +2176,7 @@ fn decode_agent_message_parts(
         tool_output: None,
         tool_status: None,
         tool_title: None,
+        media_ref: None,
     }]
 }
 

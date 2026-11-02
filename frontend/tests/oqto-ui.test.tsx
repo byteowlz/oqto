@@ -311,7 +311,7 @@ describe("OqtoUI splash", () => {
 });
 
 describe("OqtoUI live platform", () => {
-	it("pages canonical Markdown, tool, and file-reference parts without flattening", async () => {
+	it("pages canonical Markdown, tools, image refs and file references without flattening", async () => {
 		const payloads: Record<string, unknown> = {
 			"/api/chat-history?limit=80": [
 				{
@@ -373,6 +373,18 @@ describe("OqtoUI live platform", () => {
 									label: "main.rs",
 									range: { startLine: 7, endLine: 9 },
 								},
+								{
+									part_type: "image",
+									id: "p5",
+									media_ref: {
+										session_id: "oqto-abc",
+										sha256: "a".repeat(64),
+										mime_type: "image/png",
+										width: 1200,
+										height: 900,
+										byte_size: 1048576,
+									},
+								},
 							],
 							created_at: 1787006012000,
 						},
@@ -408,7 +420,14 @@ describe("OqtoUI live platform", () => {
 				"tool_call",
 				"tool_result",
 				"file_ref",
+				"image",
 			]);
+			expect(
+				newest.messages[0]?.parts?.find((part) => part.type === "image"),
+			).toMatchObject({
+				source: "url",
+				url: `/api/chat-history/oqto-abc/media/${"a".repeat(64)}?variant=thumb`,
+			});
 			expect(newest.hasMore).toBe(true);
 			expect(newest.nextBefore).toBe("v3.1");
 			const older = await liveOqtoUiPlatform.loadMessages(

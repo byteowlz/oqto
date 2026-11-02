@@ -15,6 +15,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::GetWorkspaceChatSessionMessages(r) => {
             runner.get_workspace_chat_session_messages(r).await
         }
+        RunnerRequest::GetWorkspaceSessionMedia(r) => runner.get_workspace_session_media(r).await,
         RunnerRequest::UpdateWorkspaceChatSession(r) => {
             runner.update_workspace_chat_session(r).await
         }

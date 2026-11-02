@@ -22,6 +22,14 @@ pub struct SelectedRoot {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OwnerCommand {
+    HandsRequests,
+    HandsDecide {
+        id: String,
+        root: Option<PathBuf>,
+    },
+    HandsCancel {
+        id: String,
+    },
     Pair {
         sessions: SessionAccess,
         files: Vec<SelectedRoot>,
@@ -102,6 +110,13 @@ impl PairingAuthority {
         supported: Supported,
     ) -> Result<serde_json::Value> {
         match command {
+            OwnerCommand::HandsRequests => self.hands_requests().await,
+            OwnerCommand::HandsDecide { id, root } => {
+                Ok(serde_json::json!({"applied":self.decide_hands(&id, root.as_deref()).await?}))
+            }
+            OwnerCommand::HandsCancel { id } => {
+                Ok(serde_json::json!({"cancelled":self.cancel_hands(None, &id).await?}))
+            }
             OwnerCommand::Pair {
                 sessions,
                 files,

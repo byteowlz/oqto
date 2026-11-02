@@ -1,3 +1,4 @@
+import { sessionMediaUrl } from "@/lib/session-media";
 import type { JsonValue } from "../engine/projection";
 import { createSessionEngine } from "../engine/session-engine";
 import { createEmptyActionHost } from "./actions-contract";
@@ -58,6 +59,8 @@ type JsonRecord = {
 	duration_ms?: unknown;
 	durationMs?: unknown;
 	uri?: unknown;
+	url?: unknown;
+	media_ref?: unknown;
 	label?: unknown;
 	range?: unknown;
 	startLine?: unknown;
@@ -237,6 +240,14 @@ function parseMessageParts(
 				return value === null
 					? []
 					: [{ type: "thinking" as const, id, text: value }];
+			}
+			if (type === "image") {
+				const url =
+					sessionMediaUrl(part.media_ref) ??
+					(part.source === "url" ? text(part.url) : null);
+				return url
+					? [{ type: "image", id, source: "url", url, mimeType: "image/jpeg" }]
+					: [];
 			}
 			const toolCallId =
 				text(part.tool_call_id) ??

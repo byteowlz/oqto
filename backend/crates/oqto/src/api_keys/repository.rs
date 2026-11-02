@@ -114,6 +114,20 @@ impl ApiKeyRepository {
         }
     }
 
+    /// Revoke every outstanding key for an account (deactivation, deletion).
+    pub async fn revoke_all_for_user(&self, user_id: &str) -> ApiKeyStoreResult<u64> {
+        let result = sqlx::query(
+            r#"UPDATE api_keys SET revoked_at = datetime('now')
+               WHERE user_id = ? AND revoked_at IS NULL"#,
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .context("revoke all api keys for user")?;
+
+        Ok(result.rows_affected())
+    }
+
     pub async fn revoke_by_name(&self, user_id: &str, name: &str) -> ApiKeyStoreResult<u64> {
         let result = sqlx::query(
             r#"UPDATE api_keys SET revoked_at = datetime('now')
@@ -162,7 +176,7 @@ impl ApiKeyRepository {
                       k.expires_at, k.created_at, k.revoked_at, u.email, u.display_name, u.role
                FROM api_keys k
                JOIN users u ON u.id = k.user_id
-               WHERE k.key_hash = ? AND k.revoked_at IS NULL
+               WHERE k.key_hash = ? AND k.revoked_at IS NULL AND u.is_active = 1
                LIMIT 1"#,
         )
         .bind(key_hash)

@@ -63,6 +63,6 @@ exec env -i PATH="$PATH" HOME="$home" LANG="${LANG:-C.UTF-8}" \
  OQT_TRUSTED_SOURCE_ROOT="$root" OQT_SOURCE_CHECKOUT="$source" \
  OQT_SERVER_DIR="$profile" OQT_CARRIER="$(value carrier)" \
  OQT_HANDS="$(value hands)" OQT_BRAIN="$(value brain)" PI_OFFLINE=1 OQT_ENV_DAEMON="$(value daemon)" OQT_SANDBOX_SHIM="$(value shim)" \
- OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" OQT_HOST_IDLE_SECONDS="${OQT_HOST_IDLE_SECONDS:-}" OQT_SANDBOX_CONFIG="${OQT_SANDBOX_CONFIG:-$HOME/.config/oqto/sandbox.toml}" OQT_INPUT_TRACE="$profile/input-trace.log" OQT_STARTUP_TRACE="$profile/startup-trace.log" OQT_SHELL_START="$oqt_t0" NODE_COMPILE_CACHE="$(value runtime_root)/node-compile-cache" \
+ OQT_SECCOMP_BPF="$(value bpf)" OQT_DEBUG="${OQT_DEBUG:-}" OQT_HOST_IDLE_SECONDS="${OQT_HOST_IDLE_SECONDS:-}" PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-}" OQT_SANDBOX_CONFIG="${OQT_SANDBOX_CONFIG:-$HOME/.config/oqto/sandbox.toml}" OQT_INPUT_TRACE="$profile/input-trace.log" OQT_STARTUP_TRACE="$profile/startup-trace.log" OQT_SHELL_START="$oqt_t0" NODE_COMPILE_CACHE="$(value runtime_root)/node-compile-cache" \
  node --import "$snapshot/packages/coding-agent/src/experimental/source-resolver.ts" \
  "$snapshot/packages/coding-agent/src/experimental/oqt-launcher.ts" "${args[@]}"

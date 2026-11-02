@@ -53,7 +53,50 @@ pub struct Permit {
 pub enum Admission {
     Allowed(Permit),
     Pending(Box<Request>),
-    Denied,
+    Denied(Denial),
+}
+
+/// Privacy-safe attribution; never includes protected roots or policy contents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DenialCode {
+    ProtectedSafety,
+    ConfiguredCeiling,
+    OperatorDenied,
+    Expired,
+    Stale,
+    Cancelled,
+    Unavailable,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Denial {
+    pub code: DenialCode,
+}
+
+impl std::fmt::Display for Denial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "permission not authorized: {:?}", self.code)
+    }
+}
+impl std::error::Error for Denial {}
+
+/// A bounded journal is an operational limit, not a permission decision.
+#[derive(Debug)]
+pub struct ReceiptCapacity;
+impl std::fmt::Display for ReceiptCapacity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("operator receipt capacity exhausted; open a new Session")
+    }
+}
+impl std::error::Error for ReceiptCapacity {}
+
+impl Admission {
+    fn denied(code: DenialCode) -> Self {
+        Self::Denied(Denial { code })
+    }
 }
 
 /// An admitted invocation whose owner died before confirming completion.
@@ -214,7 +257,7 @@ impl Authority {
             );
             let mut request: Request = serde_json::from_str(&row.get::<String, _>("document"))?;
             let result = match request.state {
-                RequestState::Denied => Admission::Denied,
+                RequestState::Denied => Admission::denied(DenialCode::OperatorDenied),
                 RequestState::Pending if request.expires_at > now => {
                     if let Some((id, expires)) =
                         matching_grant(&mut tx, &operation, now, None).await?
@@ -270,16 +313,21 @@ impl Authority {
                                 expires_at: expires,
                             })
                         }
-                        _ => Admission::Denied,
+                        _ => Admission::denied(if request.expires_at <= now {
+                            DenialCode::Expired
+                        } else {
+                            DenialCode::Stale
+                        }),
                     }
                 }
-                _ => Admission::Denied,
+                RequestState::Pending => Admission::denied(DenialCode::Expired),
+                _ => Admission::denied(DenialCode::Unknown),
             };
             tx.commit().await?;
             return Ok(result);
         }
         let result = match self.policy.mode(&operation.target) {
-            RuleMode::Deny => Admission::Denied,
+            RuleMode::Deny => Admission::denied(self.policy.denial_code(&operation.target)),
             RuleMode::Allow => {
                 let request = Request {
                     operation: operation.clone(),
@@ -505,10 +553,9 @@ impl Authority {
         let prefix = format!("{}:operator:", self.binding.session_id);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM (SELECT id FROM invocations WHERE instr(id, ?)=1 UNION SELECT id FROM operator_receipts)")
             .bind(&prefix).fetch_one(&mut *tx).await?;
-        ensure!(
-            count < 128,
-            "operator receipt capacity exhausted; open a new Session"
-        );
+        if count >= 128 {
+            return Err(ReceiptCapacity.into());
+        }
         let completed: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM operator_receipts WHERE id=?")
                 .bind(&operation.request_id)
@@ -734,7 +781,14 @@ impl Authority {
             // Commit the clock floor even on denial: a backward clock cannot
             // resurrect an expired grant after a failed delivery check.
             tx.commit().await?;
-            anyhow::bail!("stale, revoked or expired permit");
+            return Err(Denial {
+                code: if permit.expires_at <= now {
+                    DenialCode::Expired
+                } else {
+                    DenialCode::Stale
+                },
+            }
+            .into());
         }
         Ok(tx)
     }

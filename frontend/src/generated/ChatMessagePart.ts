@@ -39,4 +39,5 @@ export type ChatMessagePart = {
 	 * Tool title/summary (for tool parts)
 	 */
 	tool_title: string | null;
+	media_ref?: JsonValue;
 };

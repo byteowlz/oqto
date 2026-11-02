@@ -9,6 +9,7 @@
 
 import type { PiAgentMessage, PiSessionMessage } from "@/lib/api/default-chat";
 import type { Part, Sender, ToolStatus } from "@/lib/canonical-types";
+import { sessionMediaUrl } from "@/lib/session-media";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
 const LEGACY_PI_TMP_ID_PATTERN = /^pi-msg-(\d+)$/;
@@ -302,10 +303,27 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 	// --- image ---
 	if (blockType === "image") {
 		const id = (typeof b.id === "string" && b.id) || nextPartId();
+		const mediaUrl = sessionMediaUrl(b.media_ref);
+		if (mediaUrl)
+			return {
+				type: "image",
+				id,
+				source: "url",
+				url: mediaUrl,
+				mimeType: "image/jpeg",
+			};
 		// Canonical images use a MediaSource tagged union; legacy images have
 		// source/data/url/mimeType fields.
 		const source = b.source as string | Record<string, unknown> | undefined;
 		if (typeof source === "string") {
+			if (source === "url" && typeof b.url === "string")
+				return {
+					type: "image",
+					id,
+					source: "url",
+					url: b.url,
+					mimeType: typeof b.mimeType === "string" ? b.mimeType : undefined,
+				};
 			// Already canonical-ish (source is a discriminator like "base64", "url")
 			return {
 				type: "image",
@@ -772,25 +790,9 @@ export function normalizeMessages(
 		}
 	}
 
-	return dropAdjacentDuplicateAssistantMessages(display);
-}
-
-function dropAdjacentDuplicateAssistantMessages(
-	messages: DisplayMessage[],
-): DisplayMessage[] {
-	if (messages.length < 2) return messages;
-	const deduped: DisplayMessage[] = [];
-	let previousAssistantFingerprint: string | null = null;
-	for (const message of messages) {
-		const fingerprint =
-			message.role === "assistant" ? messageFingerprint(message) : null;
-		if (fingerprint && fingerprint === previousAssistantFingerprint) {
-			continue;
-		}
-		deduped.push(message);
-		previousAssistantFingerprint = fingerprint;
-	}
-	return deduped.length === messages.length ? messages : deduped;
+	// Durable identity/replay handling belongs to the session event projection;
+	// identical visible content is not evidence that two messages are one.
+	return display;
 }
 
 // ============================================================================

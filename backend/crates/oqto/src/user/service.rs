@@ -20,6 +20,12 @@ impl UserService {
         Self { repo }
     }
 
+    /// The backing repository, for callers that need account state without a
+    /// service-level round trip (authentication middleware).
+    pub fn repository(&self) -> &UserRepository {
+        &self.repo
+    }
+
     pub async fn ensure_sldr_port(&self, user_id: &str, base_port: u16, range: u16) -> Result<i64> {
         self.repo.ensure_sldr_port(user_id, base_port, range).await
     }

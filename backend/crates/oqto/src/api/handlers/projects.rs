@@ -1597,14 +1597,10 @@ pub async fn get_project_logo(
     }
 
     let full_path = root.join(&file_path);
-
-    // Check file exists and is a file
-    if !full_path.is_file() {
-        return Err(ApiError::not_found("logo not found"));
-    }
+    let canonical = canonical_logo_target(&root, &full_path).await?;
 
     // Determine content type from extension
-    let content_type = match full_path.extension().and_then(|e| e.to_str()) {
+    let content_type = match canonical.extension().and_then(|e| e.to_str()) {
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
@@ -1612,18 +1608,68 @@ pub async fn get_project_logo(
         _ => "application/octet-stream",
     };
 
-    // Read file contents
-    let contents = tokio::fs::read(&full_path)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to read logo file: {}", e)))?;
+    // Read with O_NOFOLLOW so a link swapped in after the canonicalize above
+    // cannot redirect the read.
+    let contents = read_regular_file_no_follow(&canonical).await?;
 
     Ok((
         [
             (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=86400"), // Cache for 1 day
+            (header::CACHE_CONTROL, "private, no-store"),
         ],
         contents,
     ))
+}
+
+/// Resolve a logo target and prove it is inside the workspace root.
+///
+/// The lexical checks in the handler do not constrain symlinks. Canonicalizing
+/// both sides and requiring containment is what stops a symlink planted in a
+/// user-writable workspace from reading any file the backend user can read
+/// (JWT secret, SQLite database).
+async fn canonical_logo_target(
+    root: &std::path::Path,
+    full_path: &std::path::Path,
+) -> Result<std::path::PathBuf, ApiError> {
+    let canonical_root = tokio::fs::canonicalize(root)
+        .await
+        .map_err(|_| ApiError::not_found("logo not found"))?;
+    let canonical = tokio::fs::canonicalize(full_path)
+        .await
+        .map_err(|_| ApiError::not_found("logo not found"))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(ApiError::not_found("logo not found"));
+    }
+    Ok(canonical)
+}
+
+/// Read a regular file, refusing to follow a symlink at the final path
+/// component and refusing anything that is not a regular file.
+async fn read_regular_file_no_follow(path: &std::path::Path) -> Result<Vec<u8>, ApiError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY);
+
+    let mut file = options
+        .open(path)
+        .await
+        .map_err(|_| ApiError::not_found("logo not found"))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|_| ApiError::not_found("logo not found"))?;
+    if !metadata.is_file() {
+        return Err(ApiError::not_found("logo not found"));
+    }
+
+    let mut contents = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut contents)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to read logo file: {}", e)))?;
+    Ok(contents)
 }
 
 #[instrument(skip(state, user, query))]
@@ -1662,6 +1708,13 @@ pub async fn upsert_workspace_location(
     user: CurrentUser,
     Json(request): Json<UpsertWorkspaceLocationRequest>,
 ) -> ApiResult<Json<WorkspaceLocationSummary>> {
+    // A location records where a workspace lives; it is never authorization.
+    // Refuse a path the caller could not have opened as a workspace directly,
+    // so the stored record cannot become an escape hatch later.
+    validate_workspace_path(&state, user.id(), &request.path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid location path: {}", e)))?;
+
     let existing = state
         .sessions
         .workspace_locations()
@@ -1744,8 +1797,8 @@ pub async fn set_active_workspace_location(
 #[cfg(test)]
 pub mod tests {
     use super::{
-        account_home_from_pi_skills_dir, copy_template_dir, sanitize_relative_path,
-        skill_catalog_entry,
+        account_home_from_pi_skills_dir, canonical_logo_target, copy_template_dir,
+        read_regular_file_no_follow, sanitize_relative_path, skill_catalog_entry,
     };
     use crate::skills::{
         DiscoveredSkill, EffectiveState, SkillLocation, SkillMutability, SkillPolicy, SkillScope,
@@ -1813,5 +1866,85 @@ pub mod tests {
 
         assert!(dest.join("README.md").exists());
         assert!(!dest.join(".git").exists());
+    }
+
+    // --- project logo containment -------------------------------------------
+
+    fn write_file(path: &std::path::Path, contents: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("parent dir");
+        }
+        fs::write(path, contents).expect("write file");
+    }
+
+    #[tokio::test]
+    async fn logo_target_inside_root_is_allowed() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path().join("workspace");
+        let logo = root.join("logo").join("proj").join("logo.png");
+        write_file(&logo, b"png-bytes");
+
+        let resolved = canonical_logo_target(&root, &logo)
+            .await
+            .expect("in-root logo resolves");
+        assert_eq!(std::fs::read(&resolved).expect("read"), b"png-bytes");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logo_target_rejects_symlink_escape_to_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path().join("workspace");
+        let secret = tmp.path().join("jwt_secret");
+        write_file(&secret, b"super-secret");
+
+        let link = root.join("logo").join("proj").join("a");
+        fs::create_dir_all(link.parent().expect("parent")).expect("mkdir");
+        std::os::unix::fs::symlink(&secret, &link).expect("symlink");
+
+        assert!(
+            canonical_logo_target(&root, &link).await.is_err(),
+            "a symlink escaping the workspace root must not resolve"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logo_target_rejects_symlinked_directory() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path().join("workspace");
+        fs::create_dir_all(root.join("logo")).expect("mkdir logo");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        write_file(&outside.join("x"), b"outside-data");
+
+        let link_dir = root.join("logo").join("d");
+        std::os::unix::fs::symlink(&outside, &link_dir).expect("symlink dir");
+
+        assert!(
+            canonical_logo_target(&root, &link_dir.join("x"))
+                .await
+                .is_err(),
+            "a symlinked directory escaping the root must not resolve"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logo_read_refuses_final_component_symlink() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let secret = tmp.path().join("jwt_secret");
+        write_file(&secret, b"super-secret");
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&secret, &link).expect("symlink");
+
+        assert!(
+            read_regular_file_no_follow(&link).await.is_err(),
+            "O_NOFOLLOW must refuse a symlinked leaf"
+        );
+        assert_eq!(
+            read_regular_file_no_follow(&secret).await.expect("read"),
+            b"super-secret"
+        );
     }
 }

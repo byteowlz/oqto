@@ -6,6 +6,7 @@
 pub mod config;
 pub mod error;
 pub mod handlers;
+mod previews;
 pub mod routes;
 
 use std::path::PathBuf;

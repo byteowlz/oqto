@@ -16,6 +16,6 @@ pub use repository::SessionRepository;
 #[allow(unused_imports)]
 pub use service::{
     BrowserAction, ContainerStatsReport, SessionContainerStats, SessionService,
-    SessionServiceConfig,
+    SessionServiceConfig, UserSessionService,
 };
 pub use workspace_locations::WorkspaceLocationInput;

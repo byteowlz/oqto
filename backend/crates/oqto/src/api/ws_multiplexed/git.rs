@@ -253,6 +253,22 @@ pub(super) async fn handle_git_command(
         Err(err) => return error(id, err.to_string()),
     };
 
+    // Status/diff/log/branches are reads; everything else changes the
+    // repository (index, working tree, refs) or the remote.
+    let requires_write = !matches!(
+        cmd,
+        GitWsCommand::Status { .. }
+            | GitWsCommand::Diff { .. }
+            | GitWsCommand::Log { .. }
+            | GitWsCommand::Branches { .. }
+    );
+    if requires_write
+        && let Err(err) =
+            require_workspace_role(state, user_id, &workspace_path, WorkspaceNeed::Write).await
+    {
+        return error(id, err);
+    }
+
     match cmd {
         GitWsCommand::Status { id, .. } => {
             let args = vec![

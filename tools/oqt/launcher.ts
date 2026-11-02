@@ -14,13 +14,18 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import lockfile from "proper-lockfile";
-import { uploadClassicSource } from "./classic-client.ts";
-import { readClassicSource } from "./classic-source.ts";
-import { runClient } from "./client.ts";
-import { runClientTui } from "./client-tui.ts";
+import { runEarlyClientTui } from "./presentation-client.ts";
 import { readOwnedJson } from "./readonly-profile.ts";
-import { startServer } from "./server.ts";
 import { mark } from "./trace.ts";
+
+// The interactive coding path draws its editor before loading the client and
+// server stacks; other paths load them on demand.
+const runClient = async (
+	...args: Parameters<typeof import("./client.ts").runClient>
+) => (await import("./client.ts")).runClient(...args);
+const runClientTui = async (
+	...args: Parameters<typeof import("./client-tui.ts").runClientTui>
+) => (await import("./client-tui.ts")).runClientTui(...args);
 
 const args = process.argv.slice(2);
 const smoke = args.includes("--smoke");
@@ -63,7 +68,10 @@ if (!importPath && (importOrigin || importLeaf || json))
 	throw new Error("Import options require --import-classic FILE");
 const frozenImport =
 	importPath && importOrigin
-		? await readClassicSource(importPath, importOrigin)
+		? await (await import("./classic-source.ts")).readClassicSource(
+				importPath,
+				importOrigin,
+			)
 		: undefined;
 if (
 	!smoke &&
@@ -129,16 +137,36 @@ async function readHost(): Promise<Host | undefined> {
 
 /** Attach to this workspace profile's live host or start one. Serialized by a
  * profile lock so concurrent launchers share one host (and one guard). */
-async function ensureHost(): Promise<Host> {
-	const release = await lockfile.lock(join(directory as string, "host"), {
-		realpath: false,
-		stale: 60_000,
-		retries: { retries: 600, factor: 1, minTimeout: 50, maxTimeout: 50 },
-	});
+async function ensureHost(signal?: AbortSignal): Promise<Host> {
+	signal?.throwIfAborted();
+	let release: () => Promise<void>;
+	const lockDeadline = Date.now() + 30_000;
+	for (;;) {
+		signal?.throwIfAborted();
+		try {
+			release = await lockfile.lock(join(directory as string, "host"), {
+				realpath: false,
+				stale: 60_000,
+				retries: 0,
+			});
+			break;
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				!("code" in error) ||
+				error.code !== "ELOCKED"
+			)
+				throw error;
+			if (Date.now() >= lockDeadline)
+				throw new Error("Timed out waiting for the oqt host lock");
+			await sleep(50, undefined, { signal });
+		}
+	}
 	try {
+		signal?.throwIfAborted();
 		const existing = await readHost();
 		if (existing) return existing;
-		process.stderr.write("oqt: starting session host…\n");
+		if (!signal) process.stderr.write("oqt: starting session host…\n");
 		const log = openSync(join(directory as string, "host.log"), "a", 0o600);
 		try {
 			const child = spawn(
@@ -155,6 +183,7 @@ async function ensureHost(): Promise<Host> {
 			child.unref();
 			const deadline = Date.now() + 30_000;
 			for (;;) {
+				signal?.throwIfAborted();
 				const host = await readHost();
 				if (host && host.pid === child.pid) return host;
 				if (child.exitCode !== null || child.signalCode !== null)
@@ -220,15 +249,68 @@ async function mirrorAppearance(owner: string, agentDir: string) {
 	}
 }
 
+/** The server only reports "Internal server error"; the cause (e.g. an
+ * invalid .oqto/sandbox.toml) is in the private host log. */
+async function explainStartupFailure(error: unknown): Promise<string> {
+	const path = join(directory as string, "host.log");
+	const log = await readFile(path, "utf8").catch(() => "");
+	const causes = log
+		.split("\n")
+		.filter((line) =>
+			/failed to start|Session worker failed|^Error:|^\s+workspace guard|invalid guard|unknown profile/.test(
+				line,
+			),
+		)
+		.slice(-4);
+	return `the session could not start: ${error instanceof Error ? error.message : String(error)}\n${causes.map((line) => `  ${line.trim()}`).join("\n")}\n  (full log: ${path})`;
+}
+
 if (coding) {
 	if (process.env.OQT_SHELL_START)
 		mark("shell: start", Number(process.env.OQT_SHELL_START) * 1000);
 	mark("launcher: process start", performance.timeOrigin);
+	if (process.env.OQT_VERIFIED_AT)
+		mark(
+			`shell: runtime verified (${process.env.OQT_VERIFICATION ?? "unknown"})`,
+			Number(process.env.OQT_VERIFIED_AT) * 1000,
+		);
 	mark("launcher: modules loaded");
+	if (!smoke && !frozenImport) {
+		// Small owner-profile copy; the editor reads these settings at mount.
+		await mirrorAppearance(
+			process.env.OQT_OWNER_AGENT_DIR ?? "",
+			process.env.PI_CODING_AGENT_DIR ?? "",
+		);
+		const outcome = await runEarlyClientTui({
+			runtime: packageRoot,
+			explainFailure: explainStartupFailure,
+			client: { directory },
+			prepare: async (signal) => {
+				const host = await ensureHost(signal);
+				signal.throwIfAborted();
+				process.env.OQT_GUARD_OPERATOR = host.operator;
+				return {
+					command: {
+						command: "client" as const,
+						connect: { transport: "unix" as const, path: host.socketPath },
+						pluginPackages: [plugin],
+						...(continuing ? { continue: true } : {}),
+					},
+					host: `${host.pid}:${host.operator}`,
+				};
+			},
+		});
+		if (outcome.failure !== undefined) {
+			process.stderr.write(`oqt: ${outcome.failure}\n`);
+			process.exit(1);
+		}
+		process.exit(0);
+	}
 	const host = await ensureHost();
 	mark("launcher: host ready");
 	let importedSessionId: string | undefined;
 	if (frozenImport && importOrigin) {
+		const { uploadClassicSource } = await import("./classic-client.ts");
 		const receipt = await uploadClassicSource(
 			host.operator,
 			frozenImport,
@@ -274,25 +356,11 @@ if (coding) {
 			await runClientTui(command, { directory });
 		}
 	} catch (error) {
-		// The server only reports "Internal server error"; the cause (e.g. an
-		// invalid .oqto/sandbox.toml) is in the private host log.
-		const log = await readFile(join(directory, "host.log"), "utf8").catch(
-			() => "",
-		);
-		const causes = log
-			.split("\n")
-			.filter((line) =>
-				/failed to start|Session worker failed|^Error:|^\s+workspace guard|invalid guard|unknown profile/.test(
-					line,
-				),
-			)
-			.slice(-4);
-		process.stderr.write(
-			`oqt: the session could not start: ${error instanceof Error ? error.message : String(error)}\n${causes.map((line) => `  ${line.trim()}`).join("\n")}\n  (full log: ${join(directory, "host.log")})\n`,
-		);
+		process.stderr.write(`oqt: ${await explainStartupFailure(error)}\n`);
 		process.exit(1);
 	}
 } else {
+	const { startServer } = await import("./server.ts");
 	const runtime = await startServer({
 		directory,
 		sessionDir: join(directory, "sessions"),

@@ -660,6 +660,7 @@ fn projected_parts_from_payload(
             tool_output: Some(content.clone()),
             tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
             tool_title: None,
+            media_ref: None,
         }];
     }
     let mut parts = Vec::new();
@@ -692,6 +693,7 @@ fn fallback_text_part(msg_id: &str, text: Option<String>) -> Vec<ProjectedChatMe
         tool_output: None,
         tool_status: None,
         tool_title: None,
+        media_ref: None,
     }]
 }
 
@@ -714,8 +716,18 @@ fn content_item_to_projected_part(
         tool_output: None,
         tool_status: None,
         tool_title: None,
+        media_ref: None,
     };
     match part_type {
+        "image" => {
+            let mut projected = item.clone();
+            oqto_media::inline::project(&mut projected).ok()?;
+            let reference =
+                serde_json::Value::Object(projected.get("media_ref")?.as_object()?.clone());
+            let mut part = base("image");
+            part.media_ref = Some(reference);
+            Some(part)
+        }
         "thinking" | "reasoning" => {
             let mut part = base("thinking");
             part.text = obj

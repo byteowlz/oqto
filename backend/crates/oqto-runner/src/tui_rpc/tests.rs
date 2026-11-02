@@ -198,6 +198,50 @@ fn delta() -> Value {
 }
 
 #[tokio::test]
+async fn crowded_socket_root_still_finds_the_matching_pi() -> Result<()> {
+    // A per-user TMPDIR holds tens of thousands of unrelated files; a match must
+    // never depend on where the socket happens to fall in directory order.
+    let mut fixture = Fixture::new()?;
+    let mut state = fixture.native_state();
+    state["leafId"] = Value::Null; // known empty head, so catalog liveness can report it
+    fixture.listen(false, 1, state, vec![], vec![])?;
+    let root = fixture.authority.binding.socket_root.clone();
+    for index in 0..20_000 {
+        std::fs::write(root.join(format!("unrelated-{index:05}")), b"")?;
+    }
+    // Stale pi-tui-rpc names whose PID is gone are not candidates either.
+    let mut stale = std::process::Command::new("/usr/bin/true").spawn()?;
+    let dead = stale.id();
+    stale.wait()?;
+    for index in 0..2_000 {
+        std::fs::write(
+            root.join(format!("pi-tui-rpc-{dead}-stale{index:04}.sock")),
+            b"",
+        )?;
+        if index == 0 {
+            std::fs::write(root.join(format!("pi-tui-rpc-{dead}.sock")), b"")?;
+        }
+    }
+    let observer = fixture.attach().await?;
+    assert!(observer.initial_state().streaming);
+    assert_eq!(
+        fixture.connected.load(Ordering::SeqCst),
+        1,
+        "only the real socket is probed"
+    );
+    drop(observer); // the fixture serves one connection at a time
+    let binding = &fixture.authority.binding;
+    assert_eq!(
+        live_sessions(&binding.socket_root, &binding.session_root)
+            .await
+            .len(),
+        1,
+        "catalog liveness survives a crowded socket root"
+    );
+    fixture.unchanged()
+}
+
+#[tokio::test]
 async fn both_socket_layouts_attach_without_history_lease_or_lifecycle_commands() -> Result<()> {
     for directory in [false, true] {
         let mut fixture = Fixture::new()?;

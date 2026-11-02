@@ -1,37 +1,9 @@
-import type { DisplayMessage, DisplayPart } from "@/lib/chat-render-types";
+import type { DisplayMessage } from "@/lib/chat-render-types";
 
 export type MessageGroup = {
 	role: DisplayMessage["role"];
 	messages: DisplayMessage[];
 };
-
-function fingerprintPartForRender(part: DisplayPart): string {
-	switch (part.type) {
-		case "text":
-			return `text:${part.text}`;
-		case "thinking":
-			return `thinking:${part.text}`;
-		case "tool_call":
-			return `tool_call:${part.toolCallId}:${part.name}:${JSON.stringify(part.input ?? null)}`;
-		case "tool_result":
-			return `tool_result:${part.toolCallId}:${part.name ?? ""}:${JSON.stringify(part.output ?? null)}:${part.isError ? "1" : "0"}`;
-		case "compaction":
-			return `compaction:${part.text}`;
-		case "error":
-			return `error:${part.text}`;
-		case "image":
-			return "image";
-		case "file_ref":
-			return `file_ref:${part.uri}`;
-		default:
-			return part.type;
-	}
-}
-
-function messageRenderFingerprint(message: DisplayMessage): string {
-	const parts = message.parts.map(fingerprintPartForRender);
-	return `${message.role}|${parts.join("|")}`;
-}
 
 function hasRenderableAssistantPayload(message: DisplayMessage): boolean {
 	if (message.role !== "assistant") return false;
@@ -82,12 +54,8 @@ export function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 
 		const previous = current.messages[current.messages.length - 1];
 		if (message.role === "assistant") {
-			if (
-				previous &&
-				messageRenderFingerprint(previous) === messageRenderFingerprint(message)
-			) {
-				continue;
-			}
+			// Grouping is presentation only. Distinct durable rows must survive
+			// even when their text or image bytes happen to be identical.
 			const currentHasRenderableAssistant = current.messages.some(
 				(candidate) =>
 					candidate.role === "assistant" &&

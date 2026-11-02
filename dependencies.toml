@@ -50,12 +50,12 @@ kokorox = "0.2.3"
 # isolated snapshot. Advance accepted pins only after coherent qualification;
 # the legacy standalone smoke is not a Node/npm release acceptance gate.
 # Sync accepted sources via scripts/dist/sync-agent-runtime.sh.
-pi = "1.3.0"  # qualified Linux x86_64 candidate; activate through guarded deployment
-pi-linux-x64-sha256 = "24f5be328b66d4da36876296989501974f43ab8434fbb57c35c523a3ea505ded"
-pi-linux-arm64-sha256 = "7fd2ea14fca390ebf9f47438baaef07c4b3d13db7cc8e459831118391b7ea65b"
+pi = "1.4.0"  # qualified Linux x86_64 candidate; activate through guarded deployment
+pi-linux-x64-sha256 = "f2e4e4329603223d03260cdb8bd5033dbdc1f73ba58ab8939db2e56546e115d2"
+pi-linux-arm64-sha256 = "fa5829c7ef83ffeaebba015715c8306220f89b2aa8a00154efbba98dd5440156"
 # Official Node/npm runtime; standalone archives remain separate explicit acquisition inputs.
-node = "24.14.1"
-node-linux-x64-sha256 = "84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be"
+node = "24.22.2"
+node-linux-x64-sha256 = "48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75"
 pi-extensions = "58b7a5e62c5b201cc680bd5d9ef6bc90d9e805ee"  # qualified 2026-11-02 by scripts/release/pi-extensions-update.py
 oqto-templates = "1629eb05f703a2490e19322fef85fa63dd2746d3"  # immutable release defaults revision
 typst = "0.15.1"  # Required by tmpltr: https://github.com/typst/typst

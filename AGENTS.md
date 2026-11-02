@@ -14,6 +14,8 @@ Single-context layout: project domain language lives in `CONTEXT.md`; architectu
 
 ## Rules
 
+- Work trunk-based on `main` only. The migration checkpoint is consolidated into main; do not resume development on handoff or feature branches. Keep coherent commits and verification on main; deployment remains a separate authorized action.
+
 - Before changing code/config/docs: `trx ready` or `trx list` -> reuse/create issue -> `trx update <id> --status in_progress`; close/update it when done. Ambiguous git/trx commands are read-only first.
 - Use `CONTEXT.md` for project domain language. `docs/adr/` is the canonical decision log; read past ADRs before architecture changes and add/update ADRs for new decisions.
 - Repeated failures must become mechanisms, not reminders: propose or add a lint, test, doctor, checklist, or skill when a mistake recurs.

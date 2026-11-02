@@ -20,6 +20,7 @@ import type { GuardGate } from "./brain-client.ts";
 import { readClassicImportSeed } from "./classic-import-host.ts";
 import { applyClassicImport } from "./classic-import-worker.ts";
 import { type CodingGate, gatedTool } from "./gated-tool.ts";
+import { permissionFeedback, permissionFeedbackText } from "./permission-feedback.ts";
 import type { HandsClient } from "./hands-client.ts";
 
 /** Confinement and permission rules the model must know (prompt addendum). */
@@ -30,6 +31,8 @@ export const OQT_RULES =
  * shell config commands, codemode, or unreviewed plugin registry. Authority
  * and hands are reached only through the supplied guard gate/client. */
 export async function openCodingHarness(options: {
+	/** Explicit owner-bound targets; when supplied no implicit local tools exist. */
+	environments?: import("./execution-bindings.ts").ExecutionBindings<import("./environment-tools.ts").GuardedEnvironment>;
 	databasePath: string;
 	session: string;
 	workspace: string;
@@ -50,9 +53,9 @@ export async function openCodingHarness(options: {
 	const coding = createCodingTools();
 	registry.install({
 		...coding,
-		tools: coding.tools?.map((tool) =>
-			gatedTool(tool, options.gate, options.session),
-		),
+		tools: options.environments
+			? (await import("./environment-tools.ts")).environmentTools(coding.tools ?? [], options.environments, options.session)
+			: coding.tools?.map((tool) => gatedTool(tool, options.gate, options.session)),
 	});
 	const requestAccess = options.requestAccess;
 	if (requestAccess)
@@ -106,6 +109,10 @@ export async function openCodingHarness(options: {
 									context.abortSignal,
 								);
 								return {
+									details: {
+										granted: { capability: result.granted.capability, resource: result.granted.resource },
+										expiresAt: result.expires_at,
+									},
 									output: [
 										{
 											type: "text" as const,
@@ -114,9 +121,14 @@ export async function openCodingHarness(options: {
 									],
 								};
 							} catch (error) {
-								throw new Error(
-									`Access not granted: ${error instanceof Error ? error.message : String(error)}`,
-								);
+								const feedback = permissionFeedback(error);
+								// UI details are fixed, privacy-safe admission metadata, not tool output.
+								// Preserve native failure semantics and durable result diagnostics.
+								if (typeof api.details === "function" && !context.abortSignal?.aborted) {
+									try { await api.details({ permissionFeedback: feedback }, context); }
+									catch { /* Presentation failure must not replace the admission cause. */ }
+								}
+								throw new Error(permissionFeedbackText(feedback));
 							}
 						},
 					},

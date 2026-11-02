@@ -9,6 +9,20 @@ export function workspaceFilePreviewUrl(
 	return url.toString();
 }
 
+/** Bounded raster preview; originals and unsupported/vector formats stay intact. */
+export function workspaceImagePreviewUrl(
+	workspacePath: string,
+	path: string,
+): string {
+	if (!/\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(path))
+		return workspaceFilePreviewUrl(workspacePath, path);
+	const url = new URL("/api/workspace/files/thumbnail", window.location.origin);
+	url.searchParams.set("path", path);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("size", "768");
+	return url.toString();
+}
+
 /**
  * The inverse: recover the workspace-relative path from a URL this module
  * built. It lives beside the builder so the two cannot drift; anything that

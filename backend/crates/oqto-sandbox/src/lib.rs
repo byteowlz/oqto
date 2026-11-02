@@ -9,6 +9,7 @@ pub mod landlock_shim;
 pub mod overlay;
 pub mod path_policy;
 pub mod policy_bwrap;
+pub mod policy_editor;
 pub mod policy_seatbelt;
 pub mod policy_translate;
 pub mod seatbelt;

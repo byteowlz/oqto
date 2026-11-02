@@ -111,6 +111,21 @@ impl UserRepository {
         Ok(user)
     }
 
+    /// Current authorization facts for one account: `(is_active, role)`.
+    ///
+    /// Authentication reads this per request so a token or API key cannot
+    /// outlive the account state it was issued under (deactivation, demotion).
+    pub async fn account_state(&self, id: &str) -> Result<Option<(bool, String)>> {
+        let row =
+            sqlx::query_as::<_, (i64, String)>("SELECT is_active, role FROM users WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("fetch account state")?;
+
+        Ok(row.map(|(is_active, role)| (is_active != 0, role)))
+    }
+
     /// Get a user by username.
     #[instrument(skip(self))]
     pub async fn get_by_username(&self, username: &str) -> Result<Option<User>> {

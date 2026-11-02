@@ -70,6 +70,19 @@ pub(super) async fn handle_files_command(
     };
     let workspace_path = workspace_path_owned.as_deref();
 
+    // Read-only commands stay available to every member; mutations need a role
+    // that may write. This is one decision where the target is resolved, so a
+    // new command variant cannot ship without a role answer.
+    let requires_write = matches!(
+        cmd,
+        FilesWsCommand::Write { .. }
+            | FilesWsCommand::Delete { .. }
+            | FilesWsCommand::CreateDirectory { .. }
+            | FilesWsCommand::Rename { .. }
+            | FilesWsCommand::Copy { .. }
+            | FilesWsCommand::Move { .. }
+    );
+
     let workspace_root = match resolve_workspace_root(workspace_path) {
         Ok(path) => path,
         Err(err) => {
@@ -85,28 +98,27 @@ pub(super) async fn handle_files_command(
         && let Ok(ExecutionTarget::SharedWorkspace { workspace_id }) =
             resolve_target_for_workspace_path(state, user_id, ws_path).await
     {
+        if let Err(err) = require_workspace_role(
+            state,
+            user_id,
+            ws_path,
+            if requires_write {
+                WorkspaceNeed::Write
+            } else {
+                WorkspaceNeed::Read
+            },
+        )
+        .await
+        {
+            return Some(WsEvent::Files(FilesWsEvent::Error { id, error: err }));
+        }
+
         let Some(sw) = state.shared_workspaces.as_ref() else {
             return Some(WsEvent::Files(FilesWsEvent::Error {
                 id,
                 error: "Shared workspace service not configured".to_string(),
             }));
         };
-
-        match sw.get(&workspace_id, user_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: "Access denied: shared workspace membership required".to_string(),
-                }));
-            }
-            Err(err) => {
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: format!("Failed to resolve shared workspace access: {}", err),
-                }));
-            }
-        }
 
         match sw.linux_user_for_id(&workspace_id).await {
             Ok(Some(owner_linux_user)) => {
@@ -935,16 +947,16 @@ impl TtydConnection {
 }
 
 impl TtydConnectionWrite {
-    // Mirrors tungstenite's own send signature; boxing the error would force
-    // conversions at every `?` passthrough call site.
-    #[allow(clippy::result_large_err)]
+    // `tungstenite::Error` is large (it carries an HTTP response), so it is
+    // boxed on the way out. Callers only log or drop this error, so the box is
+    // strictly cheaper than passing the value around.
     async fn send(
         &mut self,
         msg: tokio_tungstenite::tungstenite::Message,
-    ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    ) -> Result<(), Box<tokio_tungstenite::tungstenite::Error>> {
         match self {
-            TtydConnectionWrite::Unix(w) => w.send(msg).await,
-            TtydConnectionWrite::Tcp(w) => w.send(msg).await,
+            TtydConnectionWrite::Unix(w) => w.send(msg).await.map_err(Box::new),
+            TtydConnectionWrite::Tcp(w) => w.send(msg).await.map_err(Box::new),
         }
     }
 }

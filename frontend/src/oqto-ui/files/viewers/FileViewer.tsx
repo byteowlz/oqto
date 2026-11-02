@@ -5,7 +5,10 @@
  */
 
 import { useTranslation } from "react-i18next";
-import { workspaceFilePreviewUrl } from "../../platform/workspace-file-url";
+import {
+	workspaceFilePreviewUrl,
+	workspaceImagePreviewUrl,
+} from "../../platform/workspace-file-url";
 import type { PreviewState } from "../usePreview";
 import { mediaElement, viewerFor } from "./registry";
 
@@ -27,11 +30,18 @@ export function FileViewer({
 	const viewer = viewerFor(name, false);
 	if (viewer === "image") {
 		return (
-			<img
-				className="wb-files-preview__image"
-				src={workspaceFilePreviewUrl(workspacePath, path)}
-				alt={name}
-			/>
+			<a
+				href={workspaceFilePreviewUrl(workspacePath, path)}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="wb-files-preview__body"
+			>
+				<img
+					className="wb-files-preview__image"
+					src={workspaceImagePreviewUrl(workspacePath, path)}
+					alt={name}
+				/>
+			</a>
 		);
 	}
 	if (viewer === "pdf") {

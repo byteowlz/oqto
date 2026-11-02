@@ -27,6 +27,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 
 ASSETS = ('carrier', 'hands', 'shim', 'brain', 'daemon', 'bpf')
 SCHEMA = 1
@@ -181,7 +182,7 @@ def verify(runtime):
 
 
 def validate_layout(files):
-    for required in ['oqt', 'verifier.py', 'runtime.json', 'launch.py', 'bin/node',
+    for required in ['oqt', 'verifier.py', 'runtime.json', 'bin/node',
                      *['bin/' + key for key in ASSETS]]:
         if files.get(required, {}).get('type') != 'file':
             raise ValueError(f'Missing runtime file: {required}')
@@ -192,6 +193,119 @@ def validate_layout(files):
 
 # Public API used by installed-launch.py; verification never prepares profiles.
 verify_runtime = verify
+
+RECEIPT_SCHEMA = 1
+# Content is rehashed at least weekly: receipts detect filesystem modification,
+# not media corruption, root/clock manipulation or raw block-device writes.
+RECEIPT_MAX_AGE = 7 * 24 * 3600
+
+
+def stat_digest(root):
+    """Identity of every entry without reading content.
+
+    Any write, rename, replacement, chmod, link or utimes call changes ctime
+    (and/or inode), which unprivileged processes cannot set. Includes the
+    manifest and the root itself; atime is excluded because reads change it.
+    """
+    root = Path(os.path.abspath(root))
+    sha = hashlib.sha256()
+
+    def record(relative, meta):
+        sha.update(canonical([relative, meta.st_mode, meta.st_uid, meta.st_nlink, meta.st_dev,
+                              meta.st_ino, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns]))
+
+    def visit(directory, prefix):
+        with os.scandir(directory) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+        for child in children:
+            meta = child.stat(follow_symlinks=False)
+            relative = prefix + child.name
+            record(relative, meta)
+            if stat.S_ISDIR(meta.st_mode):
+                visit(child.path, relative + '/')
+
+    record('.', root.lstat())
+    visit(root, '')
+    return sha.hexdigest()
+
+
+def _private_state_directory(path):
+    meta = path.lstat()
+    return stat.S_ISDIR(meta.st_mode) and meta.st_uid == os.getuid() and not meta.st_mode & 0o077
+
+
+def read_receipt(path):
+    """Owned 0600 single-link regular file in private directories, else None."""
+    path = Path(os.path.abspath(path))
+    try:
+        if not all(_private_state_directory(parent) for parent in (path.parent, path.parent.parent)):
+            return None
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        meta = os.fstat(descriptor)
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid() or stat.S_IMODE(meta.st_mode) != 0o600
+                or meta.st_nlink != 1 or meta.st_size > 4096):
+            return None
+        with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+            value = json.loads(stream.read(4097))
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(descriptor)
+    if not isinstance(value, dict) or set(value) != {'schema', 'artifact', 'stat_digest', 'verified_at'}:
+        return None
+    if (value['schema'] != RECEIPT_SCHEMA or not isinstance(value['artifact'], str)
+            or not isinstance(value['stat_digest'], str) or not re.fullmatch('[0-9a-f]{64}', value['stat_digest'])
+            or not isinstance(value['verified_at'], (int, float)) or isinstance(value['verified_at'], bool)):
+        return None
+    return value
+
+
+def verify_with_receipt(runtime, receipt_path, now=None):
+    """Return (info, mode, new_receipt). Fast path only for a fresh receipt whose
+    stat digest still matches; otherwise full verification. A receipt is offered
+    only if the tree's stat digest was identical before and after hashing, so it
+    binds exactly the verified content. Callers save it with save_receipt.
+    """
+    root = Path(os.path.abspath(runtime))
+    now = time.time() if now is None else now
+    if not re.fullmatch('[0-9a-f]{64}', root.name):
+        raise ValueError('Runtime must be named by its full SHA-256 identity')
+    saved = read_receipt(receipt_path)
+    if (saved and saved['artifact'] == root.name and -300 <= now - saved['verified_at'] <= RECEIPT_MAX_AGE):
+        try:
+            private(root.parent)
+            if stat_digest(root) == saved['stat_digest']:
+                return result(root, root.name), 'receipt', None
+        except (OSError, ValueError):
+            pass
+    before = stat_digest(root)
+    info = verify(root)
+    after = stat_digest(root)
+    receipt = None
+    if before == after:
+        receipt = {'schema': RECEIPT_SCHEMA, 'artifact': root.name, 'stat_digest': after, 'verified_at': now}
+    return info, 'full', receipt
+
+
+def save_receipt(path, receipt):
+    """Atomically publish a receipt into an existing private state directory."""
+    path = Path(os.path.abspath(path))
+    if not all(_private_state_directory(parent) for parent in (path.parent, path.parent.parent)):
+        raise ValueError('Receipt directory must be private and owned')
+    descriptor, temporary = tempfile.mkstemp(prefix='.receipt-', dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, 'wb') as output:
+            output.write(canonical(receipt))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def remove_stage(path):

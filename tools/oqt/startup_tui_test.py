@@ -2,7 +2,9 @@
 """Startup speed mechanisms: the host lingers after the last client leaves
 (OQT_HOST_IDLE_SECONDS) so the next launch attaches without starting a host,
 and the runtime is not pinned to one CPU at nice 19."""
+import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import time
@@ -13,6 +15,13 @@ from tui_test import Terminal
 
 os.environ['OQT_HOST_IDLE_SECONDS'] = '60'
 with coding_world(lambda request: ('text', 'warm-reply'), 'oqt-startup-') as (provider, owner, work):
+    source = os.environ.get('OQT_PI_SOURCE', str(Path.home()/'.local/share/oqt/pi-source'))
+    prepared = json.loads(subprocess.check_output([
+        'python3', str(Path(__file__).resolve().parent/'prepare.py'), source,
+        str(work), 'coding', str(owner)
+    ], text=True))
+    manifest = Path(prepared['profile'])/'host.json'
+    previous_host = None
     timings = []
     for launch in ('cold', 'warm'):
         started = time.monotonic()
@@ -21,8 +30,10 @@ with coding_world(lambda request: ('text', 'warm-reply'), 'oqt-startup-') as (pr
         try:
             t.expect('oqt coding')
             timings.append(round(time.monotonic() - started, 2))
-            started_host = b'starting session host' in t.raw
-            assert started_host == (launch == 'cold'), f'{launch}: host start shown={started_host}'
+            current_host = json.loads(manifest.read_text())['pid']
+            if launch == 'warm':
+                assert current_host == previous_host, 'Warm launch replaced the live host'
+            previous_host = current_host
             if launch == 'warm':
                 pid = int(os.popen(f"pgrep -f 'oqt-launcher.ts' -n").read().strip() or 0)
                 if pid:

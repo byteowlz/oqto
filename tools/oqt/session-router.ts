@@ -42,7 +42,8 @@ import {
 	type ModelsServiceRuntime,
 } from "./services/models-provider.ts";
 import { Transcript } from "./services/transcript.ts";
-import { createSessionForks, SessionForks } from "./session-forks.ts";
+import { createSessionForks } from "./session-forks.ts";
+import { SessionForks } from "./session-forks-service.ts";
 
 const TOKEN = "oqtConversationTarget";
 const OBSERVED_TARGET = createContextKey<string>(

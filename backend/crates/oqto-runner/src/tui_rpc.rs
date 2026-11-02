@@ -24,7 +24,11 @@ use tokio::{
 };
 
 const FRAME_LIMIT: u64 = 1024 * 1024;
-const MAX_ENTRIES: usize = 8192;
+/// Entries examined in a socket root. A per-user TMPDIR legitimately holds tens
+/// of thousands of unrelated files, so the scan bound is generous and unrelated
+/// entries never consume a candidate slot or abort discovery.
+const MAX_SCANNED_ENTRIES: usize = 1_000_000;
+/// Live same-user Pi candidates actually probed, not directory entries.
 const MAX_CANDIDATES: usize = 64;
 const MAX_PENDING: usize = 16;
 const RPC_DEADLINE: Duration = Duration::from_millis(500);
@@ -243,12 +247,20 @@ impl TuiObserver {
         let mut count = 0;
         while let Some(entry) = entries.next_entry().await.context("TUI discovery failed")? {
             count += 1;
-            ensure!(count <= MAX_ENTRIES, "TUI discovery entry bound exceeded");
+            ensure!(
+                count <= MAX_SCANNED_ENTRIES,
+                "TUI discovery entry bound exceeded"
+            );
             let Some((pid, path)) =
                 socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
             else {
                 continue;
             };
+            // Stale socket names are not candidates: probing them cannot match a
+            // live Pi and must never crowd out the real socket.
+            if !live_pid(pid) {
+                continue;
+            }
             candidates.push((pid, path));
             ensure!(
                 candidates.len() <= MAX_CANDIDATES,
@@ -258,7 +270,7 @@ impl TuiObserver {
         let mut found = None;
         for (pid, path) in candidates {
             authority.revalidate(&binding)?;
-            let candidate = tokio::time::timeout(
+            if let Ok(Ok(observer)) = tokio::time::timeout(
                 RPC_DEADLINE,
                 Self::probe(
                     authority.clone(),
@@ -268,8 +280,8 @@ impl TuiObserver {
                     snapshot_only,
                 ),
             )
-            .await;
-            if let Ok(Ok(observer)) = candidate {
+            .await
+            {
                 ensure!(found.is_none(), "Ambiguous live TUI identity");
                 found = Some(observer);
             }
@@ -676,13 +688,14 @@ pub(crate) async fn live_sessions(
         let mut count = 0;
         while let Ok(Some(entry)) = entries.next_entry().await {
             count += 1;
-            if count > MAX_ENTRIES || candidates.len() >= MAX_CANDIDATES {
+            if count > MAX_SCANNED_ENTRIES || candidates.len() >= MAX_CANDIDATES {
                 break;
             }
-            if let Some(candidate) =
+            if let Some((pid, path)) =
                 socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
+                && live_pid(pid)
             {
-                candidates.push(candidate);
+                candidates.push((pid, path));
             }
         }
     }
@@ -784,6 +797,12 @@ async fn probe_live(pid: u32, path: &Path, uid: u32) -> Result<(String, LiveSess
         ));
     }
     bail!("TUI state response missing")
+}
+
+/// Cheap liveness pre-check: a dead PID cannot be the Pi owning a live socket.
+fn live_pid(pid: u32) -> bool {
+    rustix::process::Pid::from_raw(pid as i32)
+        .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
 }
 
 fn socket_candidate(name: &str, path: &Path, uid: u32) -> Option<(u32, PathBuf)> {

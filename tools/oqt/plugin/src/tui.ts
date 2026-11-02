@@ -3,8 +3,10 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
 	PresentationUI,
 	SlashCommands,
+	ToolPresentation,
 } from "@earendil-works/pi-coding-agent/experimental/plugin";
-import { OperatorResults } from "../../../../src/experimental/operator-receipts.ts";
+import { OperatorResults } from "../../../../src/experimental/operator-results-service.ts";
+import { programStatus } from "../../../../src/experimental/program-status.ts";
 import { Models } from "../../../../src/experimental/services/models.ts";
 import { Transcript } from "../../../../src/experimental/services/transcript.ts";
 import {
@@ -18,6 +20,11 @@ import {
 	type PendingInputControl,
 } from "./guard-client.ts";
 import { installModelCommands } from "./models.ts";
+import {
+	permissionDisplayText,
+	permissionHelpCommand,
+	renderPermission,
+} from "./permission-render.ts";
 
 type Choice = "once" | "session" | "always" | "deny";
 
@@ -44,7 +51,7 @@ function menu(request: PendingPermission, coding: boolean) {
 	const scope =
 		request.category === "shell"
 			? request.prefix
-				? `\`${request.prefix}\` commands`
+				? `\`${permissionDisplayText(request.prefix)}\` commands`
 				: "all shell commands"
 			: request.category === "edit"
 				? "file changes"
@@ -63,7 +70,16 @@ function menu(request: PendingPermission, coding: boolean) {
 	];
 }
 
-function title(request: PendingPermission, coding: boolean) {
+function title(raw: PendingPermission, coding: boolean) {
+	// Escape fields before inserting host-authored newlines (no forged headings).
+	const request = {
+		...raw,
+		capability: permissionDisplayText(raw.capability),
+		resource: permissionDisplayText(raw.resource),
+		argumentsText: permissionDisplayText(raw.argumentsText),
+		session: permissionDisplayText(raw.session),
+		preview: raw.preview?.split("\n").map(permissionDisplayText).join("\n"),
+	};
 	if (!coding)
 		return `DEMO permission · ${request.capability} / ${request.resource}\nArguments: ${request.argumentsText}\nSession: ${request.session}`;
 	const header = HEADERS[request.category ?? ""] ?? "Permission";
@@ -99,7 +115,30 @@ export default defineFacet({
 				? guard.state.value
 				: (demo?.state.value as OperatorState | undefined);
 		const commands = env.use(SlashCommands);
-		const ui = env.use(PresentationUI);
+		const nativeUI = env.use(PresentationUI);
+		// This boundary covers errors, rules, paths, remote labels and shell output.
+		// Host-authored line separators stay readable; each external line is escaped.
+		const safeLines = (text: string) =>
+			text.split("\n").map(permissionDisplayText).join("\n");
+		const ui: PresentationUI = {
+			select: (heading, items, selected, context) =>
+				nativeUI.select(
+					safeLines(heading),
+					items.map((item) => ({
+						...item,
+						label: permissionDisplayText(item.label),
+						description:
+							item.description === undefined
+								? undefined
+								: permissionDisplayText(item.description),
+					})),
+					selected,
+					context,
+				),
+			showStatus: (message, context) =>
+				nativeUI.showStatus(safeLines(message), context),
+		};
+		const presentation = env.use(ToolPresentation);
 		const models = env.use(Models);
 		const shown = new Set<string>();
 		const reportedInterrupted = new Set<string>();
@@ -132,8 +171,12 @@ export default defineFacet({
 			selecting = true;
 			shown.add(`input:${request.id}`);
 			try {
+				programStatus.setBlocked(`input:${request.id}`, {
+					kind: "permission",
+					message: "Remote input control",
+				});
 				const choice = await ui.select(
-					`Remote input control\nSession: ${request.session}\nClient label (unverified): ${request.label}\n\nAllow prompt, steer and abort for up to one minute? Tool approvals and access grants stay separate. Submitting input or aborting at this terminal reclaims control.`,
+					`Remote input control\nSession: ${permissionDisplayText(request.session)}\nClient label (unverified): ${permissionDisplayText(request.label)}\n\nAllow prompt, steer and abort for up to one minute? Tool approvals and access grants stay separate. Submitting input or aborting at this terminal reclaims control.`,
 					[
 						{ value: "deny", label: "Deny" },
 						{ value: "allow", label: "Allow for one minute" },
@@ -151,6 +194,7 @@ export default defineFacet({
 			} catch {
 				ui.showStatus("Remote input request expired or changed", context);
 			} finally {
+				programStatus.setBlocked(`input:${request.id}`, undefined);
 				selecting = false;
 				chooseNext(context);
 			}
@@ -164,12 +208,23 @@ export default defineFacet({
 			shown.add(request.digest);
 			try {
 				const items = menu(request, coding);
-				const picked = (await ui.select(
-					title(request, coding),
-					items,
-					coding ? items[0].value : "deny",
-					context,
-				)) as Choice | undefined;
+				// OSC 7501: blocked on the operator, with the dialog heading only.
+				programStatus.setBlocked(`permission:${request.id}`, {
+					kind: "permission",
+					message: coding
+						? (HEADERS[request.category ?? ""] ?? "Permission")
+						: "DEMO permission",
+				});
+				const picked = (await ui
+					.select(
+						title(request, coding),
+						items,
+						coding ? items[0].value : "deny",
+						context,
+					)
+					.finally(() =>
+						programStatus.setBlocked(`permission:${request.id}`, undefined),
+					)) as Choice | undefined;
 				// Esc means No in coding mode; the demo keeps "decide later".
 				if (picked === undefined && !coding) {
 					ui.showStatus(
@@ -215,7 +270,10 @@ export default defineFacet({
 					context,
 				);
 			} catch (error) {
-				ui.showStatus(`Permission decision failed: ${String(error)}`, context);
+				ui.showStatus(
+					`Permission decision failed: ${permissionDisplayText(String(error))}`,
+					context,
+				);
 			} finally {
 				selecting = false;
 				// Input control never doubles as a tool approval.
@@ -316,6 +374,8 @@ export default defineFacet({
 			);
 		};
 		env.onActivate(() => {
+			env.own(presentation.register("request_access", renderPermission));
+			env.own(commands.replace(permissionHelpCommand(commands, ui)));
 			installModelCommands({
 				commands,
 				ui,

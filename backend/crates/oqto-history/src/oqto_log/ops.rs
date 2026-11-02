@@ -1,3 +1,4 @@
+pub mod media;
 pub mod native_source;
 
 use std::path::{Path, PathBuf};

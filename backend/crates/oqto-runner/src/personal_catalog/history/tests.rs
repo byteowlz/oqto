@@ -83,3 +83,42 @@ fn cache_never_crosses_native_workspace_identity_or_a_symlink_source() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn actual_native_history_page_has_refs_and_a_screenshot_transfer_budget() -> Result<()> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (_dir, mut request) = fixture()?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(640, 480).write_to(&mut png, image::ImageFormat::Png)?;
+    let mut bytes = png.into_inner();
+    bytes.resize(1024 * 1024, 0);
+    let encoded = STANDARD.encode(&bytes);
+    let mut source = format!(
+        "{}\n",
+        serde_json::json!({"type":"session","id":"native","cwd":"/synthetic"})
+    );
+    let mut parent: Option<&str> = None;
+    for id in ["a", "b", "c"] {
+        source.push_str(&format!("{}\n",serde_json::json!({"type":"message","id":id,"parentId":parent,
+            "message":{"role":"toolResult","toolCallId":format!("call-{id}"),"toolName":"read","isError":false,
+            "content":[{"type":"image","data":encoded,"mimeType":"image/png"}]}})));
+        parent = Some(id);
+    }
+    std::fs::write(&request.path, &source)?;
+    request.leaf = Some("c".into());
+    let page = read(request.clone())?;
+    let wire = serde_json::to_vec(&page)?;
+    assert!(
+        wire.len() < 16 * 1024,
+        "actual projected screenshot page exceeded transfer budget: {}",
+        wire.len()
+    );
+    assert_eq!(page["messages"].as_array().context("messages")?.len(), 3);
+    assert!(String::from_utf8(wire)?.contains("media_ref"));
+    assert_eq!(
+        std::fs::read_to_string(&request.path)?,
+        source,
+        "projection must not rewrite Pi JSONL"
+    );
+    Ok(())
+}

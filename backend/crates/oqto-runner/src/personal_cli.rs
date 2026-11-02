@@ -69,6 +69,9 @@ impl GrantSelection {
 }
 #[derive(Debug, Default, Args)]
 pub struct ServerOptions {
+    /// Enable experimental consent-per-command Linux hands with this compiled filter.
+    #[arg(long, requires = "personal_listen")]
+    pub personal_hands_bpf: Option<PathBuf>,
     /// Personal HTTPS: standalone, or cohost with an explicit --socket/--listen-tls.
     #[arg(long, requires = "personal_origin")]
     pub personal_listen: Option<SocketAddr>,
@@ -96,6 +99,30 @@ pub struct ServerOptions {
 }
 #[derive(Debug, Subcommand)]
 pub enum OwnerCli {
+    /// Authenticated host-side requests to another personal Runner.
+    Peer {
+        #[command(subcommand)]
+        command: crate::personal_peer::PeerCommand,
+    },
+    /// Inspect inbound command requests (JSON escapes untrusted command text).
+    HandsRequests {
+        #[arg(long)]
+        state: Option<PathBuf>,
+    },
+    /// Approve one exact command in an owner-selected workdir, for 30 seconds.
+    HandsApprove {
+        #[arg(long)]
+        state: Option<PathBuf>,
+        id: String,
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Deny a pending request, or cancel execution (effects may be uncertain).
+    HandsCancel {
+        #[arg(long)]
+        state: Option<PathBuf>,
+        id: String,
+    },
     /// Issue one owner-selected five-minute QR ticket through the running host.
     Pair {
         #[arg(long)]
@@ -183,6 +210,13 @@ fn human_expiry(expires: i64, now: i64) -> Result<String> {
 }
 
 pub async fn owner(command: OwnerCli) -> Result<()> {
+    if let OwnerCli::Peer { command } = command {
+        println!(
+            "{}",
+            serde_json::to_string(&crate::personal_peer::run(command).await?)?
+        );
+        return Ok(());
+    }
     if let OwnerCli::RepairNativePins { home, apply } = command {
         let home = home
             .canonicalize()
@@ -197,6 +231,16 @@ pub async fn owner(command: OwnerCli) -> Result<()> {
         return Ok(());
     }
     let (state, command, output) = match command {
+        OwnerCli::HandsRequests { state } => (state, OwnerCommand::HandsRequests, None),
+        OwnerCli::HandsApprove { state, id, root } => (
+            state,
+            OwnerCommand::HandsDecide {
+                id,
+                root: Some(root),
+            },
+            None,
+        ),
+        OwnerCli::HandsCancel { state, id } => (state, OwnerCommand::HandsCancel { id }, None),
         OwnerCli::Pair {
             state,
             grants,
@@ -204,7 +248,7 @@ pub async fn owner(command: OwnerCli) -> Result<()> {
         } => (state, grants.command(), Some(output)),
         OwnerCli::Devices { state, after } => (state, OwnerCommand::Devices { after }, None),
         OwnerCli::Revoke { state, device_id } => (state, OwnerCommand::Revoke { device_id }, None),
-        OwnerCli::RepairNativePins { .. } => unreachable!("handled above"),
+        OwnerCli::RepairNativePins { .. } | OwnerCli::Peer { .. } => unreachable!("handled above"),
     };
     let value = oqto_personal::owner::request_owner(&state_path(state.as_ref())?, &command).await?;
     if let Some(output) = output {

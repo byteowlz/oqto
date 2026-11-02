@@ -7,6 +7,9 @@ trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/scripts/dist" "$tmp/dist/immutable/pi-runtime/pi"
 cp "$ROOT_DIR/scripts/dist/stage-pi-runtime.sh" "$ROOT_DIR/scripts/dist/verify-worktree-ownership.py" "$tmp/scripts/dist/"
 cp "$ROOT_DIR/dist/manifest.toml" "$tmp/dist/"
+cp "$ROOT_DIR/dependencies.toml" "$tmp/"
+mkdir -p "$tmp/scripts/dist/pi-node"
+cp "$ROOT_DIR/scripts/dist/pi-node/"package{,-lock}.json "$tmp/scripts/dist/pi-node/"
 # Never reached for an existing runtime; fails loudly if it is.
 printf '#!/bin/sh\necho "stager must not run" >&2; exit 9\n' > "$tmp/scripts/dist/stage-pi-node-runtime.sh"
 chmod +x "$tmp/scripts/dist/"*.sh
@@ -18,6 +21,14 @@ json.dump({"kind": "node-npm", "version": release["pi_version"], "node_version":
            "package_lock_sha256": release["pi_package_lock_sha256"]}, open(sys.argv[2], "w"))
 PY
 "$tmp/scripts/dist/stage-pi-runtime.sh" | grep -q 'already staged at the pinned closure'
+# A cached receipt matching the manifest must not hide conflicting source pins.
+cp "$tmp/dependencies.toml" "$tmp/dependencies.before"
+sed -i 's/^pi = "[^"]*"/pi = "0.0.9"/' "$tmp/dependencies.toml"
+if "$tmp/scripts/dist/stage-pi-runtime.sh" > "$tmp/out" 2>&1; then
+  echo 'manifest/receipt hid a conflicting dependency pin' >&2; exit 1
+fi
+grep -q 'release runtime pins disagree' "$tmp/out"
+cp "$tmp/dependencies.before" "$tmp/dependencies.toml"
 sed -i 's/"version": "[^"]*"/"version": "0.0.1"/' "$tmp/dist/immutable/pi-runtime/pi/oqto-runtime.json"
 if "$tmp/scripts/dist/stage-pi-runtime.sh" > "$tmp/out" 2>&1; then
   echo 'drifted staged runtime was accepted' >&2; exit 1

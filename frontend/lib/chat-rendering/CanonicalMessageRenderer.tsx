@@ -16,6 +16,10 @@ import type { FileRange, Part } from "@/lib/canonical-types";
 import type { A2UISurfaceState, DisplayPart } from "@/lib/chat-render-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
+import {
+	originalSessionMediaUrl,
+	sessionMediaImages,
+} from "@/lib/session-media";
 import type { StreamingPresentationMode } from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
@@ -378,6 +382,18 @@ function OpenableImage({
 	const picture = (
 		<img src={src} alt={alt} className={className} loading="lazy" />
 	);
+	const original = originalSessionMediaUrl(src);
+	if (original)
+		return (
+			<a
+				href={original}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="block max-w-full cursor-zoom-in border-0 bg-transparent p-0"
+			>
+				{picture}
+			</a>
+		);
 	if (!onImageOpen) return picture;
 	return (
 		<button
@@ -392,6 +408,21 @@ function OpenableImage({
 }
 type FileReferenceOpenHandler = (filePath: string, range?: FileRange) => void;
 /** Which image was activated, and the others in the same message. */
+function ToolMediaPreview({ output }: { output: unknown }) {
+	return (
+		<>
+			{sessionMediaImages(output).map((image) => (
+				<OpenableImage
+					key={image.src}
+					src={image.src}
+					alt={image.alt}
+					className="max-w-[300px] max-h-[300px] rounded-md border border-border object-contain"
+				/>
+			))}
+		</>
+	);
+}
+
 export type ImageOpenHandler = (
 	image: MarkdownImage,
 	siblings: MarkdownImage[],
@@ -1583,55 +1614,63 @@ function PiPartRenderer({
 			const hasResult = Boolean(toolResult);
 			const toolStatus = hasResult ? "completed" : "running";
 			return (
-				<ToolCallCard
-					part={{
-						id: part.id,
-						sessionID: "",
-						messageID: "",
-						type: "tool",
-						tool: part.name,
-						callID: part.toolCallId,
-						state: {
-							status: toolStatus,
-							input: part.input as Record<string, unknown>,
-							output: toolResult
-								? formatToolResultOutput(toolResult.output)
-								: undefined,
-							title: part.name,
-						},
-					}}
-					defaultCollapsed={true}
-					hideTodoTools={true}
-					collapsible={collapsible}
-					hideHeader={hideHeader}
-					isRecoveredError={isRecoveredError}
-				/>
+				<>
+					<ToolCallCard
+						part={{
+							id: part.id,
+							sessionID: "",
+							messageID: "",
+							type: "tool",
+							tool: part.name,
+							callID: part.toolCallId,
+							state: {
+								status: toolStatus,
+								input: part.input as Record<string, unknown>,
+								output: toolResult
+									? formatToolResultOutput(toolResult.output)
+									: undefined,
+								title: part.name,
+							},
+						}}
+						defaultCollapsed={true}
+						hideTodoTools={true}
+						collapsible={collapsible}
+						hideHeader={hideHeader}
+						isRecoveredError={isRecoveredError}
+					/>
+					<ToolMediaPreview
+						output={{ input: part.input, output: toolResult?.output }}
+					/>
+				</>
 			);
 		}
 
 		case "tool_result":
 			// Tool results rendered standalone (no matching tool_call found)
 			return (
-				<ToolCallCard
-					part={{
-						id: part.id,
-						sessionID: "",
-						messageID: "",
-						type: "tool",
-						tool: part.name || "result",
-						callID: part.toolCallId,
-						state: {
-							status: part.isError ? "error" : "completed",
-							output: formatToolResultOutput(part.output),
-							title: part.name || "Tool Result",
-						},
-					}}
-					defaultCollapsed={true}
-					hideTodoTools={true}
-					collapsible={collapsible}
-					hideHeader={hideHeader}
-					isRecoveredError={isRecoveredError}
-				/>
+				<>
+					<ToolCallCard
+						part={{
+							id: part.id,
+							sessionID: "",
+							messageID: "",
+							type: "tool",
+							tool: part.name || "result",
+							callID: part.toolCallId,
+							state: {
+								status: part.isError ? "error" : "completed",
+								output: formatToolResultOutput(part.output),
+								title: part.name || "Tool Result",
+							},
+						}}
+						defaultCollapsed={true}
+						hideTodoTools={true}
+						collapsible={collapsible}
+						hideHeader={hideHeader}
+						isRecoveredError={isRecoveredError}
+					/>
+					<ToolMediaPreview output={part.output} />
+				</>
 			);
 
 		case "image": {

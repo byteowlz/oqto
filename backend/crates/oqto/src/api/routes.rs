@@ -72,6 +72,7 @@ fn create_router_with_config_and_auth(
     let auth_state = crate::auth::AuthMiddlewareState {
         auth: state.auth.clone(),
         api_keys: Some(state.api_keys.as_ref().clone()),
+        accounts: Some(state.users.repository().clone()),
     };
 
     // Protected routes (require authentication)
@@ -355,6 +356,67 @@ fn create_router_with_config_and_auth(
             "/onboarding/bootstrap",
             post(onboarding_handlers::bootstrap_onboarding),
         )
+        // Chat history routes (reads from disk, reads from oqto-log)
+        .route("/chat-history", get(handlers::list_chat_history))
+        .route(
+            "/chat-history/backfill",
+            post(handlers::backfill_chat_history),
+        )
+        .route(
+            "/chat-history/grouped",
+            get(handlers::list_chat_history_grouped),
+        )
+        .route(
+            "/chat-history/{session_id}",
+            get(handlers::get_chat_session)
+                .patch(handlers::update_chat_session)
+                .delete(handlers::delete_chat_session),
+        )
+        .route(
+            "/chat-history/{session_id}/messages",
+            get(handlers::get_chat_messages),
+        )
+        .route(
+            "/chat-history/{session_id}/messages/page",
+            get(handlers::get_chat_messages_page),
+        )
+        .route(
+            "/chat-history/{session_id}/media/{sha256}",
+            get(handlers::get_session_media),
+        )
+        // Session memory routes removed. Use workspace-scoped memory endpoints:
+        // /workspace/memories*
+        // Settings routes
+        .route("/settings/schema", get(handlers::get_settings_schema))
+        .route(
+            "/settings",
+            get(handlers::get_settings_values).patch(handlers::update_settings_values),
+        )
+        .route("/settings/reload", post(handlers::reload_settings))
+        // Legacy Main Chat routes removed -- all communication now goes through
+        // the multiplexed WebSocket (agent channel)
+        // HSTRY (chat history) search routes
+        .route("/search", get(handlers::search_sessions))
+        // In-session (single conversation) search
+        .route(
+            "/agents/sessions/{session_id}/search",
+            get(handlers::search_in_session),
+        )
+        // Scheduler (skdlr) overview
+        .route("/scheduler/overview", get(handlers::scheduler_overview))
+        .route("/scheduler/jobs/{name}", delete(handlers::scheduler_delete))
+        // RSS/Atom feed fetch proxy
+        .route("/feeds/fetch", get(handlers::fetch_feed))
+        // CodexBar usage (optional, requires codexbar on PATH)
+        .route("/codexbar/usage", get(handlers::codexbar_usage))
+        // TRX (issue tracking) now uses mux-only channel
+        .with_state(state.clone());
+
+    // Admin routes live on their own sub-router with an explicit gate, so a new
+    // handler cannot silently ship without an admin check. `apply_auth_layers`
+    // then wraps the merged router with `auth_middleware` (outermost), which is
+    // what puts `CurrentUser` in the extensions the gate reads.
+    let admin_routes = Router::new()
         // Admin routes - sessions
         .route("/admin/sessions", get(handlers::admin_list_sessions))
         .route(
@@ -448,88 +510,26 @@ fn create_router_with_config_and_auth(
             "/admin/shared-workspaces/{workspace_id}/members/{user_id}",
             delete(handlers::admin_remove_shared_workspace_member),
         )
-        // Chat history routes (reads from disk, reads from oqto-log)
-        .route("/chat-history", get(handlers::list_chat_history))
-        .route(
-            "/chat-history/backfill",
-            post(handlers::backfill_chat_history),
-        )
-        .route(
-            "/chat-history/grouped",
-            get(handlers::list_chat_history_grouped),
-        )
-        .route(
-            "/chat-history/{session_id}",
-            get(handlers::get_chat_session)
-                .patch(handlers::update_chat_session)
-                .delete(handlers::delete_chat_session),
-        )
-        .route(
-            "/chat-history/{session_id}/messages",
-            get(handlers::get_chat_messages),
-        )
-        .route(
-            "/chat-history/{session_id}/messages/page",
-            get(handlers::get_chat_messages_page),
-        )
-        // Session memory routes removed. Use workspace-scoped memory endpoints:
-        // /workspace/memories*
-        // Settings routes
-        .route("/settings/schema", get(handlers::get_settings_schema))
-        .route(
-            "/settings",
-            get(handlers::get_settings_values).patch(handlers::update_settings_values),
-        )
-        .route("/settings/reload", post(handlers::reload_settings))
-        // Legacy Main Chat routes removed -- all communication now goes through
-        // the multiplexed WebSocket (agent channel)
-        // HSTRY (chat history) search routes
-        .route("/search", get(handlers::search_sessions))
-        // In-session (single conversation) search
-        .route(
-            "/agents/sessions/{session_id}/search",
-            get(handlers::search_in_session),
-        )
-        // Scheduler (skdlr) overview
-        .route("/scheduler/overview", get(handlers::scheduler_overview))
-        .route("/scheduler/jobs/{name}", delete(handlers::scheduler_delete))
-        // RSS/Atom feed fetch proxy
-        .route("/feeds/fetch", get(handlers::fetch_feed))
-        // CodexBar usage (optional, requires codexbar on PATH)
-        .route("/codexbar/usage", get(handlers::codexbar_usage))
-        // TRX (issue tracking) now uses mux-only channel
+        .layer(middleware::from_fn(require_admin_role))
         .with_state(state.clone());
 
-    let protected_routes =
-        apply_auth_layers(protected_routes, state.clone(), auth_state, auth_mode);
+    let protected_routes = protected_routes.merge(admin_routes);
 
-    // Public routes (no authentication)
-    let public_routes = Router::new()
-        .route("/health", get(handlers::health))
-        .route("/ws/debug", get(handlers::ws_debug))
-        .route("/features", get(handlers::features))
-        .route("/auth/logout", post(handlers::logout))
-        .with_state(state.clone());
+    let protected_routes = apply_auth_layers(
+        protected_routes,
+        state.clone(),
+        auth_state.clone(),
+        auth_mode.clone(),
+    );
 
-    // Unauthenticated credential endpoints: rate-limited per client IP to
-    // resist brute-force. 10 attempts / 60s / IP is generous for humans but
-    // throttles automated guessing.
-    let auth_rate_limiter =
-        super::rate_limit::AuthRateLimiter::new(10, std::time::Duration::from_secs(60));
-    let auth_routes = Router::new()
-        .route("/auth/login", post(handlers::login))
-        .route("/auth/register", post(handlers::register))
-        // Keep dev_login for backwards compatibility
-        .route("/auth/dev-login", post(handlers::dev_login))
-        .layer(middleware::from_fn_with_state(
-            auth_rate_limiter,
-            super::rate_limit::rate_limit_middleware,
-        ))
-        .with_state(state.clone());
-
-    // Delegation routes (localhost-only, no auth - used by Pi extension)
-    // These routes check for localhost in the handler and reject non-local requests
-    let delegate_routes = Router::new()
+    // Delegation routes (deprecated REST surface kept for the local Pi extension).
+    //
+    // These used to be anonymous and authorized on the TCP peer being loopback.
+    // That is not authorization: behind the deployment's own loopback reverse
+    // proxy every remote client looks like 127.0.0.1, and a peer address is not
+    // evidence of identity. They now require a normal authenticated principal and
+    // resolve sessions through the per-user service.
+    let delegate_routes_auth = Router::new()
         .route("/delegate/start", post(delegate_handlers::start_session))
         .route(
             "/delegate/prompt/{session_id}",
@@ -548,6 +548,36 @@ fn create_router_with_config_and_auth(
             post(delegate_handlers::stop_session),
         )
         .route("/delegate/sessions", get(delegate_handlers::list_sessions))
+        .with_state(state.clone());
+    let delegate_routes_auth =
+        apply_auth_layers(delegate_routes_auth, state.clone(), auth_state, auth_mode);
+
+    // Public routes (no authentication)
+    let public_routes = Router::new()
+        .route("/health", get(handlers::health))
+        .route("/ws/debug", get(handlers::ws_debug))
+        .route("/features", get(handlers::features))
+        .route("/auth/logout", post(handlers::logout))
+        .with_state(state.clone());
+
+    // Unauthenticated credential endpoints: rate-limited per client IP to
+    // resist brute-force. 10 attempts / 60s / IP is generous for humans but
+    // throttles automated guessing. Forwarded headers are only honoured for
+    // configured trusted proxies; otherwise the transport peer is the key.
+    let auth_rate_limiter = super::rate_limit::AuthRateLimiter::new(
+        10,
+        std::time::Duration::from_secs(60),
+        state.auth.trusted_proxy_addrs(),
+    );
+    let auth_routes = Router::new()
+        .route("/auth/login", post(handlers::login))
+        .route("/auth/register", post(handlers::register))
+        // Keep dev_login for backwards compatibility
+        .route("/auth/dev-login", post(handlers::dev_login))
+        .layer(middleware::from_fn_with_state(
+            auth_rate_limiter,
+            super::rate_limit::rate_limit_middleware,
+        ))
         .with_state(state.clone());
 
     // Test harness routes (dev mode only, no auth)
@@ -578,7 +608,7 @@ fn create_router_with_config_and_auth(
         .merge(public_routes)
         .merge(auth_routes)
         .merge(protected_routes)
-        .merge(delegate_routes)
+        .merge(delegate_routes_auth)
         .merge(test_routes)
         .merge(a2ui_routes)
         .layer(DefaultBodyLimit::max(max_body_size))
@@ -616,6 +646,29 @@ fn apply_auth_layers(
                 },
             ))
         }
+    }
+}
+
+/// Gate for the `/admin/*` sub-router.
+///
+/// Runs after `auth_middleware` (layers applied later are outermost), so a
+/// missing `CurrentUser` means the route was mounted outside the authenticated
+/// router and must fail closed.
+///
+/// The role itself is authoritative from the persisted account row:
+/// `auth_middleware` overwrites the token's claims with the current
+/// `(is_active, role)` and rejects inactive accounts, which is what makes
+/// deactivation and demotion take effect before the token expires.
+async fn require_admin_role(
+    req: axum::http::Request<axum::body::Body>,
+    next: middleware::Next,
+) -> Result<axum::response::Response, crate::auth::AuthError> {
+    match req.extensions().get::<CurrentUser>() {
+        Some(user) if user.is_admin() => Ok(next.run(req).await),
+        Some(_) => Err(crate::auth::AuthError::InsufficientPermissions(
+            "admin role required".to_string(),
+        )),
+        None => Err(crate::auth::AuthError::MissingAuthHeader),
     }
 }
 
@@ -707,5 +760,95 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
                 .allow_headers(headers)
                 .allow_credentials(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod admin_gate_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use chrono::Utc;
+    use tower::ServiceExt;
+
+    fn current_user(role: &str) -> CurrentUser {
+        let now = Utc::now().timestamp();
+        CurrentUser {
+            claims: crate::auth::Claims {
+                sub: "user-1".to_string(),
+                iss: Some("test".to_string()),
+                aud: None,
+                exp: now + 3600,
+                iat: Some(now),
+                nbf: None,
+                jti: None,
+                email: Some("user@example.com".to_string()),
+                name: Some("User One".to_string()),
+                preferred_username: Some("user-1".to_string()),
+                roles: vec![role.to_string()],
+                role: Some(role.to_string()),
+            },
+        }
+    }
+
+    /// Mirrors production layering: the identity layer is outermost, the admin
+    /// gate is applied to the sub-router beneath it.
+    fn gated_app(user: Option<CurrentUser>) -> Router {
+        let identity = move |mut req: axum::http::Request<axum::body::Body>,
+                             next: middleware::Next| {
+            let user = user.clone();
+            async move {
+                if let Some(user) = user {
+                    req.extensions_mut().insert(user);
+                }
+                next.run(req).await
+            }
+        };
+
+        Router::new()
+            .route("/admin/shared-workspaces", get(|| async { "admin data" }))
+            .layer(middleware::from_fn(require_admin_role))
+            .layer(middleware::from_fn(identity))
+    }
+
+    async fn call(app: Router) -> StatusCode {
+        app.oneshot(
+            Request::builder()
+                .uri("/admin/shared-workspaces")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status()
+    }
+
+    #[tokio::test]
+    async fn admin_gate_rejects_user_role() {
+        assert_eq!(
+            call(gated_app(Some(current_user("user")))).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_gate_rejects_service_role() {
+        assert_eq!(
+            call(gated_app(Some(current_user("service")))).await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_gate_allows_admin_role() {
+        assert_eq!(
+            call(gated_app(Some(current_user("admin")))).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_gate_fails_closed_without_identity() {
+        assert_eq!(call(gated_app(None)).await, StatusCode::UNAUTHORIZED);
     }
 }

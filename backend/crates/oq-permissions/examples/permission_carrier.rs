@@ -243,8 +243,12 @@ async fn main() -> Result<()> {
             let command: Command = serde_json::from_slice(&frame)?;
             match command {
                 Command::OperatorBegin { operation } if role == "operator" && coding => {
-                    authority.begin_operator(&operator, &operation, now()?).await?;
-                    Ok(json!({"journaled":true}))
+                    match authority.begin_operator(&operator, &operation, now()?).await {
+                        Ok(()) => Ok(json!({"journaled":true})),
+                        Err(error) if error.is::<oq_permissions::ReceiptCapacity>() =>
+                            Ok(json!({"operational_error":{"code":"receipt_capacity"}})),
+                        Err(error) => Err(error),
+                    }
                 }
                 Command::OperatorSeal { id, digest } if role == "operator" && coding => {
                     authority.seal_operator_result(&operator, &id, &digest).await?;
@@ -278,8 +282,13 @@ async fn main() -> Result<()> {
                         .get(&operation.request_id)
                         .context("no live invocation permit")?;
                     ensure!(admitted == &operation, "invocation arguments changed");
-                    authority.check(permit, &operation, now()?).await?;
-                    Ok(json!({"checked":true}))
+                    match authority.check(permit, &operation, now()?).await {
+                        Ok(()) => Ok(json!({"checked":true})),
+                        Err(error) => match error.downcast_ref::<oq_permissions::Denial>() {
+                            Some(denial) => Ok(json!({"checked":false, "feedback":denial})),
+                            None => Err(error),
+                        },
+                    }
                 }
                 Command::Finish { id } if role == "tools" && coding => {
                     permits.remove(&id).context("no live invocation permit")?;

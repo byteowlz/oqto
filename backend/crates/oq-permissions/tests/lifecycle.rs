@@ -225,7 +225,7 @@ async fn session_grant_is_target_and_operation_specific_not_all_tools() {
         )
         .await
         .unwrap(),
-        Admission::Denied
+        Admission::Denied(_)
     ));
 }
 
@@ -369,7 +369,9 @@ async fn deny_is_a_durable_disposition_not_a_repeated_prompt() {
     .unwrap();
     assert!(matches!(
         a.admit(operation, 102).await.unwrap(),
-        Admission::Denied
+        Admission::Denied(oq_permissions::Denial {
+            code: oq_permissions::DenialCode::OperatorDenied
+        })
     ));
 }
 
@@ -435,10 +437,16 @@ async fn revoke_blocks_inflight_delivery_and_future_calls() {
     a.revoke("owner", r.grant_id.as_ref().unwrap())
         .await
         .unwrap();
-    assert!(a.check(&p, &operation, 103).await.is_err());
+    let error = a.check(&p, &operation, 103).await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<oq_permissions::Denial>().unwrap().code,
+        oq_permissions::DenialCode::Stale
+    );
     assert!(matches!(
         a.admit(operation, 103).await.unwrap(),
-        Admission::Denied
+        Admission::Denied(oq_permissions::Denial {
+            code: oq_permissions::DenialCode::Stale
+        })
     ));
     assert!(matches!(
         a.admit(op("next", Capability::MemoryRead, "personal-memory"), 103)
@@ -454,11 +462,18 @@ async fn expiry_cannot_be_resurrected_by_a_backward_clock() {
     let operation = op("expiry", Capability::IssueUpdate, "project-issues");
     approve(&a, &pending(&a, &operation).await, GrantLifetime::Once).await;
     let p = permit(&a, &operation, 102).await;
-    assert!(a.check(&p, &operation, 1000).await.is_err());
-    assert!(a.check(&p, &operation, 103).await.is_err());
+    for now in [1000, 103] {
+        let error = a.check(&p, &operation, now).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<oq_permissions::Denial>().unwrap().code,
+            oq_permissions::DenialCode::Expired
+        );
+    }
     assert!(matches!(
         a.admit(operation, 103).await.unwrap(),
-        Admission::Denied
+        Admission::Denied(oq_permissions::Denial {
+            code: oq_permissions::DenialCode::Expired
+        })
     ));
 }
 

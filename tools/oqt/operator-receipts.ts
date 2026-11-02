@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Context, defineService } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord";
 import {
 	type ConversationId,
 	defineDoc,
@@ -91,6 +91,8 @@ type ReceiptIndex = { session: string; records: ReceiptRecord[] };
 /** One index per Session. It is never copied into a fork, and its quota cannot
  * be reset by navigating to another conversation. Excluded records are opaque. */
 export const OperatorResultsDoc = defineDoc<ReceiptIndex>({
+	// Small current-only document: ordinary changes stay deltas.
+	checkpointWhen: () => false,
 	kind: "oq.operator-results.v2",
 	version: 2,
 	scope: "session",
@@ -102,9 +104,6 @@ export interface OperatorResults {
 		context: Context,
 	): Promise<ReceiptRecord[]>;
 }
-export const OperatorResults = defineService<OperatorResults>(
-	"oq.operator-results",
-);
 type Guard = {
 	on(event: string, listener: (data: unknown) => void): () => void;
 	call(method: string, params?: unknown): Promise<unknown>;

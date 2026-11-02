@@ -6,6 +6,37 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A controller-supplied ceiling, never permission by itself. A raw Runner
+/// connection must already be authorized for the owning OS principal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MediaWorkspaceScope {
+    Owned,
+    Exact { path: std::path::PathBuf },
+    Within { root: std::path::PathBuf },
+}
+impl MediaWorkspaceScope {
+    pub fn permits(&self, workspace: Option<&str>) -> bool {
+        let valid = |path: &std::path::Path| {
+            path.is_absolute()
+                && !path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+        };
+        match self {
+            Self::Owned => true,
+            Self::Exact { path } => workspace
+                .map(std::path::Path::new)
+                .is_some_and(|workspace| valid(path) && valid(workspace) && workspace == path),
+            Self::Within { root } => workspace
+                .map(std::path::Path::new)
+                .is_some_and(|workspace| {
+                    valid(root) && valid(workspace) && workspace.starts_with(root)
+                }),
+        }
+    }
+}
+
 /// One page of projected chat messages, oldest-first, ending at the newest
 /// message not excluded by the request cursor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +103,9 @@ pub struct ProjectedChatMessagePart {
     pub tool_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_title: Option<String>,
+    /// Derived image metadata only; original bytes remain in the selected store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_ref: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +123,30 @@ mod tests {
     use super::{ProjectedChatMessage, ProjectedChatMessagePart};
 
     #[test]
+    fn media_workspace_scope_is_component_scoped_and_rejects_parent_paths() {
+        use super::MediaWorkspaceScope;
+        let scope = MediaWorkspaceScope::Within {
+            root: "/work/project".into(),
+        };
+        assert!(scope.permits(Some("/work/project/images")));
+        assert!(!scope.permits(Some("/work/project-foreign/images")));
+        assert!(!scope.permits(Some("/work/project/../private")));
+        assert!(!scope.permits(None));
+        assert!(
+            !MediaWorkspaceScope::Exact {
+                path: "/work/project".into()
+            }
+            .permits(Some("/work/project/images"))
+        );
+        assert!(
+            !MediaWorkspaceScope::Within {
+                root: "relative".into()
+            }
+            .permits(Some("/work/project"))
+        );
+    }
+
+    #[test]
     fn projected_chat_part_preserves_structured_tool_output() {
         let part = ProjectedChatMessagePart {
             id: "part-1".to_string(),
@@ -101,6 +159,7 @@ mod tests {
             tool_output: Some(serde_json::json!({ "stdout": "ok", "code": 0 })),
             tool_status: Some("success".to_string()),
             tool_title: None,
+            media_ref: None,
         };
 
         let json = serde_json::to_string(&part).expect("serialize projected part");

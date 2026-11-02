@@ -20,6 +20,7 @@ use crate::wire::{encode_json_frame, read_json_frame};
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
+mod managed_media;
 pub mod pair_control;
 mod personal;
 pub use personal::PersonalBackend;
@@ -125,6 +126,7 @@ impl ConnectionAccess {
                 | RunnerRequest::ListWorkspaceChatSessions(_)
                 | RunnerRequest::GetWorkspaceChatSession(_)
                 | RunnerRequest::GetWorkspaceChatSessionMessages(_)
+                | RunnerRequest::GetWorkspaceSessionMedia(_)
         )
     }
 
@@ -2036,6 +2038,35 @@ impl Runner {
             messages.len()
         );
 
+        let mut messages = messages;
+        if matches!(&source_mode, WorkspaceChatMessagesSource::Authoritative) {
+            for message in &mut messages {
+                for part in &mut message.parts {
+                    if let Some(reference) = &mut part.media_ref {
+                        let Some(reference) = reference.as_object_mut() else {
+                            return error_response(
+                                ErrorCode::Internal,
+                                "invalid image reference metadata",
+                            );
+                        };
+                        reference.insert("session_id".into(), req.session_id.clone().into());
+                    }
+                    for value in [&mut part.tool_input, &mut part.tool_output]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Err(error) =
+                            oqto_media::inline::project_for_session(value, &req.session_id)
+                        {
+                            return error_response(
+                                ErrorCode::Internal,
+                                format!("media projection failed: {error}"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
             session_id: req.session_id,
             source: source_mode,
@@ -4813,6 +4844,7 @@ mod tests {
                 tool_output: None,
                 tool_status: None,
                 tool_title: None,
+                media_ref: None,
             }],
         }
     }

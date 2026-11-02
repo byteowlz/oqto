@@ -266,6 +266,7 @@ export function LoadedCompositorShell({
 						status={snapshot.environment.statusBar}
 						session={context.session}
 						models={snapshot.environment.models}
+						platform={platform}
 						settingsOpen={settingsOpen}
 						onToggleSettings={settings.toggle}
 					/>

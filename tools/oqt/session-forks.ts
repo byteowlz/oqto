@@ -1,5 +1,5 @@
 // Worker-owned native Durable navigation; no filesystem, model or authority access.
-import { type Context, defineService } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord";
 import {
 	type ConversationId,
 	type ConversationRecord,
@@ -35,10 +35,11 @@ export interface SessionForks {
 		context: Context,
 	): Promise<ConversationId>;
 }
-export const SessionForks = defineService<SessionForks>("oqt.session-forks");
 
 // Selection is Session state, not fork-inherited conversation state or authority.
 export const SelectedConversationDoc = defineDoc<{ conversationId: number }>({
+	// Small current-only document: ordinary changes stay deltas.
+	checkpointWhen: () => false,
 	kind: "oqt.selected-conversation",
 	version: 1,
 	scope: "session",

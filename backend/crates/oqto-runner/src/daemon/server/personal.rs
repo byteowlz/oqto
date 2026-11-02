@@ -12,6 +12,8 @@ use std::{
 };
 
 pub struct PersonalBackend {
+    authority: Arc<oqto_personal::PairingAuthority>,
+    hands_bpf: Option<PathBuf>,
     home: PathBuf,
     workspace_roots: Vec<PathBuf>,
     terminal_enabled: bool,
@@ -29,6 +31,8 @@ impl Drop for PersonalBackend {
 }
 impl PersonalBackend {
     pub(crate) fn new(
+        authority: Arc<oqto_personal::PairingAuthority>,
+        hands_bpf: Option<PathBuf>,
         home: PathBuf,
         workspace_roots: Vec<PathBuf>,
         terminal_enabled: bool,
@@ -60,6 +64,8 @@ impl PersonalBackend {
             }
         });
         Self {
+            authority,
+            hands_bpf,
             home,
             workspace_roots,
             terminal_enabled,
@@ -211,6 +217,7 @@ impl super::Runner {
             (home, native)
         };
         crate::runtime_guard::ensure_history_state_owner(&home)?;
+        oqto_media::cache::validate_config()?;
         // Reserve the endpoint before creating any identity or grant store.
         let listener = tokio::net::TcpListener::bind(address).await?;
         let authority = Arc::new(
@@ -230,6 +237,8 @@ impl super::Runner {
             ino: owner_meta.ino(),
         };
         let backend = Arc::new(PersonalBackend::new(
+            Arc::clone(&authority),
+            options.personal_hands_bpf,
             home,
             options.workspace_roots,
             self.user_config.terminal_enabled,
@@ -316,6 +325,7 @@ impl ActionBackend for PersonalBackend {
                 | HostAction::SessionFiles { .. }
                 | HostAction::ProjectIcons { .. }
                 | HostAction::SessionHistory { .. }
+                | HostAction::SessionMedia { .. }
         ) && !self.ingest.catalog_ready())
             || (matches!(
                 action,
@@ -329,6 +339,73 @@ impl ActionBackend for PersonalBackend {
             return Err(ActionFailure::Unavailable);
         }
         match action {
+            HostAction::HandsRequest {
+                request_key,
+                session_label,
+                command,
+            } => {
+                if self.hands_bpf.is_none() || !cfg!(target_os = "linux") {
+                    return Err(ActionFailure::Unavailable);
+                }
+                let device = authorization.fence().device_id().to_owned();
+                let receipt = self
+                    .authority
+                    .request_hands(&device, &request_key, &session_label, &command)
+                    .await
+                    .map_err(|_| ActionFailure::Invalid)?;
+                serde_json::to_value(receipt).map_err(|_| ActionFailure::Unavailable)
+            }
+            HostAction::HandsStatus { id } => {
+                let receipt = self
+                    .authority
+                    .hands_receipt(authorization.fence().device_id(), &id)
+                    .await
+                    .map_err(|_| ActionFailure::NotFound)?;
+                serde_json::to_value(receipt).map_err(|_| ActionFailure::Unavailable)
+            }
+            HostAction::HandsCancel { id } => {
+                let applied = self
+                    .authority
+                    .cancel_hands(Some(authorization.fence().device_id()), &id)
+                    .await
+                    .map_err(|_| ActionFailure::Unavailable)?;
+                Ok(serde_json::json!({"cancelled":applied}))
+            }
+            HostAction::HandsRun { id } => {
+                let bpf = self.hands_bpf.clone().ok_or(ActionFailure::Unavailable)?;
+                let fence = authorization.fence();
+                let device = fence.device_id().to_owned();
+                let claim = self
+                    .authority
+                    .claim_hands(&device, &id, fence.clone())
+                    .await
+                    .map_err(|_| ActionFailure::Denied)?;
+                // Do not hold the admission read-lock across execution: local
+                // owner revocation must be able to close its fence immediately.
+                drop(authorization);
+                if let Some(claim) = claim {
+                    let authority = Arc::clone(&self.authority);
+                    let invocation = id.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) =
+                            crate::personal_hands::execute(Arc::clone(&authority), claim, &bpf)
+                                .await
+                        {
+                            log::warn!("confined hands invocation failed: {error:#}");
+                            let _ = authority.uncertain_hands(&invocation).await;
+                        }
+                    });
+                }
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                let receipt = self
+                    .authority
+                    .hands_receipt(&device, &id)
+                    .await
+                    .map_err(|_| ActionFailure::Unavailable)?;
+                serde_json::to_value(receipt).map_err(|_| ActionFailure::Unavailable)
+            }
             HostAction::Capabilities => {
                 let grants = authorization.grants();
                 let fence = authorization.fence();
@@ -454,6 +531,41 @@ impl ActionBackend for PersonalBackend {
                 .map_err(|_| ActionFailure::Unavailable)?
                 .ok_or(ActionFailure::Invalid)
             }
+            HostAction::SessionMedia {
+                session_id,
+                sha256,
+                variant,
+            } => {
+                let fence = authorization.fence();
+                // Decode/scan workers may queue. Never hold the admission lock
+                // across that wait and prevent destination-owner revocation.
+                drop(authorization);
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                let source = self
+                    .ingest
+                    .source
+                    .as_deref()
+                    .ok_or(ActionFailure::Unavailable)?;
+                let result = crate::personal_media::read(
+                    &self.home,
+                    &self.workspace_roots,
+                    source,
+                    &session_id,
+                    sha256,
+                    matches!(
+                        variant,
+                        oqto_personal_wire::actions::SessionMediaVariant::Thumb
+                    ),
+                )
+                .await
+                .map_err(|_| ActionFailure::NotFound)?;
+                if !fence.is_current() {
+                    return Err(ActionFailure::Denied);
+                }
+                Ok(result)
+            }
             HostAction::SessionHistory { session_id, before }
                 if before
                     .as_deref()
@@ -482,7 +594,11 @@ impl ActionBackend for PersonalBackend {
                     (Err(_), Some(_)) => return Err(ActionFailure::Unavailable),
                 };
                 match (live, before) {
-                    (Some(page), _) => Ok(page),
+                    (Some(mut page), _) => {
+                        crate::personal_media::project(&mut page)
+                            .map_err(|_| ActionFailure::Unavailable)?;
+                        Ok(page)
+                    }
                     // A live cursor is meaningless once the Pi has gone; the phone refreshes.
                     (None, Some(_)) => Err(ActionFailure::Unavailable),
                     (None, None) => crate::history_read::read_native_authorized_history(
@@ -492,7 +608,11 @@ impl ActionBackend for PersonalBackend {
                         None,
                     )
                     .await
-                    .map(|response| response.data)
+                    .and_then(|response| {
+                        let mut data = response.data;
+                        crate::personal_media::project(&mut data)?;
+                        Ok(data)
+                    })
                     .map_err(|_| ActionFailure::Unavailable),
                 }
             }
@@ -504,7 +624,11 @@ impl ActionBackend for PersonalBackend {
                     before,
                 )
                 .await
-                .map(|response| response.data)
+                .and_then(|response| {
+                    let mut data = response.data;
+                    crate::personal_media::project(&mut data)?;
+                    Ok(data)
+                })
                 .map_err(|_| ActionFailure::Unavailable)
             }
             action @ (HostAction::SessionAttach { .. }

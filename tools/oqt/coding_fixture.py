@@ -86,7 +86,9 @@ def snapshot(owner):
 
 @contextmanager
 def coding_world(script, prefix):
-    with tempfile.TemporaryDirectory(prefix=prefix, dir='/var/tmp') as root:
+    # Node may still flush its compile cache at exit; a late write must never
+    # turn a passing test into a teardown error.
+    with tempfile.TemporaryDirectory(prefix=prefix, dir='/var/tmp', ignore_cleanup_errors=True) as root:
         root = Path(root)
         provider = ScriptedProvider(script)
         try:

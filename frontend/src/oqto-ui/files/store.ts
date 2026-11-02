@@ -35,8 +35,10 @@ export function createFilesStore(
 	workspacePath: string,
 ): FilesStore {
 	let state = initialState();
+	let disposed = false;
 	const listeners = new Set<() => void>();
 	const inFlight = new Set<string>();
+	const invalidated = new Set<string>();
 
 	const emit = (next: FilesState) => {
 		if (next === state) return;
@@ -45,16 +47,21 @@ export function createFilesStore(
 	};
 
 	function fetchListing(path: string): void {
-		if (inFlight.has(path)) return;
+		if (inFlight.has(path)) {
+			invalidated.add(path);
+			return;
+		}
 		inFlight.add(path);
 		emit(applyListing(state, path, { status: "loading" }));
 		fileHost.list(workspacePath, path, state.showHidden).then(
 			(entries) => {
 				inFlight.delete(path);
 				emit(applyListing(state, path, { status: "ready", entries }));
+				if (invalidated.delete(path)) fetchListing(path);
 			},
 			(error: Error) => {
 				inFlight.delete(path);
+				invalidated.delete(path);
 				emit(
 					applyListing(state, path, {
 						status: "error",
@@ -66,6 +73,10 @@ export function createFilesStore(
 	}
 
 	const unwatch = fileHost.watch(workspacePath, (change) => {
+		if (change.kind === "resync") {
+			for (const path of Object.keys(state.listings)) fetchListing(path);
+			return;
+		}
 		const result = applyChange(state, change.path);
 		emit(result.state);
 		if (result.refetch !== null) fetchListing(result.refetch);
@@ -90,7 +101,11 @@ export function createFilesStore(
 			}
 		},
 		load: (path, force = false) => {
-			if (force || !state.listings[path]) fetchListing(path);
+			// Miller-column prefetch is requested during render. Admit the
+			// read after that render, never synchronously notify another pane.
+			queueMicrotask(() => {
+				if (!disposed && (force || !state.listings[path])) fetchListing(path);
+			});
 		},
 		open: (path) => {
 			emit(navigate(state, path));
@@ -98,6 +113,7 @@ export function createFilesStore(
 			if (!listing || listing.status === "error") fetchListing(path);
 		},
 		dispose: () => {
+			disposed = true;
 			unwatch();
 			listeners.clear();
 		},
