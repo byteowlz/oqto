@@ -22,8 +22,6 @@ cd "$root"
 timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source" >/dev/null
 timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 python3 tools/oqt/prepare.py "$source" "$fixture/workspace" coding "$fixture/owner" > "$fixture/prepared.json"
 args=(install --prepared-json "$fixture/prepared.json" --launcher tools/oqt/installed-entry.sh --node "$(command -v node)" --data-root "$data"
- --runtime-file launch.py=tools/oqt/installed-launch.py
- --runtime-file installed-state.py=tools/oqt/installed-state.py
  --runtime-file profile_namespace.py=tools/oqt/profile_namespace.py
  --runtime-file preparation_lock.py=tools/oqt/preparation_lock.py)
 if ((activate)); then

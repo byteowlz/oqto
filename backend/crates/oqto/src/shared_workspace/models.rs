@@ -316,3 +316,39 @@ pub struct AdminSharedWorkspaceInfo {
     pub updated_at: String,
     pub member_count: i64,
 }
+
+#[cfg(test)]
+mod role_tests {
+    use super::MemberRole;
+
+    #[test]
+    fn viewer_is_read_only() {
+        let viewer = MemberRole::Viewer;
+        assert!(
+            !viewer.can_write(),
+            "a viewer must not modify the workspace"
+        );
+        assert!(!viewer.can_prompt(), "a viewer must not drive sessions");
+        assert!(!viewer.can_manage_members());
+        assert!(!viewer.can_delete_workspace());
+    }
+
+    #[test]
+    fn member_can_write_and_prompt_but_not_manage() {
+        let member = MemberRole::Member;
+        assert!(member.can_write());
+        assert!(member.can_prompt());
+        assert!(!member.can_manage_members());
+        assert!(!member.can_delete_workspace());
+    }
+
+    #[test]
+    fn admin_manages_members_but_only_owner_deletes() {
+        let admin = MemberRole::Admin;
+        assert!(admin.can_write() && admin.can_prompt());
+        assert!(admin.can_manage_members());
+        assert!(!admin.can_delete_workspace());
+
+        assert!(MemberRole::Owner.can_delete_workspace());
+    }
+}

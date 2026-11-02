@@ -517,6 +517,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 tool_output: None,
                 tool_status: None,
                 tool_title: None,
+                media_ref: None,
             },
             "tool" => ChatMessagePart {
                 id: info.id,
@@ -529,6 +530,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 tool_output: info.state.as_ref().and_then(|s| s.output.clone()),
                 tool_status: info.state.as_ref().and_then(|s| s.status.clone()),
                 tool_title: info.state.as_ref().and_then(|s| s.title.clone()),
+                media_ref: None,
             },
             // For step-start, step-finish, and other types, include minimal info
             _ => ChatMessagePart {
@@ -542,6 +544,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 tool_output: None,
                 tool_status: None,
                 tool_title: None,
+                media_ref: None,
             },
         };
 

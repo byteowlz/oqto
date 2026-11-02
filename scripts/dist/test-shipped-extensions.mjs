@@ -157,7 +157,7 @@ try {
 		console.error(JSON.stringify(failures, null, 2));
 		process.exitCode = 1;
 	} else {
-		console.log(`${extensions.length} extensions and the combined catalog passed real Pi 1.0 catalog/session-start smoke.`);
+		console.log(`${extensions.length} extensions and the combined catalog passed real Pi ${expectedVersion} catalog/session-start smoke.`);
 	}
 } finally {
 	await rm(temp, { recursive: true, force: true });

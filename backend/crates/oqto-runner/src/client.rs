@@ -897,6 +897,20 @@ impl RunnerClient {
         }
     }
 
+    /// Retrieve media only from the selected canonical Session's original records.
+    pub async fn get_workspace_session_media(
+        &self,
+        request: GetWorkspaceSessionMediaRequest,
+    ) -> Result<WorkspaceSessionMediaResponse> {
+        match self
+            .request(&RunnerRequest::GetWorkspaceSessionMedia(request))
+            .await?
+        {
+            RunnerResponse::WorkspaceSessionMedia(response) => Ok(response),
+            _ => anyhow::bail!("Session media unavailable"),
+        }
+    }
+
     /// Repair missing workspace chat history metadata from Pi JSONL session files.
     pub async fn repair_workspace_chat_history(
         &self,

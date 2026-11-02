@@ -16,7 +16,8 @@ sdk = lock['packages']['node_modules/@earendil-works/pi-coding-agent']
 assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', p['pi'])
 assert p['pi'] == sdk['version'] == package['dependencies']['@earendil-works/pi-coding-agent']
 assert lock['packages']['']['dependencies'] == package['dependencies']
-assert p['node'] == '24.14.1'
+# The accepted Node LTS line is 24; exact patch + archive digest live in pins.
+assert re.fullmatch(r'24\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', p['node'])
 assert len(p['node-linux-x64-sha256']) == 64
 for name, entry in lock['packages'].items():
     if name:

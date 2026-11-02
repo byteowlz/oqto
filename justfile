@@ -91,6 +91,7 @@ dist-stage-pi-node-runtime output:
 # Locked acquisition and preserve-first staging contracts (no downloads).
 test-pi-node-runtime:
     python3 -B scripts/tests/test-pi-node-runtime.py
+    bash scripts/tests/test-stage-pi-runtime-idempotent.sh
 
 # Stage the built frontend into dist/immutable/frontend/ (use --build to build first)
 dist-stage-frontend *ARGS:
@@ -138,10 +139,11 @@ test-oqt-core: test-sandbox-schema
     cd backend && cargo test --locked -p oqto-sandbox --lib --test guard_config
     cd backend && cargo clippy --locked -p oq-permissions -p oqto-sandbox --all-targets -- -D warnings
     node --test --test-concurrency=1 tools/oqt/input-leases.test.mjs tools/oqt/guard-wire.test.mjs tools/oqt/classic-import.test.mjs tools/oqt/classic-source.test.mjs tools/oqt/classic-client.test.mjs tools/oqt/classic-cli.test.mjs
+    node --experimental-strip-types --test --test-concurrency=1 tools/oqt/presentation-startup.test.mjs tools/oqt/brain-grants.test.mjs tools/oqt/brain-grants-errors.test.mjs
 
 # Owned derivative uses its pinned SDK's Biome, not the separate frontend version.
 test-oqt-lint PI_SOURCE:
-    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/input-leases.ts tools/oqt/input-leases.test.mjs tools/oqt/classic-*.ts tools/oqt/classic-*.mjs tools/oqt/session-*.ts tools/oqt/session-*.mjs tools/oqt/operator-*.ts tools/oqt/operator-*.mjs tools/oqt/guard*.ts tools/oqt/guard*.mjs tools/oqt/launcher.ts tools/oqt/coding-worker.ts tools/oqt/plugin/src/guard-client.ts tools/oqt/plugin/src/tui.ts
+    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/input-leases.ts tools/oqt/input-leases.test.mjs tools/oqt/classic-*.ts tools/oqt/classic-*.mjs tools/oqt/session-*.ts tools/oqt/session-*.mjs tools/oqt/operator-*.ts tools/oqt/operator-*.mjs tools/oqt/guard*.ts tools/oqt/guard*.mjs tools/oqt/launcher.ts tools/oqt/coding-worker.ts tools/oqt/plugin/src/guard-client.ts tools/oqt/plugin/src/tui.ts tools/oqt/presentation-*.ts tools/oqt/presentation-*.mjs tools/oqt/brain-grants*.ts tools/oqt/brain-grants*.mjs tools/oqt/coding-composition.ts tools/oqt/operator-results-service.ts tools/oqt/program-status.ts tools/oqt/host2/*.ts
 
 test-oqt-typecheck PI_SOURCE:
     bash tools/oqt/typecheck.sh "{{PI_SOURCE}}"
@@ -156,7 +158,7 @@ install-oqt:
 
 test-oqt-install:
     timeout 90 python3 tools/oqt/install_runtime_test.py
-    timeout 30 python3 tools/oqt/installed_state_test.py
+    timeout 60 node --experimental-strip-types --test tools/oqt/installed-state.test.mjs
 
 # Real native import storage and bounded host transport; disposable fixtures only.
 test-oqt-import-native PI_SOURCE:
@@ -176,6 +178,26 @@ test-oqt-hands PI_SOURCE DAEMON BPF:
 
 test-oqt-ui:
     OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 160s python3 tools/oqt/tui_test.py
+
+# host2 on current upstream Pi + chord2 (ADR-0071): typecheck, transport and confined-brain tests.
+test-oqt-host2:
+    bash tools/oqt/host2/run-tests.sh
+
+# Upstream Pi tracking: fails when the pin is >14 days old or depends on removed upstream code.
+test-oqt-upstream-drift *ARGS:
+    python3 tools/oqt/upstream_drift.py {{ARGS}}
+
+# Early editor: typing/queue/cancel/failure while the real host lock is held.
+test-oqt-early-editor:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 420s python3 tools/oqt/early_presentation_tui_test.py
+
+# Opt-in staged-runtime startup timings; never activates the runtime.
+test-oqt-installed-early RUNTIME:
+    OQT_INSTALLED_TEST_RUNTIME="{{RUNTIME}}" timeout --kill-after=5s 900s python3 tools/oqt/installed_early_editor_test.py
+
+# OSC 7501 program status from the real TUI (query answered, and forced).
+test-oqt-program-status:
+    OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 300s python3 tools/oqt/program_status_tui_test.py
 
 test-oqt-coding:
     OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 100s python3 tools/oqt/coding_tui_test.py
@@ -219,8 +241,7 @@ fmt:
 
 # Generate TypeScript types from Rust structs
 gen-types:
-    cd backend && cargo test -p oqto export_typescript_bindings -- --nocapture
-    cd frontend && bun run format:generated-types
+    bash scripts/dev/generate-types.sh
 
 # Check all Rust code compiles
 check: agent-check-on-change
@@ -1016,6 +1037,7 @@ test-release-version-sync:
 # Dist sources resolve to pinned refs, preserving dirty or unknown local caches
 test-dist-sync-pins:
     ./scripts/tests/test-dist-sync-pins.sh
+    bash scripts/tests/test-dist-extension-closure.sh
 
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:
@@ -1059,6 +1081,34 @@ admin-sync-all *ARGS:
 
 # Alias for the rootless local update channel
 update-pi: update-pi-local
+
+# Shared media derivation/cache, native HTTPS and managed canonical history.
+test-personal-media:
+    cd backend && cargo fmt -p oqto-media -p oqto-protocol -p oqto-history -p oqto-files -p oqto-runner -p oqto-personal -p oqto-personal-wire -p oqto -- --check
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-media
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-files --lib previews
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --lib personal_media
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --lib actual_native_history_page_has_refs
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --test personal_host session_media_is_scoped
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --test personal_host media_cache_configuration
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --test personal_host managed_history_images
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-history --lib ops::media
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-protocol --lib projection::tests
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto --lib chat::media::tests
+
+# Full synthetic Session -> pi-hands -> HTTPS Runner -> real confined command.
+test-pi-hands PI_SOURCE BPF SHIM:
+    just test-runner-hands "{{BPF}}" "{{SHIM}}"
+    OQT_PI_SOURCE="{{PI_SOURCE}}" bash tools/oqt/pi-hands/check.sh
+    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/pi-hands/index.ts tools/oqt/pi-hands/native.test.mjs
+    OQT_PI_SOURCE="{{PI_SOURCE}}" OQT_HANDS_TEST_BPF="{{BPF}}" OQTO_SANDBOX_SHIM_BIN="{{SHIM}}" timeout 100 taskset -c 0 nice -n 19 node --import "{{PI_SOURCE}}/packages/coding-agent/src/experimental/source-resolver.ts" --test tools/oqt/pi-hands/native.test.mjs
+
+# Real confined hands through signed/pinned HTTPS and destination owner CLI.
+# Supply compiled BPF + shim; never uses production state or launches real Pi.
+test-runner-hands BPF SHIM:
+    cd backend && cargo fmt -p oqto-personal -p oqto-personal-wire -p oqto-runner -- --check
+    cd backend && CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-personal --lib hands
+    cd backend && OQT_HANDS_TEST_BPF="{{BPF}}" OQTO_SANDBOX_SHIM_BIN="{{SHIM}}" CARGO_BUILD_JOBS=1 taskset -c 0 nice -n 19 cargo test --locked -p oqto-runner --test personal_host hands -- --ignored --test-threads=1
 
 # Component enrollment TLS proof only: not a running host service, Pi, Files/PTY or phone acceptance.
 test-personal-authority:

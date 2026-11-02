@@ -13,6 +13,7 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./"),
+			"@oqto-flash": path.resolve(__dirname, "../..", "oqto-flash/src"),
 			"@byteowlz/design-system": path.resolve(
 				__dirname,
 				"vendor/design-system/src/index.ts",

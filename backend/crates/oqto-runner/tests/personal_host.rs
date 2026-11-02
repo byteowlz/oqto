@@ -32,6 +32,8 @@ fn command(home: &Path) -> Command {
     command
         .env_clear()
         .env("HOME", home)
+        .env("OQTO_MEDIA_CACHE_DIR", home.join("media-cache"))
+        .env("OQTO_MEDIA_CACHE_ENABLED", "true")
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", home.join(".local/state"))
         .env("TMPDIR", home.join("tmp"))
@@ -59,6 +61,9 @@ impl Host {
         Self::start_mode(false).await
     }
     async fn start_mode(sessions: bool) -> Result<Self> {
+        Self::start_options(sessions, None).await
+    }
+    async fn start_options(sessions: bool, hands_bpf: Option<&Path>) -> Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix("oqpp-")
             .tempdir_in("/tmp")?;
@@ -92,6 +97,13 @@ impl Host {
         drop(reserved);
         let log = std::fs::File::create(root.join("host.stderr"))?;
         let mut process = command(&home);
+        if let Some(bpf) = hands_bpf {
+            process.arg("--personal-hands-bpf").arg(bpf);
+            process.env("OQTO_HANDS_FIXTURE_SECRET", "must-not-reach-hands");
+            if let Some(shim) = std::env::var_os("OQTO_SANDBOX_SHIM_BIN") {
+                process.env("OQTO_SANDBOX_SHIM_BIN", shim);
+            }
+        }
         if sessions {
             process
                 .args(["--sessions", "control", "--personal-workspace-root"])
@@ -230,6 +242,16 @@ impl Host {
     }
 }
 
+#[path = "personal_host/hands_cli.rs"]
+mod hands_cli;
+
+#[path = "personal_host/hands.rs"]
+mod hands;
+
+#[path = "personal_host/managed_media.rs"]
+mod managed_media;
+#[path = "personal_host/media_cache.rs"]
+mod media_cache;
 #[path = "personal_host/sessions.rs"]
 mod sessions;
 #[path = "personal_host/split_source.rs"]

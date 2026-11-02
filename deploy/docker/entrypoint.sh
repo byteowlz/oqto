@@ -278,6 +278,10 @@ use_sudo = true
 [auth]
 dev_mode = ${DEV_MODE}
 jwt_secret = "${JWT_SECRET}"
+# The bundled Caddy proxies /api/* over loopback, so the backend peer is always
+# 127.0.0.1. Trusting exactly that peer is what keeps the login rate limiter
+# keyed per real client instead of per proxy.
+trusted_proxies = ["127.0.0.1", "::1"]
 
 [eavs]
 enabled = true

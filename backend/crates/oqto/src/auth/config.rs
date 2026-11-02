@@ -27,6 +27,15 @@ pub struct AuthConfig {
     /// Allowed CORS origins. If empty in production, CORS is disabled.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+
+    /// Reverse proxies whose forwarded headers (`X-Forwarded-For`,
+    /// `X-Real-IP`) may be trusted, matched by peer address.
+    ///
+    /// Empty means "trust nothing": the client address is the transport peer.
+    /// Only list an address when the proxy is the *only* way to reach the
+    /// backend, otherwise any direct client can pick its own address.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for AuthConfig {
@@ -42,6 +51,7 @@ impl Default for AuthConfig {
                 "http://localhost:3000".to_string(),
                 "http://localhost:8080".to_string(),
             ],
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -86,6 +96,14 @@ impl AuthConfig {
             None => Ok(None),
             Some(value) => resolve_secret_value(value).map(Some),
         }
+    }
+
+    /// Parse `trusted_proxies` into addresses, dropping entries that do not parse.
+    pub fn trusted_proxy_addrs(&self) -> Vec<std::net::IpAddr> {
+        self.trusted_proxies
+            .iter()
+            .filter_map(|value| value.trim().parse::<std::net::IpAddr>().ok())
+            .collect()
     }
 
     /// Validate the configuration.

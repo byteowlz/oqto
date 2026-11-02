@@ -129,6 +129,9 @@ export async function withGuard(
 			context,
 		);
 		await run({
+			gate,
+			hands,
+			models,
 			root,
 			workspace,
 			guard,

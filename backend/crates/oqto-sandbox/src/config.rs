@@ -1957,21 +1957,35 @@ impl SandboxConfig {
             return Ok(None);
         }
 
-        match std::fs::read_to_string(&config_path) {
-            Ok(contents) => match toml::from_str::<SandboxConfigFile>(&contents) {
-                Ok(file) => {
-                    // Merge global profiles with workspace profiles (workspace takes precedence)
-                    let mut merged_profiles = global_profiles.clone();
-                    merged_profiles.extend(file.profiles.clone());
+        let contents = std::fs::read_to_string(&config_path).map_err(|e| {
+            anyhow::anyhow!("failed to read workspace sandbox config {config_path:?}: {e}")
+        })?;
+        Self::resolve_workspace_text(&contents, &config_path, global_profiles).map(Some)
+    }
 
-                    let profile_name = if file.profile.is_empty() {
-                        default_profile_name()
-                    } else {
-                        &file.profile
-                    };
+    /// Resolve captured workspace TOML with the same strict semantics as the file
+    /// loader. `config_path` is diagnostic only; this method performs no I/O.
+    /// Callers must supply the actual owner profile definitions and pin their
+    /// dependencies independently when preparing a reviewed proposal.
+    pub fn resolve_workspace_text(
+        contents: &str,
+        config_path: &Path,
+        global_profiles: &HashMap<String, SandboxProfile>,
+    ) -> Result<Self> {
+        match toml::from_str::<SandboxConfigFile>(contents) {
+            Ok(file) => {
+                // Merge global profiles with workspace profiles (workspace takes precedence)
+                let mut merged_profiles = global_profiles.clone();
+                merged_profiles.extend(file.profiles.clone());
 
-                    // Resolve the profile
-                    let profile = merged_profiles
+                let profile_name = if file.profile.is_empty() {
+                    default_profile_name()
+                } else {
+                    &file.profile
+                };
+
+                // Resolve the profile
+                let profile = merged_profiles
                         .get(profile_name)
                         .cloned()
                         .or_else(|| SandboxProfile::builtin(profile_name))
@@ -1980,61 +1994,57 @@ impl SandboxConfig {
                                 "workspace sandbox config {config_path:?} references unknown profile '{profile_name}'"
                             )
                         })?;
-                    if let Some(guard) = &file.guard {
-                        guard
-                            .validate_workspace()
-                            .with_context(|| format!("invalid guard in {config_path:?}"))?;
-                    }
-
-                    let config = Self {
-                        guard: profile.guard.clone(),
-                        // The workspace file's own guard is a narrowing layer.
-                        workspace_guard: file.guard.clone(),
-                        workspace_cache_enabled: profile.workspace_cache_enabled,
-                        workspace_cache_root: profile.workspace_cache_root.clone(),
-                        resource_limits: profile.resource_limits,
-                        enabled: file.enabled,
-                        profile: profile_name.to_string(),
-                        read_policy: profile.read_policy,
-                        home_access: profile.home_access,
-                        allow_read: profile.allow_read,
-                        deny_read: profile.deny_read,
-                        allow_write: profile.allow_write,
-                        deny_write: profile.deny_write,
-                        isolate_network: profile.isolate_network,
-                        isolate_pid: profile.isolate_pid,
-                        drop_all_caps: profile.drop_all_caps,
-                        disable_userns: profile.disable_userns,
-                        assert_userns_disabled: profile.assert_userns_disabled,
-                        no_new_privs: profile.no_new_privs,
-                        seccomp_mode: profile.seccomp_mode,
-                        landlock_mode: profile.landlock_mode,
-                        seccomp_bpf_path: profile.seccomp_bpf_path,
-                        extra_ro_bind: profile.extra_ro_bind,
-                        extra_rw_bind: profile.extra_rw_bind,
-                        overlay_enabled: profile.overlay_enabled,
-                        overlay_root: profile.overlay_root,
-                        overlay_paths: profile.overlay_paths,
-                        scoped_paths: profile.scoped_paths,
-                        network: profile.network,
-                        // The work directory's own grants, not the profile's default of
-                        // "enabled for everything and nothing granted".
-                        ssh: file.ssh.clone().or(profile.ssh),
-                        profiles: merged_profiles,
-                    };
-
-                    info!(
-                        "Loaded workspace sandbox config from {:?}, profile='{}'",
-                        config_path, config.profile
-                    );
-                    Ok(Some(config))
+                if let Some(guard) = &file.guard {
+                    guard
+                        .validate_workspace()
+                        .with_context(|| format!("invalid guard in {config_path:?}"))?;
                 }
-                Err(e) => Err(anyhow::anyhow!(
-                    "failed to parse workspace sandbox config {config_path:?}: {e}"
-                )),
-            },
+
+                let config = Self {
+                    guard: profile.guard.clone(),
+                    // The workspace file's own guard is a narrowing layer.
+                    workspace_guard: file.guard.clone(),
+                    workspace_cache_enabled: profile.workspace_cache_enabled,
+                    workspace_cache_root: profile.workspace_cache_root.clone(),
+                    resource_limits: profile.resource_limits,
+                    enabled: file.enabled,
+                    profile: profile_name.to_string(),
+                    read_policy: profile.read_policy,
+                    home_access: profile.home_access,
+                    allow_read: profile.allow_read,
+                    deny_read: profile.deny_read,
+                    allow_write: profile.allow_write,
+                    deny_write: profile.deny_write,
+                    isolate_network: profile.isolate_network,
+                    isolate_pid: profile.isolate_pid,
+                    drop_all_caps: profile.drop_all_caps,
+                    disable_userns: profile.disable_userns,
+                    assert_userns_disabled: profile.assert_userns_disabled,
+                    no_new_privs: profile.no_new_privs,
+                    seccomp_mode: profile.seccomp_mode,
+                    landlock_mode: profile.landlock_mode,
+                    seccomp_bpf_path: profile.seccomp_bpf_path,
+                    extra_ro_bind: profile.extra_ro_bind,
+                    extra_rw_bind: profile.extra_rw_bind,
+                    overlay_enabled: profile.overlay_enabled,
+                    overlay_root: profile.overlay_root,
+                    overlay_paths: profile.overlay_paths,
+                    scoped_paths: profile.scoped_paths,
+                    network: profile.network,
+                    // The work directory's own grants, not the profile's default of
+                    // "enabled for everything and nothing granted".
+                    ssh: file.ssh.clone().or(profile.ssh),
+                    profiles: merged_profiles,
+                };
+
+                info!(
+                    "Loaded workspace sandbox config from {:?}, profile='{}'",
+                    config_path, config.profile
+                );
+                Ok(config)
+            }
             Err(e) => Err(anyhow::anyhow!(
-                "failed to read workspace sandbox config {config_path:?}: {e}"
+                "failed to parse workspace sandbox config {config_path:?}: {e}"
             )),
         }
     }

@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
@@ -75,17 +75,18 @@ export function OqtoUiShell({
 	const snapshotQuery = useQuery({
 		queryKey: ["oqto-ui", platform.id, sessionId],
 		queryFn: () => platform.load(sessionId),
-		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 	});
 	const snapshot = snapshotQuery.data;
 
-	if (!snapshot) {
+	const identityMismatch =
+		!!snapshot && !!sessionId && snapshot.activeSessionId !== sessionId;
+	if (!snapshot || identityMismatch) {
 		return (
 			<div className="wb-shell" data-state="loading" ref={rootRef}>
 				<Splash
 					schemeId={schemeId}
-					error={snapshotQuery.isError}
+					error={snapshotQuery.isError || identityMismatch}
 					onRetry={() => void snapshotQuery.refetch()}
 				/>
 			</div>
@@ -160,10 +161,9 @@ function LoadedShell({
 			item.sessions.some((session) => session.id === snapshot.activeSessionId),
 		) ??
 		directories[0];
-	const session =
-		directory?.sessions.find(
-			(item) => item.id === (navigation.sessionId ?? snapshot.activeSessionId),
-		) ?? directory?.sessions[0];
+	const session = directory?.sessions.find(
+		(item) => item.id === (navigation.sessionId ?? snapshot.activeSessionId),
+	);
 	if (!directory || !session) {
 		return (
 			<div className="wb-shell" data-state="empty" ref={rootRef}>
@@ -188,7 +188,7 @@ function LoadedShell({
 			ref={rootRef}
 		>
 			<NavigationRail
-				runnerTargets={platform.runnerTargets}
+				platform={platform}
 				workDirectories={directories}
 				workDirectoryId={directory.id}
 				sessionId={session.id}
@@ -269,6 +269,7 @@ function LoadedShell({
 					status={status}
 					session={session}
 					models={snapshot.environment.models}
+					platform={platform}
 					settingsOpen={settingsOpen}
 					onToggleSettings={() => setSettingsOpen((open) => !open)}
 				/>

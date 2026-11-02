@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use tracing::info;
 
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
 use crate::shared_workspace::{
     AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
     CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, SharedWorkspaceInfo,
@@ -319,6 +319,7 @@ pub async fn delete_shared_workspace(
 /// cleanup after verification.
 pub async fn admin_migrate_shared_workspace_placement(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
     Path(workspace_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = state
@@ -654,12 +655,17 @@ pub async fn transfer_shared_workspace_ownership(
 }
 
 // ============================================================================
-// Admin handlers (require admin role -- enforced by route layer)
+// Admin handlers
+//
+// Each handler takes the `RequireAdmin` extractor, so the role check is part of
+// the handler signature and cannot be lost by a routing change. The `/admin/*`
+// sub-router is additionally gated in `api::routes`.
 // ============================================================================
 
 /// Admin: list all shared workspaces.
 pub async fn admin_list_shared_workspaces(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
 ) -> ApiResult<Json<Vec<AdminSharedWorkspaceInfo>>> {
     let service = state
         .shared_workspaces
@@ -677,6 +683,7 @@ pub async fn admin_list_shared_workspaces(
 /// Admin: get shared workspace details including all members.
 pub async fn admin_get_shared_workspace(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
     Path(workspace_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = state
@@ -716,6 +723,7 @@ pub async fn admin_get_shared_workspace(
 /// Admin: force-delete a shared workspace.
 pub async fn admin_delete_shared_workspace(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
     Path(workspace_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = state
@@ -745,6 +753,7 @@ pub async fn admin_delete_shared_workspace(
 /// Admin: force-transfer ownership.
 pub async fn admin_transfer_shared_workspace_ownership(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
     Path(workspace_id): Path<String>,
     Json(request): Json<TransferOwnershipRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -764,6 +773,7 @@ pub async fn admin_transfer_shared_workspace_ownership(
 /// Admin: force-remove a member.
 pub async fn admin_remove_shared_workspace_member(
     State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
     Path((workspace_id, target_user_id)): Path<(String, String)>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = state

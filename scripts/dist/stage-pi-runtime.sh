@@ -6,6 +6,30 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 [[ $# == 0 ]] || { echo 'Usage: stage-pi-runtime.sh' >&2; exit 2; }
+# Check all declarations BEFORE acquiring or reusing anything. A matching cached
+# receipt must not conceal a stale release manifest or a changed dependency lock.
+python3 - "$ROOT_DIR" <<'PY'
+import hashlib, json, pathlib, sys, tomllib
+root = pathlib.Path(sys.argv[1])
+release = tomllib.loads((root/'dist/manifest.toml').read_text())['release']
+pins = tomllib.loads((root/'dependencies.toml').read_text())['external']
+package = json.loads((root/'scripts/dist/pi-node/package.json').read_text())
+lock_path = root/'scripts/dist/pi-node/package-lock.json'
+lock = json.loads(lock_path.read_bytes())
+name = '@earendil-works/pi-coding-agent'
+sdk = lock['packages']['node_modules/'+name]
+expected = {'pi_runtime':'bundled-official-node-npm', 'pi_version':pins['pi'],
+            'node_version':pins['node'], 'node_archive_sha256':pins['node-linux-x64-sha256'],
+            'pi_npm_integrity':sdk['integrity'],
+            'pi_package_lock_sha256':hashlib.sha256(lock_path.read_bytes()).hexdigest()}
+drift = {key:(release.get(key),value) for key,value in expected.items() if release.get(key)!=value}
+if (package['dependencies'] != {name:pins['pi']}
+        or lock['packages']['']['dependencies'] != package['dependencies']
+        or sdk['version'] != pins['pi']):
+    sys.exit('error: release runtime pins disagree: dependency/package/lock mismatch')
+if drift:
+    sys.exit(f'error: release runtime pins disagree: {drift}')
+PY
 mkdir -p dist/immutable/pi-runtime
 staged="$ROOT_DIR/dist/immutable/pi-runtime/pi"
 # Idempotent for repeated release builds: keep an already staged runtime only
@@ -21,6 +45,7 @@ except (OSError, ValueError):
     sys.exit(f"error: staged Pi runtime has no readable receipt: {receipt_path}")
 release = tomllib.load(open(manifest_path, "rb"))["release"]
 expected = {
+    "kind": "node-npm",
     "version": release["pi_version"],
     "node_version": release["node_version"],
     "node_archive_sha256": release["node_archive_sha256"],

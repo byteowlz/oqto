@@ -51,14 +51,30 @@ describe("canonical Chat message grouping", () => {
 		expect(groups).toHaveLength(2);
 	});
 
-	it("drops duplicate assistant rows produced by reconnect races", () => {
+	it("preserves distinct durable rows even when their text is identical", () => {
 		const part = { type: "text", id: "p1", text: "Same" } as const;
 		const groups = groupMessages([
 			message("a1", "assistant", [part]),
 			message("a2", "assistant", [part]),
 		]);
 
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.messages).toHaveLength(1);
+		expect(groups).toHaveLength(2);
+		expect(
+			groups.flatMap((group) => group.messages.map((message) => message.id)),
+		).toEqual(["a1", "a2"]);
+	});
+
+	it("does not collapse distinct assistant image rows into the image fingerprint", () => {
+		const groups = groupMessages([
+			message("image-a", "assistant", [
+				{ type: "image", id: "part-a", source: "url", url: "/image-a.png" },
+			]),
+			message("image-b", "assistant", [
+				{ type: "image", id: "part-b", source: "url", url: "/image-b.png" },
+			]),
+		]);
+		expect(
+			groups.flatMap((group) => group.messages.map((message) => message.id)),
+		).toEqual(["image-a", "image-b"]);
 	});
 });

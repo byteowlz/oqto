@@ -33,6 +33,7 @@ pub use private::persistent_filesystem;
 mod private_tests;
 use anyhow::{Context, Result, ensure};
 pub use grants::{Access, FileGrant, Grants, SessionAccess};
+pub mod hands;
 use oqto_personal_wire::OQTO_PERSONAL_V1;
 pub use oqto_personal_wire::{Enrollment, PairingQr, SignedRequest};
 use rand::TryRngCore;
@@ -132,6 +133,12 @@ impl PairingAuthority {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        // A previous authority may have died after dispatch. Never replay it.
+        sqlx::query(
+            "UPDATE personal_hands SET state='uncertain',output=NULL WHERE state='running'",
+        )
+        .execute(&pool)
+        .await?;
         sqlx::query(
             "INSERT OR IGNORE INTO personal_host_identity (singleton, public_id) VALUES (1, ?)",
         )
@@ -354,6 +361,10 @@ fn token_hash(token: &str) -> String {
 mod bootstrap_tests;
 #[cfg(test)]
 mod dispatch_tests;
+#[cfg(test)]
+mod hands_restart_tests;
+#[cfg(test)]
+mod hands_tests;
 #[cfg(test)]
 mod https_tests;
 #[cfg(test)]

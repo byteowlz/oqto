@@ -156,27 +156,10 @@ export class STTService {
 			this.stopListening();
 			throw new Error("Browser did not provide a 24 kHz capture context");
 		}
-		const url = URL.createObjectURL(
-			new Blob(
-				[
-					`
-			class EarsCapture extends AudioWorkletProcessor {
-				process(inputs) {
-					if (inputs[0]?.[0]) this.port.postMessage(inputs[0][0]);
-					return true;
-				}
-			}
-			registerProcessor('ears-capture', EarsCapture);
-		`,
-				],
-				{ type: "application/javascript" },
-			),
-		);
-		try {
-			await context.audioWorklet.addModule(url);
-		} finally {
-			URL.revokeObjectURL(url);
-		}
+		// Same shared processor, served as an asset rather than a CSP-blocked Blob.
+		// no-inline is essential: a data: module would violate the same policy.
+		const url = new URL("./capture-worklet.js?no-inline", import.meta.url).href;
+		await context.audioWorklet.addModule(url);
 		if (token !== this.setupToken) {
 			await context
 				.close()
@@ -217,8 +200,13 @@ export class STTService {
 		);
 		let offset = 0;
 		for (const chunk of this.chunks) {
-			audio.set(chunk, offset);
-			offset += chunk.length;
+			for (const sample of chunk) {
+				// WebAudio resampling can slightly overshoot the nominal unit range.
+				// Keep non-finite values visible to the recognizer's error handling.
+				audio[offset++] = Number.isFinite(sample)
+					? Math.max(-1, Math.min(1, sample))
+					: sample;
+			}
 		}
 		this.chunks = [];
 		this.recognizer.feed(audio);

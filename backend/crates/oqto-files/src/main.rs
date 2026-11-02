@@ -62,6 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Config::default()
     };
 
+    oqto_media::cache::validate_config()?;
+
     // Resolve root directory to absolute path
     let root_dir = cli.root.canonicalize().unwrap_or_else(|_| cli.root.clone());
 

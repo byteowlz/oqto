@@ -15,6 +15,10 @@ name = "oqto-files"
 path = "src/main.rs"
 
 [dependencies]
+oqto-media = { path = "../oqto-media" }
+cap-std = "4.0.3"
+libc.workspace = true
+base64.workspace = true
 # Error handling
 thiserror.workspace = true
 

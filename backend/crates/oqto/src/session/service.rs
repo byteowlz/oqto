@@ -1006,6 +1006,17 @@ impl SessionService {
                 let canonical = location_path.canonicalize().with_context(|| {
                     format!("resolving workspace location {}", location_path.display())
                 })?;
+                // A stored location is a *binding fact*, not an authorization.
+                // It must satisfy the same containment rule as a path the
+                // client supplied directly, otherwise a caller can register an
+                // arbitrary host directory and have it treated as its workspace.
+                let allowed_roots = self.allowed_workspace_roots(user_id);
+                if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+                    anyhow::bail!(
+                        "workspace location {} is outside allowed roots",
+                        canonical.display()
+                    );
+                }
                 return Ok(canonical);
             }
 
@@ -3410,6 +3421,7 @@ delegated_fetch = true
     }
 
     use super::*;
+    use crate::session::workspace_locations::WorkspaceLocationInput;
 
     fn agent_ctx_test_session(agent: Option<&str>) -> Session {
         Session {
@@ -3867,6 +3879,122 @@ delegated_fetch = true
             .await
             .unwrap_err();
         assert!(err.to_string().contains("outside allowed roots"));
+    }
+
+    #[tokio::test]
+    async fn resolve_workspace_path_rejects_out_of_root_active_location() {
+        let temp_dir = tempfile::tempdir().t();
+        let workspace_root = temp_dir.path().join("workspaces");
+        std::fs::create_dir_all(&workspace_root).t();
+
+        let outside = temp_dir.path().join("victim-home");
+        std::fs::create_dir_all(&outside).t();
+
+        let local_config = LocalRuntimeConfig {
+            workspace_dir: workspace_root.to_string_lossy().to_string(),
+            single_user: true,
+            ..Default::default()
+        };
+        let local_runtime = LocalRuntime::new(local_config.clone());
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: Some(local_config),
+            single_user: true,
+            ..Default::default()
+        };
+
+        let db = Database::in_memory().await.t();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runner = RunnerClient::default();
+        let service = SessionService::with_runner(repo, runner, local_runtime, config);
+
+        let user_id = "test-user";
+        // A stored location is a binding fact, not authorization. Register the
+        // victim's home as the active location for a workspace id that does not
+        // exist, then ask for that non-existent path.
+        let missing_workspace_id = outside.join("does-not-exist");
+        service
+            .workspace_locations()
+            .upsert_location(
+                &WorkspaceLocationInput {
+                    id: "loc-1".to_string(),
+                    user_id: user_id.to_string(),
+                    workspace_id: missing_workspace_id.to_string_lossy().to_string(),
+                    location_id: "loc".to_string(),
+                    kind: "local".to_string(),
+                    path: outside.to_string_lossy().to_string(),
+                    runner_id: None,
+                    repo_fingerprint: None,
+                    is_active: 1,
+                },
+                true,
+            )
+            .await
+            .t();
+
+        let err = service
+            .resolve_workspace_path(user_id, missing_workspace_id.to_string_lossy().as_ref())
+            .await
+            .expect_err("an out-of-root location must not resolve");
+        assert!(
+            err.to_string().contains("outside allowed roots"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_workspace_path_accepts_in_root_active_location() {
+        let temp_dir = tempfile::tempdir().t();
+        let workspace_root = temp_dir.path().join("workspaces");
+        std::fs::create_dir_all(&workspace_root).t();
+
+        let inside = workspace_root.join("moved-project");
+        std::fs::create_dir_all(&inside).t();
+
+        let local_config = LocalRuntimeConfig {
+            workspace_dir: workspace_root.to_string_lossy().to_string(),
+            single_user: true,
+            ..Default::default()
+        };
+        let local_runtime = LocalRuntime::new(local_config.clone());
+        let config = SessionServiceConfig {
+            runtime_mode: RuntimeMode::Local,
+            local_config: Some(local_config),
+            single_user: true,
+            ..Default::default()
+        };
+
+        let db = Database::in_memory().await.t();
+        let repo = SessionRepository::new(db.pool().clone());
+        let runner = RunnerClient::default();
+        let service = SessionService::with_runner(repo, runner, local_runtime, config);
+
+        let user_id = "test-user";
+        let missing_workspace_id = inside.join("does-not-exist");
+        service
+            .workspace_locations()
+            .upsert_location(
+                &WorkspaceLocationInput {
+                    id: "loc-2".to_string(),
+                    user_id: user_id.to_string(),
+                    workspace_id: missing_workspace_id.to_string_lossy().to_string(),
+                    location_id: "loc".to_string(),
+                    kind: "local".to_string(),
+                    path: inside.to_string_lossy().to_string(),
+                    runner_id: None,
+                    repo_fingerprint: None,
+                    is_active: 1,
+                },
+                true,
+            )
+            .await
+            .t();
+
+        let resolved = service
+            .resolve_workspace_path(user_id, missing_workspace_id.to_string_lossy().as_ref())
+            .await
+            .t();
+        assert_eq!(resolved, inside.canonicalize().t());
     }
 
     #[test]

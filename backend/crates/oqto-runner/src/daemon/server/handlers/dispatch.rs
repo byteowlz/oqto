@@ -110,6 +110,7 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::ListWorkspaceChatSessions(_)
         | RunnerRequest::GetWorkspaceChatSession(_)
         | RunnerRequest::GetWorkspaceChatSessionMessages(_)
+        | RunnerRequest::GetWorkspaceSessionMedia(_)
         | RunnerRequest::UpdateWorkspaceChatSession(_)
         | RunnerRequest::RepairWorkspaceChatHistory(_)) => {
             super::sessions::handle_request(runner, req).await

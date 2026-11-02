@@ -66,8 +66,8 @@ function bindSocket(ws: WebSocket): SocketLike {
 }
 
 const scheduler: Scheduler = {
-	schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-	cancel: (handle) => clearTimeout(handle),
+	schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+	cancel: (handle) => window.clearTimeout(handle),
 	now: () => Date.now(),
 };
 

@@ -644,6 +644,18 @@ pub async fn delete_user(
     // Delete from oqto DB first
     state.users.delete_user(&user_id).await?;
 
+    // A deleted account must not keep working keys. (The FK cascade, if any,
+    // cannot be relied on: revocation is the explicit, observable state.)
+    match state.api_keys.revoke_all_for_user(&user_id).await {
+        Ok(revoked) if revoked > 0 => {
+            info!(user_id = %user_id, revoked, "Revoked API keys for deleted user")
+        }
+        Ok(_) => {}
+        Err(e) => {
+            warn!(user_id = %user_id, error = %e, "Failed to revoke API keys for deleted user")
+        }
+    }
+
     // Remove the personal container placement (compute + registry record).
     // The durable state volume is retained for operator-controlled cleanup.
     if let Some(manager) = &state.placement_manager
@@ -687,6 +699,19 @@ pub async fn deactivate_user(
 ) -> ApiResult<Json<DbUserInfo>> {
     // Uses centralized From<anyhow::Error> conversion
     let user = state.users.deactivate_user(&user_id).await?;
+
+    // Deactivation must terminate the credentials issued to the account, not
+    // only block the next login. The authentication middleware re-checks
+    // is_active per request; this closes the API-key path explicitly.
+    match state.api_keys.revoke_all_for_user(&user.id).await {
+        Ok(revoked) if revoked > 0 => {
+            info!(user_id = %user.id, revoked, "Revoked API keys for deactivated user")
+        }
+        Ok(_) => {}
+        Err(e) => {
+            warn!(user_id = %user.id, error = %e, "Failed to revoke API keys for deactivated user")
+        }
+    }
 
     info!(user_id = %user.id, "Deactivated user");
     Ok(Json(user.into()))

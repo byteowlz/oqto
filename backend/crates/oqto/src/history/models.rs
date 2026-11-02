@@ -187,4 +187,7 @@ pub struct ChatMessagePart {
     pub tool_status: Option<String>,
     /// Tool title/summary (for tool parts)
     pub tool_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub media_ref: Option<serde_json::Value>,
 }

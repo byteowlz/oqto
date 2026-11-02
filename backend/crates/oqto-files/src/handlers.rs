@@ -12,8 +12,6 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use image::GenericImageView;
-use image::codecs::jpeg::JpegEncoder;
 use notify::{
     EventKind, RecursiveMode, Watcher,
     event::{CreateKind, RemoveKind},
@@ -1715,6 +1713,11 @@ pub async fn get_thumbnail(
         )));
     }
 
+    if is_image {
+        return crate::previews::image(root_dir, file_path, query.size, &state.config).await;
+    }
+
+    // Video previews retain their existing frame-extraction pipeline.
     // Generate cache key from file path and size
     let cache_key = generate_cache_key(&file_path, query.size);
 
@@ -1741,11 +1744,7 @@ pub async fn get_thumbnail(
         file_path, query.size
     );
 
-    if is_video {
-        generate_video_thumbnail(&file_path, &thumbnail_path, query.size).await?;
-    } else {
-        generate_thumbnail(&file_path, &thumbnail_path, query.size).await?;
-    }
+    generate_video_thumbnail(&file_path, &thumbnail_path, query.size).await?;
 
     serve_thumbnail(&thumbnail_path).await
 }
@@ -1778,18 +1777,6 @@ async fn serve_thumbnail(thumbnail_path: &Path) -> Result<Response, FileServerEr
         .into_response())
 }
 
-/// Generate a thumbnail for an image file
-async fn generate_thumbnail(
-    source_path: &Path,
-    dest_path: &Path,
-    size: u32,
-) -> Result<(), FileServerError> {
-    let (source, dest) = (source_path.to_path_buf(), dest_path.to_path_buf());
-    tokio::task::spawn_blocking(move || generate_thumbnail_blocking(&source, &dest, size))
-        .await
-        .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
-}
-
 /// Generate a thumbnail for a video file (async wrapper)
 async fn generate_video_thumbnail(
     source_path: &Path,
@@ -1800,69 +1787,6 @@ async fn generate_video_thumbnail(
     tokio::task::spawn_blocking(move || generate_video_thumbnail_blocking(&source, &dest, size))
         .await
         .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
-}
-
-fn generate_thumbnail_blocking(
-    source_path: &Path,
-    dest_path: &Path,
-    size: u32,
-) -> Result<(), FileServerError> {
-    // Load image
-    let img = image::open(source_path).map_err(|e| {
-        error!("Failed to load image {:?}: {}", source_path, e);
-        FileServerError::InvalidPath(format!("Failed to load image: {}", e))
-    })?;
-
-    // Calculate thumbnail dimensions while preserving aspect ratio
-    let (width, height) = img.dimensions();
-    let (new_width, new_height) = if width > height {
-        if width > size {
-            (size, height * size / width)
-        } else {
-            (width, height)
-        }
-    } else if height > size {
-        (width * size / height, size)
-    } else {
-        (width, height)
-    };
-
-    // Resize image
-    let thumbnail = img.resize(
-        new_width.max(1),
-        new_height.max(1),
-        image::imageops::FilterType::Lanczos3,
-    );
-
-    // Save as JPEG
-    let parent_dir = dest_path.parent().ok_or_else(|| {
-        FileServerError::Io(std::io::Error::other("Invalid thumbnail path".to_string()))
-    })?;
-
-    std::fs::create_dir_all(parent_dir).map_err(|e| {
-        error!(
-            "Failed to create thumbnail cache dir {:?}: {}",
-            parent_dir, e
-        );
-        FileServerError::Io(std::io::Error::other(e))
-    })?;
-
-    // Save as JPEG with quality 80
-    let file = std::fs::File::create(dest_path).map_err(|e| {
-        error!("Failed to create thumbnail file {:?}: {}", dest_path, e);
-        FileServerError::Io(std::io::Error::other(e.to_string()))
-    })?;
-    let encoder = JpegEncoder::new_with_quality(&file, 80);
-    thumbnail.write_with_encoder(encoder).map_err(|e| {
-        error!("Failed to encode thumbnail {:?}: {}", dest_path, e);
-        FileServerError::Io(std::io::Error::other(format!(
-            "Failed to encode thumbnail: {}",
-            e
-        )))
-    })?;
-
-    debug!("Thumbnail saved to {:?}", dest_path);
-    Ok(())
 }
 
 /// Generate cache key from file path and size

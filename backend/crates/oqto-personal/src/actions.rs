@@ -63,7 +63,11 @@ pub fn action_router(authority: Arc<PairingAuthority>, backend: Arc<dyn ActionBa
 }
 fn access(action: &HostAction) -> Access<'_> {
     match action {
-        HostAction::Capabilities => Access::Inventory,
+        HostAction::Capabilities
+        | HostAction::HandsRequest { .. }
+        | HostAction::HandsRun { .. }
+        | HostAction::HandsStatus { .. }
+        | HostAction::HandsCancel { .. } => Access::Inventory,
         HostAction::FilesList { root_id, .. } | HostAction::FileRead { root_id, .. } => {
             Access::FileRead(root_id)
         }
@@ -80,6 +84,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::SessionFiles { .. }
         | HostAction::ProjectIcons { .. }
         | HostAction::SessionHistory { .. }
+        | HostAction::SessionMedia { .. }
         | HostAction::SessionAttach { .. }
         | HostAction::SessionRead { .. }
         | HostAction::SessionModels { .. }

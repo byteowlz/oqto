@@ -60,6 +60,9 @@ pub struct AuthState {
 pub struct AuthMiddlewareState {
     pub auth: AuthState,
     pub api_keys: Option<ApiKeyRepository>,
+    /// Account repository used to re-check `is_active`/role per request, so a
+    /// credential cannot outlive a deactivation or demotion.
+    pub accounts: Option<crate::user::UserRepository>,
 }
 
 impl AuthState {
@@ -104,6 +107,11 @@ impl AuthState {
     /// Get allowed CORS origins from config.
     pub fn allowed_origins(&self) -> &[String] {
         &self.config.allowed_origins
+    }
+
+    /// Peer addresses whose forwarded headers may be trusted.
+    pub fn trusted_proxy_addrs(&self) -> Vec<std::net::IpAddr> {
+        self.config.trusted_proxy_addrs()
     }
 
     /// Validate credentials in dev mode.
@@ -369,6 +377,28 @@ pub async fn auth_middleware(
     } else {
         return Err(AuthError::MissingAuthHeader);
     };
+
+    // A verified credential is not a statement about the account's *current*
+    // state. Re-check it so deactivation and demotion take effect immediately
+    // instead of waiting for the token to expire.
+    if let Some(ref accounts) = state.accounts
+        && let Some((is_active, role)) = accounts
+            .account_state(&claims.sub)
+            .await
+            .map_err(|err| AuthError::Internal(err.to_string()))?
+    {
+        let sub = claims.sub.clone();
+        if !is_active {
+            warn!("rejected credential for inactive account: {}", sub);
+            return Err(AuthError::InvalidToken("account is inactive".to_string()));
+        }
+        // The persisted role is authoritative; the token's role may be stale.
+        let mut claims = claims;
+        claims.roles = vec![role.clone()];
+        claims.role = Some(role);
+        req.extensions_mut().insert(CurrentUser { claims });
+        return Ok(next.run(req).await);
+    }
 
     // Inject current user into extensions
     let user = CurrentUser { claims };

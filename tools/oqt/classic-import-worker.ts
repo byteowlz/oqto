@@ -65,6 +65,8 @@ type ImportState = {
 	agent: string;
 };
 export const ClassicImportDoc = defineDoc<ImportState>({
+	// Small current-only document: ordinary changes stay deltas.
+	checkpointWhen: () => false,
 	kind: "oq.classic-import.v1",
 	version: 1,
 	scope: "conversation",

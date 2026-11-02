@@ -15,7 +15,7 @@ import {
 	type SessionSummary,
 } from "./services/sessions.ts";
 import { SlashCommands } from "./services/slash-commands.ts";
-import { SessionForks } from "./session-forks.ts";
+import { SessionForks } from "./session-forks-service.ts";
 
 export interface SessionSwitcher {
 	currentSessionId(): string | undefined;

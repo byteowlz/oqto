@@ -93,6 +93,59 @@ pub const MANDATORY_DENY_CIDRS: &[&str] = &[
     "fe80::/10",
 ];
 
+/// Whether an address is a *public internet* destination.
+///
+/// This is the guard for backend-side fetches of user-supplied URLs (feed
+/// proxy, webhooks, provider probes). Loopback, private, link-local,
+/// metadata, carrier-grade NAT, multicast and reserved ranges are not public:
+/// reaching them from the backend bypasses the deployment's network position
+/// and, for `169.254.169.254`, exfiltrates cloud credentials.
+///
+/// Callers must check every address a hostname resolves to, and re-check after
+/// each redirect, because a name can resolve to a public address once and a
+/// private one later (DNS rebinding).
+pub fn is_public_destination(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_unspecified()
+                || v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                // Carrier-grade NAT / tailnet range: backend-position reachability.
+                || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1]))
+                // 198.18.0.0/15 benchmarking.
+                || (v4.octets()[0] == 198 && (18..20).contains(&v4.octets()[1]))
+                // 192.0.0.0/24 IETF protocol assignments.
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
+                // 240.0.0.0/4 reserved, and 0.0.0.0/8 "this network".
+                || v4.octets()[0] >= 240
+                || v4.octets()[0] == 0)
+        }
+        IpAddr::V6(v6) => {
+            // IPv4-mapped/compatible forms must be judged as the v4 address.
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_public_destination(IpAddr::V4(mapped));
+            }
+            !(v6.is_unspecified()
+                || v6.is_loopback()
+                || v6.is_multicast()
+                // fc00::/7 unique local.
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // fe80::/10 link local.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                // 64:ff9b::/96 NAT64 maps arbitrary v4; treat as non-public.
+                || (v6.segments()[0] == 0x0064
+                    && v6.segments()[1] == 0xff9b
+                    && v6.segments()[2..6].iter().all(|s| *s == 0)))
+        }
+    }
+}
+
 /// The canonical policy for one workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceEgressPolicy {
@@ -209,5 +262,48 @@ mod tests {
     #[test]
     fn delegated_fetch_defaults_to_denied() {
         assert!(!WorkspaceEgressPolicy::denied("ws-1").delegated_fetch);
+    }
+
+    #[test]
+    fn public_destination_classification() {
+        use std::net::IpAddr;
+        let forbidden = [
+            "127.0.0.1",
+            "127.9.9.9",
+            "0.0.0.0",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "169.254.1.1",
+            "100.64.0.12",
+            "198.18.0.1",
+            "224.0.0.1",
+            "240.0.0.1",
+            "192.0.0.8",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd00::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::7f00:1",
+        ];
+        for ip in forbidden {
+            let addr: IpAddr = ip.parse().expect("ip");
+            assert!(
+                !super::is_public_destination(addr),
+                "{ip} must not be treated as a public destination"
+            );
+        }
+
+        for ip in ["1.1.1.1", "93.184.216.34", "2606:2800:220:1::1"] {
+            let addr: IpAddr = ip.parse().expect("ip");
+            assert!(
+                super::is_public_destination(addr),
+                "{ip} must be treated as public"
+            );
+        }
     }
 }

@@ -67,6 +67,11 @@ type DurableVisualGroup = {
 	id: string;
 	group: CanonicalMessageGroup;
 };
+type TimelineVisualRow = {
+	key: string;
+	group: CanonicalMessageGroup;
+	working: boolean;
+};
 
 function timestampFromDisplayTime(time: string, fallback: number): number {
 	const match = time.match(/^(\d{1,2}):(\d{2})$/);
@@ -264,13 +269,47 @@ function ScopedChatPane({
 	});
 	const followTailRef = useRef(true);
 
+	// Virtualize the entire rendered sequence. Unmeasured transient rows would
+	// inherit the absolute row's zero offset and overlap the start of history.
+	const rows = useMemo<TimelineVisualRow[]>(
+		() => [
+			...durableGroups.map(({ id, group }) => ({
+				key: `durable:${id}`,
+				group,
+				working: false,
+			})),
+			...(pendingPrompt
+				? [
+						{
+							key: `pending:${pendingPrompt.id}`,
+							group: pendingPromptGroup(pendingPrompt),
+							working: false,
+						},
+					]
+				: []),
+			...(draft
+				? [
+						{
+							key: "draft:active",
+							group: streamingDraftGroup(draft),
+							working: true,
+						},
+					]
+				: []),
+		],
+		[durableGroups, pendingPrompt, draft],
+	);
 	const getItemKey = useCallback(
-		(index: number) => durableGroups[index]?.id ?? index,
-		[durableGroups],
+		(index: number) => {
+			const row = rows[index];
+			if (!row) throw new Error("Unknown timeline render row");
+			return row.key;
+		},
+		[rows],
 	);
 
 	const virtualizer = useVirtualizer({
-		count: compact ? 0 : durableGroups.length,
+		count: compact ? 0 : rows.length,
 		getScrollElement: () => scrollRef.current,
 		// Close to the real average row height; large misestimates make the
 		// scrollbar and viewport visibly jump when rows measure.
@@ -314,7 +353,17 @@ function ScopedChatPane({
 		}
 	});
 
-	const visibleItems = virtualizer.getVirtualItems();
+	// A growing row that is still visible must not drag a scrolled-up reader
+	// downward. Compensate only for resized rows wholly above the viewport;
+	// the layout effect below separately owns following the live tail.
+	virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+		item,
+		_delta,
+		view,
+	) => item.end <= (view.scrollOffset ?? 0);
+	const visibleItems = compact
+		? rows.map((row, index) => ({ key: row.key, index, start: 0 }))
+		: virtualizer.getVirtualItems();
 	const autoLoadRef = useRef({ hasMore: false, loading: false });
 	autoLoadRef.current = {
 		hasMore: timeline.hasMore,
@@ -412,90 +461,37 @@ function ScopedChatPane({
 						} as React.CSSProperties
 					}
 				>
-					{compact
-						? durableGroups.map((group) => (
-								<div className="wb-timeline-row" key={group.id}>
-									<MessageGroupCard
-										group={group.group}
-										assistantName={agentName}
-										workspacePath={workspacePath}
-										fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
-										locale={locale}
-										messageId={group.group.messages[0]?.id}
-										onFileReferenceOpen={(path, range) =>
-											onOpenFile(path, range)
-										}
-										onImageOpen={(image) =>
-											onOpenFile(workspaceFilePathFromUrl(image.src))
-										}
-									/>
-								</div>
-							))
-						: visibleItems.map((row) => {
-								const group = durableGroups[row.index];
-								if (!group) return null;
-								return (
-									<div
-										className="wb-timeline-row"
-										key={row.key}
-										data-index={row.index}
-										ref={virtualizer.measureElement}
-										style={
-											{
-												"--row-offset": `${row.start}px`,
-											} as React.CSSProperties
-										}
-									>
-										<MessageGroupCard
-											group={group.group}
-											assistantName={agentName}
-											workspacePath={workspacePath}
-											fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
-											locale={locale}
-											messageId={group.group.messages[0]?.id}
-											onFileReferenceOpen={(path, range) =>
-												onOpenFile(path, range)
-											}
-											onImageOpen={(image) =>
-												onOpenFile(workspaceFilePathFromUrl(image.src))
-											}
-										/>
-									</div>
-								);
-							})}
-					{pendingPrompt ? (
-						<div className="wb-timeline-row" key={pendingPrompt.id}>
-							<MessageGroupCard
-								group={pendingPromptGroup(pendingPrompt)}
-								assistantName={agentName}
-								workspacePath={workspacePath}
-								fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
-								locale={locale}
-								messageId={pendingPrompt.id}
-								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
-								onImageOpen={(image) =>
-									onOpenFile(workspaceFilePathFromUrl(image.src))
+					{visibleItems.map((item) => {
+						const row = rows[item.index];
+						if (!row) return null;
+						return (
+							<div
+								className="wb-timeline-row"
+								key={item.key}
+								data-index={compact ? undefined : item.index}
+								ref={compact ? undefined : virtualizer.measureElement}
+								style={
+									{
+										"--row-offset": compact ? undefined : `${item.start}px`,
+									} as React.CSSProperties
 								}
-							/>
-						</div>
-					) : null}
-					{draft ? (
-						<div className="wb-timeline-row" key="streaming-draft">
-							<MessageGroupCard
-								group={streamingDraftGroup(draft)}
-								assistantName={agentName}
-								workspacePath={workspacePath}
-								fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
-								locale={locale}
-								messageId="streaming-draft"
-								showWorkingIndicator
-								onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
-								onImageOpen={(image) =>
-									onOpenFile(workspaceFilePathFromUrl(image.src))
-								}
-							/>
-						</div>
-					) : null}
+							>
+								<MessageGroupCard
+									group={row.group}
+									assistantName={agentName}
+									workspacePath={workspacePath}
+									fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+									locale={locale}
+									messageId={row.group.messages[0]?.id}
+									showWorkingIndicator={row.working}
+									onFileReferenceOpen={(path, range) => onOpenFile(path, range)}
+									onImageOpen={(image) =>
+										onOpenFile(workspaceFilePathFromUrl(image.src))
+									}
+								/>
+							</div>
+						);
+					})}
 				</div>
 			</section>
 

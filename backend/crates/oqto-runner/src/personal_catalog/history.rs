@@ -111,12 +111,15 @@ fn read(request: Read) -> Result<Value> {
     }
     cache.push((key, index));
     drop(cache);
+    // Project before the wire bound: source image bytes are not history payload.
+    let mut page = serde_json::to_value(page).context("Invalid native page")?;
+    crate::personal_media::project(&mut page)?;
     // The native payload/page bound is not permission to emit an oversized wire reply.
     ensure!(
         serde_json::to_vec(&page)?.len() <= 16 * 1024 * 1024,
         "Native projected page exceeds response bound"
     );
-    serde_json::to_value(page).context("Invalid native page")
+    Ok(page)
 }
 
 #[cfg(test)]

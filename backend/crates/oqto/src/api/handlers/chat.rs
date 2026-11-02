@@ -1,4 +1,7 @@
 //! Chat history handlers.
+#[path = "chat_media.rs"]
+mod media;
+pub use media::get_session_media;
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -15,7 +18,9 @@ use tracing::{debug, info, instrument};
 
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
-use crate::runner::router::{ExecutionTarget, resolve_runner_for_target};
+use crate::runner::router::{
+    ExecutionTarget, resolve_runner_for_read_target, resolve_runner_for_target,
+};
 use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 
 use crate::api::error::{ApiError, ApiResult};
@@ -55,6 +60,34 @@ fn is_within_path(path: &str, root: &StdPath) -> bool {
 
 fn retain_sessions_in_allowed_workspace(sessions: &mut Vec<ChatSession>, allowed_root: &StdPath) {
     sessions.retain(|session| is_within_path(&session.workspace_path, allowed_root));
+}
+
+/// Require a role that may mutate a shared workspace's chat history.
+///
+/// Membership alone is a *read* grant: a `viewer` may open the conversation but
+/// must not rename or delete it for everybody else.
+async fn require_shared_workspace_write(
+    state: &AppState,
+    user_id: &str,
+    workspace_id: &str,
+) -> ApiResult<()> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let (_workspace, role) = service
+        .get(workspace_id, user_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("shared workspace lookup failed: {e}")))?
+        .ok_or_else(|| ApiError::forbidden("shared workspace access denied"))?;
+
+    if !role.can_write() {
+        return Err(ApiError::forbidden(format!(
+            "the {role} role may not modify shared workspace chat history"
+        )));
+    }
+    Ok(())
 }
 
 async fn resolve_session_target(
@@ -121,7 +154,7 @@ async fn resolve_session_target(
         // Self-heal path #1: probe the personal runner first for legacy sessions
         // that predate canonical session_target records.
         let personal_target = ExecutionTarget::Personal;
-        if let Some(runner) = resolve_runner_for_target(state, user_id, &personal_target)
+        if let Some(runner) = resolve_runner_for_read_target(state, user_id, &personal_target)
             .await
             .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         {
@@ -169,7 +202,7 @@ async fn resolve_session_target(
                 let target = ExecutionTarget::SharedWorkspace {
                     workspace_id: workspace.id.clone(),
                 };
-                let runner_opt = resolve_runner_for_target(state, user_id, &target)
+                let runner_opt = resolve_runner_for_read_target(state, user_id, &target)
                     .await
                     .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
                 let Some(runner) = runner_opt else {
@@ -427,7 +460,7 @@ pub async fn list_chat_history(
         ExecutionTarget::Personal
     };
 
-    let runner = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_read_target(&state, user.id(), &target)
         .await
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
@@ -568,7 +601,7 @@ pub async fn get_chat_session(
         is_multi_user_mode(&state),
     )
     .await?;
-    let runner = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_read_target(&state, user.id(), &target)
         .await
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
@@ -621,6 +654,10 @@ pub async fn update_chat_session(
     Query(query): Query<ChatHistoryQuery>,
     Json(request): Json<UpdateChatSessionRequest>,
 ) -> ApiResult<Json<ChatSession>> {
+    if let Some(workspace_id) = query.shared_workspace_id.as_deref() {
+        require_shared_workspace_write(&state, user.id(), workspace_id).await?;
+    }
+
     let target = resolve_session_target(
         &state,
         user.id(),
@@ -681,6 +718,10 @@ pub async fn delete_chat_session(
     Path(session_id): Path<String>,
     Query(query): Query<DeleteChatSessionQuery>,
 ) -> ApiResult<StatusCode> {
+    if let Some(workspace_id) = query.shared_workspace_id.as_deref() {
+        require_shared_workspace_write(&state, user.id(), workspace_id).await?;
+    }
+
     let target = resolve_session_target(
         &state,
         user.id(),
@@ -876,6 +917,7 @@ fn convert_runner_response(
                     }),
                     tool_status: p.tool_status,
                     tool_title: p.tool_title,
+                    media_ref: p.media_ref,
                 })
                 .collect(),
         })
@@ -933,7 +975,7 @@ pub async fn get_chat_messages(
     )
     .await?;
 
-    let runner = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_read_target(&state, user.id(), &target)
         .await
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
@@ -1014,7 +1056,7 @@ pub async fn get_chat_messages_page(
     )
     .await?;
 
-    let runner = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_read_target(&state, user.id(), &target)
         .await
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;

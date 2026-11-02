@@ -151,6 +151,9 @@ fn workspace_chat_messages_to_json(
                             serde_json::Value::String(tool_call_id),
                         );
                     }
+                    if let Some(reference) = p.media_ref {
+                        part.insert("media_ref".into(), reference);
+                    }
                     if let Some(tool_input) = p.tool_input {
                         part.insert("input".to_string(), tool_input);
                     }
@@ -2563,6 +2566,69 @@ async fn handle_copy_to_workspace(
             id,
             error: format!("Cross-workspace copy failed: {}", err),
         })),
+    }
+}
+
+/// One role decision for a workspace reached over the mux channels.
+///
+/// Personal workspaces are owned by the caller. A shared workspace is reachable
+/// by every member, but membership is a *read* grant: mutations need a role that
+/// may write, and driving agent work needs a role that may prompt. Callers pass
+/// what they are about to do instead of re-deriving the rule.
+pub(super) async fn require_workspace_role(
+    state: &AppState,
+    user_id: &str,
+    workspace_path: &str,
+    need: WorkspaceNeed,
+) -> Result<(), String> {
+    let Ok(ExecutionTarget::SharedWorkspace { workspace_id }) =
+        resolve_target_for_workspace_path(state, user_id, workspace_path).await
+    else {
+        return Ok(());
+    };
+
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| "Shared workspace service not configured".to_string())?;
+
+    let (_workspace, role) = service
+        .get(&workspace_id, user_id)
+        .await
+        .map_err(|err| format!("Failed to resolve shared workspace access: {err}"))?
+        .ok_or_else(|| "Access denied: shared workspace membership required".to_string())?;
+
+    let permitted = match need {
+        WorkspaceNeed::Read => true,
+        WorkspaceNeed::Write => role.can_write(),
+        WorkspaceNeed::Prompt => role.can_prompt(),
+    };
+
+    if !permitted {
+        return Err(format!(
+            "Access denied: the {role} role may not {} in this shared workspace",
+            need.describe()
+        ));
+    }
+
+    Ok(())
+}
+
+/// What a mux channel is about to do in a workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkspaceNeed {
+    Read,
+    Write,
+    Prompt,
+}
+
+impl WorkspaceNeed {
+    fn describe(self) -> &'static str {
+        match self {
+            WorkspaceNeed::Read => "read",
+            WorkspaceNeed::Write => "modify files or history",
+            WorkspaceNeed::Prompt => "start or prompt sessions",
+        }
     }
 }
 

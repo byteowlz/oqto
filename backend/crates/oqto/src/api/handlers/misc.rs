@@ -485,27 +485,64 @@ pub struct FeedFetchResponse {
 }
 
 /// Fetch an RSS/Atom feed and return raw XML for client-side parsing.
+///
+/// The backend sits behind the deployment's network position, so this endpoint
+/// is a fetch primitive on the caller's behalf: it must only reach public
+/// internet destinations. Every redirect hop is re-validated, and the checked
+/// address is pinned on the request so a second DNS answer cannot rebind the
+/// connection to a private address.
 #[instrument(skip(_state))]
 pub async fn fetch_feed(
     State(_state): State<AppState>,
     Query(query): Query<FeedFetchQuery>,
 ) -> ApiResult<Json<FeedFetchResponse>> {
-    let url =
+    const MAX_REDIRECTS: usize = 5;
+    const MAX_BYTES: usize = 1_000_000;
+
+    let mut url =
         reqwest::Url::parse(&query.url).map_err(|_| ApiError::bad_request("Invalid feed URL"))?;
-    if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(ApiError::bad_request("Feed URL must be http or https"));
+    let requested_url = query.url.clone();
+    let mut response = None;
+
+    for _ in 0..=MAX_REDIRECTS {
+        let pinned = public_destination_for_feed(&url).await?;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(12))
+            // Manual redirect handling so each hop is validated.
+            .redirect(reqwest::redirect::Policy::none())
+            // Pin the vetted address: the request must not resolve the name again.
+            .resolve(pinned.0.as_str(), pinned.1)
+            .build()
+            .map_err(|e| ApiError::internal(format!("Failed to build HTTP client: {}", e)))?;
+
+        let current = client
+            .get(url.clone())
+            .send()
+            .await
+            .map_err(|e| ApiError::internal(format!("Feed fetch failed: {}", e)))?;
+
+        if current.status().is_redirection() {
+            let location = current
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| ApiError::bad_gateway("Feed redirect without a location"))?;
+            url = url
+                .join(location)
+                .map_err(|_| ApiError::bad_gateway("Feed redirect target is invalid"))?;
+            if url.scheme() != "http" && url.scheme() != "https" {
+                return Err(ApiError::bad_request("Feed URL must be http or https"));
+            }
+            continue;
+        }
+
+        response = Some(current);
+        break;
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()
-        .map_err(|e| ApiError::internal(format!("Failed to build HTTP client: {}", e)))?;
-
-    let response = client
-        .get(url.clone())
-        .send()
-        .await
-        .map_err(|e| ApiError::internal(format!("Feed fetch failed: {}", e)))?;
+    let response =
+        response.ok_or_else(|| ApiError::bad_gateway("Feed redirected too many times"))?;
 
     if !response.status().is_success() {
         return Err(ApiError::internal(format!(
@@ -520,9 +557,8 @@ pub async fn fetch_feed(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
 
-    let max_bytes = 1_000_000usize;
     if let Some(length) = response.content_length()
-        && length as usize > max_bytes
+        && length as usize > MAX_BYTES
     {
         return Err(ApiError::bad_request("Feed payload too large"));
     }
@@ -532,16 +568,67 @@ pub async fn fetch_feed(
         .await
         .map_err(|e| ApiError::internal(format!("Feed read failed: {}", e)))?;
 
-    if bytes.len() > max_bytes {
+    if bytes.len() > MAX_BYTES {
         return Err(ApiError::bad_request("Feed payload too large"));
     }
 
     let content = String::from_utf8_lossy(&bytes).to_string();
     Ok(Json(FeedFetchResponse {
-        url: query.url,
+        url: requested_url,
         content,
         content_type,
     }))
+}
+
+/// Resolve a feed URL to a public address, or refuse it.
+///
+/// Returns `(host, socket_addr)` so the caller can pin the vetted address on the
+/// HTTP client. Every address the name resolves to must be public: a mixed
+/// answer is refused rather than partially trusted.
+async fn public_destination_for_feed(
+    url: &reqwest::Url,
+) -> ApiResult<(String, std::net::SocketAddr)> {
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(ApiError::bad_request("Feed URL must be http or https"));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| ApiError::bad_request("Feed URL has no host"))?
+        .to_string();
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| ApiError::bad_request("Feed URL has no port"))?;
+    let bare_host = host.trim_start_matches('[').trim_end_matches(']');
+
+    // A literal address needs no DNS, and a bracketed IPv6 host is not a name.
+    if let Ok(ip) = bare_host.parse::<std::net::IpAddr>() {
+        if !oqto_egress::is_public_destination(ip) {
+            return Err(ApiError::forbidden(
+                "Feed URL resolves to a non-public address",
+            ));
+        }
+        return Ok((host, std::net::SocketAddr::new(ip, port)));
+    }
+
+    let resolved: Vec<std::net::SocketAddr> = tokio::net::lookup_host((bare_host, port))
+        .await
+        .map_err(|_| ApiError::bad_request("Feed host could not be resolved"))?
+        .collect();
+
+    if resolved.is_empty() {
+        return Err(ApiError::bad_request("Feed host could not be resolved"));
+    }
+    // Every answer must be public: a mixed answer is refused rather than
+    // partially trusted, so a rebinding name cannot slip a private address in.
+    for addr in &resolved {
+        if !oqto_egress::is_public_destination(addr.ip()) {
+            return Err(ApiError::forbidden(
+                "Feed URL resolves to a non-public address",
+            ));
+        }
+    }
+
+    Ok((host, resolved[0]))
 }
 
 // ============================================================================
@@ -850,5 +937,53 @@ fn oqto_log_result_to_search_hit(
         match_type: Some("message".to_string()),
         origin_kind: Some("oqto_log".to_string()),
         source_id: Some("oqto_log".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod feed_guard_tests {
+    use super::public_destination_for_feed;
+
+    async fn refused(url: &str) -> bool {
+        let parsed = reqwest::Url::parse(url).expect("url");
+        public_destination_for_feed(&parsed).await.is_err()
+    }
+
+    #[tokio::test]
+    async fn refuses_loopback_private_and_metadata_targets() {
+        // Literal addresses: no DNS involved, so this is deterministic offline.
+        for url in [
+            "http://127.0.0.1/feed",
+            "http://127.0.0.1:3033/v1/models",
+            "http://localhost./feed",
+            "http://0.0.0.0/feed",
+            "http://10.1.2.3/feed",
+            "http://172.16.0.1/feed",
+            "http://192.168.1.1/feed",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://100.64.0.12:4782/agents.md",
+            "http://[::1]/feed",
+            "http://[fd00::1]/feed",
+            "http://[fe80::1]/feed",
+            "http://[::ffff:127.0.0.1]/feed",
+        ] {
+            assert!(refused(url).await, "{url} must be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn refuses_non_http_schemes() {
+        assert!(refused("file:///etc/passwd").await);
+        assert!(refused("gopher://example.com/").await);
+    }
+
+    #[tokio::test]
+    async fn accepts_a_public_literal_address() {
+        let parsed = reqwest::Url::parse("https://1.1.1.1/feed.xml").expect("url");
+        let (host, addr) = public_destination_for_feed(&parsed)
+            .await
+            .expect("public address is allowed");
+        assert_eq!(host, "1.1.1.1");
+        assert_eq!(addr.port(), 443);
     }
 }

@@ -157,14 +157,20 @@ PY
 )
 [[ ${#EXTENSIONS[@]} -gt 0 ]] || { echo 'error: no canonical extensions in manifest' >&2; exit 1; }
 
+# Validate the complete source set before replacing build-owned output. This is
+# NOT a user extension directory: retired entries here must not survive a new
+# release and collide with their replacement tools during native autoload.
+for ext in "${EXTENSIONS[@]}"; do
+  [[ "$ext" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && -d "$EXTENSIONS_REPO/$ext" ]] || {
+    echo "error: invalid or missing extension in source repo: $ext" >&2
+    exit 1
+  }
+done
+rm -rf "$ROOT_DIR/dist/immutable/defaults/pi-agent/extensions"
+mkdir -p "$ROOT_DIR/dist/immutable/defaults/pi-agent/extensions"
 for ext in "${EXTENSIONS[@]}"; do
   src="$EXTENSIONS_REPO/$ext"
   dst="dist/immutable/defaults/pi-agent/extensions/$ext"
-  if [[ ! -d "$src" ]]; then
-    echo "error: missing extension in source repo: $src" >&2
-    exit 1
-  fi
-  rm -rf "$dst"
   mkdir -p "$dst"
   cp -R "$src/." "$dst/"
 done

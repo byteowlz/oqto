@@ -95,6 +95,8 @@ dashmap.workspace = true
 # File server (for Main Chat file access)
 oqto-files = { path = "../oqto-files" }
 oqto-sandbox = { path = "../oqto-sandbox" }
+# Egress destination policy (backend-side fetches of user-supplied URLs)
+oqto-egress = { path = "../oqto-egress" }
 
 # Authentication
 jsonwebtoken.workspace = true

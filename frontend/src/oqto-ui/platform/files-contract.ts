@@ -20,7 +20,8 @@ export interface FileEntry {
 export interface FileChange {
 	/** Path relative to the work directory root. */
 	readonly path: string;
-	readonly kind: "created" | "modified" | "deleted";
+	/** resync invalidates the work directory; no invented incremental path event. */
+	readonly kind: "created" | "modified" | "deleted" | "resync";
 	readonly directory: boolean;
 }
 

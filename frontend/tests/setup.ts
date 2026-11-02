@@ -12,12 +12,12 @@ global.fetch = vi.fn();
 
 // Mock localStorage
 const localStorageMock = {
-	getItem: vi.fn(),
+	getItem: vi.fn(() => null),
 	setItem: vi.fn(),
 	removeItem: vi.fn(),
 	clear: vi.fn(),
 	length: 0,
-	key: vi.fn(),
+	key: vi.fn(() => null),
 };
 global.localStorage = localStorageMock as unknown as Storage;
 

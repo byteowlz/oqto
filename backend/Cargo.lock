@@ -4975,6 +4975,7 @@ dependencies = [
  "once_cell",
  "oqto-apps",
  "oqto-eavs",
+ "oqto-egress",
  "oqto-files",
  "oqto-history",
  "oqto-host",
@@ -5090,13 +5091,17 @@ name = "oqto-files"
 version = "0.5.11"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "bytes",
+ "cap-std",
  "clap",
  "futures",
  "hex",
  "image",
+ "libc",
  "mime_guess",
  "notify",
+ "oqto-media",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5119,11 +5124,13 @@ name = "oqto-history"
 version = "0.5.11"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "futures",
  "hex",
  "hyper-util",
  "once_cell",
+ "oqto-media",
  "oqto-pi",
  "oqto-protocol",
  "serde",
@@ -5157,6 +5164,26 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "oqto-media"
+version = "0.5.11"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cap-std",
+ "dirs 5.0.1",
+ "hex",
+ "image",
+ "libc",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tracing",
+ "uuid 1.21.0",
 ]
 
 [[package]]
@@ -5271,6 +5298,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "env_logger",
  "hex",
+ "image",
  "iroh",
  "libc",
  "log",
@@ -5279,6 +5307,7 @@ dependencies = [
  "oqto-apps",
  "oqto-credential-http",
  "oqto-history",
+ "oqto-media",
  "oqto-personal",
  "oqto-personal-wire",
  "oqto-pi",

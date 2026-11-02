@@ -167,10 +167,16 @@ async fn authorize_target(state: &AppState, user_id: &str, target: &ExecutionTar
             .shared_workspaces
             .as_ref()
             .context("shared workspaces not configured")?;
-        service
+        let (_ws, role) = service
             .get(workspace_id, user_id)
             .await?
             .context("shared workspace not found or access denied")?;
+        // Prompting runs agent work inside the workspace: membership is a read
+        // grant, so the role has to say whether this principal may drive it.
+        anyhow::ensure!(
+            role.can_prompt(),
+            "shared workspace role {role} may not start or prompt sessions"
+        );
     }
     Ok(())
 }
@@ -185,6 +191,35 @@ pub async fn resolve_runner_for_target(
 ) -> Result<Option<RunnerClient>> {
     // Placement reachability never substitutes for Workspace authorization.
     authorize_target(state, user_id, target).await?;
+    resolve_authorized_runner_target(state, user_id, target).await
+}
+
+/// Read-only endpoints may resolve a member's Workspace without granting the
+/// ability to drive a harness. Never use this resolver for prompts/mutations.
+pub async fn resolve_runner_for_read_target(
+    state: &AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+) -> Result<Option<RunnerClient>> {
+    if let ExecutionTarget::SharedWorkspace { workspace_id } = target {
+        state
+            .shared_workspaces
+            .as_ref()
+            .context("shared workspaces not configured")?
+            .get(workspace_id, user_id)
+            .await?
+            .context("shared workspace not found or access denied")?;
+    } else {
+        authorize_target(state, user_id, target).await?;
+    }
+    resolve_authorized_runner_target(state, user_id, target).await
+}
+
+async fn resolve_authorized_runner_target(
+    state: &AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+) -> Result<Option<RunnerClient>> {
     // A remote machine runs its own runner: it has no placement or Linux user here.
     if let ExecutionTarget::RemoteMachine { machine_id, .. } = target {
         let client = state
