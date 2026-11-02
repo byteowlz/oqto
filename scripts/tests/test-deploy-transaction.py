@@ -87,9 +87,9 @@ class FakeHost(tx.SystemHost):
         self.events.append((f"system-{action}", unit))
 
     def system_unit_exists(self, unit):
-        return False
+        return unit == tx.WATCHDOG_SERVICE
 
-    def processes(self, uid, comm):
+    def processes(self, uid, comm, home=None):
         if comm == "oqto":
             return self.backend_running
         return self.stray if comm == "oqto-runner" else []
@@ -333,11 +333,23 @@ class Activation(Fixture):
             )
 
     def test_watchdog_is_paused_and_resumed_only_if_it_was_running(self) -> None:
+        # The in-flight oneshot must be stopped too: it restarts oqto (and, via
+        # Wants=, oqto-runner) even after the timer is paused.
         for profile, stop, start in (
-            ("personal", ("stop", tx.WATCHDOG_TIMER), ("start", tx.WATCHDOG_TIMER)),
+            (
+                "personal",
+                [
+                    ("stop", tx.WATCHDOG_TIMER),
+                    ("stop", tx.WATCHDOG_SERVICE),
+                ],
+                ("start", tx.WATCHDOG_TIMER),
+            ),
             (
                 "team",
-                ("system-stop", tx.WATCHDOG_TIMER),
+                [
+                    ("system-stop", tx.WATCHDOG_TIMER),
+                    ("system-stop", tx.WATCHDOG_SERVICE),
+                ],
                 ("system-start", tx.WATCHDOG_TIMER),
             ),
         ):
@@ -346,16 +358,32 @@ class Activation(Fixture):
             self.host.watchdog_active = True
             self.assertTrue(tx.pause_watchdog(self.host, info, [self.principal]))
             tx.resume_watchdog(self.host, info, [self.principal])
-            self.assertEqual(self.host.events, [stop, start])
+            self.assertEqual(self.host.events, [*stop, start])
             self.host.events.clear()
             self.host.watchdog_active = False
             self.assertFalse(tx.pause_watchdog(self.host, info, [self.principal]))
             self.assertEqual(self.host.events, [])
 
+    def test_isolated_home_runner_is_not_a_writer(self) -> None:
+        # The phone-pairing runner shares the uid and process name but runs with
+        # its own HOME; it must not block activation. Anything unproven counts.
+        home = Path("/home/u")
+
+        def env(h: bytes) -> bytes:
+            return b"PATH=/bin\0HOME=" + h + b"\0RUST_LOG=info\0"
+
+        other = env(b"/home/u/.local/share/oqto/personal-runner/home")
+        self.assertTrue(tx.runs_in_other_home(other, home))
+        self.assertFalse(tx.runs_in_other_home(env(b"/home/u"), home))
+        self.assertFalse(tx.runs_in_other_home(env(b"/home/u/"), home))
+        self.assertFalse(tx.runs_in_other_home(b"PATH=/bin\0", home))
+        self.assertFalse(tx.runs_in_other_home(None, home))
+
     def test_writers_restarted_during_the_window_abort_activation(self) -> None:
         info = {"backend_uid": ME.pw_uid}
         tx.require_writers_stopped(self.host, info, [self.principal])
         self.host.backend_running = [99]
+        self.host.exe_path = Path("/usr/local/bin/oqto")
         clock = iter([0.0, 0.0, 31.0])
         original_monotonic, original_sleep = tx.time.monotonic, tx.time.sleep
         tx.time.monotonic = lambda: next(clock)
@@ -365,7 +393,9 @@ class Activation(Fixture):
                 tx.require_writers_stopped(self.host, info, [self.principal])
         finally:
             tx.time.monotonic, tx.time.sleep = original_monotonic, original_sleep
-        self.assertIn("restarted while stopped", str(refused.exception))
+        self.assertIn("still running after stop", str(refused.exception))
+        self.assertIn("oqto pid 99 (uid", str(refused.exception))
+        self.assertIn("/usr/local/bin/oqto", str(refused.exception))
 
     def test_pi_entrypoint_is_relinked_only_when_managed(self) -> None:
         entry = self.root / "pi"
