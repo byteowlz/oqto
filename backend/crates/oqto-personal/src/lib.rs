@@ -4,7 +4,9 @@
 #![cfg(unix)]
 
 pub mod actions;
+mod grant_volumes;
 mod grants;
+pub use grant_volumes::GrantVolumeReport;
 pub mod http;
 mod identity;
 pub mod owner;
@@ -32,7 +34,7 @@ pub use private::persistent_filesystem;
 #[cfg(test)]
 mod private_tests;
 use anyhow::{Context, Result, ensure};
-pub use grants::{Access, FileGrant, Grants, SessionAccess};
+pub use grants::{Access, FileGrant, GrantRootChanged, Grants, SessionAccess};
 pub mod hands;
 use oqto_personal_wire::OQTO_PERSONAL_V1;
 pub use oqto_personal_wire::{Enrollment, PairingQr, SignedRequest};
@@ -133,6 +135,8 @@ impl PairingAuthority {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        // Outside the migration list on purpose: see grant_volumes (rollback safety).
+        Self::create_grant_volumes(&pool).await?;
         // A previous authority may have died after dispatch. Never replay it.
         sqlx::query(
             "UPDATE personal_hands SET state='uncertain',output=NULL WHERE state='running'",
@@ -156,14 +160,27 @@ impl PairingAuthority {
             checkpoint.try_get::<i64, _>(0)? == 0,
             "personal store initialization checkpoint busy"
         );
-        Ok(Self {
+        let authority = Self {
             pool,
             root,
             host_id,
             dispatch: Arc::new(tokio::sync::RwLock::new(())),
             fences: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             _instance: instance,
-        })
+        };
+        // Grants whose mount is unchanged since selection get their persistent
+        // volume identity now, so the next reboot cannot revoke them.
+        match authority.record_grant_volumes().await {
+            Ok(report) if report.recorded > 0 || report.mismatched > 0 => log::info!(
+                "file grant volumes: {} recorded, {} current, {} need owner repair or re-pairing",
+                report.recorded,
+                report.current,
+                report.mismatched
+            ),
+            Ok(_) => {}
+            Err(error) => log::warn!("recording file grant volumes failed: {error:#}"),
+        }
+        Ok(authority)
     }
 
     pub fn host_id(&self) -> &str {
@@ -241,6 +258,11 @@ impl PairingAuthority {
         sqlx::query("INSERT INTO personal_devices (id, public_key, name, grants_json, created_at) VALUES (?, ?, ?, ?, ?)")
             .bind(&id).bind(&enrollment.public_key).bind(&enrollment.name).bind(grants).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
+        // New grants get their persistent volume identity while the mount is
+        // certainly unchanged. Best effort: a failure leaves the v1 fast path.
+        if let Err(error) = self.record_grant_volumes().await {
+            log::warn!("recording file grant volumes after enrollment failed: {error:#}");
+        }
         Ok(id)
     }
 
@@ -297,9 +319,10 @@ impl PairingAuthority {
         let dispatch = Arc::clone(&self.dispatch).read_owned().await;
         let grants: Option<String> = sqlx::query_scalar("SELECT grants_json FROM personal_devices WHERE id=? AND revision=? AND revoked_at IS NULL")
             .bind(&device.id).bind(device.revision).fetch_optional(&self.pool).await?;
-        let grants: Grants =
+        let mut grants: Grants =
             serde_json::from_str(&grants.context("device grant revoked or changed")?)?;
         ensure!(grants.allows(access), "device capability not granted");
+        self.attach_grant_volumes(&device.id, &mut grants).await?;
         let mut fences = self.fences.lock().await;
         let flag = Arc::clone(
             fences

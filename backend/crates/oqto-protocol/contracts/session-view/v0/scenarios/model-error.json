@@ -1,0 +1,638 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "model-error",
+ "description": "The model fails: the prompt settles unanswered and pi.live.runFailure keeps the reason after the run ended.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "entry_kinds": [
+   "pi.user",
+   "pi.system",
+   "pi.assistant"
+  ],
+  "receipts": {
+   "req-error-1": [
+    "placed",
+    "unanswered"
+   ]
+  },
+  "errors": {},
+  "idle": true,
+  "run_failure": "model_error"
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c1",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-error-1",
+    "input": {
+     "kind": "prompt",
+     "text": "This will fail"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 2,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "turns": 0,
+       "first": 7
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "This will fail",
+          "timestamp": 1767225600024
+         }
+        ],
+        "kind": "pi.user",
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "ad660c45c6b3b40b804c0ef35562547c3e48c882dc1070a43bfc59b1fc11a529"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-error-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7,
+    "id": "c2"
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 3,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      1,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "system",
+          "content": "",
+          "toolsAdded": [
+           {
+            "name": "echo",
+            "description": "Return the given text.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "text": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "text"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "gate",
+            "description": "Wait until the fixture releases the named gate.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "name": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           }
+          ],
+          "timestamp": 1767225600041
+         }
+        ],
+        "kind": "pi.system",
+        "id": 10,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "93d9c029dbdbde2612f0915ee44334c479c5e5607d4731dc5c601f1df2177caf"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 4,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "28ffb7d8b32d68ae7c4f1afd464d5ba9f338dde8695415e2664bdc3485ecc235"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 5,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "runFailure"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "reason": "model_error",
+       "detail": "fixture provider failure",
+       "first": 7
+      }
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1"
+      ],
+      {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 104,
+       "totalTokens": 104,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      2,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": ""
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 0,
+           "cacheRead": 0,
+           "cacheWrite": 104,
+           "totalTokens": 104,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "error",
+          "errorMessage": "fixture provider failure",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 11,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "8cad0c8f85b35832871eb1b7297d6ec80793865edf49e6bbd6ba7e1b5722862c"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-error-1",
+    "kind": "prompt",
+    "status": "unanswered",
+    "entry": 7,
+    "reason": "model_error",
+    "detail": "fixture provider failure"
+   }
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "This will fail",
+      "timestamp": 1767225600024
+     }
+    ],
+    "kind": "pi.user",
+    "id": 7,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "system",
+      "content": "",
+      "toolsAdded": [
+       {
+        "name": "echo",
+        "description": "Return the given text.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "text"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "gate",
+        "description": "Wait until the fixture releases the named gate.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "name"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "timestamp": 1767225600041
+     }
+    ],
+    "kind": "pi.system",
+    "id": 10,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": ""
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 104,
+       "totalTokens": 104,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "error",
+      "errorMessage": "fixture provider failure",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 11,
+    "conversationId": 1,
+    "byTaskId": 9
+   }
+  ],
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {
+    "runFailure": {
+     "taskId": 9,
+     "inputs": [
+      8
+     ],
+     "reason": "model_error",
+     "detail": "fixture provider failure",
+     "first": 7
+    }
+   },
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {
+     "faux/faux-1": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 104,
+      "totalTokens": 104,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     }
+    },
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "This will fail",
+     "timestamp": 1767225600024
+    }
+   ],
+   "kind": "pi.user",
+   "id": 7,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "system",
+     "content": "",
+     "toolsAdded": [
+      {
+       "name": "echo",
+       "description": "Return the given text.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "gate",
+       "description": "Wait until the fixture releases the named gate.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "timestamp": 1767225600041
+    }
+   ],
+   "kind": "pi.system",
+   "id": 10,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": ""
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 104,
+      "totalTokens": 104,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "error",
+     "errorMessage": "fixture provider failure",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 11,
+   "conversationId": 1,
+   "byTaskId": 9
+  }
+ ]
+}

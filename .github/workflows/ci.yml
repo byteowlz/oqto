@@ -13,6 +13,18 @@ permissions:
   contents: read
 
 jobs:
+  repository-hygiene:
+    name: Tracked source / repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Test and enforce tracked-source boundaries
+        run: |
+          uv run --no-project python -B scripts/lint/test_repository_hygiene.py
+          uv run --no-project python -B scripts/tests/test-agent-check-root.py
+          uv run --no-project python -B scripts/lint/repository_hygiene.py
+
   install-matrix-safety:
     name: Install matrix / offline preflight safety
     runs-on: ubuntu-latest

@@ -1,0 +1,810 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "load-earlier",
+ "description": "Attach with a small window to a Session that already has history, then load earlier entries page by page, newest first, until nothing is left; malformed reads are refused.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "gap": false,
+  "covers_transcript": true,
+  "pages": 3,
+  "idle": true,
+  "errors": {
+   "c8": "invalid",
+   "c9": "invalid",
+   "c10": "invalid"
+  }
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-1",
+    "input": {
+     "kind": "prompt",
+     "text": "Earlier prompt 1"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7,
+    "id": "c1"
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 11
+   }
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-2",
+    "input": {
+     "kind": "prompt",
+     "text": "Earlier prompt 2"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-2",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 12,
+    "id": "c2"
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-2",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 12,
+    "answer": 15
+   }
+  },
+  {
+   "client": {
+    "id": "c3",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-3",
+    "input": {
+     "kind": "prompt",
+     "text": "Earlier prompt 3"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-3",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 16,
+    "id": "c3"
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-earlier-3",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 16,
+    "answer": 19
+   }
+  },
+  {
+   "client": {
+    "id": "c4",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 2,
+     "max": 4
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c4",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 2,
+     "max": 4
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [
+        {
+         "model": [
+          {
+           "role": "user",
+           "content": "Earlier prompt 3",
+           "timestamp": 1767225600116
+          }
+         ],
+         "kind": "pi.user",
+         "id": 16,
+         "conversationId": 1
+        },
+        {
+         "model": [
+          {
+           "role": "assistant",
+           "content": [
+            {
+             "type": "text",
+             "text": "Answer 3."
+            }
+           ],
+           "api": "faux-fixture",
+           "provider": "faux",
+           "model": "faux-1",
+           "usage": {
+            "input": 0,
+            "output": 3,
+            "cacheRead": 115,
+            "cacheWrite": 11,
+            "totalTokens": 129,
+            "cost": {
+             "input": 0,
+             "output": 0,
+             "cacheRead": 0,
+             "cacheWrite": 0,
+             "total": 0
+            }
+           },
+           "stopReason": "stop",
+           "timestamp": 1767225600000,
+           "thinkingLevel": "off"
+          }
+         ],
+         "kind": "pi.assistant",
+         "id": 19,
+         "conversationId": 1,
+         "byTaskId": 18
+        }
+       ],
+       "before": 15,
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {
+          "faux/faux-1": {
+           "input": 0,
+           "output": 9,
+           "cacheRead": 219,
+           "cacheWrite": 126,
+           "totalTokens": 354,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          }
+         },
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "6854041532b10f5c50ae30a65d531b40715f700d6d3e7ffc2d4bdbd697a2e99e"
+  },
+  {
+   "client": {
+    "id": "c5",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "max": 15,
+    "order": "descending",
+    "limit": 2
+   }
+  },
+  {
+   "host": {
+    "type": "entries",
+    "id": "c5",
+    "session": "ses_fixture",
+    "items": [
+     {
+      "model": [
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "text",
+          "text": "Answer 2."
+         }
+        ],
+        "api": "faux-fixture",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+         "input": 0,
+         "output": 3,
+         "cacheRead": 104,
+         "cacheWrite": 11,
+         "totalTokens": 118,
+         "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+         }
+        },
+        "stopReason": "stop",
+        "timestamp": 1767225600000,
+        "thinkingLevel": "off"
+       }
+      ],
+      "kind": "pi.assistant",
+      "id": 15,
+      "conversationId": 1,
+      "byTaskId": 14
+     },
+     {
+      "model": [
+       {
+        "role": "user",
+        "content": "Earlier prompt 2",
+        "timestamp": 1767225600067
+       }
+      ],
+      "kind": "pi.user",
+      "id": 12,
+      "conversationId": 1
+     }
+    ],
+    "next": "eyJhZnRlciI6MTIsIm9yZGVyIjoiZGVzY2VuZGluZyJ9"
+   }
+  },
+  {
+   "client": {
+    "id": "c6",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "max": 15,
+    "order": "descending",
+    "limit": 2,
+    "cursor": "eyJhZnRlciI6MTIsIm9yZGVyIjoiZGVzY2VuZGluZyJ9"
+   }
+  },
+  {
+   "host": {
+    "type": "entries",
+    "id": "c6",
+    "session": "ses_fixture",
+    "items": [
+     {
+      "model": [
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "text",
+          "text": "Answer 1."
+         }
+        ],
+        "api": "faux-fixture",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+         "input": 0,
+         "output": 3,
+         "cacheRead": 0,
+         "cacheWrite": 104,
+         "totalTokens": 107,
+         "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+         }
+        },
+        "stopReason": "stop",
+        "timestamp": 1767225600000,
+        "thinkingLevel": "off"
+       }
+      ],
+      "kind": "pi.assistant",
+      "id": 11,
+      "conversationId": 1,
+      "byTaskId": 9
+     },
+     {
+      "model": [
+       {
+        "role": "system",
+        "content": "",
+        "toolsAdded": [
+         {
+          "name": "echo",
+          "description": "Return the given text.",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "text": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "text"
+           ],
+           "additionalProperties": false
+          }
+         },
+         {
+          "name": "gate",
+          "description": "Wait until the fixture releases the named gate.",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "name": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "name"
+           ],
+           "additionalProperties": false
+          }
+         }
+        ],
+        "timestamp": 1767225600036
+       }
+      ],
+      "kind": "pi.system",
+      "id": 10,
+      "conversationId": 1,
+      "byTaskId": 9
+     }
+    ],
+    "next": "eyJhZnRlciI6MTAsIm9yZGVyIjoiZGVzY2VuZGluZyJ9"
+   }
+  },
+  {
+   "client": {
+    "id": "c7",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "max": 15,
+    "order": "descending",
+    "limit": 2,
+    "cursor": "eyJhZnRlciI6MTAsIm9yZGVyIjoiZGVzY2VuZGluZyJ9"
+   }
+  },
+  {
+   "host": {
+    "type": "entries",
+    "id": "c7",
+    "session": "ses_fixture",
+    "items": [
+     {
+      "model": [
+       {
+        "role": "user",
+        "content": "Earlier prompt 1",
+        "timestamp": 1767225600019
+       }
+      ],
+      "kind": "pi.user",
+      "id": 7,
+      "conversationId": 1
+     }
+    ]
+   }
+  },
+  {
+   "client": {
+    "id": "c8",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "order": "sideways"
+   }
+  },
+  {
+   "host": {
+    "type": "error",
+    "id": "c8",
+    "code": "invalid",
+    "message": "read bounds, order or limit out of range"
+   }
+  },
+  {
+   "client": {
+    "id": "c9",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "limit": 500
+   }
+  },
+  {
+   "host": {
+    "type": "error",
+    "id": "c9",
+    "code": "invalid",
+    "message": "read bounds, order or limit out of range"
+   }
+  },
+  {
+   "client": {
+    "id": "c10",
+    "type": "read_entries",
+    "session": "ses_fixture",
+    "cursor": "not-a-cursor"
+   }
+  },
+  {
+   "host": {
+    "type": "error",
+    "id": "c10",
+    "code": "invalid",
+    "message": "cursor malformed"
+   }
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "Earlier prompt 3",
+      "timestamp": 1767225600116
+     }
+    ],
+    "kind": "pi.user",
+    "id": 16,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Answer 3."
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 3,
+       "cacheRead": 115,
+       "cacheWrite": 11,
+       "totalTokens": 129,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 19,
+    "conversationId": 1,
+    "byTaskId": 18
+   }
+  ],
+  "before": 15,
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {},
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {
+     "faux/faux-1": {
+      "input": 0,
+      "output": 9,
+      "cacheRead": 219,
+      "cacheWrite": 126,
+      "totalTokens": 354,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     }
+    },
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Earlier prompt 1",
+     "timestamp": 1767225600019
+    }
+   ],
+   "kind": "pi.user",
+   "id": 7,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "system",
+     "content": "",
+     "toolsAdded": [
+      {
+       "name": "echo",
+       "description": "Return the given text.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "gate",
+       "description": "Wait until the fixture releases the named gate.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "timestamp": 1767225600036
+    }
+   ],
+   "kind": "pi.system",
+   "id": 10,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "Answer 1."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 3,
+      "cacheRead": 0,
+      "cacheWrite": 104,
+      "totalTokens": 107,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 11,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Earlier prompt 2",
+     "timestamp": 1767225600067
+    }
+   ],
+   "kind": "pi.user",
+   "id": 12,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "Answer 2."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 3,
+      "cacheRead": 104,
+      "cacheWrite": 11,
+      "totalTokens": 118,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 15,
+   "conversationId": 1,
+   "byTaskId": 14
+  },
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Earlier prompt 3",
+     "timestamp": 1767225600116
+    }
+   ],
+   "kind": "pi.user",
+   "id": 16,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "Answer 3."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 3,
+      "cacheRead": 115,
+      "cacheWrite": 11,
+      "totalTokens": 129,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 19,
+   "conversationId": 1,
+   "byTaskId": 18
+  }
+ ]
+}

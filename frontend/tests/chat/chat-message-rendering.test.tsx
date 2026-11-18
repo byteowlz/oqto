@@ -217,7 +217,9 @@ describe("chat message rendering", () => {
 		const rows = details?.querySelectorAll("[role='tab'], button");
 		expect((rows?.length ?? 0) > 0).toBe(true);
 		// The answer itself is never folded away.
-		expect(screen.getByText(/Beide Dateien passen zusammen/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Beide Dateien passen zusammen/),
+		).toBeInTheDocument();
 	});
 
 	it("keeps a single call as a plain row, like Desktop and Mobile", () => {
@@ -225,8 +227,13 @@ describe("chat message rendering", () => {
 		const { container } = render(
 			<MessageGroupCard group={ANSWER} messageId="assistant-1" />,
 		);
-		expect(container.querySelector("details.chat-activity--collapsed")).toBeNull();
-		expect(container.querySelector("[data-part='tool_call']") ?? container.textContent).toBeTruthy();
+		expect(
+			container.querySelector("details.chat-activity--collapsed"),
+		).toBeNull();
+		expect(
+			container.querySelector("[data-part='tool_call']") ??
+				container.textContent,
+		).toBeTruthy();
 	});
 
 	it("shows every step at the highest detail level", () => {

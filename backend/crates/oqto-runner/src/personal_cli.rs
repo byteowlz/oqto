@@ -145,6 +145,17 @@ pub enum OwnerCli {
         state: Option<PathBuf>,
         device_id: String,
     },
+    /// Record the persistent volume identity of file grants so a reboot cannot
+    /// revoke them. Grants on an unchanged mount are recorded automatically; with
+    /// --apply this also accepts roots whose only change is a remount (same path,
+    /// directory and inode) as the owner's approval. Reports counts; dry run writes
+    /// nothing. Safe while the Runner runs.
+    RepairGrantVolumes {
+        #[arg(long)]
+        state: Option<PathBuf>,
+        #[arg(long)]
+        apply: bool,
+    },
     /// Re-pin native Sessions whose pin stopped matching only because macOS gave the
     /// volume a new device number (for example after a reboot). Reports counts; writes
     /// only with --apply. Safe while the Runner runs: each pin is compare-and-swapped.
@@ -154,6 +165,11 @@ pub enum OwnerCli {
         home: PathBuf,
         #[arg(long)]
         apply: bool,
+        /// Owner trust for one Workspace whose Session files were rewritten in
+        /// place (new inode) by a trusted tool. Still requires the same file path
+        /// and the same native session id read from the file today.
+        #[arg(long)]
+        accept_rewritten_in: Option<PathBuf>,
     },
 }
 pub fn state_path(selected: Option<&PathBuf>) -> Result<PathBuf> {
@@ -217,13 +233,20 @@ pub async fn owner(command: OwnerCli) -> Result<()> {
         );
         return Ok(());
     }
-    if let OwnerCli::RepairNativePins { home, apply } = command {
+    if let OwnerCli::RepairNativePins {
+        home,
+        apply,
+        accept_rewritten_in,
+    } = command
+    {
         let home = home
             .canonicalize()
             .context("Runner service HOME unavailable")?;
         let source = crate::personal_source::binding::load(&home)?
             .context("No native-source binding in this HOME")?;
-        let report = source.repair_pins(apply).await?;
+        let report = source
+            .repair_pins_with(apply, accept_rewritten_in.as_deref())
+            .await?;
         println!(
             "{}",
             serde_json::to_string(&serde_json::json!({"applied": apply, "report": report}))?
@@ -248,6 +271,9 @@ pub async fn owner(command: OwnerCli) -> Result<()> {
         } => (state, grants.command(), Some(output)),
         OwnerCli::Devices { state, after } => (state, OwnerCommand::Devices { after }, None),
         OwnerCli::Revoke { state, device_id } => (state, OwnerCommand::Revoke { device_id }, None),
+        OwnerCli::RepairGrantVolumes { state, apply } => {
+            (state, OwnerCommand::GrantVolumes { apply }, None)
+        }
         OwnerCli::RepairNativePins { .. } | OwnerCli::Peer { .. } => unreachable!("handled above"),
     };
     let value = oqto_personal::owner::request_owner(&state_path(state.as_ref())?, &command).await?;

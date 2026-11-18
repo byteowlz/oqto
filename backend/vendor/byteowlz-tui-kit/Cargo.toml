@@ -1,0 +1,12 @@
+[package]
+name = "byteowlz-tui-kit"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/byteowlz/templates"
+description = "Shared TUI substrate for byteowlz tools: ANSI-token theme, action dispatch with key progressions, a command palette, and modern ratatui widgets."
+publish = false
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"

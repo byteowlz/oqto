@@ -1,0 +1,224 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "passive-write",
+ "description": "A passive write appends an entry and never starts a run; a pi.* kind is refused.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "entry_kinds": [
+   "app.note"
+  ],
+  "receipts": {
+   "req-write-1": [
+    "done"
+   ]
+  },
+  "errors": {
+   "req-write-2": "invalid"
+  },
+  "idle": true,
+  "never_ran": true
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c1",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "write",
+    "session": "ses_fixture",
+    "request_id": "req-write-1",
+    "entry": {
+     "kind": "app.note",
+     "data": {
+      "text": "the user opened a file"
+     }
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 2,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "kind": "app.note",
+        "data": {
+         "text": "the user opened a file"
+        },
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "fad2d70a88b08970ee595e2b89ec7925a311cbc22d1ed3263497f928d9c16154"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-write-1",
+    "kind": "write",
+    "status": "done",
+    "entry": 7,
+    "id": "c2"
+   }
+  },
+  {
+   "client": {
+    "id": "c3",
+    "type": "write",
+    "session": "ses_fixture",
+    "request_id": "req-write-2",
+    "entry": {
+     "kind": "pi.user",
+     "data": {
+      "text": "not allowed"
+     }
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "error",
+    "id": "c3",
+    "code": "invalid",
+    "message": "entry kind must be lowercase and must not start with pi."
+   }
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "kind": "app.note",
+    "data": {
+     "text": "the user opened a file"
+    },
+    "id": 7,
+    "conversationId": 1
+   }
+  ],
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {},
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {},
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "kind": "app.note",
+   "data": {
+    "text": "the user opened a file"
+   },
+   "id": 7,
+   "conversationId": 1
+  }
+ ]
+}

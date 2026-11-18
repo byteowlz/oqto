@@ -1,0 +1,4 @@
+root = Stack([card])
+card = Card([x, ok])
+x = Hologram("nope")
+ok = TextContent("still renders")

@@ -1,10 +1,14 @@
 use super::*;
+#[path = "runtime_binding_test.rs"]
+mod runtime_binding;
+#[path = "runtime_exchange_test.rs"]
+mod runtime_exchange;
 use std::{os::unix::fs::PermissionsExt, sync::atomic::AtomicUsize};
 use tokio::net::UnixListener;
 
 struct Gate {
     binding: ObservationBinding,
-    live: AtomicBool,
+    live: Arc<AtomicBool>,
     control_live: AtomicBool,
     mfa_at: Instant,
     expires: Instant,
@@ -75,6 +79,10 @@ struct Fixture {
     leases: Arc<AtomicUsize>,
     closed: Arc<AtomicUsize>,
     behavior: Arc<AtomicUsize>,
+    source_epoch: Arc<std::sync::Mutex<Option<Value>>>,
+    state_reads: Arc<AtomicUsize>,
+    revoke_on_state: Arc<AtomicBool>,
+    source: Arc<runtime_exchange::SourceControls>,
     sentinel: Vec<u8>,
 }
 impl Drop for Fixture {
@@ -108,7 +116,7 @@ impl Fixture {
         std::fs::write(&binding.session_file, &sentinel)?;
         let gate = Arc::new(Gate {
             binding: binding.clone(),
-            live: AtomicBool::new(true),
+            live: Arc::new(AtomicBool::new(true)),
             control_live: AtomicBool::new(true),
             mfa_at: Instant::now(),
             expires: Instant::now() + Duration::from_secs(30),
@@ -123,6 +131,15 @@ impl Fixture {
         let closed = Arc::new(AtomicUsize::new(0));
         let behavior = Arc::new(AtomicUsize::new(0));
         let mode = behavior.clone();
+        let source_epoch = Arc::new(std::sync::Mutex::new(None));
+        let epoch = source_epoch.clone();
+        let state_reads = Arc::new(AtomicUsize::new(0));
+        let reads = state_reads.clone();
+        let revoke_on_state = Arc::new(AtomicBool::new(false));
+        let revoke = revoke_on_state.clone();
+        let admission_live = gate.live.clone();
+        let source = Arc::new(runtime_exchange::SourceControls::default());
+        let native_source = source.clone();
         let (a, l, c) = (actions.clone(), leases.clone(), closed.clone());
         let server = tokio::spawn(async move {
             loop {
@@ -130,18 +147,41 @@ impl Fixture {
                     break;
                 };
                 let mut reader = BufReader::new(stream);
-                let caps = if capable {
+                let mut caps = if capable {
                     vec!["connection_leases_v1"]
                 } else {
                     vec![]
                 };
+                if native_source.supported.load(Ordering::SeqCst) {
+                    caps.push(oqto_protocol::runtime_interactions::RUNTIME_SOURCE_CAPABILITY);
+                }
                 let _ = send(&mut reader, json!({"type":"hello","v":1,"pid":std::process::id(),"commands":["get_state","lease","prompt","steer","abort"],"capabilities":caps})).await;
                 let mut held = false;
                 while let Ok(frame) = read_frame(&mut reader).await {
+                    if matches!(
+                        frame["type"].as_str(),
+                        Some("interaction_negotiate" | "interaction_source")
+                    ) {
+                        if native_source
+                            .reply(&mut reader, &frame, &epoch, &admission_live)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        continue;
+                    }
                     let mut response = json!({"type":"response","command":frame["type"],"id":frame["id"],"success":true});
                     match frame["type"].as_str() {
                         Some("get_state") => {
-                            response["data"] = json!({"sessionId":"native-a","sessionFile":binding.session_file,"cwd":binding.work_directory})
+                            reads.fetch_add(1, Ordering::SeqCst);
+                            response["data"] = json!({"sessionId":"native-a","sessionFile":binding.session_file,"cwd":binding.work_directory});
+                            if let Some(generation) = epoch.lock().unwrap().clone() {
+                                response["data"]["interactionRuntimeGeneration"] = generation;
+                            }
+                            if revoke.swap(false, Ordering::SeqCst) {
+                                admission_live.store(false, Ordering::SeqCst);
+                            }
                         }
                         Some("lease") => {
                             l.fetch_add(1, Ordering::SeqCst);
@@ -191,6 +231,10 @@ impl Fixture {
             leases,
             closed,
             behavior,
+            source_epoch,
+            state_reads,
+            revoke_on_state,
+            source,
             sentinel,
         })
     }
@@ -538,4 +582,67 @@ fn input_wire_cannot_approve_tools_select_paths_or_self_attest_mfa() {
     ] {
         assert!(serde_json::from_value::<InputAction>(value).is_err());
     }
+}
+
+/// Owner report 2026-11-13: a model switch answered after 5 s read as an uncertain
+/// outcome. Model and thinking changes get 25 s; prompts keep 5 s.
+#[test]
+fn model_and_thinking_changes_wait_longer_than_prompts() {
+    assert_eq!(
+        InputAction::SetModel {
+            provider: "p".into(),
+            model_id: "m".into()
+        }
+        .deadline(),
+        Duration::from_secs(25)
+    );
+    assert_eq!(
+        InputAction::SetThinkingLevel {
+            level: "high".into()
+        }
+        .deadline(),
+        Duration::from_secs(25)
+    );
+    for action in [
+        InputAction::Prompt {
+            message: "x".into(),
+        },
+        InputAction::Steer {
+            message: "x".into(),
+        },
+        InputAction::FollowUp {
+            message: "x".into(),
+        },
+        InputAction::Abort,
+    ] {
+        assert_eq!(action.deadline(), Duration::from_secs(5));
+    }
+}
+
+/// Owner 2026-11-11: rename a Session from the phone; Pi's own set_session_name.
+#[test]
+fn session_name_packets_are_trimmed_and_bounded() {
+    let packet = InputAction::SetSessionName {
+        name: "  Voice relay work  ".into(),
+    }
+    .packet()
+    .unwrap();
+    assert_eq!(packet["type"], "set_session_name");
+    assert_eq!(packet["name"], "Voice relay work");
+    for bad in ["", "   ", "line\nbreak", &"x".repeat(201)] {
+        assert!(
+            InputAction::SetSessionName { name: bad.into() }
+                .packet()
+                .is_err(),
+            "{bad:?}"
+        );
+    }
+    assert!(
+        InputAction::SetSessionName {
+            name: "ä".repeat(200)
+        }
+        .packet()
+        .is_ok(),
+        "200 characters, not bytes"
+    );
 }

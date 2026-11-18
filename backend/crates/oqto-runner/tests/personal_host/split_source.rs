@@ -8,6 +8,9 @@ use std::sync::{
 };
 use tokio::net::UnixListener;
 
+#[path = "split_source/session_terminal.rs"]
+mod session_terminal;
+
 const NATIVE: &str = "split-native";
 const FRESH: &str = "fresh-header-only";
 fn source_file(root: &Path, work: &Path, id: &str, body: &str) -> Result<PathBuf> {
@@ -44,9 +47,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn start() -> Result<Self> {
-        Self::start_with_inventory(0, false).await
+        Self::start_with_inventory(0, false, false).await
     }
-    async fn start_with_inventory(shards: usize, broken: bool) -> Result<Self> {
+    async fn start_with_inventory(shards: usize, broken: bool, terminal: bool) -> Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix("oqsplit-")
             .tempdir_in("/tmp")?;
@@ -203,7 +206,7 @@ impl Fixture {
         )?;
         std::fs::set_permissions(&sentinel, std::fs::Permissions::from_mode(0o700))?;
         let config = root.join("config.toml");
-        let config_bytes = format!("[local]\nsingle_user=true\nterminal_enabled=false\nworkspace_dir={}\n[runner]\nrunner_id=\"split-fixture\"\n[pi]\nexecutable={}\n[unknown_future]\npreserve=\"opaque synthetic value\"\n", serde_json::to_string(&work)?, serde_json::to_string(&sentinel)?).into_bytes();
+        let config_bytes = format!("[local]\nsingle_user=true\nterminal_enabled={terminal}\nworkspace_dir={}\n[runner]\nrunner_id=\"split-fixture\"\n[pi]\nexecutable={}\n[unknown_future]\npreserve=\"opaque synthetic value\"\n", serde_json::to_string(&work)?, serde_json::to_string(&sentinel)?).into_bytes();
         std::fs::write(&config, &config_bytes)?;
         std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))?;
         let identity = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
@@ -601,7 +604,7 @@ fn synthetic_child_resources(pid: u32) -> Result<(usize, usize)> {
 #[tokio::test]
 async fn many_shard_failure_refuses_sessions_recovers_and_bounds_process_resources() -> Result<()> {
     const SHARDS: usize = 192;
-    let fixture = Fixture::start_with_inventory(SHARDS, true).await?;
+    let fixture = Fixture::start_with_inventory(SHARDS, true, false).await?;
     let peer = Peer::start(&fixture)?;
     let device = fixture.host.enroll(&fixture.host.qr, 101).await?;
     let sampling = Arc::new(AtomicBool::new(true));

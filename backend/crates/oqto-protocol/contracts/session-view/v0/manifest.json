@@ -1,0 +1,23 @@
+{
+  "contract": "oqto.session-view",
+  "version": 0,
+  "files": {
+    "fixtures.json": "4240f2ad7a37ad1bfa0ee414f7d1f90be8e97b7c8a622817f008d4f17e89b0e5",
+    "frames.schema.json": "2a9139242f398cdf19e38342e4ca0d23f95d15fa7d87805096fad92b5371292f",
+    "operations.json": "c495594cc264203c324fd1cd3a97d659a7ccf9ac910e2b4b5aef9a0872a95095",
+    "ops-vectors.json": "06638c3441e0d8c4c9875193b2218b130053977c4b243cd91fcd195ffbcb7062",
+    "scenarios/abort.json": "cfdf6a77167028f5871103e84ff3ff6ede8c0aa5cdd03a4a6bb8fd96abd8c989",
+    "scenarios/busy-inputs.json": "b5792e45c30b361bc26de0fbdaefd607056696549617fc76662d922ace02d782",
+    "scenarios/exactly-once.json": "f1884683b409d1c14682e34eec1aa9d36a3bfb8270b57f920cd99525ef41028a",
+    "scenarios/fill-gap.json": "dd90ec8af65fa0d30fda3cefca15648a03d5182e667cb9b34cf292c80d95e722",
+    "scenarios/load-earlier.json": "5eea6b667df3c66e9a88c59f5fababd969734f7f3f5b6377e27ae2490038d284",
+    "scenarios/model-error.json": "d967a84b5709886e132408449744dc06025d8208ab0368a9e76d9254a84b50a3",
+    "scenarios/passive-write.json": "818f07721768fdfa9b0539b69ab26caa102da341b16a86876015910482fff521",
+    "scenarios/prompt-answer.json": "5cb71fb64dec6769d5fbff98f1e37ec893b0893fd9adf5a4da4349e0a93dfb3b",
+    "scenarios/tool-round.json": "7bd6f5003744ec95d439841d4247d526f4bffee9d4341ba11b5f318374621764",
+    "scenarios/two-clients.json": "d03abce0fccfad2815b8cfbba53c4e90e0e66b9900e23e42b68b13ee150e856c",
+    "scenarios/ui-part.json": "20f37ebe77fc00d0d18ead61999b36c7069b6bf7f9b127d55e00294dc5b37d92",
+    "scenarios/window-resume.json": "5897ddca3629c1254cfc95f2b8b43c7373c025162fa1f643f2a25027f488af44",
+    "spec.md": "939dfd3d284b94961e725fe3d96788c232ae8d83d47220e15c43aa2507713786"
+  }
+}

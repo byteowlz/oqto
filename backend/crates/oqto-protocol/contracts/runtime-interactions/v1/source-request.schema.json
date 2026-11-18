@@ -1,0 +1,613 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeSourceRequest",
+  "description": "No public Session/controller binding crosses the native source boundary.",
+  "type": "object",
+  "required": [
+    "operation",
+    "requestId",
+    "source",
+    "version"
+  ],
+  "properties": {
+    "operation": {
+      "$ref": "#/definitions/RuntimeOperation"
+    },
+    "requestId": {
+      "$ref": "#/definitions/RuntimeId"
+    },
+    "source": {
+      "$ref": "#/definitions/RuntimeSourceIdentity"
+    },
+    "version": {
+      "$ref": "#/definitions/RuntimeVersion"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "RuntimeAllowMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "confirm",
+        "timeout"
+      ]
+    },
+    "RuntimeAutoDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "RuntimeCursor": {
+      "type": "object",
+      "required": [
+        "generation",
+        "revision"
+      ],
+      "properties": {
+        "generation": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        },
+        "revision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeGeneration": {
+      "description": "Preserve an engine-issued token's representation; numeric producer epochs are not minted IDs.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      ]
+    },
+    "RuntimeId": {
+      "description": "Opaque source-issued identity. Names, timestamps and visible order are not IDs.",
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "RuntimeOperation": {
+      "description": "Untrusted requests contain comparisons only; Session routing/actor authority is external.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "capabilities"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "command_catalog"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "catalogGeneration",
+            "commandId",
+            "op"
+          ],
+          "properties": {
+            "args": {
+              "type": "string"
+            },
+            "catalogGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "commandId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "command_dispatch"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "permission_snapshot"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "controllerGeneration",
+            "controllerId",
+            "decision",
+            "handleId",
+            "op",
+            "producerGeneration",
+            "requestRevision"
+          ],
+          "properties": {
+            "controllerGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "controllerId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "decision": {
+              "$ref": "#/definitions/RuntimePermissionDecision"
+            },
+            "handleId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "permission_decide"
+              ]
+            },
+            "optionId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RuntimeId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "producerGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "requestRevision": {
+              "$ref": "#/definitions/RuntimeRevision"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "policy_read"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "changes",
+            "expected",
+            "op"
+          ],
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RuntimePolicyChange"
+              }
+            },
+            "expected": {
+              "$ref": "#/definitions/RuntimeCursor"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "policy_apply"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "queue_snapshot"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "expected",
+            "op"
+          ],
+          "properties": {
+            "action": {
+              "$ref": "#/definitions/RuntimeQueueAction"
+            },
+            "expected": {
+              "$ref": "#/definitions/RuntimeCursor"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "queue_apply"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "afterEventId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RuntimeId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "error_list"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op",
+            "operationId"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "receipt_get"
+              ]
+            },
+            "operationId": {
+              "$ref": "#/definitions/RuntimeId"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimePermissionDecision": {
+      "type": "string",
+      "enum": [
+        "allow_once",
+        "deny",
+        "cancel"
+      ]
+    },
+    "RuntimePolicyChange": {
+      "description": "Separate owner-authorized policy write; never carried in an answer payload.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allow_mode"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeAllowMode"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "auto_decision"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeAutoDecision"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allowed_models"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allowed_kinds"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "max_subagents"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "confirm_timeout_ms"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeRevision"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeQueueAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "steer"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "follow_up"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemId"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "cancel_item"
+              ]
+            },
+            "itemId": {
+              "$ref": "#/definitions/RuntimeId"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "clear"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemId",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "update_item"
+              ]
+            },
+            "itemId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemIds"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "reorder"
+              ]
+            },
+            "itemIds": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RuntimeId"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeRevision": {
+      "description": "JSON-safe revision, independent from a request revision or generation.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "RuntimeSourceIdentity": {
+      "description": "Native source identity is comparison evidence from a verified channel, never host authority.",
+      "type": "object",
+      "required": [
+        "nativeSessionId",
+        "runtimeGeneration"
+      ],
+      "properties": {
+        "nativeSessionId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "runtimeGeneration": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeVersion": {
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 1.0,
+      "minimum": 1.0
+    }
+  }
+}

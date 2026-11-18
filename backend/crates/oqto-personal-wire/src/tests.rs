@@ -115,3 +115,80 @@ fn renders_terminal_and_svg_without_image_dependencies() -> Result<()> {
     assert!(qr.render_svg()?.contains("<svg"));
     Ok(())
 }
+
+// The admitted personal families are a union, not either consumer's old subset.
+const ACTION_FAMILY_FIXTURES: &str = r#"[
+ {"operation":"capabilities"},
+ {"operation":"hands_request","request_key":"fixture","session_label":"fixture","command":"fixture"},
+ {"operation":"hands_run","id":"fixture"},
+ {"operation":"hands_status","id":"fixture"},
+ {"operation":"hands_cancel","id":"fixture"},
+ {"operation":"files_list","root_id":"fixture","path":""},
+ {"operation":"file_read","root_id":"fixture","path":"file","offset":0,"limit":1},
+ {"operation":"file_write","root_id":"fixture","path":"file","data_base64":"YQ==","expected_sha256":null},
+ {"operation":"file_remove","root_id":"fixture","path":"file","expected_sha256":"fixture"},
+ {"operation":"directory_create","root_id":"fixture","path":"folder"},
+ {"operation":"terminals_list"},
+ {"operation":"session_terminal_open","session_id":"fixture","rows":24,"cols":80},
+ {"operation":"terminal_open","cwd":"/fixture","rows":24,"cols":80},
+ {"operation":"terminal_read","terminal_id":"fixture","after":0},
+ {"operation":"terminal_write","terminal_id":"fixture","data_base64":"YQ=="},
+ {"operation":"terminal_resize","terminal_id":"fixture","rows":24,"cols":80},
+ {"operation":"terminal_close","terminal_id":"fixture"},
+ {"operation":"sessions_list"},
+ {"operation":"session_files","session_id":"fixture"},
+ {"operation":"project_icons","directories":["/fixture"]},
+ {"operation":"session_media","session_id":"fixture","sha256":"fixture","variant":"thumb"},
+ {"operation":"session_history","session_id":"fixture","before":null},
+ {"operation":"session_attach","session_id":"fixture"},
+ {"operation":"session_read","attachment_id":"fixture"},
+ {"operation":"session_models","attachment_id":"fixture"},
+ {"operation":"session_request_control","attachment_id":"fixture"},
+ {"operation":"session_release_control","attachment_id":"fixture"},
+ {"operation":"session_input","attachment_id":"fixture","input":{"kind":"steer","message":"fixture"}},
+ {"operation":"session_detach","attachment_id":"fixture"}
+]"#;
+
+#[test]
+fn complete_action_family_roundtrips_without_losing_terminal_media_or_hands() -> Result<()> {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(ACTION_FAMILY_FIXTURES)?;
+    assert_eq!(fixtures.len(), 29);
+    let mut names = std::collections::HashSet::new();
+    for fixture in fixtures {
+        names.insert(fixture["operation"].as_str().unwrap_or_default().to_owned());
+        let action: actions::HostAction = serde_json::from_value(fixture.clone())?;
+        assert_eq!(serde_json::to_value(action)?, fixture);
+    }
+    assert_eq!(names.len(), 29);
+    Ok(())
+}
+
+#[test]
+fn terminal_capability_is_explicit_defaults_false_and_never_inferred() -> Result<()> {
+    let legacy = serde_json::json!({
+        "version":1,"host_id":"fixture","device_id":"fixture","roots":[],
+        "session_observe_granted":true,"session_control_granted":false,
+        "full_user_terminal_granted":true,"files_supported":true,
+        "terminal_supported":true,"session_observe_supported":true,
+        "session_control_supported":true
+    });
+    let caps: actions::HostCapabilities = serde_json::from_value(legacy.clone())?;
+    assert_eq!(
+        serde_json::to_value(caps)?["session_terminal_supported"],
+        false
+    );
+    let mut current = legacy;
+    current["session_terminal_supported"] = serde_json::json!(true);
+    let caps: actions::HostCapabilities = serde_json::from_value(current.clone())?;
+    assert_eq!(serde_json::to_value(caps)?, current);
+    current["invented_permission"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<actions::HostCapabilities>(current).is_err());
+    assert!(
+        serde_json::from_value::<actions::HostAction>(serde_json::json!({
+            "operation":"session_terminal_open","session_id":"fixture","cwd":"/client-picked",
+            "rows":24,"cols":80
+        }))
+        .is_err()
+    );
+    Ok(())
+}

@@ -124,6 +124,11 @@ impl ReadShard {
             }
         }
         uri.push_str("?mode=ro&cache=private");
+        #[cfg(test)]
+        ATTACHED
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attach recorder poisoned"))?
+            .push(path.to_owned());
         sqlx::query("ATTACH DATABASE ? AS native_identity")
             .bind(uri)
             .execute(shard.connection())
@@ -145,6 +150,17 @@ impl ReadShard {
 mod lifecycle_tests;
 #[cfg(test)]
 static INITIALIZED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+// Every shard ATTACH, by path, so a test can count its own home's attaches
+// while other tests share the same two process-wide readers.
+#[cfg(test)]
+static ATTACHED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+pub(super) fn attaches_under(home: &Path) -> usize {
+    ATTACHED
+        .lock()
+        .map(|paths| paths.iter().filter(|path| path.starts_with(home)).count())
+        .unwrap_or(usize::MAX)
+}
 // Keep the earlier resource assertions; cancellation proof additionally observes
 // ConnectionState-owned captures and real worker thread identities, not this count.
 #[cfg(test)]

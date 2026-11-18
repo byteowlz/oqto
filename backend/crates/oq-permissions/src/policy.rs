@@ -178,6 +178,9 @@ impl Policy {
                 DenialCode::Unknown
             };
         }
+        if let Some(base) = remote_base(target) {
+            return self.denial_code(&base);
+        }
         if target.capability == Capability::Execute
             && let Some(prefix) = target
                 .resource_id
@@ -219,6 +222,18 @@ impl Policy {
     pub fn mode(&self, target: &Target) -> RuleMode {
         if let Some(rule) = self.rules.iter().find(|rule| rule.target == *target) {
             return rule.mode;
+        }
+        // Named remote machines (ADR-0086): the local guard decides with the
+        // owner's ceiling for the same tool category, but a remote edit or
+        // shell call always at least asks; owner auto rules, remembered
+        // repo rules and pre-approved prefixes never cross machines.
+        if let Some(base) = remote_base(target) {
+            let mode = self.mode(&base);
+            return if base.resource_id == crate::ceiling::WORKSPACE_READ {
+                mode
+            } else {
+                crate::ceiling::narrower(mode, RuleMode::Ask)
+            };
         }
         // Simple shell commands without their own rule inherit the generic
         // shell mode (unless the prefix itself is malformed).
@@ -309,6 +324,36 @@ impl Operation {
         );
         Ok(())
     }
+}
+
+/// `remote:<machine>:<base>` targets a named machine's confined hands; the
+/// base is a workspace tool resource. Anything else is not a remote target.
+fn remote_base(target: &Target) -> Option<Target> {
+    if target.capability != Capability::Execute {
+        return None;
+    }
+    let rest = target
+        .resource_id
+        .strip_prefix(crate::ceiling::REMOTE_PREFIX)?;
+    let (machine, base) = rest.split_once(':')?;
+    let mut bytes = machine.bytes();
+    let valid = machine.len() <= 32
+        && machine != "local"
+        && bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    let known = [
+        crate::ceiling::WORKSPACE_READ,
+        crate::ceiling::WORKSPACE_WRITE,
+        crate::ceiling::WORKSPACE_SHELL,
+    ]
+    .contains(&base)
+        || base
+            .strip_prefix(crate::ceiling::SHELL_PREFIX)
+            .is_some_and(crate::ceiling::valid_shell_prefix);
+    (valid && known).then(|| Target {
+        capability: Capability::Execute,
+        resource_id: base.into(),
+    })
 }
 
 pub(crate) fn bounded_id(id: &str) -> Result<()> {

@@ -1,12 +1,13 @@
 # oqt: experimental standalone workspace coding
 
-From this checkout's repository root, select a project **outside this launcher's
-own source tree** (the installed launcher is not changed by source work):
+Use `just oqt` from this checkout, selecting a project **outside this launcher's
+own source tree**. The source entrypoint lives at `tools/oqt/dev.sh`; the installed
+launcher is independent and is not changed by source work.
 
 ```sh
-./oqt --workdir /path/to/project
+just oqt --workdir /path/to/project
 # Reopen (or join, from a second terminal) the latest Session for that workspace:
-./oqt --continue --workdir /path/to/project
+just oqt --continue --workdir /path/to/project
 ```
 
 Real coding is the default. `--demo` runs the synthetic fixture demo instead
@@ -25,10 +26,10 @@ and no service, default or PATH entry changes.
 
 ```sh
 # Read-only preflight/discovery; no SDK preparation or owner-profile access:
-./oqt inspect-classic /path/session.jsonl --origin macbook --json
-./oqt list-classic /path/to/copied/sessions --origin macbook --json
+just oqt inspect-classic /path/session.jsonl --origin macbook --json
+just oqt list-classic /path/to/copied/sessions --origin macbook --json
 # Import an exact snapshot into the chosen owner's workspace catalog:
-./oqt --import-classic /path/session.jsonl --origin macbook --json --workdir /project
+just oqt --import-classic /path/session.jsonl --origin macbook --json --workdir /project
 # Add --leaf SOURCE_ENTRY_ID to select a source point; --continue attaches afterward.
 ```
 
@@ -66,7 +67,7 @@ the picker, rather than replaying its old choice.
 launcher (TUI) ──unix──▶ host (upstream server + guard) ──spawns──▶ brain (confined session worker)
      │                       │  guard: ledger carriers, hands, owner broker      │
      └── operator socket ───▶│                                                   ├─ per-session tool socket
-                             └── hands (bwrap) ◀──── epoch-fenced transport ─────┘
+                             └── hands (bwrap | Seatbelt) ◀── epoch-fenced ──────┘
 ```
 
 - **Host**: a detached process per workspace profile. Launchers attach to a
@@ -76,15 +77,84 @@ launcher (TUI) ──unix──▶ host (upstream server + guard) ──spawns�
   credential broker and the operator socket. TUI decisions go straight to the
   guard, so no brain can approve its own requests.
 - **Brain**: each Session worker runs inside `oqt_brain`
-  (bwrap/seccomp/Landlock) with explicit binds only: private source snapshot,
+  (Linux: bwrap/seccomp/Landlock; macOS: Seatbelt) with explicit binds only: private source snapshot,
   pinned checkout, its session store and its own sockets. Your `auth.json`,
   `~/.ssh`, the ledger and guard state are not visible. The brain has network
   for model providers.
 - **Hands**: guard-owned `RemoteExecutionEnv` daemons in bwrap/seccomp/Landlock
-  sandboxes. They see only the workspace plus approved resources, with no
+  sandboxes (macOS: Seatbelt, see below). They see only the workspace plus approved resources, with no
   network unless granted. Every generation has a fresh epoch, and tool calls are
   pinned to the generation admitted for them. Completed, failed or revoked calls
   retire their executor, descendants included, before delivery.
+
+## macOS (Apple Silicon)
+
+oqt also runs on macOS arm64 (ADR-0084, proposed). The brain and hands use a
+Seatbelt profile compiled by `oqto-sandbox` from the same policy. There is no
+seccomp, no Landlock and no PID or mount namespace on macOS:
+
+- Denied paths are unreadable (`EPERM`), not empty mounts; their names stay visible.
+- The launchers stay the confined process's parent. Every launch carries a
+  marker that its descendants cannot shed, even after `setsid`. Revoke and
+  every hands replacement SIGKILL all marked processes and install fresh hands
+  only after a complete scan finds none. If that cannot be confirmed, the
+  Session freezes (no grants, no tool calls) and the TUI shows
+  `oqt needs attention`; restart oqt.
+- Hands get a private `TMPDIR`/`HOME` scratch, wiped per generation; there is
+  no private `/tmp`.
+- Not covered: processes a confined tool asks launchd or LaunchServices to
+  start (allowed Mach IPC), memory/CPU/disk limits.
+- The brain needs a self-contained Node (official nodejs.org build). Set
+  `OQT_NODE=/path/to/node-v26.x-darwin-arm64/bin/node`; a Homebrew `node` is
+  refused because it loads libraries from `/opt/homebrew`.
+
+## Remote hands: named machines (ADR-0086)
+
+`read`, `write`, `edit` and `bash` take an optional `machine` argument. A named
+machine runs the call on that machine's own confined hands, in its configured
+workspace (native mode); omitting it runs locally. The local guard keeps every
+decision: remote calls are separate ledger resources (`remote:<machine>:...`),
+edits and shell commands on another machine always ask at least once, and
+"always in this repo" rules never cross machines. Unknown, offline, unpaired,
+unbound or frozen machines fail before the operator is asked and before any
+effect; there is no local fallback. Every result names its machine and cwd.
+A `code` tool runs a JavaScript cell (QuickJS) whose only capability is calling
+these tools, each with its own approval and receipt; nested calls start one at
+a time in call order (concurrent prompts on one ledger are not qualified), and
+`Promise.allSettled` keeps every outcome.
+
+The destination runs a foreground `oqto-hands-host` (no service, no
+autostart) with its own pairing store; pairing alone never authorizes hands,
+the destination owner adds a standing delegation per device and binding:
+
+```sh
+# Destination (config: examples/hands-host.{linux,macos}.toml in the crate)
+oqto-hands-host --config hands-host.toml serve          # foreground
+oqto-hands-host --config hands-host.toml pair --out qr.json   # one-use, 5 min
+oqto-hands-host --config hands-host.toml delegate --device ID --binding workspace
+oqto-hands-host --config hands-host.toml status | revoke --device ID
+# Origin (guard)
+oqt_link pair --name linux-box --qr-file qr.json   # key + record in ~/.local/state/oqt/hands-link
+$EDITOR ~/.config/oqt/hands-link.toml           # see examples/hands-link.toml
+oqt_link status
+```
+
+Lease length, renewal interval and concurrency are owner values per machine
+(origin) and per binding (destination ceiling): required, validated against
+the checked-in JSON schemas, unknown keys and out-of-range values fail closed.
+`/machines` in the TUI and `oqt_link status` show them. `/permissions revoke`
+freezes locally, then fences each machine; the destination stops and confirms
+its generations. An unconfirmed remote stop leaves that machine in attention.
+A dropped link makes the running call unknown; nothing is ever replayed.
+
+Limits: native workspace mode only (no mirror); remote hands have no network
+and no outside-path grants; the destination is trusted to run its own
+confinement honestly (a compromised destination can forge results).
+
+```sh
+just test-hands-link
+just test-oqt-remote-hands "$OQT_PI_SOURCE" "$DAEMON" "$BPF"   # macOS: none
+```
 
 ## Operator commands and durable receipts
 
@@ -262,7 +332,7 @@ migrated into the installed version. Roll back explicitly with
 `python3 tools/oqt/install-runtime.py activate --runtime /absolute/oqt/runtimes/OLD_HASH`
 (the already-managed entrypoint follows `current`). This is a private local
 experiment, not signing, production release or power-loss qualification; see
-ADR-0066. The source `./oqt` still refuses its own checkout—use installed `oqt`
+ADR-0066. The source `just oqt` still refuses its own checkout—use installed `oqt`
 when developing this repository.
 
 ## Look and feel
@@ -276,9 +346,13 @@ gauge, and the client loads only the permission plugin.
 
 ## Preparation
 
-- **Requirements:** Linux x86_64, bwrap, Node 26, cached Cargo dependencies, and
-  the qualified upstream checkout at `cdaf6c227d4718a72b59ccd02152c9614df44cfc`
-  (`OQT_PI_SOURCE`). A wrong or dirty pin fails closed.
+- **Requirements:** Linux x86_64 with bwrap, or macOS arm64 with `sandbox-exec`
+  and GNU `timeout` (coreutils); Node 26 (macOS: an official build via
+  `OQT_NODE`), cached Cargo dependencies, and the qualified upstream checkout at
+  `cdaf6c227d4718a72b59ccd02152c9614df44cfc` (`OQT_PI_SOURCE`) with
+  `npm ci --ignore-scripts`, the `packages/ai/src/providers/data` of
+  `@earendil-works/pi-ai@1.1.0` and `npm run build:offline`. A wrong or dirty
+  pin fails closed. `OQT_TARGET_DIR` selects a private Cargo target directory.
 - **Private derivative:** preparation builds a private source derivative under
   `/var/tmp/q<uid>-<artifact>/`. Upstream code is reused unchanged except for
   the reviewed exact-text patches in `source_patches.py`: confined worker spawn,
@@ -311,6 +385,8 @@ tools/oqt/typecheck.sh "$OQT_PI_SOURCE"
 just test-oqt-hands "$OQT_PI_SOURCE" \
   "$PWD/backend/target/oqt-env/debug/pi-env" \
   "$PWD/backend/target/oqt-prepared/bpf/default-x86_64.bpf" # guard/brain/broker/resources/supervisor
+# macOS: the third argument is `none` (no seccomp); the supervisor suite adds
+# the setsid-escape and unconfirmed-stop proofs there.
 just test-oqt-coding     # real TUI: four tools, exact approvals, reopen
 just test-oqt-recovery   # real TUI: brain kill and host kill mid-shell
 just test-oqt-access     # real TUI: outside-path request, approval, mount

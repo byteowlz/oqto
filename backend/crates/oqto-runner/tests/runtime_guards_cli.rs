@@ -14,10 +14,17 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().expect("fixture");
+        let dir = tempfile::Builder::new()
+            .prefix("oqguard-")
+            .tempdir_in("/tmp")
+            .expect("fixture");
         let home = dir.path().join("home");
         let runtime = dir.path().join("runtime");
         std::fs::create_dir(&home).expect("home");
+        oqto_runner::pair_control::validate_socket_path(
+            &oqto_runner::pair_control::root(&home).join("control.sock"),
+        )
+        .expect("portable management socket");
         std::fs::create_dir(&runtime).expect("runtime");
         std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700))
             .expect("private runtime");

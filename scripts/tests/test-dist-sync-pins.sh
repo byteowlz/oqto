@@ -17,6 +17,15 @@ if PI_AGENT_EXTENSIONS_REF=main "$sync" --print-refs > "$scratch/output" 2>&1; t
 fi
 grep -Fq 'source ref overrides must match dependencies.toml' "$scratch/output"
 
+# Public builds never require a private source by default. An explicit developer
+# override remains supported; --print-refs performs no fetch or staging.
+env -u PI_AGENT_EXTENSIONS_URL -u PI_AGENT_EXTENSIONS_PUBLIC_URL \
+  bash -x "$sync" --print-refs > "$scratch/refs" 2> "$scratch/default-source"
+grep -Fq 'PI_AGENT_EXTENSIONS_URL=https://github.com/byteowlz/pi-agent-extensions.git' "$scratch/default-source"
+PI_AGENT_EXTENSIONS_URL=file:///fixture/private-extensions \
+  bash -x "$sync" --print-refs > "$scratch/refs" 2> "$scratch/explicit-source"
+grep -Fq 'PI_AGENT_EXTENSIONS_URL=file:///fixture/private-extensions' "$scratch/explicit-source"
+
 # A sibling checkout that is not the clean pinned commit is never used: sync
 # falls back to the pinned cache (here an unknown cache, so it stops before any
 # network access) and leaves the checkout untouched.

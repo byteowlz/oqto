@@ -1,0 +1,14 @@
+# Throwaway qualification only; no product services or installs.
+
+check:
+    cargo check --locked --manifest-path engine/Cargo.toml
+    uv run --no-project -m unittest test_rolling_reference
+    uv tool run ruff check rolling_compare.py rolling_reference.py test_rolling_reference.py
+    uv tool run ruff format --check rolling_compare.py rolling_reference.py test_rolling_reference.py
+
+build:
+    cargo build --locked --release --manifest-path engine/Cargo.toml
+
+# Export COPY_PROBE_HOST and a fresh owned COPY_PROBE_REMOTE first; both scratch trees are removed.
+rolling output="rolling-results.json": build
+    uv run --no-project rolling_compare.py --output '{{output}}'

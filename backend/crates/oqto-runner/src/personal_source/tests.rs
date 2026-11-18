@@ -1,34 +1,137 @@
 use super::*;
 use std::os::unix::fs::symlink;
 
-fn fixture() -> Result<(tempfile::TempDir, PersonalSource, PathBuf)> {
-    let dir = tempfile::tempdir()?;
-    let root = dir.path().canonicalize()?;
-    let home = root.join("service");
-    let sessions = root.join("native/.pi/agent/sessions");
-    let work = root.join("byteowlz/work");
-    let sockets = root.join("terminal-tmp");
-    for path in [&home, &sessions, &work, &sockets] {
-        std::fs::create_dir_all(path)?;
+use super::test_support::{fixture, write};
+#[test]
+fn unchanged_inventory_reads_no_headers() -> Result<()> {
+    let (_dir, source, work) = fixture()?;
+    for id in ["first", "second"] {
+        write(&source, &work, id)?;
     }
-    let source = PersonalSource::new(home, sessions, sockets, vec![root.join("byteowlz")])?;
-    Ok((dir, source, work))
+    let first = source.headers()?;
+    assert_eq!(
+        source
+            .header_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    source
+        .header_reads
+        .store(0, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(source.headers()?, first);
+    assert_eq!(
+        source
+            .header_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    Ok(())
 }
-fn write(source: &PersonalSource, work: &Path, native: &str) -> Result<PathBuf> {
-    let dir = source
-        .session_root()
-        .join(oqto_pi::session_files::cwd_to_safe_dirname(work));
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("2026-10-19_{native}.jsonl"));
-    std::fs::write(
-        &path,
-        format!(
-            "{}\n",
-            serde_json::json!({"type":"session","id":native,"cwd":work})
-        ),
-    )?;
-    Ok(path)
+
+#[test]
+fn cache_invalidates_only_changed_entries() -> Result<()> {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (_dir, source, work) = fixture()?;
+    let first = write(&source, &work, "first")?;
+    let second = write(&source, &work, "second")?;
+    source.headers()?;
+    let reads = || source.header_reads.swap(0, SeqCst);
+    reads();
+    // Size change, then mtime-only change with nanosecond precision.
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&first)?
+        .write_all(b"body\n")?;
+    assert_eq!(source.headers()?.len(), 2);
+    assert_eq!(reads(), 1);
+    let file = std::fs::File::open(&second)?;
+    file.set_modified(file.metadata()?.modified()? + std::time::Duration::from_nanos(1000))?;
+    source.headers()?;
+    assert_eq!(reads(), 1);
+    // Same size and mtime but another inode.
+    let old = std::fs::metadata(&first)?;
+    let replacement = first.with_extension("replacement");
+    std::fs::copy(&first, &replacement)?;
+    std::fs::File::open(&replacement)?.set_modified(old.modified()?)?;
+    std::fs::rename(&replacement, &first)?;
+    source.headers()?;
+    assert_eq!(reads(), 1);
+    write(&source, &work, "third")?;
+    assert_eq!(source.headers()?.len(), 3);
+    assert_eq!(reads(), 1);
+    std::fs::remove_file(&second)?;
+    assert_eq!(source.headers()?.len(), 2);
+    assert_eq!(reads(), 0);
+    assert!(
+        !source
+            .inventory
+            .lock()
+            .unwrap()
+            .files_contains_for_test(&second)
+    );
+    Ok(())
 }
+
+#[test]
+fn warmed_cache_still_refuses_replaced_directories_files_and_cwd_aliases() -> Result<()> {
+    let (_dir, source, work) = fixture()?;
+    let path = write(&source, &work, "native")?;
+    source.headers()?;
+    let parent = path.parent().context("parent")?;
+    let saved = parent.with_extension("saved");
+    std::fs::rename(parent, &saved)?;
+    std::fs::create_dir(parent)?;
+    std::fs::rename(saved.join(path.file_name().context("name")?), &path)?;
+    source
+        .header_reads
+        .store(0, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(source.headers()?.len(), 1);
+    assert_eq!(
+        source
+            .header_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "directory replacement must invalidate children"
+    );
+    let saved_file = source.home.join("saved-native");
+    std::fs::rename(&path, &saved_file)?;
+    symlink(&saved_file, &path)?;
+    assert!(source.headers()?.is_empty());
+    std::fs::remove_file(&path)?;
+    std::fs::rename(saved_file, &path)?;
+    source.headers()?;
+    let saved_work = work.with_extension("saved");
+    std::fs::rename(&work, &saved_work)?;
+    symlink(&saved_work, &work)?;
+    assert!(source.headers()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn one_directory_chunks_retain_every_header_until_complete() -> Result<()> {
+    let (_dir, source, work) = fixture()?;
+    for n in 0..4 {
+        let cwd = work.join(format!("repo-{n}"));
+        std::fs::create_dir(&cwd)?;
+        write(&source, &cwd, &format!("native-{n}"))?;
+    }
+    let mut scan = inventory::HeaderScan::default();
+    for n in 1..=4 {
+        let ready = scan.advance(&source, 1, std::time::Duration::from_secs(5))?;
+        assert_eq!(ready, n == 4);
+        assert_eq!(scan.headers.len(), n);
+    }
+    let mut ids: Vec<_> = scan
+        .headers
+        .iter()
+        .map(|header| header.external_id.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["native-0", "native-1", "native-2", "native-3"]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn fresh_header_only_split_home_identity_is_immutable_and_preserves_owner() -> Result<()> {
     let (_dir, source, work) = fixture()?;
@@ -349,5 +452,407 @@ async fn remounted_pins_are_accepted_today_and_repaired_only_for_the_same_source
     );
     let again = source.repair_pins(true).await?;
     assert_eq!((again.current, again.upgraded, again.mismatched), (1, 0, 1));
+    Ok(())
+}
+
+/// oqto-a9v9: a version 1 pin that still matches today's mount is upgraded to
+/// version 2 without approval, so a later remount no longer strands it. A pin
+/// that already stopped matching is left for the owner-approved repair.
+#[tokio::test]
+async fn current_v1_pins_upgrade_silently_and_drifted_ones_wait_for_the_owner() -> Result<()> {
+    use oqto_history::oqto_log::ops::native_source::{discover, repin, validate};
+    let (_dir, source, work) = fixture()?;
+    let ws = work.to_str().context("workspace")?;
+    let mut sessions = Vec::new();
+    for native in ["still-current", "already-drifted"] {
+        let header = source.header(&write(&source, &work, native)?)?;
+        assert!(
+            discover(
+                &source.home,
+                "owner",
+                ws,
+                &header.external_id,
+                &header.identity
+            )
+            .await?
+        );
+        let public =
+            oqto_history::oqto_log::store::platform_id_for_external_id(&header.external_id);
+        // Stored as version 1, as the old Runner wrote it.
+        assert!(
+            repin(
+                &source.home,
+                ws,
+                &public,
+                &header.external_id,
+                &header.identity,
+                &header.legacy_identity
+            )
+            .await?
+        );
+        sessions.push((public, header));
+    }
+    // The second one was written before a remount: its device number is stale.
+    let (public, header) = &sessions[1];
+    let mut stale: serde_json::Value = serde_json::from_str(&header.legacy_identity)?;
+    stale["dev"] = serde_json::Value::from(stale["dev"].as_u64().unwrap_or_default() + 1);
+    stale["root"]["dev"] =
+        serde_json::Value::from(stale["root"]["dev"].as_u64().unwrap_or_default() + 1);
+    let stale = serde_json::to_string(&stale)?;
+    assert!(
+        repin(
+            &source.home,
+            ws,
+            public,
+            &header.external_id,
+            &header.legacy_identity,
+            &stale
+        )
+        .await?
+    );
+
+    assert_eq!(
+        source.upgrade_current_pins().await?,
+        1,
+        "only the provably current pin"
+    );
+    let (public, header) = &sessions[0];
+    // Version 2 only: a remount (device change) can no longer break it.
+    validate(
+        &source.home,
+        public,
+        &header.external_id,
+        ws,
+        &[header.identity.as_str()],
+    )
+    .await?;
+    let (public, header) = &sessions[1];
+    assert!(
+        validate(
+            &source.home,
+            public,
+            &header.external_id,
+            ws,
+            &header.accepted_pins()
+        )
+        .await
+        .is_err(),
+        "a drifted pin is never trusted silently"
+    );
+    assert_eq!(source.upgrade_current_pins().await?, 0, "idempotent");
+    let owner = source.repair_pins(false).await?;
+    assert_eq!(
+        owner.upgradable, 1,
+        "the drifted one stays visible to the owner repair"
+    );
+    Ok(())
+}
+
+/// A Session whose working folder was deleted (a removed checkout or worktree)
+/// stays readable history: still root-contained, still plain, never redirected.
+#[test]
+fn sessions_of_deleted_folders_stay_admissible_but_never_redirected() -> Result<()> {
+    let (_dir, source, work) = fixture()?;
+    let gone = work.join("elox/extracted/elox-vendor");
+    std::fs::create_dir_all(&gone)?;
+    let path = write(&source, &gone, "vanished")?;
+    std::fs::remove_dir_all(work.join("elox"))?;
+    assert!(!gone.exists());
+    let header = source.header(&path)?;
+    assert_eq!(header.workspace, gone, "the recorded folder, not a guess");
+
+    // Plain-path rules for a missing folder.
+    assert!(canonical_or_vanished(&gone)?);
+    assert!(
+        !canonical_or_vanished(&work.join("elox/../elox/x"))?,
+        "no dot-dot"
+    );
+    assert!(!canonical_or_vanished(std::path::Path::new("relative/x"))?);
+    // An existing ancestor reached through a symlink redirects; refuse it.
+    let elsewhere = work.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere)?;
+    std::os::unix::fs::symlink(&elsewhere, work.join("link"))?;
+    assert!(!canonical_or_vanished(&work.join("link/missing/x"))?);
+    // Outside the roots it is still denied, deleted or not.
+    let outside = source.home.join("outside");
+    std::fs::create_dir_all(&outside)?;
+    let path = write(&source, &outside, "outside")?;
+    std::fs::remove_dir_all(&outside)?;
+    assert!(source.header(&path).is_err());
+    Ok(())
+}
+
+/// The owner may trust rewritten Session files in one Workspace; the native
+/// session id read from the file must still match, and other Workspaces are
+/// untouched.
+#[tokio::test]
+async fn owner_trusted_rewrites_need_the_same_session_id_and_workspace() -> Result<()> {
+    use oqto_history::oqto_log::ops::native_source::{discover, repin, validate};
+    let (_dir, source, work) = fixture()?;
+    let ws = work.to_str().context("workspace")?;
+    let header = source.header(&write(&source, &work, "rewritten")?)?;
+    assert!(
+        discover(
+            &source.home,
+            "owner",
+            ws,
+            &header.external_id,
+            &header.identity
+        )
+        .await?
+    );
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(&header.external_id);
+    // A version 1 pin from before the rewrite: another inode, another mount number.
+    let mut old: serde_json::Value = serde_json::from_str(&header.legacy_identity)?;
+    old["ino"] = serde_json::Value::from(old["ino"].as_u64().unwrap_or_default() + 7);
+    old["dev"] = serde_json::Value::from(old["dev"].as_u64().unwrap_or_default() + 1);
+    old["root"]["dev"] =
+        serde_json::Value::from(old["root"]["dev"].as_u64().unwrap_or_default() + 1);
+    let old = serde_json::to_string(&old)?;
+    assert!(
+        repin(
+            &source.home,
+            ws,
+            &public,
+            &header.external_id,
+            &header.identity,
+            &old
+        )
+        .await?
+    );
+
+    let plain = source.repair_pins(true).await?;
+    assert_eq!(
+        (plain.upgraded, plain.mismatched),
+        (0, 1),
+        "without owner trust: refused"
+    );
+    let other = source
+        .repair_pins_with(true, Some(&work.join("other")))
+        .await?;
+    assert_eq!(other.upgraded, 0, "trust is per Workspace");
+    let dry = source.repair_pins_with(false, Some(&work)).await?;
+    assert_eq!((dry.upgradable, dry.rewritten, dry.upgraded), (1, 1, 0));
+    let applied = source.repair_pins_with(true, Some(&work)).await?;
+    assert_eq!((applied.upgraded, applied.rewritten), (1, 1));
+    validate(
+        &source.home,
+        &public,
+        &header.external_id,
+        ws,
+        &[header.identity.as_str()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// The deployed repair command only understood version 1 pins. Version 2 pins
+/// (persistent filesystem IDs) require the same explicit per-Workspace approval
+/// for an inode-only rewrite, without relaxing any other identity fact.
+#[tokio::test]
+async fn owner_trusted_version2_rewrites_preserve_every_other_identity_fact() -> Result<()> {
+    use oqto_history::oqto_log::ops::native_source::{discover, repin, validate};
+    for changed in [
+        "inode",
+        "filesystem",
+        "root-filesystem",
+        "root-inode",
+        "path",
+        "workspace",
+        "native-id",
+        "version",
+    ] {
+        let (_dir, source, work) = fixture()?;
+        let ws = work.to_str().context("workspace")?;
+        let header = source.header(&write(&source, &work, "rewritten-v2")?)?;
+        discover(
+            &source.home,
+            "owner",
+            ws,
+            &header.external_id,
+            &header.identity,
+        )
+        .await?;
+        let public =
+            oqto_history::oqto_log::store::platform_id_for_external_id(&header.external_id);
+        let mut old: serde_json::Value = serde_json::from_str(&header.identity)?;
+        old["ino"] = serde_json::Value::from(header.ino + 7);
+        match changed {
+            "filesystem" => old["filesystem"] = "different-volume".into(),
+            "root-filesystem" => old["root"]["filesystem"] = "different-volume".into(),
+            "root-inode" => old["root"]["ino"] = 0.into(),
+            "path" => old["file"] = "/another/session.jsonl".into(),
+            "workspace" => old["workspace"] = "/another/workspace".into(),
+            "native-id" => old["native_id"] = "another-session".into(),
+            "version" => old["pin"] = 3.into(),
+            _ => {}
+        }
+        let old = serde_json::to_string(&old)?;
+        assert!(
+            repin(
+                &source.home,
+                ws,
+                &public,
+                &header.external_id,
+                &header.identity,
+                &old
+            )
+            .await?
+        );
+        assert_eq!(
+            source.repair_pins(true).await?.upgraded,
+            0,
+            "no implicit rewrite trust: {changed}"
+        );
+        assert_eq!(
+            source
+                .repair_pins_with(true, Some(&work.join("other")))
+                .await?
+                .upgraded,
+            0,
+            "trust cannot escape its Workspace: {changed}"
+        );
+        let dry = source.repair_pins_with(false, Some(&work)).await?;
+        let applied = source.repair_pins_with(true, Some(&work)).await?;
+        let expected = usize::from(changed == "inode");
+        assert_eq!(dry.upgradable, expected, "dry {changed}: {dry:?}");
+        assert_eq!(
+            (applied.upgraded, applied.rewritten),
+            (expected, expected),
+            "{changed}: {applied:?}"
+        );
+        if expected == 1 {
+            validate(
+                &source.home,
+                &public,
+                &header.external_id,
+                ws,
+                &[header.identity.as_str()],
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// A rewrite that changed the session id is another Session; trust never covers it.
+#[tokio::test]
+async fn owner_trust_never_adopts_a_different_session() -> Result<()> {
+    use oqto_history::oqto_log::ops::native_source::{discover, repin};
+    let (_dir, source, work) = fixture()?;
+    let ws = work.to_str().context("workspace")?;
+    let header = source.header(&write(&source, &work, "original")?)?;
+    assert!(
+        discover(
+            &source.home,
+            "owner",
+            ws,
+            &header.external_id,
+            &header.identity
+        )
+        .await?
+    );
+    let public = oqto_history::oqto_log::store::platform_id_for_external_id(&header.external_id);
+    let mut old: serde_json::Value = serde_json::from_str(&header.legacy_identity)?;
+    old["ino"] = serde_json::Value::from(old["ino"].as_u64().unwrap_or_default() + 7);
+    old["native_id"] = "someone-else".into();
+    let old = serde_json::to_string(&old)?;
+    assert!(
+        repin(
+            &source.home,
+            ws,
+            &public,
+            &header.external_id,
+            &header.identity,
+            &old
+        )
+        .await?
+    );
+    let applied = source.repair_pins_with(true, Some(&work)).await?;
+    assert_eq!((applied.upgraded, applied.mismatched), (0, 1));
+    Ok(())
+}
+
+/// oqto-6qff: header inventory over a Mac-sized native tree (4219 files in 424
+/// Workspace directories) stays inside the discovery bounds and reports its
+/// cold/warm cost; chunking must converge even when a cold tree is slower than
+/// one wall-clock budget. Header opens, not timing alone, prove cache reuse.
+#[test]
+fn header_inventory_at_personal_host_scale() -> Result<()> {
+    const DIRECTORIES: usize = 424;
+    const FILES: usize = 4219;
+    let (_dir, source, work) = fixture()?;
+    let workspaces: Vec<PathBuf> = (0..DIRECTORIES)
+        .map(|n| {
+            let path = work.join(format!("repo-{n}"));
+            std::fs::create_dir_all(&path)?;
+            Ok(path)
+        })
+        .collect::<Result<_>>()?;
+    let body = format!("{}\n", "x".repeat(4096));
+    for n in 0..FILES {
+        let path = write(
+            &source,
+            &workspaces[n % DIRECTORIES],
+            &format!("native-{n}"),
+        )?;
+        let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+        use std::io::Write;
+        file.write_all(body.as_bytes())?;
+    }
+    let started = std::time::Instant::now();
+    let mut scan = inventory::HeaderScan::default();
+    for chunk in 1..=DIRECTORIES {
+        assert_eq!(
+            scan.advance(&source, 1, std::time::Duration::from_secs(5))?,
+            chunk == DIRECTORIES
+        );
+    }
+    let elapsed = started.elapsed();
+    let headers = scan.headers;
+    assert_eq!(headers.len(), FILES);
+    assert_eq!(
+        source
+            .header_reads
+            .swap(0, std::sync::atomic::Ordering::SeqCst),
+        FILES
+    );
+    let started = std::time::Instant::now();
+    let warm_headers = source.headers()?;
+    let warm = started.elapsed();
+    assert_eq!(warm_headers, headers);
+    assert_eq!(
+        source
+            .header_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    eprintln!(
+        "oqto-6qff header inventory: {FILES} files in {DIRECTORIES} directories, {DIRECTORIES} cold chunks {elapsed:?}, warm {warm:?}, header reads {FILES} -> 0"
+    );
+    assert!(
+        warm < elapsed / 3,
+        "steady scan {warm:?} must be a small fraction of cold {elapsed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bounded_header_read_keeps_incomplete_and_oversized_distinct() -> Result<()> {
+    let (_dir, source, work) = fixture()?;
+    let path = write(&source, &work, "native")?;
+    let header = std::fs::read(&path)?;
+    // Mid-write: the header line is not terminated yet (announce retries this).
+    std::fs::write(&path, &header[..header.len() - 1])?;
+    let error = source.header(&path).unwrap_err().to_string();
+    assert!(error.contains("Incomplete native header"), "{error}");
+    std::fs::write(&path, vec![b' '; MAX_HEADER_BYTES + 1])?;
+    let error = source.header(&path).unwrap_err().to_string();
+    assert!(error.contains("Oversized native header"), "{error}");
+    // A terminated header followed by a body parses from the header line only.
+    let mut full = header.clone();
+    full.extend_from_slice(b"not JSON body that must never be parsed\n");
+    std::fs::write(&path, &full)?;
+    assert_eq!(source.header(&path)?.external_id, "native");
     Ok(())
 }

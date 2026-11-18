@@ -1,0 +1,20 @@
+[package]
+name = "oqto-runner-client"
+description = "Host-neutral consumer state for the shared Oqto runtime-interaction contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Host-neutral by construction: no transport, auth, engine, Pi, TUI or socket
+# dependency. Producers and IPC adapters live outside this crate.
+[dependencies]
+oqto-protocol = { path = "../oqto-protocol" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

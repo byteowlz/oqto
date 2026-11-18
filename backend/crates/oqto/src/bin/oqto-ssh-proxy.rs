@@ -19,11 +19,12 @@
 //!
 //! 1. Agent (inside sandbox) connects to proxy socket
 //! 2. Proxy receives SSH agent protocol requests
-//! 3. For sign requests, proxy extracts target host from SSH protocol
-//! 4. Proxy checks policy (allowed_hosts, allowed_keys)
-//! 5. If policy requires prompt, sends request to oqto server
-//! 6. If approved, forwards to real ssh-agent
-//! 7. Returns response to agent
+//! 3. Only identity listing and signing are forwarded; every other agent
+//!    message is refused (deny by default)
+//! 4. Listing withholds keys outside the grant; signing is allowed only for
+//!    granted keys (`allowed_keys`). `allowed_hosts` is NOT enforced: a sign
+//!    request carries no trustworthy host (see oqto-deer)
+//! 5. Returns the upstream response to the agent
 //!
 //! ## SSH Agent Protocol
 //!
@@ -576,23 +577,15 @@ fn handle_client(
                 }
             }
 
-            ssh_agent::SSH_AGENTC_ADD_IDENTITY
-            | ssh_agent::SSH_AGENTC_REMOVE_IDENTITY
-            | ssh_agent::SSH_AGENTC_ADD_ID_CONSTRAINED => {
-                // Key management operations are blocked
-                warn!("Blocked key management operation: {}", msg_type);
-                send_failure(&mut client)?;
-            }
-
             _ => {
-                // Unknown message type - forward to upstream
-                if let Some(ref mut upstream) = upstream {
-                    write_message(upstream, &request)?;
-                    let response = read_message(upstream)?;
-                    write_message(&mut client, &response)?;
-                } else {
-                    send_failure(&mut client)?;
-                }
+                // Deny by default: only listing and signing reach the owner's
+                // agent. Everything else (adding or removing keys, remove-all,
+                // lock and unlock, smartcard providers, extensions) would let a
+                // sandboxed client change or disable the owner's agent. A
+                // client's session-bind extension also fails here; OpenSSH
+                // continues without it.
+                warn!("Refused agent message type {}", msg_type);
+                send_failure(&mut client)?;
             }
         }
     }
@@ -746,6 +739,56 @@ mod tests {
             allowed_keys: allowed_keys.iter().map(|k| k.to_string()).collect(),
             prompt_unknown: false,
         }
+    }
+
+    /// A fake owner agent that answers identity listings with an empty list,
+    /// records every other message type it receives and answers success.
+    fn fake_upstream(dir: &std::path::Path) -> (PathBuf, std::sync::mpsc::Receiver<u8>) {
+        let path = dir.join("upstream.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (seen, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                while let Ok(message) = read_message(&mut stream) {
+                    if message.first() == Some(&ssh_agent::SSH_AGENTC_REQUEST_IDENTITIES) {
+                        let _ = write_message(
+                            &mut stream,
+                            &[ssh_agent::SSH_AGENT_IDENTITIES_ANSWER, 0, 0, 0, 0],
+                        );
+                    } else {
+                        let _ = seen.send(message.first().copied().unwrap_or(0));
+                        let _ = write_message(&mut stream, &[ssh_agent::SSH_AGENT_SUCCESS]);
+                    }
+                }
+            }
+        });
+        (path, received)
+    }
+
+    /// Remove-all (19), smartcard add/remove (20, 21), lock/unlock (22, 23),
+    /// constrained smartcard add (26), extensions (27), key management (17, 18,
+    /// 25) and unknown types never reach the owner's agent.
+    #[test]
+    fn only_listing_and_signing_reach_the_owner_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let (upstream, received) = fake_upstream(dir.path());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let worker = std::thread::spawn(move || {
+            handle_client(server, &upstream, &policy(&["forgejo"]), false)
+        });
+        for msg_type in [17u8, 18, 19, 20, 21, 22, 23, 25, 26, 27, 99, 255] {
+            write_message(&mut client, &[msg_type, 0, 0, 0, 0]).unwrap();
+            let reply = read_message(&mut client).unwrap();
+            assert_eq!(reply, [ssh_agent::SSH_AGENT_FAILURE], "type {msg_type}");
+        }
+        drop(client);
+        worker.join().unwrap().unwrap();
+        let forwarded: Vec<u8> = received.try_iter().collect();
+        assert!(
+            forwarded.is_empty(),
+            "forwarded to the owner's agent: {forwarded:?}"
+        );
     }
 
     #[test]

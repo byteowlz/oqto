@@ -21,6 +21,10 @@ export interface CodingGate {
 	/** Execution env pinned to the generation admitted for this operation.
 	 * A revoke closes it; the tool then fails instead of moving to new hands. */
 	env?(operation: CodingOperation): unknown;
+	/** Where the admitted call ran. With named machines configured every
+	 * result names its machine and cwd (ADR-0086). */
+	target?(operation: CodingOperation): { machine: string; cwd: string };
+	readonly namedMachines?: boolean;
 }
 
 /** Withhold ALL progress until delivery authorization, including failures.
@@ -101,16 +105,41 @@ export function gatedTool(
 				text += decoder.decode();
 				context.abortSignal?.throwIfAborted();
 				await gate.check(operation, context);
+				const output =
+					result.output === undefined && text !== ""
+						? [{ type: "text" as const, text }]
+						: result.output;
+				const where = gate.namedMachines ? gate.target?.(operation) : undefined;
 				return {
 					...result,
-					...(result.output === undefined && text !== ""
-						? { output: [{ type: "text" as const, text }] }
-						: {}),
+					...(where
+						? {
+								output: [
+									{
+										type: "text" as const,
+										text: `[machine ${where.machine} · cwd ${where.cwd}]\n`,
+									},
+									...(output ?? []),
+								],
+							}
+						: output !== result.output
+							? { output }
+							: {}),
 				};
 			} catch (error) {
 				// Provider exceptions may contain data. Never disclose those on a
 				// failed gate, timeout, cancellation, or uncertain effect.
 				if (process.env.OQT_DEBUG) console.error("oqt tool failure:", error);
+				// Remote routing and outcome errors (ADR-0086) carry fixed guard
+				// text naming what happened; they are not permission decisions.
+				const routing =
+					error && typeof error === "object" && "operational" in error
+						? (error as { operational?: { code?: unknown } }).operational?.code
+						: undefined;
+				if (typeof routing === "string" && routing.startsWith("machine_"))
+					throw new Error(
+						`${(error as Error).message}${admitted ? " Execution outcome is uncertain." : ""}`,
+					);
 				const feedback = permissionFeedback(
 					// A provider/tool exception must never supply attributed denial data.
 					admitted ? undefined : error,

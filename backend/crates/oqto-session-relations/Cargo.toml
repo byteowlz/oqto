@@ -1,0 +1,14 @@
+[package]
+name = "oqto-session-relations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Pure optional Session relationship normalization without authority or IO"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

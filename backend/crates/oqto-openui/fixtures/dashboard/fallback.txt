@@ -1,0 +1,20 @@
+== oqto · week 43 ==
+Runner fleet and test health
+Sessions: 1,284 this week (+12%)
+Test pass rate: 98.7% of 2,941 (+1.2%)
+Deploys: 14 3 rolled back (-8%)
+p95 latency: 412 ms runner RPC (-5%)
+-- Activity --
+Sessions: Mon=160, Tue=210, Wed=198, Thu=240, Fri=231, Sat=120, Sun=125
+Failed: Mon=4, Tue=9, Wed=3, Thu=6, Fri=2, Sat=1, Sun=1
+Peak on Thursday: 240 sessions, 6 failed.
+-- Tests --
+Passed: runner=196, history=61, personal=27, sandbox=180
+Failed: runner=0, history=2, personal=0, sandbox=0
+[WARNING] 2 failing in history: native_head and reader_lifecycle since 4f2a9c1.
+-- Hosts --
+Host       | Runner | Sessions | State
+-----------|--------|----------|---------
+linux-box  | 0.5.11 | 42       | healthy
+desktop-01 | 0.5.11 | 18       | healthy
+server-02  | 0.5.9  | 311      | degraded

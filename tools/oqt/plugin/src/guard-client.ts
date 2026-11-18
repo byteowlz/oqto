@@ -39,6 +39,23 @@ export interface OperatorState {
 	readonly resources: readonly ActiveResource[];
 	readonly rules?: RememberedRules;
 	readonly inputRequests?: readonly PendingInputControl[];
+	/** Sessions whose authority froze because a stop was not confirmed. */
+	readonly attention?: readonly { session: string; message: string }[];
+	/** Named remote machines (ADR-0086) with their owner-configured limits. */
+	readonly machines?: readonly MachineView[];
+}
+export interface MachineView {
+	readonly machine: string;
+	readonly binding: string;
+	readonly lease_ms: number;
+	readonly renew_ms: number;
+	readonly max_concurrent_calls: number;
+	readonly connected: boolean;
+	readonly cwd: string | null;
+	readonly platform: string | null;
+	readonly remote_attention: boolean | null;
+	readonly attention: string | null;
+	readonly active_calls: number;
 }
 type Listener = (state: OperatorState, context: Context) => void;
 
@@ -134,8 +151,10 @@ export function guardPermissions(path: string): PermissionsPort {
 							interrupted: Omit<InterruptedCall, "session">[];
 							resources?: Omit<ActiveResource, "session">[];
 							input?: { pending: Omit<PendingInputControl, "session"> | null };
+							attention?: string | null;
 						}[];
 						rules?: RememberedRules;
+						machines?: MachineView[];
 					};
 					for (const session of data.sessions) known.add(session.id);
 					value = {
@@ -146,6 +165,11 @@ export function guardPermissions(path: string): PermissionsPort {
 								: [],
 						),
 						pending: data.sessions.flatMap((session) => session.pending),
+						attention: data.sessions.flatMap((session) =>
+							typeof session.attention === "string"
+								? [{ session: session.id, message: session.attention }]
+								: [],
+						),
 						interrupted: data.sessions.flatMap((session) =>
 							session.interrupted.map((row) => ({
 								...row,
@@ -159,6 +183,9 @@ export function guardPermissions(path: string): PermissionsPort {
 							})),
 						),
 						...(data.rules ? { rules: data.rules } : {}),
+						...(Array.isArray(data.machines)
+							? { machines: data.machines }
+							: {}),
 					};
 					for (const listener of listeners) listener(value, BACKGROUND_CONTEXT);
 					continue;

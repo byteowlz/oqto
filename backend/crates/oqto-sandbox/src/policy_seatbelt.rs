@@ -130,7 +130,7 @@ pub fn compile_socket_rules(policy: &ResolvedPolicy) -> String {
 ///
 /// A path containing a quote or backslash would otherwise end the literal early
 /// and silently change which paths the rule covers.
-fn escape(path: &str) -> String {
+pub(crate) fn escape(path: &str) -> String {
     path.replace('\\', "\\\\").replace('"', "\\\"")
 }
 

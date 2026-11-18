@@ -39,6 +39,19 @@ bun run lint
 bun run build
 ```
 
+`bun run lint` is read-only. Biome and Oxlint receive every tracked frontend
+file from the Git index in bounded argument batches, preserving their existing
+tool policies; no new source exclusions are added. Ignored staged runtimes and
+untracked scratch are not directory-walk inputs. Add new source to the index
+before checking it. Missing tracked files and tool failures fail the gate.
+Tracked generated TypeScript is checked, not silently rewritten; the explicit
+maintenance command remains `bun run format:generated-types`. Hook, OqtoUI type
+and architecture checks still run after source lint. The current Flash development
+type aliases also require the adjacent `oqto-flash` checkout's existing locked
+dependencies. Restore those without changing its manifests or running lifecycle
+scripts: `bun install --frozen-lockfile --ignore-scripts --no-save` in that checkout.
+This does not start Flash or change its source/build contract.
+
 Use [the canonical packaging sequence](../docs/reference/build-and-deploy.md) for
 deployments, not an ad-hoc copy of `frontend/dist`. Vendored runtime dependencies
 and archives are part of the reproducible build input, with licences/provenance.

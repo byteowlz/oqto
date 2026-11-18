@@ -51,44 +51,90 @@ impl std::fmt::Debug for HistoryReadResponse {
 /// discovery cost more than the scan it replaces, so descent is limited and
 /// obviously non-workspace directories are skipped.
 const MAX_ROOT_DEPTH: usize = 4;
+#[cfg(test)]
+#[path = "history_read/catalog_tests.rs"]
+mod catalog_tests;
+#[path = "history_read/catalog_work.rs"]
+mod catalog_work;
 
-fn workspaces_under(roots: &[PathBuf]) -> Vec<String> {
-    fn walk(dir: &std::path::Path, depth: usize, out: &mut Vec<String>) {
-        if let Some(path) = dir.to_str() {
-            out.push(path.trim_end_matches('/').to_string());
-        }
-        if depth == 0 {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let child = entry.path();
-            if !child.is_dir() || child.is_symlink() {
-                continue;
-            }
-            let skip = child
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_none_or(|name| {
-                    name.starts_with('.') || matches!(name, "node_modules" | "target" | "vendor")
-                });
-            if !skip {
-                walk(&child, depth - 1, out);
-            }
-        }
-    }
+pub(crate) fn catalog_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<catalog_work::Unavailable>().is_some()
+}
+pub(crate) fn catalog_source_fault(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<catalog_work::Unavailable>()
+        .is_none_or(|error| error.source_fault)
+}
 
+fn workspaces_under(
+    roots: &[PathBuf],
+    epoch: &std::sync::atomic::AtomicBool,
+    stopped: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<String>> {
+    #[cfg(test)]
+    catalog_tests::scanned(roots);
+    let started = std::time::Instant::now();
+    let checkpoint = || {
+        catalog_work::check_scan(epoch, stopped)?;
+        catalog_work::budget(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "Catalog traversal budget exceeded",
+        )?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let mut entries_seen = 0_usize;
+    let max_entries = 65_536;
+    #[cfg(test)]
+    let max_entries = roots
+        .first()
+        .and_then(|root| catalog_tests::entry_limit(root))
+        .unwrap_or(max_entries);
     let mut out = Vec::new();
-    for root in roots {
-        if root.is_absolute() && root.is_dir() {
-            walk(root, MAX_ROOT_DEPTH, &mut out);
+    let mut pending: Vec<_> = roots
+        .iter()
+        .map(|root| (root.clone(), MAX_ROOT_DEPTH))
+        .collect();
+    while let Some((dir, depth)) = pending.pop() {
+        checkpoint()?;
+        catalog_work::budget(out.len() < 8192, "Catalog workspace budget exceeded")?;
+        ensure!(dir.is_absolute(), "Catalog root must be absolute");
+        let workspace = dir.to_str().context("Invalid workspace encoding")?;
+        out.push(workspace.trim_end_matches('/').to_owned());
+        if depth == 0 {
+            continue;
+        }
+        #[cfg(test)]
+        catalog_tests::operation(roots, &dir, "read_dir");
+        let entries = std::fs::read_dir(&dir)?;
+        for entry in entries {
+            checkpoint()?;
+            entries_seen += 1;
+            catalog_work::budget(entries_seen <= max_entries, "Catalog entry budget exceeded")?;
+            if let Some(child) = workspace_directory(entry?)? {
+                catalog_work::budget(
+                    pending.len().saturating_add(out.len()) < 8192,
+                    "Catalog workspace budget exceeded",
+                )?;
+                pending.push((child, depth - 1));
+            }
         }
     }
     out.sort();
     out.dedup();
-    out
+    Ok(out)
+}
+
+/// Exclude by name before any metadata; DirEntry's type never follows a target.
+fn workspace_directory(entry: std::fs::DirEntry) -> Result<Option<PathBuf>> {
+    let name = entry.file_name();
+    if name.to_str().is_none_or(|name| {
+        name.starts_with('.') || matches!(name, "node_modules" | "target" | "vendor")
+    }) {
+        return Ok(None);
+    }
+    #[cfg(test)]
+    catalog_tests::entry_type(&entry.path());
+    Ok(entry.file_type()?.is_dir().then(|| entry.path()))
 }
 
 fn is_under_roots(workspace: &str, roots: &[PathBuf]) -> bool {
@@ -96,7 +142,7 @@ fn is_under_roots(workspace: &str, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| workspace.starts_with(root))
 }
 
-/// Building the catalog opens and migrates one store per workspace, so
+/// Building the catalog reads one canonical shard per workspace, so
 /// expanding a machine in the UI must not pay for it on every expand. A recent
 /// catalog is reused briefly, in memory only, keyed by the source and the roots
 /// it was built from so a config change cannot serve the previous scope.
@@ -107,15 +153,68 @@ type CatalogEntry = (
     std::time::Instant,
     std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>,
 );
-static CATALOG_CACHE: once_cell::sync::Lazy<
-    tokio::sync::Mutex<std::collections::HashMap<CatalogKey, CatalogEntry>>,
-> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+#[derive(Default)]
+struct CatalogCache {
+    rows: std::collections::HashMap<CatalogKey, CatalogEntry>,
+    flights: std::collections::HashMap<CatalogKey, std::sync::Arc<catalog_work::Flight>>,
+    failures:
+        std::collections::HashMap<CatalogKey, (std::time::Instant, std::sync::Arc<anyhow::Error>)>,
+    // Weak references retain no idle homes. Concurrent reads of the same home
+    // share a fence; invalidation removes it and cancels only those builds.
+    builds: std::collections::HashMap<PathBuf, std::sync::Weak<std::sync::atomic::AtomicBool>>,
+}
+impl CatalogCache {
+    fn begin(&mut self, home: &std::path::Path) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.builds.retain(|_, fence| fence.strong_count() > 0);
+        if let Some(fence) = self.builds.get(home).and_then(std::sync::Weak::upgrade) {
+            return fence;
+        }
+        let fence = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        self.builds
+            .insert(home.to_owned(), std::sync::Arc::downgrade(&fence));
+        fence
+    }
+    fn invalidate(&mut self, home: &std::path::Path) {
+        self.flights.retain(|(source, _), flight| {
+            if source == home {
+                flight.invalidate();
+                false
+            } else {
+                true
+            }
+        });
+        self.failures.retain(|(source, _), _| source != home);
+        if let Some(fence) = self.builds.remove(home).and_then(|fence| fence.upgrade()) {
+            fence.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.rows.retain(|(cached_home, _), _| cached_home != home);
+    }
+    fn finish(
+        &mut self,
+        key: CatalogKey,
+        fence: &std::sync::atomic::AtomicBool,
+        rows: std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>,
+    ) {
+        self.rows.retain(|_, (at, _)| at.elapsed() < CATALOG_TTL);
+        if fence.load(std::sync::atomic::Ordering::SeqCst) {
+            if self.rows.len() >= 64
+                && let Some(oldest) = self
+                    .rows
+                    .iter()
+                    .min_by_key(|(_, (at, _))| *at)
+                    .map(|(key, _)| key.clone())
+            {
+                self.rows.remove(&oldest);
+            }
+            self.rows.insert(key, (std::time::Instant::now(), rows));
+        }
+    }
+}
+static CATALOG_CACHE: once_cell::sync::Lazy<tokio::sync::Mutex<CatalogCache>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(CatalogCache::default()));
 
-static CATALOG_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) async fn invalidate_catalog(home: &std::path::Path) {
-    let mut cache = CATALOG_CACHE.lock().await;
-    CATALOG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    cache.retain(|(cached_home, _), _| cached_home != home);
+    CATALOG_CACHE.lock().await.invalidate(home);
 }
 
 /// The same cached, root-filtered rows the catalog lists from.
@@ -130,36 +229,7 @@ async fn catalog_source(
     home: &std::path::Path,
     workspace_roots: &[PathBuf],
 ) -> Result<std::sync::Arc<Vec<oqto_history::oqto_log::ops::OqtoLogSessionRow>>> {
-    let key: CatalogKey = (home.to_owned(), workspace_roots.to_vec());
-    let generation;
-    {
-        let cache = CATALOG_CACHE.lock().await;
-        generation = CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
-        if let Some((at, rows)) = cache.get(&key)
-            && at.elapsed() < CATALOG_TTL
-        {
-            return Ok(rows.clone());
-        }
-    }
-
-    let workspaces = workspaces_under(workspace_roots);
-    let rows = oqto_history::oqto_log::ops::list_sessions_for_workspaces(home, &workspaces)
-        .await?
-        .into_iter()
-        .filter(|row| {
-            row.workspace_id
-                .as_deref()
-                .is_some_and(|workspace| is_under_roots(workspace, workspace_roots))
-        })
-        .collect::<Vec<_>>();
-
-    let rows = std::sync::Arc::new(rows);
-    let mut cache = CATALOG_CACHE.lock().await;
-    cache.retain(|_, (at, _)| at.elapsed() < CATALOG_TTL);
-    if generation == CATALOG_GENERATION.load(std::sync::atomic::Ordering::SeqCst) {
-        cache.insert(key, (std::time::Instant::now(), rows.clone()));
-    }
-    Ok(rows)
+    catalog_work::read(home, workspace_roots).await
 }
 
 /// One exact public/native binding in the already-authorized local source.
@@ -332,6 +402,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn catalog_build_fences_are_home_scoped_and_reject_every_stale_writer() {
+        use std::sync::Arc;
+        let mut cache = CatalogCache::default();
+        let a = PathBuf::from("/synthetic/a");
+        let b = PathBuf::from("/synthetic/b");
+        let key_a = (a.clone(), vec![a.clone()]);
+        let key_b = (b.clone(), vec![b.clone()]);
+        let first = cache.begin(&a);
+        let overlapping = cache.begin(&a);
+        assert!(Arc::ptr_eq(&first, &overlapping));
+        let unrelated = cache.begin(&b);
+        cache.invalidate(&b);
+        let rows = Arc::new(Vec::new());
+        cache.finish(key_a.clone(), &first, rows.clone());
+        cache.finish(key_b.clone(), &unrelated, rows.clone());
+        assert!(Arc::ptr_eq(&cache.rows[&key_a].1, &rows));
+        assert!(!cache.rows.contains_key(&key_b));
+        cache.invalidate(&a);
+        cache.finish(key_a.clone(), &first, rows.clone());
+        cache.finish(key_a.clone(), &overlapping, rows.clone());
+        assert!(
+            !cache.rows.contains_key(&key_a),
+            "neither stale writer may repopulate"
+        );
+        let fresh = cache.begin(&a);
+        let new_scope = (a.clone(), vec![a.clone(), b.clone()]);
+        cache.finish(key_a.clone(), &fresh, rows.clone());
+        cache.finish(new_scope.clone(), &fresh, rows.clone());
+        cache.finish(key_a.clone(), &first, Arc::new(Vec::new()));
+        assert!(
+            Arc::ptr_eq(&cache.rows[&key_a].1, &rows),
+            "late old result cannot replace the new snapshot"
+        );
+        cache.invalidate(&a);
+        assert!(!cache.rows.contains_key(&key_a) && !cache.rows.contains_key(&new_scope));
+        drop((first, overlapping, fresh, unrelated));
+        let _fresh = cache.begin(&b);
+        assert_eq!(
+            cache.builds.len(),
+            1,
+            "finished homes must not accumulate fences"
+        );
+    }
+
     #[tokio::test]
     async fn a_cached_catalog_is_reused_briefly_and_then_expires() {
         let home = tempfile::tempdir().unwrap();
@@ -347,7 +462,7 @@ mod tests {
         {
             let mut cache = CATALOG_CACHE.lock().await;
             let key = (config.home.clone(), config.workspace_roots.clone());
-            let entry = cache.get_mut(&key).expect("cached");
+            let entry = cache.rows.get_mut(&key).expect("cached");
             entry.0 = std::time::Instant::now() - CATALOG_TTL - std::time::Duration::from_secs(1);
         }
         assert!(
@@ -374,7 +489,12 @@ mod tests {
         std::fs::create_dir_all(home.path().join("private-notes")).unwrap();
 
         let roots = vec![designated.clone()];
-        let found = workspaces_under(&roots);
+        let found = workspaces_under(
+            &roots,
+            &std::sync::atomic::AtomicBool::new(true),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
         let has = |p: &std::path::Path| found.iter().any(|w| std::path::Path::new(w) == p);
 
         assert!(has(&designated), "the root itself is a workspace");

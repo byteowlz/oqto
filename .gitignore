@@ -7,6 +7,12 @@ pi-session-exports/
 .pi/todos/
 .pi/delegations/
 .tmp/
+.pytest_cache/
+.ruff_cache/
+/target/
+/backend/target/
+/frontend/dist/
+/package-lock.json
 # === macos ===
 # macOS
 # General
@@ -56,8 +62,8 @@ scripts/e2e/.secrets/
 
 # Claude Code local config (permissions cache)
 .claude/
-.mmry/mmry.jsonl
-.mmry/index/
+# All local agent memory/migration state is private runtime data, not source.
+/.mmry/
 
 # Generated distribution staging; manifest and mutable-template sources stay tracked.
 dist/out/
@@ -81,3 +87,9 @@ node_modules/
 
 # trx ledger lives in the central store
 /.trx/
+
+# A global `dist/` ignore would silently swallow new source tooling under
+# scripts/dist (existing files there are tracked). Keep that directory visible;
+# build output stays ignored.
+!scripts/dist/
+!scripts/dist/**

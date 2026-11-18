@@ -1,0 +1,151 @@
+{
+  "$id": "https://github.com/byteowlz/dingz/schemas/post.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dingz post envelope",
+  "description": "A post delivered by dingz. Every field is supplied by the caller; a receiving store stamps identity itself.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "description": "Short body text. May be empty.",
+      "type": "string",
+      "default": "",
+      "maxLength": 4000
+    },
+    "funnel": {
+      "description": "Funnel the post belongs to, as claimed by the poster.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "kind": {
+      "description": "What the post is about. Defaults to `info`.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Kind"
+        }
+      ],
+      "default": "info"
+    },
+    "labels": {
+      "description": "Labels such as `restricted`, `route:local` or `untrusted-source`.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z0-9][a-z0-9:._-]*$"
+      },
+      "maxItems": 16
+    },
+    "links": {
+      "description": "Links to the source Session and related artifacts. The first link is the\npost's primary reference.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Link"
+      },
+      "maxItems": 8
+    },
+    "project": {
+      "description": "Project or topic the post belongs to, as claimed by the poster.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "task": {
+      "description": "Task the post belongs to, as claimed by the poster.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "minLength": 1
+    },
+    "title": {
+      "description": "Short headline.",
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "title"
+  ],
+  "stability": "draft",
+  "version": "1.0.0",
+  "x-max-serialized-bytes": 32768,
+  "definitions": {
+    "Kind": {
+      "description": "What a post is about. The set is closed: unknown kinds are rejected.",
+      "oneOf": [
+        {
+          "description": "A task or piece of work finished.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The poster cannot continue without input.",
+          "type": "string",
+          "const": "blocked"
+        },
+        {
+          "description": "Work was handed to another agent or a subagent.",
+          "type": "string",
+          "const": "delegation"
+        },
+        {
+          "description": "A board/tracker change.",
+          "type": "string",
+          "const": "board"
+        },
+        {
+          "description": "A wiki change.",
+          "type": "string",
+          "const": "wiki"
+        },
+        {
+          "description": "Recurring, low-attention output (filtered out of views by default).",
+          "type": "string",
+          "const": "routine"
+        },
+        {
+          "description": "A plain notification; what `dingz send` produces.",
+          "type": "string",
+          "const": "info"
+        }
+      ]
+    },
+    "Link": {
+      "description": "A link attached to a post, typically to the source Session or an artifact.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Optional short display text.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120,
+          "minLength": 1
+        },
+        "url": {
+          "description": "Target URL or app URI.",
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    }
+  }
+}

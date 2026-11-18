@@ -5,7 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/build/scripts/dist" "$tmp/build/dist" "$tmp/build/tools/provider-login"
-cp "$root/scripts/dist/"{sync.sh,verify-worktree-ownership.py} "$tmp/build/scripts/dist/"
+cp "$root/scripts/dist/"{sync.sh,pi-ext-sources.sh,verify-worktree-ownership.py} "$tmp/build/scripts/dist/"
 for file in worker.mjs broker.mjs pi-runtime.mjs README.md; do
   printf 'fixture\n' > "$tmp/build/tools/provider-login/$file"
 done

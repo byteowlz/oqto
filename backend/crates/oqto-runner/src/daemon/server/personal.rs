@@ -293,6 +293,72 @@ impl super::Runner {
     }
 }
 
+impl PersonalBackend {
+    fn session_files_failure(error: anyhow::Error) -> ActionFailure {
+        if crate::history_read::catalog_unavailable(&error) {
+            ActionFailure::Unavailable
+        } else {
+            ActionFailure::Denied
+        }
+    }
+    fn catalog_failure(&self, error: anyhow::Error) -> ActionFailure {
+        // Cancellation/invalidation/budget readiness is not corrupt identity
+        // authority. Real source faults retain their class through shared fills.
+        if crate::history_read::catalog_source_fault(&error) {
+            self.ingest.mark_authority_failed();
+        }
+        ActionFailure::Unavailable
+    }
+    async fn dispatch_terminal(
+        &self,
+        action: HostAction,
+        authorization: AuthorizedAction,
+    ) -> Result<Value, ActionFailure> {
+        if let HostAction::SessionTerminalOpen {
+            session_id,
+            rows,
+            cols,
+        } = action
+        {
+            return self
+                .open_session_terminal(session_id, (rows, cols), authorization)
+                .await;
+        }
+        if !self.terminal_enabled {
+            return Err(ActionFailure::Unavailable);
+        }
+        let terminals = Arc::clone(&self.terminals);
+        tokio::task::spawn_blocking(move || terminals.execute(action, authorization))
+            .await
+            .map_err(|_| ActionFailure::OutcomeUnknown)?
+    }
+
+    async fn open_session_terminal(
+        &self,
+        session_id: String,
+        dimensions: (u16, u16),
+        authorization: AuthorizedAction,
+    ) -> Result<Value, ActionFailure> {
+        if !self.terminal_enabled || authorization.grants().sessions == SessionAccess::None {
+            return Err(ActionFailure::Denied);
+        }
+        let row = crate::history_read::resolve_authorized_session(
+            &self.home,
+            &self.workspace_roots,
+            &session_id,
+        )
+        .await
+        .map_err(|_| ActionFailure::Denied)?;
+        let cwd = row.workspace_id.ok_or(ActionFailure::Unavailable)?;
+        let terminals = Arc::clone(&self.terminals);
+        tokio::task::spawn_blocking(move || {
+            terminals.open_session(session_id, cwd, dimensions, authorization)
+        })
+        .await
+        .map_err(|_| ActionFailure::OutcomeUnknown)?
+    }
+}
+
 struct OwnerCleanup {
     path: PathBuf,
     dev: u64,
@@ -323,6 +389,7 @@ impl ActionBackend for PersonalBackend {
             action,
             HostAction::SessionsList
                 | HostAction::SessionFiles { .. }
+                | HostAction::SessionTerminalOpen { .. }
                 | HostAction::ProjectIcons { .. }
                 | HostAction::SessionHistory { .. }
                 | HostAction::SessionMedia { .. }
@@ -438,6 +505,7 @@ impl ActionBackend for PersonalBackend {
                     full_user_terminal_granted: grants.full_user_terminal,
                     files_supported: supported.files,
                     terminal_supported: supported.terminal,
+                    session_terminal_supported: supported.terminal && supported.sessions,
                     session_observe_supported: supported.sessions,
                     session_control_supported: supported.control,
                 })
@@ -456,19 +524,24 @@ impl ActionBackend for PersonalBackend {
                 .await
                 .map_err(|_| ActionFailure::OutcomeUnknown)?
             }
-            action @ (HostAction::TerminalsList
+            action @ (HostAction::VoiceCapabilities
+            | HostAction::VoiceTranscribeOpen { .. }
+            | HostAction::VoiceTranscribeAppend { .. }
+            | HostAction::VoiceTranscribeFinish { .. }
+            | HostAction::VoiceTranscribeCancel { .. }
+            | HostAction::VoiceSpeakOpen { .. }
+            | HostAction::VoiceSpeakRead { .. }
+            | HostAction::VoiceSpeakClose { .. }) => {
+                crate::personal_voice::execute(action, authorization).await
+            }
+            action @ (HostAction::SessionTerminalOpen { .. }
+            | HostAction::TerminalsList
             | HostAction::TerminalOpen { .. }
             | HostAction::TerminalRead { .. }
             | HostAction::TerminalWrite { .. }
             | HostAction::TerminalResize { .. }
             | HostAction::TerminalClose { .. }) => {
-                if !self.terminal_enabled {
-                    return Err(ActionFailure::Unavailable);
-                }
-                let terminals = Arc::clone(&self.terminals);
-                tokio::task::spawn_blocking(move || terminals.execute(action, authorization))
-                    .await
-                    .map_err(|_| ActionFailure::OutcomeUnknown)?
+                self.dispatch_terminal(action, authorization).await
             }
             HostAction::SessionFiles { session_id } => {
                 let row = crate::history_read::resolve_authorized_session(
@@ -477,7 +550,7 @@ impl ActionBackend for PersonalBackend {
                     &session_id,
                 )
                 .await
-                .map_err(|_| ActionFailure::Denied)?;
+                .map_err(Self::session_files_failure)?;
                 let cwd = row.workspace_id.ok_or(ActionFailure::Unavailable)?;
                 let fence = authorization.fence();
                 let result = tokio::task::spawn_blocking(move || {
@@ -513,12 +586,17 @@ impl ActionBackend for PersonalBackend {
                         &self.workspace_roots,
                     )
                     .await;
+                    crate::personal_catalog::enrich_relations(
+                        &mut data,
+                        &rows,
+                        &self.home,
+                        &self.workspace_roots,
+                        self.ingest.source.as_deref(),
+                    )
+                    .await;
                     anyhow::Ok(data)
                 };
-                listed.await.map_err(|_| {
-                    self.ingest.mark_authority_failed();
-                    ActionFailure::Unavailable
-                })
+                listed.await.map_err(|error| self.catalog_failure(error))
             }
             HostAction::ProjectIcons { directories } => {
                 let rows = crate::history_read::authorized_rows(&self.home, &self.workspace_roots)

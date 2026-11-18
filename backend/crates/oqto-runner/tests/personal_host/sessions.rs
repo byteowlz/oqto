@@ -96,7 +96,7 @@ async fn actual_cli_signed_https_existing_pi_history_control_and_revocation() ->
                     line.clear();
                     let mut response = serde_json::json!({"type":"response","id":frame["id"],"command":frame["type"],"success":true});
                     match frame["type"].as_str() {
-                        Some("get_state") => response["data"] = serde_json::json!({"sessionId":native,"sessionFile":path,"cwd":cwd,"leafId":"source-a"}),
+                        Some("get_state") => response["data"] = serde_json::json!({"sessionId":native,"sessionFile":path,"cwd":cwd,"leafId":"source-a","contextUsage":{"tokens":42,"contextWindow":80,"apiKey":"synthetic-context-secret"},"model":{"provider":"synthetic","id":"selected","contextWindow":200,"headers":{"Authorization":"synthetic-model-secret"}}}),
                         Some("lease") => { leases.fetch_add(1, Ordering::SeqCst); held=true; response["data"] = serde_json::json!({"owner":"remote","reason":"tui_confirmed"}); }
                         Some("prompt" | "steer" | "abort") if held => { writes.fetch_add(1, Ordering::SeqCst); }
                         _ => response["success"] = false.into(),
@@ -127,6 +127,24 @@ async fn actual_cli_signed_https_existing_pi_history_control_and_revocation() ->
         .context("attachment")?
         .to_owned();
     assert_eq!(confirmed.load(Ordering::SeqCst), 0);
+    let (status, observation) = host
+        .action(
+            &device,
+            91,
+            HostAction::SessionRead {
+                attachment_id: id.clone(),
+            },
+        )
+        .await?;
+    assert_eq!(status, 200, "{observation}");
+    assert_eq!(
+        observation["details"]["context_usage"],
+        serde_json::json!({"tokens":42,"context_window":80})
+    );
+    assert!(!observation.to_string().contains("synthetic-context-secret"));
+    assert!(!observation.to_string().contains("synthetic-model-secret"));
+    assert_eq!(confirmed.load(Ordering::SeqCst), 0);
+    assert_eq!(counts.load(Ordering::SeqCst), 0);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let (status, page) = host

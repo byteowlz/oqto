@@ -2,11 +2,15 @@
 //! fallback. The trusted guard writes a private spec; the brain can only reach
 //! explicitly bound paths/sockets. Owner credentials, the permission ledger and
 //! guard state are never bindable: approval authority stays outside the brain.
+//!
+//! Linux: bwrap with seccomp and Landlock. macOS: a Seatbelt profile compiled
+//! by oqto-sandbox; this launcher stays the brain's supervising parent and
+//! reaps the launch's marked processes when it stops. There is no seccomp on
+//! macOS.
+mod oqt_launch;
+
 use anyhow::{Context, Result, ensure};
-use oqto_sandbox::{
-    NetworkConfig, NetworkMode, SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command,
-    configure_bwrap_pre_exec,
-};
+use oqto_sandbox::{NetworkConfig, NetworkMode, SandboxConfig};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -21,9 +25,14 @@ struct BrainSpec {
     ro: Vec<PathBuf>,
     rw: Vec<PathBuf>,
     forbidden: Vec<PathBuf>,
-    bpf: PathBuf,
+    /// Compiled seccomp filter: required on Linux, absent on macOS.
+    #[serde(default)]
+    bpf: Option<PathBuf>,
     env: BTreeMap<String, String>,
     args: Vec<String>,
+    /// macOS: directory holding the launch marker files.
+    #[serde(default)]
+    marker: Option<PathBuf>,
 }
 
 fn env_allowed(key: &str) -> bool {
@@ -41,30 +50,16 @@ fn overlaps(bind: &Path, forbidden: &Path) -> bool {
     bind.starts_with(forbidden) || forbidden.starts_with(bind)
 }
 
-#[cfg(target_os = "linux")]
-fn main() -> Result<()> {
-    use std::os::unix::{fs::MetadataExt, process::CommandExt};
-    tracing_subscriber::fmt()
-        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
-        .with_writer(std::io::stderr)
-        .init();
-    let mut args = std::env::args_os().skip(1);
-    let spec_path = PathBuf::from(args.next().context("private brain spec required")?);
-    ensure!(args.next().is_none(), "unexpected brain launcher arguments");
-    let uid = std::fs::metadata("/proc/self")?.uid();
-    let metadata = std::fs::symlink_metadata(&spec_path)?;
-    ensure!(
-        metadata.is_file() && metadata.mode() & 0o077 == 0 && metadata.uid() == uid,
-        "brain spec must be an owned private regular file"
-    );
-    let parent = spec_path.parent().context("spec parent required")?;
-    let directory = std::fs::symlink_metadata(parent)?;
-    ensure!(
-        directory.is_dir() && directory.mode() & 0o077 == 0 && directory.uid() == uid,
-        "brain spec parent must be private and owned"
-    );
-    ensure!(metadata.len() <= 65536, "brain spec too large");
-    let spec: BrainSpec = serde_json::from_slice(&std::fs::read(&spec_path)?)?;
+struct Launch {
+    config: SandboxConfig,
+    cwd: PathBuf,
+    node: PathBuf,
+    spec: BrainSpec,
+}
+
+fn prepare(spec_path: &Path) -> Result<Launch> {
+    let spec: BrainSpec =
+        serde_json::from_slice(&oqt_launch::read_private_spec(spec_path, 65536)?)?;
     ensure!(
         spec.ro.len() + spec.rw.len() <= 64 && spec.forbidden.len() <= 64,
         "bounded binds required"
@@ -127,6 +122,8 @@ fn main() -> Result<()> {
         ensure!(env_allowed(key), "brain environment key not allowed: {key}");
     }
     let mut config = SandboxConfig::strict();
+    // Hosts without an Oqto installation lack /etc/oqto and friends.
+    config.prune_absent_system_denies();
     config.allow_read.clear();
     config.allow_write.clear();
     // Grants go through the policy allow lists so bwrap mounts and the
@@ -146,12 +143,47 @@ fn main() -> Result<()> {
         mode: NetworkMode::Open,
         ..NetworkConfig::default()
     });
-    config.seccomp_mode = SeccompMode::Enforce;
-    config.seccomp_bpf_path = Some(spec.bpf.canonicalize()?.display().to_string());
     for denied in &forbidden {
         config.deny_read.push(denied.display().to_string());
         config.deny_write.push(denied.display().to_string());
     }
+    Ok(Launch {
+        config,
+        cwd,
+        node,
+        spec,
+    })
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .with_writer(std::io::stderr)
+        .init();
+    let mut args = std::env::args_os().skip(1);
+    let spec_path = PathBuf::from(args.next().context("private brain spec required")?);
+    ensure!(args.next().is_none(), "unexpected brain launcher arguments");
+    launch(prepare(&spec_path)?)
+}
+
+#[cfg(target_os = "linux")]
+fn launch(launch: Launch) -> Result<()> {
+    use oqto_sandbox::{
+        SandboxStdin, SeccompMode, build_sandbox_command, configure_bwrap_pre_exec,
+    };
+    use std::os::unix::process::CommandExt;
+    let Launch {
+        mut config,
+        cwd,
+        node,
+        spec,
+    } = launch;
+    ensure!(spec.marker.is_none(), "macOS-only brain field on Linux");
+    let bpf = spec
+        .bpf
+        .context("Linux brains require a compiled seccomp filter")?;
+    config.seccomp_mode = SeccompMode::Enforce;
+    config.seccomp_bpf_path = Some(bpf.canonicalize()?.display().to_string());
     let mut command =
         build_sandbox_command(&config, &cwd, &node, &spec.args, SandboxStdin::Redirected)?;
     command
@@ -164,7 +196,41 @@ fn main() -> Result<()> {
     Err(command.exec()).context("executing confined brain")
 }
 
-#[cfg(not(target_os = "linux"))]
-fn main() -> Result<()> {
-    anyhow::bail!("oqt brain confinement currently requires Linux; no fallback")
+#[cfg(target_os = "macos")]
+fn launch(launch: Launch) -> Result<()> {
+    use oqto_sandbox::process_tree::{Marker, supervise};
+    let Launch {
+        mut config,
+        cwd,
+        node,
+        spec,
+    } = launch;
+    ensure!(
+        spec.bpf.is_none(),
+        "there is no seccomp on macOS; refusing a filter it would not apply"
+    );
+    let marker = Marker::open(
+        spec.marker
+            .as_deref()
+            .context("macOS brains require a launch marker")?,
+    )?;
+    oqt_launch::seatbelt_compatible(&mut config);
+    // Seatbelt has no private /tmp: the brain's own empty cwd is its HOME and
+    // TMPDIR (it is the policy's work directory, so it is writable).
+    let mut command = oqt_launch::seatbelt_command(&config, &cwd, &marker, &node, &spec.args)?;
+    command
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &cwd)
+        .env("TMPDIR", &cwd)
+        .env("LANG", "C.UTF-8")
+        .envs(&spec.env);
+    // The worker manager signals this launcher's pid; give the worker time to
+    // shut down cleanly before its group is killed.
+    let code = supervise(command, &marker, std::time::Duration::from_secs(5))?;
+    std::process::exit(code)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn launch(_: Launch) -> Result<()> {
+    anyhow::bail!("oqt brain confinement requires Linux or macOS; no fallback")
 }

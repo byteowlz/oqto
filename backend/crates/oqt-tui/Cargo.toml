@@ -1,0 +1,38 @@
+[package]
+name = "oqt-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal client for Durable agents over oqto.session-view (ADR-0087): chat, tools, receipts, cache-first start, OpenUI parts, Kitty images and OSC 7501."
+
+[[bin]]
+name = "oqt-tui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+byteowlz-tui-kit = { path = "../../vendor/byteowlz-tui-kit" }
+clap.workspace = true
+crossterm = { version = "0.29", features = ["event-stream"] }
+dirs.workspace = true
+futures.workspace = true
+oqto-openui = { path = "../oqto-openui" }
+oqto-session-client = { path = "../oqto-session-client" }
+oqto-session-view = { path = "../oqto-session-view" }
+pulldown-cmark = { version = "0.13", default-features = false }
+ratatui = "0.30"
+rustix = { workspace = true, features = ["event", "stdio", "time"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

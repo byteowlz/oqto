@@ -5,7 +5,7 @@
 // boundary here; this is not production Account authentication.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	closeSync,
@@ -19,7 +19,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { realpath, rm } from "node:fs/promises";
-import type { Server } from "node:net";
+import type { Server, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,7 +34,7 @@ import {
 	operateClassicImport,
 	retireClassicImportPeer,
 } from "./classic-import-host.ts";
-import { classify } from "./classify.ts";
+import { classify, remoteMachine } from "./classify.ts";
 import {
 	CodingAuthority,
 	type CodingRequest,
@@ -45,7 +45,19 @@ import {
 import { GuardOperationalError } from "./guard-errors.ts";
 import { type Peer, serve } from "./guard-wire.ts";
 import { HandsClient } from "./hands-client.ts";
-import { HandsSupervisor } from "./hands-supervisor.ts";
+import {
+	HandsLink,
+	type MachineStatus,
+	type RemoteTool,
+	remoteCallId,
+	remoteDigest,
+} from "./hands-link.ts";
+import {
+	confirmReaped,
+	createMarker,
+	DARWIN,
+	HandsSupervisor,
+} from "./hands-supervisor.ts";
 import { SessionInputLeases } from "./input-leases.ts";
 import {
 	digestOperatorResult,
@@ -139,8 +151,11 @@ function describe(operation: Operation) {
 			kind: "tool" as const,
 			category: classified.category,
 			...(classified.prefix ? { prefix: classified.prefix } : {}),
+			...(classified.machine ? { machine: classified.machine } : {}),
 			capability: String(args.tool),
-			resource: "confined workspace",
+			resource: classified.machine
+				? `confined workspace on ${classified.machine}`
+				: "confined workspace",
 			argumentsText: summarize(args.input),
 			preview: classified.preview,
 		};
@@ -223,7 +238,8 @@ export interface BrainConfig {
 	/** oqt_brain launcher. */
 	launcher: string;
 	node: string;
-	bpf: string;
+	/** Compiled seccomp filter (Linux). There is no seccomp on macOS. */
+	bpf?: string;
 	shim: string;
 	/** Read-only binds every brain needs (private source snapshot, pinned checkout). */
 	ro: string[];
@@ -243,7 +259,8 @@ export interface BrainConfig {
 export interface GuardOptions {
 	authorityRoot: string;
 	protectedRoots: string[];
-	hands: { launcher: string; daemon: string; bpf: string };
+	/** `bpf`: compiled seccomp filter (Linux). There is no seccomp on macOS. */
+	hands: { launcher: string; daemon: string; bpf?: string };
 	broker: OwnerBroker;
 	brain?: BrainConfig;
 	/** Ceiling source (ADR-0060): the owner's sandbox.toml; the carrier also
@@ -258,6 +275,20 @@ export interface GuardOptions {
 	/** Project context files (AGENTS.md chain) read by the trusted host for
 	 * the brain's system prompt. Content is untrusted prompt data. */
 	contextFiles?: (workspace: string) => { path: string; content: string }[];
+	/** Remote hands (ADR-0086): the guard-owned `oqt_link` adapter and the
+	 * profile its controller namespace derives from. Absent or unconfigured:
+	 * every named machine is unknown, never a local fallback. */
+	link?: { binary: string; profile: string };
+}
+
+interface RemoteCall {
+	machine: string;
+	callId: string;
+	cwd: string;
+	token: string;
+	/** Set when the link reported the call lost or ended by the host. */
+	lost: boolean;
+	drained: boolean;
 }
 
 const CONTEXT_FILE_LIMIT = 256 * 1024;
@@ -296,6 +327,8 @@ export interface SessionState {
 		startedAt: number;
 	}[];
 	resources: { capability: string; resource: string; expiresAt: number }[];
+	/** Set when the authority froze because a stop was not confirmed. */
+	attention: string | null;
 }
 
 export class GuardSession {
@@ -308,6 +341,9 @@ export class GuardSession {
 	readonly socketsDir: string;
 	/** Brain bwrap work directory; empty and session-local. */
 	readonly brainCwd: string;
+	/** macOS: private TMPDIR/HOME for the hands (Seatbelt has no private
+	 * /tmp). Outside every protected root; wiped on each hands generation. */
+	readonly handsScratch: string | undefined;
 	readonly toolPath: string;
 	readonly handsPath: string;
 	readonly ready: Promise<void>;
@@ -332,6 +368,13 @@ export class GuardSession {
 	#serial: Promise<unknown> = Promise.resolve();
 	readonly #releases = new Map<string, () => void>();
 	readonly #drained = new Set<string>();
+	/** Admitted remote calls by request id, and their one-use attach tokens. */
+	readonly #remote = new Map<string, RemoteCall>();
+	readonly #remoteAttach = new Map<
+		string,
+		{ callId: string; attach: string }
+	>();
+	readonly #remoteSockets = new Set<Socket>();
 	#receiptPeer: Peer | undefined;
 	#receiptReady = false;
 	#receiptConversation: number | undefined;
@@ -391,7 +434,7 @@ export class GuardSession {
 	}
 	assertAdmission(): void {
 		if (!canAdmitSession(this.id))
-			throw new GuardOperationalError("unavailable");
+			throw new GuardOperationalError("import_staging");
 	}
 	async acquire(id: string, signal: AbortSignal) {
 		let acquired!: () => void;
@@ -428,6 +471,11 @@ export class GuardSession {
 		guard.recordRoot(brainRoot);
 		this.socketsDir = join(brainRoot, "sockets");
 		this.brainCwd = join(brainRoot, "cwd");
+		if (DARWIN) {
+			this.handsScratch = mkdtempSync("/var/tmp/oqx-");
+			chmodSync(this.handsScratch, 0o700);
+			guard.recordRoot(this.handsScratch);
+		}
 		privateDirectory(this.socketsDir);
 		privateDirectory(this.brainCwd);
 		this.toolPath = join(this.socketsDir, "tool.sock");
@@ -638,7 +686,9 @@ export class GuardSession {
 			],
 			parent: this.privateDir,
 			socketPath: this.handsPath,
+			scratch: this.handsScratch,
 		});
+		this.supervisor.remoteRoute = (epoch) => this.#remoteRoute(epoch);
 		mark("guard: hands ready");
 		const hash = createHash("sha256").update(this.workspace).digest("hex");
 		const ceiling = options.ceiling ?? {
@@ -809,6 +859,10 @@ export class GuardSession {
 			case "prepare": {
 				this.assertAdmission();
 				const operation = codingOperation(params.operation);
+				const machine = remoteMachine(operation.arguments.input);
+				// Unknown, offline, unbound or frozen machines fail before the
+				// operator is asked and before any effect; never a local fallback.
+				if (machine) await this.#routable(machine);
 				const { expiresAt } = await this.authority.prepare(operation, signal);
 				live.add(operation.request_id);
 				this.#admitted.set(operation.request_id, operation);
@@ -817,9 +871,18 @@ export class GuardSession {
 					// Hold the lane until finish, including actual brain execution.
 					await this.syncResources(true);
 					await this.authority.ready(signal);
+					if (machine)
+						return await this.#claimRemote(operation, machine, expiresAt);
 					return { expires_at: expiresAt, epoch: this.supervisor.epoch };
 				} catch (error) {
 					this.release(operation.request_id);
+					if (machine && !this.#remote.has(operation.request_id)) {
+						// Not started: the claim was refused or never acknowledged
+						// (no attach challenge reached us, so nothing could run).
+						live.delete(operation.request_id);
+						this.#admitted.delete(operation.request_id);
+						await this.authority.finish(operation.request_id).catch(() => {});
+					}
 					throw error;
 				}
 			}
@@ -850,6 +913,8 @@ export class GuardSession {
 				if (JSON.stringify(admitted) !== JSON.stringify(operation))
 					throw new GuardOperationalError("invalid_binding");
 				await this.authority.check(admitted);
+				if (this.#remote.get(operation.request_id)?.lost)
+					throw new GuardOperationalError("machine_outcome_unknown");
 				return { checked: true };
 			}
 			case "finish": {
@@ -861,12 +926,23 @@ export class GuardSession {
 				this.#drained.delete(params.id);
 				live.delete(params.id);
 				this.#admitted.delete(params.id);
+				this.#forgetRemote(params.id);
 				this.release(params.id);
 				return { finished: true };
 			}
 			case "drain": {
 				if (![...live].some((id) => this.#releases.has(id)))
 					throw new GuardOperationalError("no_live_invocation");
+				const remote =
+					typeof params.id === "string"
+						? this.#remote.get(params.id)
+						: undefined;
+				if (remote && typeof params.id === "string" && live.has(params.id)) {
+					// Remote calls retire their destination generation; local hands
+					// ran nothing for them and are not replaced.
+					await this.#drainRemote(params.id, remote);
+					return { epoch: this.supervisor.epoch };
+				}
 				// Retire the executor (and any detached descendants) before delivery.
 				await this.authority.transition(() => this.supervisor.replace());
 				await this.authority.ready(signal);
@@ -877,6 +953,13 @@ export class GuardSession {
 			case "epoch":
 				await this.authority.ready(signal);
 				return { epoch: this.supervisor.epoch };
+			case "machines":
+				// Names and descriptions only: never addresses, keys or limits.
+				return (this.guard.link?.machines ?? []).map((machine) => ({
+					machine: machine.machine,
+					platform: machine.platform,
+					cwd: machine.cwd,
+				}));
 			case "identity":
 				// The worker must report the host pid the manager spawned and will signal.
 				if (this.brainPid === undefined)
@@ -964,6 +1047,13 @@ export class GuardSession {
 	 * invocation it held becomes an interrupted, never-replayed record that also
 	 * fences every overlay. Failure leaves the authority frozen. */
 	brainLost(lost: Set<string>) {
+		for (const id of lost) {
+			const remote = this.#remote.get(id);
+			// The destination stops and confirms; a failure leaves the machine
+			// in attention inside the link. Never replayed.
+			if (remote) void this.guard.link?.cancel(remote.callId).catch(() => {});
+			this.#forgetRemote(id);
+		}
 		return this.authority
 			.transition(async () => {
 				await this.supervisor.stop();
@@ -981,8 +1071,148 @@ export class GuardSession {
 				for (const id of lost) this.release(id);
 			});
 	}
-	revokeAll() {
-		return this.authority.revokeAll();
+	/** Local freeze and revoke first, then fence every remote machine: the
+	 * destination stops and confirms its generations and acknowledges. An
+	 * unconfirmed remote stop leaves that machine in attention. */
+	async revokeAll() {
+		await this.authority.revokeAll();
+		for (const remote of this.#remote.values()) remote.lost = true;
+		await this.guard.link?.freeze();
+		this.guard.emit();
+	}
+	async #routable(machine: string) {
+		const link = this.guard.link;
+		const known = link?.machines.find((row) => row.machine === machine);
+		if (!link || !known) throw new GuardOperationalError("machine_unknown");
+		if (known.attention || known.remote_attention)
+			throw new GuardOperationalError("machine_attention");
+		const probe = await link.probe(machine);
+		if (probe.ok !== true)
+			throw new GuardOperationalError("machine_unavailable");
+	}
+	async #claimRemote(operation: Operation, machine: string, expiresAt: number) {
+		const link = this.guard.link;
+		const status = link?.machines.find((row) => row.machine === machine);
+		if (!link || !status) throw new GuardOperationalError("machine_unknown");
+		const tool = String(operation.arguments.tool) as RemoteTool;
+		const callId = remoteCallId(link.namespace, operation.request_id);
+		const reply = await link.claim(
+			machine,
+			callId,
+			remoteDigest(machine, status.binding, tool, operation.arguments.input),
+			tool,
+		);
+		if (
+			reply.ok !== true ||
+			typeof reply.attach !== "string" ||
+			typeof reply.cwd !== "string"
+		)
+			throw new GuardOperationalError(
+				reply.status === "duplicate"
+					? "machine_duplicate"
+					: typeof reply.code === "string" && reply.code.startsWith("attention")
+						? "machine_attention"
+						: "machine_unavailable",
+			);
+		const token = randomBytes(16).toString("hex");
+		this.#remoteAttach.set(token, { callId, attach: reply.attach });
+		this.#remote.set(operation.request_id, {
+			machine,
+			callId,
+			cwd: reply.cwd,
+			token,
+			lost: false,
+			drained: false,
+		});
+		return {
+			expires_at: expiresAt,
+			remote: {
+				machine,
+				cwd: reply.cwd,
+				platform: reply.platform,
+				epoch: token,
+				generation: reply.generation,
+			},
+		};
+	}
+	/** The brain's proxy for a remote call: one use, then raw pi-env bytes to
+	 * the link's data stream. A second attach (lazy reconnect) is refused. */
+	#remoteRoute(epoch: string) {
+		const attach = this.#remoteAttach.get(epoch);
+		if (!attach) return undefined;
+		this.#remoteAttach.delete(epoch);
+		return (socket: Socket, syncToken: string, rest: Buffer) => {
+			const link = this.guard.link;
+			if (!link) {
+				socket.destroy();
+				return;
+			}
+			this.#remoteSockets.add(socket);
+			socket.once("close", () => this.#remoteSockets.delete(socket));
+			void link.attachData(attach.callId, attach.attach, syncToken).then(
+				(remote) => {
+					this.#remoteSockets.add(remote);
+					remote.once("close", () => {
+						this.#remoteSockets.delete(remote);
+						socket.destroy();
+					});
+					remote.on("error", () => remote.destroy());
+					socket.once("close", () => remote.destroy());
+					if (rest.length) remote.write(rest);
+					socket.pipe(remote);
+					remote.pipe(socket);
+				},
+				() => socket.destroy(),
+			);
+		};
+	}
+	/** Retire the destination generation. Never throws: a lost release or an
+	 * unconfirmed stop marks the call lost, so the following check reports an
+	 * unknown outcome and the lane still finishes (the link keeps that machine
+	 * in attention; other machines and local hands continue). */
+	async #drainRemote(id: string, remote: RemoteCall) {
+		remote.drained = true;
+		const reply = this.guard.link
+			? await this.guard.link.release(remote.callId)
+			: { ok: false };
+		const receipt = reply.receipt as { stop?: string } | undefined;
+		if (reply.ok !== true || !receipt || receipt.stop === "unconfirmed") {
+			remote.lost = true;
+			// Attention (or a lost link) shows on every operator surface.
+			await this.guard.link?.refresh().catch(() => {});
+		}
+		this.#drained.add(id);
+		this.guard.emit();
+	}
+	#forgetRemote(id: string) {
+		const remote = this.#remote.get(id);
+		if (!remote) return;
+		this.#remote.delete(id);
+		this.#remoteAttach.delete(remote.token);
+	}
+	/** Link event: a call was lost (control dropped) or ended by the host. */
+	remoteEvent(event: Record<string, unknown>) {
+		const callId =
+			typeof event.call_id === "string"
+				? event.call_id
+				: event.receipt &&
+						typeof event.receipt === "object" &&
+						"call_id" in event.receipt
+					? String((event.receipt as { call_id: unknown }).call_id)
+					: undefined;
+		if (!callId) return;
+		for (const remote of this.#remote.values())
+			if (remote.callId === callId && !remote.drained) remote.lost = true;
+	}
+	/** Stop admitting work because a confined process could not be confirmed
+	 * stopped. The authority stays frozen and reports attention. */
+	async freeze() {
+		await this.ready.catch(() => {});
+		await this.authority
+			?.transition(() =>
+				Promise.reject(new Error("confined process stop not confirmed")),
+			)
+			.catch(() => {});
 	}
 	async acknowledge() {
 		await this.authority.acknowledge();
@@ -1009,6 +1239,7 @@ export class GuardSession {
 					startedAt: entry.started_at,
 				};
 			}),
+			attention: this.authority?.attention ?? null,
 			resources: this.resources.map((grant) => {
 				const described = describe({
 					request_id: "",
@@ -1024,6 +1255,7 @@ export class GuardSession {
 		};
 	}
 	async close() {
+		for (const socket of this.#remoteSockets) socket.destroy();
 		// Init may still be creating the tool server; close it only afterwards.
 		await this.ready.catch(() => {});
 		// Let in-flight transitions (brain loss, revocation) finish before the
@@ -1037,6 +1269,8 @@ export class GuardSession {
 		} finally {
 			await this.authority?.close();
 			await rm(dirname(this.socketsDir), { recursive: true, force: true });
+			if (this.handsScratch)
+				await rm(this.handsScratch, { recursive: true, force: true });
 		}
 	}
 }
@@ -1053,6 +1287,7 @@ export class Guard {
 	#emitDirty = false;
 	readonly #roots = new Set<string>();
 	readonly rules: RulesStore;
+	link: HandsLink | undefined;
 	#operator: Server | undefined;
 	#index = 0;
 	private constructor(options: GuardOptions) {
@@ -1080,6 +1315,27 @@ export class Guard {
 			},
 		);
 		chmodSync(guard.operatorPath, 0o600);
+		if (options.link) {
+			try {
+				guard.link = await HandsLink.open({
+					binary: options.link.binary,
+					dataSocket: join(guard.directory, "link-data.sock"),
+					profile: options.link.profile,
+				});
+			} catch (error) {
+				// Fail closed: no link means every named machine is unknown.
+				console.error("oqt: remote hands link unavailable:", error);
+			}
+			guard.link?.onEvent((event) => {
+				for (const session of guard.sessions.values())
+					session.remoteEvent(event);
+				if (event.event === "ended" || event.event === "lost")
+					void guard.link?.refresh().then(
+						() => guard.emit(),
+						() => {},
+					);
+			});
+		}
 		return guard;
 	}
 	/** Brain-visible roots live outside the guard directory (they must not
@@ -1126,6 +1382,7 @@ export class Guard {
 				input: this.#inputs.get(id)?.view() ?? { pending: null, holder: null },
 			})),
 			...(rules ? { rules } : {}),
+			machines: this.link?.machines ?? ([] as readonly MachineStatus[]),
 		};
 	}
 	#retirePeer(peer: Peer) {
@@ -1252,7 +1509,8 @@ export class Guard {
 					const request = session.pending.find((row) => row.id === params.id);
 					if (!request) throw new GuardOperationalError("request_stale");
 					const described = describe(request.operation);
-					if (described.kind !== "tool")
+					// Repo rules are local; a remote machine is approved per Session.
+					if (described.kind !== "tool" || "machine" in described)
 						throw new GuardOperationalError("resource_session_only");
 					remember = described;
 				}
@@ -1349,6 +1607,10 @@ export class Guard {
 			);
 		const session = this.session(options.metadata.id, workspace);
 		const control = env.PI_SESSION_WORKER_CONTROL_ADDRESS;
+		const marker = DARWIN
+			? mkdtempSync(join(session.privateDir, "b-"))
+			: undefined;
+		if (marker) createMarker(marker);
 		const importSeed = isClassicImportStaged(options.metadata.path)
 			? classicImportSeedPath(options.metadata.path)
 			: undefined;
@@ -1369,7 +1631,8 @@ export class Guard {
 				this.directory,
 				this.options.authorityRoot,
 			],
-			bpf: brain.bpf,
+			...(brain.bpf ? { bpf: brain.bpf } : {}),
+			...(marker ? { marker } : {}),
 			env: {
 				...brain.env,
 				...env,
@@ -1387,6 +1650,8 @@ export class Guard {
 		};
 		mark("guard: spawn brain");
 		const specPath = join(session.privateDir, "brain.json");
+		// macOS: a fresh launch marker per brain, reaped and confirmed when the
+		// launcher exits (no PID namespace ends the tree there).
 		writeFileSync(specPath, JSON.stringify(spec), { mode: 0o600 });
 		chmodSync(specPath, 0o600);
 		const log = brain.log ? openSync(brain.log, "a", 0o600) : "ignore";
@@ -1406,6 +1671,17 @@ export class Guard {
 					console.error(
 						`oqt: brain for session ${session.id} exited (${signal ?? code}); see brain.log`,
 					);
+				if (marker)
+					void confirmReaped(this.options.hands.launcher, marker).then(
+						() => rm(marker, { recursive: true, force: true }),
+						(error) => {
+							console.error(
+								`oqt: brain processes for session ${session.id} not confirmed stopped:`,
+								error,
+							);
+							void session.freeze();
+						},
+					);
 			});
 			return child;
 		} finally {
@@ -1420,6 +1696,7 @@ export class Guard {
 		);
 		for (const session of this.sessions.values())
 			await session.close().catch(() => {});
+		await this.link?.close();
 		await rm(this.directory, { recursive: true, force: true });
 	}
 }

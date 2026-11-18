@@ -10,7 +10,8 @@ Interface for installed launch/preparation (which are supplied by the caller)::
 
 Install does NOT activate unless --activate is supplied. preparation.json is the
 existing prepare.py output, generated with disposable work/owner directories.
-Only source and the six native assets are consumed, not its profiles/home.
+Only source and the native assets are consumed, not its profiles/home
+(six on Linux; five on macOS, which has no seccomp filter).
 Verification returns runtime-local paths with prepare.py-compatible asset keys.
 Published trees are owner-readable/executable, not writable; hashes and modes
 cover every entry. This is same-uid tamper detection, not an OS immutability or
@@ -25,11 +26,13 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
 
-ASSETS = ('carrier', 'hands', 'shim', 'brain', 'daemon', 'bpf')
+# There is no seccomp on macOS, so no compiled filter is part of a runtime there.
+ASSETS = ('carrier', 'hands', 'shim', 'brain', 'daemon', 'link') + (() if sys.platform == 'darwin' else ('bpf',))
 SCHEMA = 1
 
 
@@ -45,6 +48,25 @@ def digest(path):
     return sha.hexdigest()
 
 
+def resolve_system_links(path):
+    """Resolve only root-owned symlinks inside root-owned directories.
+
+    macOS keeps /var, /tmp and /etc as such links into /private; no user can
+    swap them. Every other symlink stays a refused component below."""
+    resolved = Path('/')
+    parts = path.parts[1:]
+    for index, part in enumerate(parts):
+        candidate = resolved / part
+        try:
+            meta = candidate.lstat()
+        except FileNotFoundError:
+            return candidate.joinpath(*parts[index + 1:])
+        if stat.S_ISLNK(meta.st_mode) and meta.st_uid == 0 and resolved.lstat().st_uid == 0:
+            candidate = candidate.resolve(strict=True)
+        resolved = candidate
+    return resolved
+
+
 def private(path, strict=True):
     """Create/check every path component without following directory symlinks.
 
@@ -52,7 +74,7 @@ def private(path, strict=True):
     Private managed directories require 0700. A shared user namespace may
     retain its owned non-group/world-writable mode (e.g. existing 0755).
     """
-    path = Path(os.path.abspath(path))
+    path = resolve_system_links(Path(os.path.abspath(path)))
     for component in [*reversed(path.parents), path]:
         try:
             meta = component.lstat()
@@ -316,7 +338,20 @@ def remove_stage(path):
     shutil.rmtree(path)
 
 
+def require_self_contained_node(node):
+    """macOS: the confined brain runs this node, and its Seatbelt profile
+    exposes only /usr/lib and /System libraries. A Homebrew node links dylibs
+    from /opt/homebrew and would fail inside the brain; refuse it here."""
+    if sys.platform != 'darwin':
+        return
+    output = subprocess.run(['/usr/bin/otool', '-L', str(node)], check=True, capture_output=True, text=True).stdout
+    foreign = [line.split()[0] for line in output.splitlines()[1:] if line.strip() and not line.split()[0].startswith(('/usr/lib/', '/System/'))]
+    if foreign:
+        raise ValueError(f'Node links libraries outside /usr/lib and /System ({foreign[0]}); use an official nodejs.org build')
+
+
 def install(prepared, launcher, data_root, node, extra=()):
+    require_self_contained_node(node)
     data_root = private(data_root, strict=False)
     runtimes = private(data_root / 'runtimes')
     snapshot = Path(prepared['source']).resolve(strict=True)
@@ -440,7 +475,7 @@ def activate(runtime, launcher_destination=None):
         # Validate and back up launcher before changing either public pointer.
         pending_launcher = None
         if launcher_destination is not None:
-            destination = Path(os.path.abspath(launcher_destination))
+            destination = resolve_system_links(Path(os.path.abspath(launcher_destination)))
             # ~/.local/bin is normally 0755: ancestors must be owned and not
             # group/world-writable, but do not change user directory modes.
             for ancestor in [destination.parent, *destination.parent.parents]:

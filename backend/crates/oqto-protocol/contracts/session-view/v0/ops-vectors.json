@@ -1,0 +1,833 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "source": {
+  "package": "@earendil-works/chord",
+  "version": "1.5.2"
+ },
+ "vectors": [
+  {
+   "name": "r replaces the root",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "r",
+     {
+      "b": 2
+     }
+    ]
+   ],
+   "result": {
+    "b": 2
+   }
+  },
+  {
+   "name": "r then further ops in one batch",
+   "value": null,
+   "ops": [
+    [
+     "r",
+     {
+      "list": []
+     }
+    ],
+    [
+     "p",
+     [
+      "list"
+     ],
+     0,
+     0,
+     [
+      1,
+      2
+     ]
+    ],
+    [
+     "s",
+     [
+      "n"
+     ],
+     3
+    ]
+   ],
+   "result": {
+    "list": [
+     1,
+     2
+    ],
+    "n": 3
+   }
+  },
+  {
+   "name": "s sets an object key",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "b"
+     ],
+     {
+      "c": [
+       1
+      ]
+     }
+    ]
+   ],
+   "result": {
+    "a": 1,
+    "b": {
+     "c": [
+      1
+     ]
+    }
+   }
+  },
+  {
+   "name": "s replaces an array element",
+   "value": {
+    "xs": [
+     1,
+     2,
+     3
+    ]
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "xs",
+      1
+     ],
+     "two"
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     "two",
+     3
+    ]
+   }
+  },
+  {
+   "name": "s appends exactly at the array end",
+   "value": {
+    "xs": [
+     1,
+     2
+    ]
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "xs",
+      2
+     ],
+     3
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     2,
+     3
+    ]
+   }
+  },
+  {
+   "name": "s past the array end is refused",
+   "value": {
+    "xs": [
+     1,
+     2
+    ]
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "xs",
+      4
+     ],
+     3
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "s through a missing parent is refused",
+   "value": {
+    "a": {}
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "a",
+      "b",
+      "c"
+     ],
+     1
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "s with an empty path is refused",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "s",
+     [],
+     2
+    ]
+   ],
+   "error": "invalid_op"
+  },
+  {
+   "name": "d deletes an object key",
+   "value": {
+    "a": 1,
+    "b": 2
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "a"
+     ]
+    ]
+   ],
+   "result": {
+    "b": 2
+   }
+  },
+  {
+   "name": "d removes an array element and shifts the rest",
+   "value": {
+    "xs": [
+     "a",
+     "b",
+     "c"
+    ]
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "xs",
+      0
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     "b",
+     "c"
+    ]
+   }
+  },
+  {
+   "name": "d past the array end is refused",
+   "value": {
+    "xs": [
+     "a"
+    ]
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "xs",
+      3
+     ]
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "d exactly at the array end",
+   "value": {
+    "xs": [
+     "a"
+    ]
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "xs",
+      1
+     ]
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "d on a missing object key",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "b"
+     ]
+    ]
+   ],
+   "result": {
+    "a": 1
+   }
+  },
+  {
+   "name": "d through a missing parent is refused",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "d",
+     [
+      "b",
+      "c"
+     ]
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "a appends text",
+   "value": {
+    "t": "Hello"
+   },
+   "ops": [
+    [
+     "a",
+     [
+      "t"
+     ],
+     ", world"
+    ]
+   ],
+   "result": {
+    "t": "Hello, world"
+   }
+  },
+  {
+   "name": "a on a non-string is refused",
+   "value": {
+    "t": 5
+   },
+   "ops": [
+    [
+     "a",
+     [
+      "t"
+     ],
+     "x"
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "a on a missing key is refused",
+   "value": {},
+   "ops": [
+    [
+     "a",
+     [
+      "t"
+     ],
+     "x"
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "t drops leading UTF-16 code units",
+   "value": {
+    "t": "abcdef"
+   },
+   "ops": [
+    [
+     "t",
+     [
+      "t"
+     ],
+     2
+    ]
+   ],
+   "result": {
+    "t": "cdef"
+   }
+  },
+  {
+   "name": "t counts UTF-16 code units, not characters",
+   "value": {
+    "t": "😀ab"
+   },
+   "ops": [
+    [
+     "t",
+     [
+      "t"
+     ],
+     2
+    ]
+   ],
+   "result": {
+    "t": "ab"
+   }
+  },
+  {
+   "name": "t beyond the length leaves an empty string",
+   "value": {
+    "t": "ab"
+   },
+   "ops": [
+    [
+     "t",
+     [
+      "t"
+     ],
+     5
+    ]
+   ],
+   "result": {
+    "t": ""
+   }
+  },
+  {
+   "name": "p inserts",
+   "value": {
+    "xs": [
+     1,
+     4
+    ]
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     1,
+     0,
+     [
+      2,
+      3
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  },
+  {
+   "name": "p removes",
+   "value": {
+    "xs": [
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     1,
+     2,
+     []
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     4
+    ]
+   }
+  },
+  {
+   "name": "p replaces",
+   "value": {
+    "xs": [
+     1,
+     2,
+     3
+    ]
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     0,
+     2,
+     [
+      "a"
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     "a",
+     3
+    ]
+   }
+  },
+  {
+   "name": "p on the root array",
+   "value": [
+    1,
+    2,
+    3
+   ],
+   "ops": [
+    [
+     "p",
+     [],
+     0,
+     1,
+     []
+    ]
+   ],
+   "result": [
+    2,
+    3
+   ]
+  },
+  {
+   "name": "p with an index past the array end",
+   "value": {
+    "xs": [
+     1
+    ]
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     5,
+     0,
+     [
+      2
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "name": "p removing more than remain",
+   "value": {
+    "xs": [
+     1,
+     2,
+     3
+    ]
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     1,
+     9,
+     [
+      "z"
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     1,
+     "z"
+    ]
+   }
+  },
+  {
+   "name": "p on a non-array is refused",
+   "value": {
+    "xs": {}
+   },
+   "ops": [
+    [
+     "p",
+     [
+      "xs"
+     ],
+     0,
+     0,
+     [
+      1
+     ]
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "m reorders: new[i] = old[permutation[i]]",
+   "value": {
+    "xs": [
+     "a",
+     "b",
+     "c"
+    ]
+   },
+   "ops": [
+    [
+     "m",
+     [
+      "xs"
+     ],
+     [
+      2,
+      0,
+      1
+     ]
+    ]
+   ],
+   "result": {
+    "xs": [
+     "c",
+     "a",
+     "b"
+    ]
+   }
+  },
+  {
+   "name": "m with a wrong length is refused",
+   "value": {
+    "xs": [
+     "a",
+     "b",
+     "c"
+    ]
+   },
+   "ops": [
+    [
+     "m",
+     [
+      "xs"
+     ],
+     [
+      1,
+      0
+     ]
+    ]
+   ],
+   "error": "unresolvable_path"
+  },
+  {
+   "name": "m that is not a permutation is refused",
+   "value": {
+    "xs": [
+     "a",
+     "b"
+    ]
+   },
+   "ops": [
+    [
+     "m",
+     [
+      "xs"
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   ],
+   "error": "invalid_op"
+  },
+  {
+   "name": "reserved segment __proto__ is refused",
+   "value": {
+    "a": {}
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "a",
+      "__proto__",
+      "x"
+     ],
+     1
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "reserved segment constructor is refused",
+   "value": {
+    "a": {}
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "constructor"
+     ],
+     1
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "negative index is refused",
+   "value": {
+    "xs": [
+     1
+    ]
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "xs",
+      -1
+     ],
+     2
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "string index into an array is refused",
+   "value": {
+    "xs": [
+     1
+    ]
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "xs",
+      "0"
+     ],
+     2
+    ]
+   ],
+   "error": "unsafe_path"
+  },
+  {
+   "name": "unknown verb is refused",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "x",
+     [
+      "a"
+     ],
+     2
+    ]
+   ],
+   "error": "invalid_op"
+  },
+  {
+   "name": "wrong arity is refused",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "s",
+     [
+      "a"
+     ]
+    ]
+   ],
+   "error": "invalid_op"
+  },
+  {
+   "name": "path that is not an array is refused",
+   "value": {
+    "a": 1
+   },
+   "ops": [
+    [
+     "s",
+     "a",
+     2
+    ]
+   ],
+   "error": "invalid_op"
+  },
+  {
+   "name": "ops apply in order",
+   "value": {
+    "log": "",
+    "xs": []
+   },
+   "ops": [
+    [
+     "a",
+     [
+      "log"
+     ],
+     "one"
+    ],
+    [
+     "p",
+     [
+      "xs"
+     ],
+     0,
+     0,
+     [
+      "x"
+     ]
+    ],
+    [
+     "a",
+     [
+      "log"
+     ],
+     ",two"
+    ],
+    [
+     "d",
+     [
+      "xs",
+      0
+     ]
+    ]
+   ],
+   "result": {
+    "log": "one,two",
+    "xs": []
+   }
+  }
+ ]
+}

@@ -5,11 +5,35 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Details {
+    /// Source-issued continuity, not a host grant, PID or native Session identity.
+    pub interaction_runtime_generation:
+        Option<oqto_protocol::runtime_interactions::RuntimeGeneration>,
     pub model: Option<Model>,
+    #[serde(default, deserialize_with = "context_usage")]
+    pub context_usage: Option<ContextUsage>,
     pub thinking_level: Option<String>,
     pub has_pending_messages: Option<bool>,
     pub pending_message_count: Option<u32>,
 }
+/// Current source-owned estimate, paired with the source's (possibly routed) window.
+/// Null tokens are unknown, not zero; counts above the window remain truthful.
+#[derive(Clone, Deserialize, Serialize)]
+pub(super) struct ContextUsage {
+    tokens: Option<u64>,
+    #[serde(rename(deserialize = "contextWindow"))]
+    context_window: u64,
+}
+
+/// Malformed optional telemetry must not discard an otherwise valid bound snapshot.
+fn context_usage<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<ContextUsage>, D::Error> {
+    let raw = Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value::<ContextUsage>(raw)
+        .ok()
+        .filter(|usage| usage.context_window > 0))
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub(super) struct Model {
     provider: String,
@@ -28,6 +52,7 @@ impl Model {
 impl TuiObserver {
     pub fn details(&self) -> Value {
         json!({"model":self.details.model.as_ref().filter(|m|m.valid()),
+            "context_usage":self.details.context_usage,
             "thinking_level":self.details.thinking_level.as_ref().filter(|s|s.len() <= 32),
             "queue_pending":self.details.has_pending_messages.or(self.details.pending_message_count.map(|n|n > 0)),
             "queue_count":self.details.pending_message_count})
@@ -35,19 +60,29 @@ impl TuiObserver {
     /// This uses only advertised observation commands, not a native input lease.
     pub async fn model_options(&mut self) -> Result<Value> {
         self.snapshot_state().await?;
-        let models = self.observe_options("get_available_models").await?;
-        let list = models
-            .get("scoped")
-            .and_then(Value::as_array)
-            .filter(|m| !m.is_empty())
-            .or_else(|| models.get("models").and_then(Value::as_array))
-            .context("Model catalog unavailable")?;
-        ensure!(list.len() <= 2048, "Model catalog exceeds bound");
-        let models: Vec<Model> = list
-            .iter()
-            .filter_map(|v| serde_json::from_value::<Model>(v.clone()).ok())
-            .filter(Model::valid)
-            .collect();
+        let raw = self.observe_options("get_available_models").await?;
+        // Both scopes travel: the Session's scoped set stays the primary catalog
+        // (wire-compatible), and the full configured set rides along as an optional
+        // additive field so an operator can switch to any configured model. Each
+        // list is bounded and validated independently; malformed entries are
+        // dropped, never guessed into the other scope.
+        fn parse(list: Option<&Vec<Value>>) -> anyhow::Result<Vec<Model>> {
+            let list = list.context("Model catalog unavailable")?;
+            ensure!(list.len() <= 2048, "Model catalog exceeds bound");
+            Ok(list
+                .iter()
+                .filter_map(|v| serde_json::from_value::<Model>(v.clone()).ok())
+                .filter(Model::valid)
+                .collect())
+        }
+        let scoped = parse(raw.get("scoped").and_then(Value::as_array)).ok();
+        let configured = parse(raw.get("models").and_then(Value::as_array));
+        let scoped_present = scoped.as_ref().is_some_and(|s| !s.is_empty());
+        let models = if scoped_present {
+            scoped.unwrap()
+        } else {
+            configured?
+        };
         let thinking = if self
             .commands
             .iter()
@@ -72,8 +107,20 @@ impl TuiObserver {
             Vec::new()
         };
         self.snapshot_state().await?;
+        // The rest of the configured catalog, deduped against the primary list.
+        // Empty when scoped already covers everything or no full list was reported.
+        let primary: std::collections::HashSet<(String, String)> = models
+            .iter()
+            .map(|m| (m.provider.clone(), m.id.clone()))
+            .collect();
+        let mut all_models = if scoped_present {
+            parse(raw.get("models").and_then(Value::as_array)).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        all_models.retain(|m| !primary.contains(&(m.provider.clone(), m.id.clone())));
         Ok(
-            json!({"models":models,"thinking_levels":thinking,"current":self.details(),
+            json!({"models":models,"all_models":all_models,"thinking_levels":thinking,"current":self.details(),
             "can_set_model":self.commands.iter().any(|c|c == "set_model"),
             "can_set_thinking":self.commands.iter().any(|c|c == "set_thinking_level")}),
         )

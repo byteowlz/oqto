@@ -19,7 +19,8 @@ SPEC.loader.exec_module(installer)
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='oqt-install-test-')
-        self.root = Path(self.temp.name)
+        # Resolved: macOS temporary directories live under the /var symlink.
+        self.root = Path(self.temp.name).resolve()
         self.upstream = self.root / 'upstream'
         self.snapshot = self.root / 'derivative'
         for tree in (self.upstream, self.snapshot):

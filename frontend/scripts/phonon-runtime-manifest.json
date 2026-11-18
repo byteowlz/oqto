@@ -1,0 +1,30 @@
+{
+	"version": "0.4.0",
+	"integrity": "sha512-008+bytDUgx2npm+KXJV4Quo8BTXeRVLiYkX4mXPcToy81RQ2cu3Vvi2bdRjFZdpyaWfDy574w4bIZnGqRd44g==",
+	"files": {
+		"LICENSE-APACHE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+		"LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+		"README.md": "af5d957f778815654d5dba4c9ba5f41c716b428aa319d2158f28b75410a81730",
+		"device.js": "b261780c034384efb013015012ba197738c06bf66ac54c909d7b67e2c26d446c",
+		"fetch.js": "fe28ae73b476a1b014098843335141efad3a943c98939a72d2d907ee4596582c",
+		"hub.js": "f6efff9bb477527b4ecd4cf617a3f6473dcea58e37763d431f582c7262bb19c3",
+		"index.d.ts": "59f724a65cee8ed59dfe7f248d4f19e47a659af384486e813ece257b2b23f608",
+		"index.js": "dabc1ed5598c0a89777d45fa652c2e7a974b4922fc0dd8ba3f5ce5cf13ddc567",
+		"package.json": "7ba121966b32a3740348e67b264939dd2d12786a61eee27fc4cf8fc2d8a6a4e1",
+		"simd.js": "002ae86d173038fe83449b623510c2e697f3837e3a9f39c2c7445525efd9fb3b",
+		"threads.js": "19782737d03b71e028b7924d80cd5d14820f23e28ca352e65975c1a0dfccea0f",
+		"wasm/phonon_tts.d.ts": "aa54c76efebc5e30eaf2f0d6f4f3c164b8634dadef42db55213bbd745f80977f",
+		"wasm/phonon_tts.js": "192214be708c85efec830788be5b4ff92ce21de19f8e592f947944a385357d2f",
+		"wasm/phonon_tts_bg.wasm": "5e3f7e8a16cea084691f6a077332217180b4a4be90ff561fb2e1e7c80ea9ede4",
+		"wasm/phonon_tts_bg.wasm.d.ts": "097a49e1fffccad49d1c801a9f4c2d5e7f943f1c71d812e594e4c69e347e5001",
+		"wasm/phonon_tts_simd_bg.wasm": "7da51b45b82c9e14f4ba47792aebe0b67d881c3e2ccfc1abc17c0e8951d33f15",
+		"wasm-threads/phonon_tts.d.ts": "2f53e34b5887eeef7925594414b83b621193ece57dfbe19870e6c31e5adcc0e1",
+		"wasm-threads/phonon_tts.js": "0fc05d3c2e4b697decd88dc4315e2c440f52a01bac1ca9f082e4c7c467000587",
+		"wasm-threads/phonon_tts_bg.wasm": "6ba9f6573e25921a0adeb7ebb8d16c66cffe64ed6bd39aeffccc6bbfcbeecedf",
+		"wasm-threads/phonon_tts_bg.wasm.d.ts": "5e3d4e267471473fbc086defa9aeffdad6ae051eed8e9ce79f4e9d4585bfebe8",
+		"wasm-threads/phonon_tts_simd_bg.wasm": "b73f321363a039763a9d63b26af38e0b585b07296fcb04df9bb23e486ff9f257",
+		"wasm-threads/snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.js": "cbdef38f2155f8f5b243bb6bf113706c1a26c911833b19de4bc85b9cccbab94f",
+		"wav.js": "ffe180a940387cf3e5259e68b0a052934b9860034d2f9c82527c986e132d9ce1",
+		"worker.js": "9bfcf650f5d2af09b22268233993395a7182aa50f1d0eb9c01ffa60febb9b632"
+	}
+}

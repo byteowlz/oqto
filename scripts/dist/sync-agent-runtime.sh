@@ -12,11 +12,15 @@
 #                              [--non-interactive (requires --skip-pi)]
 set -euo pipefail
 
+# Portable owner/group lookup: BSD stat has no -c, GNU stat has no -f %Su.
+_file_owner() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1" 2>/dev/null || id -un; }
+_file_group() { stat -c %G "$1" 2>/dev/null || stat -f %Sg "$1" 2>/dev/null || id -gn; }
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${MANIFEST:-$SCRIPT_DIR/../../dependencies.toml}"
 PI_VERSION=""
 EXT_REF=""
-EXT_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
+EXT_REPO="${PI_AGENT_EXTENSIONS_PUBLIC_URL:-https://github.com/byteowlz/pi-agent-extensions.git}"
 DO_PI=true
 DO_EXT=true
 NON_INTERACTIVE=false
@@ -68,7 +72,16 @@ err() { printf '[agent-sync] error: %s\n' "$*" >&2; }
 read_pin() {
   local key="$1"
   [[ -f "$MANIFEST" ]] || return 0
-  sed -n '/^\[external\]/,/^\[/{s/^'"$key"' *= *"\([^"]*\)".*/\1/p}' "$MANIFEST" | head -1
+  awk -v key="$key" '
+    /^\[external\]/ { inside = 1; next }
+    /^\[/           { inside = 0 }
+    inside && index($0, key " = \"") == 1 {
+      line = substr($0, length(key) + 4)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ' "$MANIFEST"
 }
 
 [[ -n "$PI_VERSION" ]] || PI_VERSION="$(read_pin pi)"
@@ -130,7 +143,7 @@ ext_cache() {
 install_ext_for_home() {
   local home="$1" src="$2"
   local owner
-  owner="$(stat -c '%U' "$home")" || return 1
+  owner="$(_file_owner "$home")" || return 1
 
   as_owner() {
     if [[ "$owner" == root ]]; then

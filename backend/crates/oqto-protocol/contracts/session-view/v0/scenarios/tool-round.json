@@ -1,0 +1,1047 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "tool-round",
+ "description": "One tool round: tool slot progress in pi.live, tool result entry, final answer.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "entry_kinds": [
+   "pi.user",
+   "pi.system",
+   "pi.assistant",
+   "pi.tool-result",
+   "pi.assistant"
+  ],
+  "receipts": {
+   "req-tool-1": [
+    "placed",
+    "done"
+   ]
+  },
+  "errors": {},
+  "idle": true
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c1",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-tool-1",
+    "input": {
+     "kind": "prompt",
+     "text": "Use the echo tool"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 2,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "turns": 0,
+       "first": 7
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Use the echo tool",
+          "timestamp": 1767225600024
+         }
+        ],
+        "kind": "pi.user",
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "7fb8a9b6b33a06fd5bfc35b21a34f86c0128cf9070ff04f34ef4de5dd83ea292"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-tool-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7,
+    "id": "c2"
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 3,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      1,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "system",
+          "content": "",
+          "toolsAdded": [
+           {
+            "name": "echo",
+            "description": "Return the given text.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "text": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "text"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "gate",
+            "description": "Wait until the fixture releases the named gate.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "name": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           }
+          ],
+          "timestamp": 1767225600041
+         }
+        ],
+        "kind": "pi.system",
+        "id": 10,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "3386ea668d749d729f0e36a29e1588a8f06f974834d1fb88a106d22a7ff68d53"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 4,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "c4ed3b5fc59c739ad270da17d2a178d1aabf0945a5587abd1f20bb6a8d2f82e8"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 5,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ],
+      [
+       {
+        "callId": "call_echo_1",
+        "name": "echo",
+        "taskId": 12,
+        "status": "pending"
+       }
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "turns"
+      ],
+      1
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1"
+      ],
+      {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 0,
+       "cacheWrite": 105,
+       "totalTokens": 110,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      2,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "toolCall",
+            "id": "call_echo_1",
+            "name": "echo",
+            "arguments": {
+             "text": "ping"
+            }
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 5,
+           "cacheRead": 0,
+           "cacheWrite": 105,
+           "totalTokens": 110,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 11,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "aa3cc2eb0eae522146daab3228d5e1774c0721c640e0c3b5549bd8e8e3fddd7d"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 6,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "running"
+     ]
+    ]
+   },
+   "value_sha256": "a473ff86012f97df07b3730c8354c5bb4556523a8e0145ba6994796eb5e6f3df"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 7,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "output"
+      ],
+      "echo:ping"
+     ]
+    ]
+   },
+   "value_sha256": "5d7b40b8b22d8bb948877e8588bae8b53188cd6e2306c840319ebb43634dfcbe"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 8,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "done"
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "entry"
+      ],
+      13
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "output"
+      ]
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      3,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "toolResult",
+          "toolCallId": "call_echo_1",
+          "toolName": "echo",
+          "content": [
+           {
+            "type": "text",
+            "text": "echo:ping"
+           }
+          ],
+          "isError": false,
+          "durationMs": 1,
+          "timestamp": 1767225600082
+         }
+        ],
+        "data": {
+         "diagnostics": []
+        },
+        "kind": "pi.tool-result",
+        "id": 13,
+        "conversationId": 1,
+        "byTaskId": 12
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "15a2f28e58774790dbe320fd55a5f197d170c1f434ee53aeb7b6b072ee5bdc11"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 9,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "taskId"
+      ],
+      14
+     ]
+    ]
+   },
+   "value_sha256": "589e14dd73c007eb076a491702feb0836423bb31020fada1dc934c239a20bc0a"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 10,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "074f4564b69a042187bd3bb572351602792c2d9de2b440ceb1a3347db8e5dd7d"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 11,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "output"
+      ],
+      10
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheRead"
+      ],
+      105
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheWrite"
+      ],
+      119
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "totalTokens"
+      ],
+      234
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      4,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "The tool said ping."
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 5,
+           "cacheRead": 105,
+           "cacheWrite": 14,
+           "totalTokens": 124,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "stop",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 15,
+        "conversationId": 1,
+        "byTaskId": 14
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "90bf5e7a9971d54db672af954d41d7cf87820fd6a27b441ec4c7162ae678e29d"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-tool-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 15
+   }
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "Use the echo tool",
+      "timestamp": 1767225600024
+     }
+    ],
+    "kind": "pi.user",
+    "id": 7,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "system",
+      "content": "",
+      "toolsAdded": [
+       {
+        "name": "echo",
+        "description": "Return the given text.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "text"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "gate",
+        "description": "Wait until the fixture releases the named gate.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "name"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "timestamp": 1767225600041
+     }
+    ],
+    "kind": "pi.system",
+    "id": 10,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "toolCall",
+        "id": "call_echo_1",
+        "name": "echo",
+        "arguments": {
+         "text": "ping"
+        }
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 0,
+       "cacheWrite": 105,
+       "totalTokens": 110,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 11,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "toolResult",
+      "toolCallId": "call_echo_1",
+      "toolName": "echo",
+      "content": [
+       {
+        "type": "text",
+        "text": "echo:ping"
+       }
+      ],
+      "isError": false,
+      "durationMs": 1,
+      "timestamp": 1767225600082
+     }
+    ],
+    "data": {
+     "diagnostics": []
+    },
+    "kind": "pi.tool-result",
+    "id": 13,
+    "conversationId": 1,
+    "byTaskId": 12
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "The tool said ping."
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 105,
+       "cacheWrite": 14,
+       "totalTokens": 124,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 15,
+    "conversationId": 1,
+    "byTaskId": 14
+   }
+  ],
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {},
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {
+     "faux/faux-1": {
+      "input": 0,
+      "output": 10,
+      "cacheRead": 105,
+      "cacheWrite": 119,
+      "totalTokens": 234,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     }
+    },
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Use the echo tool",
+     "timestamp": 1767225600024
+    }
+   ],
+   "kind": "pi.user",
+   "id": 7,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "system",
+     "content": "",
+     "toolsAdded": [
+      {
+       "name": "echo",
+       "description": "Return the given text.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "gate",
+       "description": "Wait until the fixture releases the named gate.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "timestamp": 1767225600041
+    }
+   ],
+   "kind": "pi.system",
+   "id": 10,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "toolCall",
+       "id": "call_echo_1",
+       "name": "echo",
+       "arguments": {
+        "text": "ping"
+       }
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 5,
+      "cacheRead": 0,
+      "cacheWrite": 105,
+      "totalTokens": 110,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 11,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "toolResult",
+     "toolCallId": "call_echo_1",
+     "toolName": "echo",
+     "content": [
+      {
+       "type": "text",
+       "text": "echo:ping"
+      }
+     ],
+     "isError": false,
+     "durationMs": 1,
+     "timestamp": 1767225600082
+    }
+   ],
+   "data": {
+    "diagnostics": []
+   },
+   "kind": "pi.tool-result",
+   "id": 13,
+   "conversationId": 1,
+   "byTaskId": 12
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "The tool said ping."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 5,
+      "cacheRead": 105,
+      "cacheWrite": 14,
+      "totalTokens": 124,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 15,
+   "conversationId": 1,
+   "byTaskId": 14
+  }
+ ]
+}

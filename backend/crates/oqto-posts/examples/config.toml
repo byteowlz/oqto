@@ -1,0 +1,31 @@
+# Explicit foreground configuration, disabled until the owner opts in.
+enabled = false
+database = "/tmp/oqto-posts-example/posts.db"
+socket_directory = "/tmp/oqto-posts-example/sockets"
+
+[policy]
+max_posts = 10000
+max_age_secs = 2592000
+posts_per_minute = 60
+
+[limits]
+max_connections = 64
+request_timeout_ms = 2000
+write_timeout_ms = 2000
+
+[[identities]]
+name = "reviewer"
+role = "agent"
+[identities.stamp]
+agent = "reviewer"
+workspace = "work"
+session = "public-session-1"
+route = "local"
+
+[[identities]]
+name = "owner"
+role = "owner"
+[identities.stamp]
+agent = "owner"
+workspace = "home"
+route = "local"

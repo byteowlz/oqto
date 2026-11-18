@@ -88,9 +88,35 @@ function sharedAncestors(path: string): void {
 	}
 }
 
+/** Resolve only root-owned symlinks inside root-owned directories, as the
+ * installer does: macOS keeps /var, /tmp and /etc as such links into
+ * /private, and no user can swap them. Every other symlink stays refused. */
+function resolveSystemLinks(path: string): string {
+	let resolved = "/";
+	const parts = path.split("/").filter(Boolean);
+	for (const [index, part] of parts.entries()) {
+		let candidate = join(resolved, part);
+		let meta: ReturnType<typeof lstatSync>;
+		try {
+			meta = lstatSync(candidate);
+		} catch {
+			return join(candidate, ...parts.slice(index + 1));
+		}
+		if (
+			meta.isSymbolicLink() &&
+			meta.uid === 0 &&
+			lstatSync(resolved).uid === 0
+		)
+			candidate = realpathSync(candidate);
+		resolved = candidate;
+	}
+	return resolved;
+}
+
 /** A managed directory: owned by us, and either exactly 0700 or merely not
  * group/world writable, matching the installer's distinction. */
-function privateDirectory(path: string, strict = true): string {
+function privateDirectory(requested: string, strict = true): string {
+	const path = resolveSystemLinks(requested);
 	sharedAncestors(path);
 	const meta = lstatSync(path);
 	if (
@@ -111,9 +137,13 @@ function ancestors(path: string): string[] {
 	return chain;
 }
 
+/** The shared temporary directory. Kept lexical for short socket paths; on
+ * macOS it is a root-owned link into /private, resolved for the checks. */
+const SHARED_TMP = "/var/tmp";
+
 /** /var/tmp is shared and sticky; it must be root- or self-owned. */
 function requireSharedParent(path: string): void {
-	const meta = lstatSync(path);
+	const meta = lstatSync(resolveSystemLinks(path));
 	if (!meta.isDirectory() || (meta.uid !== 0 && meta.uid !== getuid()))
 		fail("Unsafe IPC parent");
 	if ((meta.mode & 0o022) !== 0 && (meta.mode & 0o1000) === 0)
@@ -121,11 +151,12 @@ function requireSharedParent(path: string): void {
 }
 
 /** Short /var/tmp/qi<uid>-<key> symlink to the (possibly long) state dir so
- * confined control sockets stay under the 108-byte Unix limit. */
+ * confined control sockets stay under the Unix limit (108 bytes on Linux,
+ * 104 on macOS). */
 export function ipcAlias(
 	stateHome: string,
 	artifact: string,
-	parent = "/var/tmp",
+	parent = SHARED_TMP,
 ): string {
 	const target = join(realpathSync(stateHome), "oqt", "runtimes", artifact);
 	const key = createHash("sha256")
@@ -159,7 +190,7 @@ export function prepareState(options: {
 	const store = privateDirectory(join(root, "oqt"), false);
 	privateDirectory(join(store, "runtimes"));
 	const state = privateDirectory(join(store, "runtimes", artifact));
-	const ipcParent = options.ipcParent ?? "/var/tmp";
+	const ipcParent = options.ipcParent ?? SHARED_TMP;
 	requireSharedParent(ipcParent);
 	const alias = ipcAlias(root, artifact, ipcParent);
 	try {
@@ -182,8 +213,12 @@ export function prepareState(options: {
 	const shortProfile = join(alias, "p", key);
 	if (
 		Buffer.byteLength(
-			join(shortProfile, "control-00000000-0000-0000-0000-000000000000.sock"),
-		) >= 108
+			// The longest upstream socket name: server-<uuid>-<nonce>.sock.
+			join(
+				shortProfile,
+				"server-00000000-0000-0000-0000-000000000000-000000000000.sock",
+			),
+		) >= (process.platform === "darwin" ? 104 : 108)
 	)
 		fail("Installed profile exceeds Unix socket limit");
 	return {

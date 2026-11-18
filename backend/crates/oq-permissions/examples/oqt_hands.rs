@@ -1,10 +1,17 @@
 //! Private local ExecutionEnv transport launcher. No unrestricted fallback.
 //! The trusted owner supplies a private spec; model tool arguments cannot alter it.
+//!
+//! Linux: bwrap with seccomp and Landlock; the PID namespace ends every
+//! descendant. macOS: a Seatbelt profile compiled by oqto-sandbox, with this
+//! launcher staying the supervising parent and reaping the launch's marked
+//! processes (see `oqto_sandbox::process_tree`). There is no seccomp on macOS.
+//!
+//! `oqt_hands reap DIR` (macOS) stops and confirms every process carrying the
+//! marker in DIR, for the guard's own confirmation after a stop.
+mod oqt_launch;
+
 use anyhow::{Context, Result, ensure};
-use oqto_sandbox::{
-    NetworkConfig, NetworkMode, SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command,
-    configure_bwrap_pre_exec,
-};
+use oqto_sandbox::SandboxConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -13,7 +20,9 @@ use std::path::PathBuf;
 struct HandsSpec {
     workspace: PathBuf,
     daemon: PathBuf,
-    bpf: PathBuf,
+    /// Compiled seccomp filter: required on Linux, absent on macOS.
+    #[serde(default)]
+    bpf: Option<PathBuf>,
     protected_roots: Vec<PathBuf>,
     /// Operator-approved extra resources, compiled by the guard from active
     /// grants. Never derived from model arguments without approval.
@@ -23,10 +32,17 @@ struct HandsSpec {
     write_paths: Vec<PathBuf>,
     #[serde(default)]
     network: bool,
-    /// Ceiling deny roots: mounted empty so tools can never touch them, even
-    /// inside the workspace, an approved grant or a pre-approved tree.
+    /// Ceiling deny roots: mounted empty (Linux) or unreadable (macOS) so
+    /// tools can never touch them, even inside the workspace, an approved
+    /// grant or a pre-approved tree.
     #[serde(default)]
     mask_paths: Vec<PathBuf>,
+    /// macOS: directory holding the launch marker files.
+    #[serde(default)]
+    marker: Option<PathBuf>,
+    /// macOS: private TMPDIR/HOME (Seatbelt has no private /tmp).
+    #[serde(default)]
+    scratch: Option<PathBuf>,
 }
 
 /// A grant may neither sit inside a protected root nor contain one.
@@ -34,32 +50,20 @@ fn overlaps(path: &std::path::Path, protected: &std::path::Path) -> bool {
     path.starts_with(protected) || protected.starts_with(path)
 }
 
-#[cfg(target_os = "linux")]
-fn main() -> Result<()> {
-    use std::os::unix::{fs::MetadataExt, process::CommandExt};
-    tracing_subscriber::fmt()
-        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
-        .with_writer(std::io::stderr)
-        .init();
-    let mut args = std::env::args_os().skip(1);
-    let spec_path = PathBuf::from(args.next().context("private hands spec required")?);
-    let metadata = std::fs::symlink_metadata(&spec_path)?;
-    ensure!(
-        metadata.is_file()
-            && metadata.mode() & 0o077 == 0
-            && metadata.uid() == std::fs::metadata("/proc/self")?.uid(),
-        "hands spec must be an owned private regular file"
-    );
-    let parent = spec_path.parent().context("spec parent required")?;
-    let directory = std::fs::symlink_metadata(parent)?;
-    ensure!(
-        directory.is_dir() && directory.mode() & 0o077 == 0 && directory.uid() == metadata.uid(),
-        "hands spec parent must be private and owned consistently"
-    );
+struct Launch {
+    config: SandboxConfig,
+    workspace: PathBuf,
+    daemon: PathBuf,
+    payload: Vec<String>,
+    protected_roots: Vec<PathBuf>,
+    spec: HandsSpec,
+}
+
+fn prepare(spec_path: PathBuf, args: impl Iterator<Item = std::ffi::OsString>) -> Result<Launch> {
     // The parent's actor boundary is supplied by the runner. This transport is
     // not a replacement for multi-user Account authentication.
-    ensure!(metadata.len() <= 16384, "hands spec too large");
-    let spec: HandsSpec = serde_json::from_slice(&std::fs::read(&spec_path)?)?;
+    let spec: HandsSpec =
+        serde_json::from_slice(&oqt_launch::read_private_spec(&spec_path, 16384)?)?;
     ensure!(
         !spec.protected_roots.is_empty() && spec.protected_roots.len() <= 32,
         "protected roots required and bounded"
@@ -72,6 +76,8 @@ fn main() -> Result<()> {
     let daemon = spec.daemon.canonicalize()?;
     ensure!(daemon.is_file(), "daemon must be a file");
     let mut config = SandboxConfig::strict();
+    // Hosts without an Oqto installation lack /etc/oqto and friends.
+    config.prune_absent_system_denies();
     config.allow_read.clear();
     config.allow_write.clear();
     config.extra_ro_bind = vec![daemon.display().to_string()];
@@ -81,10 +87,8 @@ fn main() -> Result<()> {
     // history shards inside the owner's ~/.pi or ~/.claude (preserve-first).
     config.scoped_paths.clear();
     config.isolate_network = true;
-    config.seccomp_mode = SeccompMode::Enforce;
-    config.seccomp_bpf_path = Some(spec.bpf.canonicalize()?.display().to_string());
     let mut protected_roots = Vec::new();
-    for path in spec.protected_roots {
+    for path in &spec.protected_roots {
         let protected = path
             .canonicalize()
             .with_context(|| format!("resolving protected root {}", path.display()))?;
@@ -176,16 +180,17 @@ fn main() -> Result<()> {
                 continue;
             }
         }
-        // Deny entries are mounted empty (tmpfs), so a masked subpath
-        // disappears from the workspace, grants and pre-approved trees alike.
+        // Deny entries are mounted empty (tmpfs) on Linux and unreadable on
+        // macOS, so a masked subpath is unusable in the workspace, grants and
+        // pre-approved trees alike.
         config.deny_read.push(masked.display().to_string());
         config.deny_write.push(masked.display().to_string());
     }
     if spec.network {
         config.isolate_network = false;
-        config.network = Some(NetworkConfig {
-            mode: NetworkMode::Open,
-            ..NetworkConfig::default()
+        config.network = Some(oqto_sandbox::NetworkConfig {
+            mode: oqto_sandbox::NetworkMode::Open,
+            ..oqto_sandbox::NetworkConfig::default()
         });
     }
     let payload: Vec<String> = args
@@ -202,6 +207,54 @@ fn main() -> Result<()> {
             && payload[2].bytes().all(|c| c.is_ascii_hexdigit()),
         "only framed daemon startup allowed"
     );
+    Ok(Launch {
+        config,
+        workspace,
+        daemon,
+        payload,
+        protected_roots,
+        spec,
+    })
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .with_writer(std::io::stderr)
+        .init();
+    let mut args = std::env::args_os().skip(1);
+    let first = args.next().context("private hands spec required")?;
+    if first == "reap" {
+        let directory = PathBuf::from(args.next().context("marker directory required")?);
+        ensure!(args.next().is_none(), "unexpected reap arguments");
+        return reap(&directory);
+    }
+    launch(prepare(PathBuf::from(first), args)?)
+}
+
+#[cfg(target_os = "linux")]
+fn launch(launch: Launch) -> Result<()> {
+    use oqto_sandbox::{
+        SandboxStdin, SeccompMode, build_sandbox_command, configure_bwrap_pre_exec,
+    };
+    use std::os::unix::process::CommandExt;
+    let Launch {
+        mut config,
+        workspace,
+        daemon,
+        payload,
+        spec,
+        ..
+    } = launch;
+    ensure!(
+        spec.marker.is_none() && spec.scratch.is_none(),
+        "macOS-only hands fields on Linux"
+    );
+    let bpf = spec
+        .bpf
+        .context("Linux hands require a compiled seccomp filter")?;
+    config.seccomp_mode = SeccompMode::Enforce;
+    config.seccomp_bpf_path = Some(bpf.canonicalize()?.display().to_string());
     let mut command = build_sandbox_command(
         &config,
         &workspace,
@@ -219,7 +272,70 @@ fn main() -> Result<()> {
     Err(command.exec()).context("executing confined hands")
 }
 
-#[cfg(not(target_os = "linux"))]
-fn main() -> Result<()> {
-    anyhow::bail!("oqt hands currently require Linux; no fallback")
+#[cfg(target_os = "linux")]
+fn reap(_: &std::path::Path) -> Result<()> {
+    anyhow::bail!("reap is macOS-only; Linux hands end with their PID namespace")
+}
+
+#[cfg(target_os = "macos")]
+fn launch(launch: Launch) -> Result<()> {
+    use oqto_sandbox::process_tree::{Marker, supervise};
+    let Launch {
+        mut config,
+        workspace,
+        daemon,
+        payload,
+        mut protected_roots,
+        spec,
+    } = launch;
+    ensure!(
+        spec.bpf.is_none(),
+        "there is no seccomp on macOS; refusing a filter it would not apply"
+    );
+    let marker = Marker::open(
+        spec.marker
+            .as_deref()
+            .context("macOS hands require a launch marker")?,
+    )?;
+    protected_roots.push(workspace.clone());
+    let scratch = oqt_launch::scratch(spec.scratch.as_ref(), &protected_roots)?;
+    oqt_launch::seatbelt_compatible(&mut config);
+    config.allow_write.push(scratch.display().to_string());
+    let mut command =
+        oqt_launch::seatbelt_command(&config, &workspace, &marker, &daemon, &payload)?;
+    command
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &scratch)
+        .env("TMPDIR", &scratch)
+        .env("LANG", "C.UTF-8")
+        .env("SHELL", "/bin/bash");
+    let code = supervise(command, &marker, std::time::Duration::from_millis(500))?;
+    std::process::exit(code)
+}
+
+#[cfg(target_os = "macos")]
+fn reap(directory: &std::path::Path) -> Result<()> {
+    use oqto_sandbox::process_tree::{Marker, reap};
+    let report = reap(&Marker::open(directory)?, std::time::Duration::from_secs(3))?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "confirmed": report.confirmed(),
+            "killed": report.killed,
+            "remaining": report.remaining,
+            "unverifiable": report.unverifiable,
+        })
+    );
+    ensure!(report.confirmed(), "launch not confirmed stopped");
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn launch(_: Launch) -> Result<()> {
+    anyhow::bail!("oqt hands require Linux or macOS; no fallback")
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn reap(_: &std::path::Path) -> Result<()> {
+    anyhow::bail!("oqt hands require Linux or macOS")
 }

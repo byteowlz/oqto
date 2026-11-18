@@ -1,0 +1,6 @@
+root = Stack([card])
+card = Card([head, form])
+head = CardHeader("Pick a sandbox profile", "For the new workspace")
+form = Form("profile", btns, [FormControl("Profile", choice)])
+choice = RadioGroup("profile", [RadioItem("Minimal", "Home readable, /tmp writable", "minimal"), RadioItem("Strict", "Workspace only, no network", "strict")], "minimal")
+btns = Buttons([Button("Create workspace", @Answer({profile: $profile})), Button("Cancel", @Answer({cancelled: true}), "tertiary")])

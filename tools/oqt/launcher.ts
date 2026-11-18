@@ -82,7 +82,12 @@ if (
 		"oqt requires a real terminal (use --smoke only for qualification)",
 	);
 const directory = process.env.OQT_SERVER_DIR;
-if (!directory || !process.env.OQT_CARRIER || !process.env.OQT_SECCOMP_BPF)
+// Linux confines with a compiled seccomp filter; there is none on macOS.
+if (
+	!directory ||
+	!process.env.OQT_CARRIER ||
+	(process.platform !== "darwin" && !process.env.OQT_SECCOMP_BPF)
+)
 	throw new Error("Missing protected launcher context; no fallback");
 const packageRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const plugin = join(packageRoot, "examples/plugins/oq-permissions");

@@ -607,7 +607,7 @@ pub async fn list_sessions(
     user_home: &Path,
     workspace: Option<&str>,
 ) -> Result<Vec<OqtoLogSessionRow>> {
-    list_sessions_from(list_db_paths(user_home), workspace).await
+    list_sessions_from(list_db_paths(user_home), workspace, None).await
 }
 
 /// List sessions for an explicit set of workspaces.
@@ -627,7 +627,28 @@ pub async fn list_sessions_for_workspaces(
         })
         .filter(|db| db.exists())
         .collect();
-    list_sessions_from(dbs, None).await
+    list_sessions_from(dbs, None, None).await
+}
+
+/// Resource exhaustion is not proof that canonical source identity is corrupt.
+#[derive(Debug)]
+pub struct CatalogRowBudget;
+impl std::fmt::Display for CatalogRowBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Catalog row budget exceeded")
+    }
+}
+impl std::error::Error for CatalogRowBudget {}
+
+/// Read a complete bounded catalog from caller-selected canonical shard paths.
+/// Exceeding the row budget refuses the entire result, never a partial identity view.
+/// Uses the same fixed, cancellation-safe read workers as ordinary catalog reads.
+pub async fn list_sessions_in_shards_bounded(
+    dbs: Vec<PathBuf>,
+    max_rows: usize,
+) -> Result<Vec<OqtoLogSessionRow>> {
+    anyhow::ensure!(max_rows > 0, "Catalog row budget must be positive");
+    list_sessions_from(dbs, None, Some(max_rows)).await
 }
 
 // Schema-aware, read-only compatibility with retained migration prefixes.
@@ -648,9 +669,18 @@ async fn session_columns(
 async fn list_sessions_from(
     dbs: Vec<PathBuf>,
     workspace: Option<&str>,
+    max_rows: Option<usize>,
 ) -> Result<Vec<OqtoLogSessionRow>> {
     let mut sessions = Vec::new();
     for db in dbs {
+        let row_limit = max_rows
+            .map(|limit| {
+                format!(
+                    " LIMIT {}",
+                    limit.saturating_sub(sessions.len()).saturating_add(1)
+                )
+            })
+            .unwrap_or_default();
         // Catalog reads never migrate or bootstrap a store. Writers own schema
         // initialization, including explicit header-only native discovery.
         let mut shard = native_source::reader::ReadShard::open(&db).await?;
@@ -701,7 +731,7 @@ async fn list_sessions_from(
 
         let rows = if let Some(workspace) = workspace {
             let query = format!(
-                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       {has_parent_expr}\n                       OR {native_identity_expr}\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE (s.workspace_id = ? OR s.workspace_id LIKE ?)\n                   AND (\n                       {has_parent_expr}\n                       OR {native_identity_expr}\n                       OR EXISTS (\n                           SELECT 1\n                           FROM oqto_log_turns t\n                           JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                           WHERE t.session_id = s.session_id\n                       )\n                   )\n                 ORDER BY s.updated_at DESC{row_limit}",
                 base_select
             );
             sqlx::query_as::<
@@ -728,7 +758,7 @@ async fn list_sessions_from(
             .await?
         } else {
             let query = format!(
-                "{}\n                 WHERE {has_parent_expr}\n                    OR {native_identity_expr}\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC",
+                "{}\n                 WHERE {has_parent_expr}\n                    OR {native_identity_expr}\n                    OR EXISTS (\n                        SELECT 1\n                        FROM oqto_log_turns t\n                        JOIN oqto_log_messages m ON m.turn_id = t.turn_id\n                        WHERE t.session_id = s.session_id\n                    )\n                 ORDER BY s.updated_at DESC{row_limit}",
                 base_select
             );
             sqlx::query_as::<
@@ -752,6 +782,10 @@ async fn list_sessions_from(
             .fetch_all(&mut *pool)
             .await?
         };
+        anyhow::ensure!(
+            max_rows.is_none_or(|limit| sessions.len().saturating_add(rows.len()) <= limit),
+            CatalogRowBudget
+        );
         shard.finish().await?;
 
         sessions.extend(rows.into_iter().map(|row| OqtoLogSessionRow {

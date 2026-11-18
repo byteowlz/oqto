@@ -252,6 +252,8 @@ mod hands;
 mod managed_media;
 #[path = "personal_host/media_cache.rs"]
 mod media_cache;
+#[path = "personal_host/session_files.rs"]
+mod session_files;
 #[path = "personal_host/sessions.rs"]
 mod sessions;
 #[path = "personal_host/split_source.rs"]

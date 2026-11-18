@@ -10,9 +10,13 @@ authors.workspace = true
 zeroize = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings", "chrono-impl", "serde-json-impl"] }
+
+[dev-dependencies]
+sha2.workspace = true
 
 [lints]
 workspace = true

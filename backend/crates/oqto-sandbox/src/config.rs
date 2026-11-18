@@ -1777,6 +1777,21 @@ impl SandboxConfig {
         }
     }
 
+    /// Drop deny entries for absolute system paths that do not exist here.
+    ///
+    /// The strict profile denies paths an Oqto installation has (`/etc/oqto`,
+    /// `/run/oqto`, the systemctl binaries). bwrap cannot mount over a path
+    /// that is absent below a read-only system bind such as `/etc`, so on a
+    /// host without Oqto installed every strict launch failed with "Can't
+    /// mkdir /etc/oqto". An absent system path holds nothing to hide, and
+    /// confined code cannot create it below the read-only bind. Home entries
+    /// (`~/...`) are kept: home itself is not bound, and their mountpoints
+    /// can be created.
+    pub fn prune_absent_system_denies(&mut self) {
+        self.deny_read
+            .retain(|path| path.starts_with('~') || Path::new(path).exists());
+    }
+
     /// Create a strict sandbox config (most restrictive).
     pub fn strict() -> Self {
         let profile = SandboxProfile::strict();
@@ -3604,6 +3619,21 @@ mod tests {
             WORKSPACE_CACHE_ENV
                 .iter()
                 .any(|(var, _)| *var == "CARGO_HOME")
+        );
+    }
+
+    #[test]
+    fn absent_system_denies_are_pruned_and_home_entries_kept() {
+        let mut config = SandboxConfig::strict();
+        config.deny_read = vec![
+            "/nonexistent-oqto-sandbox-test/etc".to_string(),
+            "~/.ssh".to_string(),
+            "/".to_string(),
+        ];
+        config.prune_absent_system_denies();
+        assert_eq!(
+            config.deny_read,
+            vec!["~/.ssh".to_string(), "/".to_string()]
         );
     }
 

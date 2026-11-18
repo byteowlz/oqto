@@ -58,6 +58,11 @@ impl AuthorityHealth {
 const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 const QUIESCENCE: Duration = Duration::from_secs(30);
 const NUDGE_DEDUPE_WINDOW: Duration = Duration::from_secs(10);
+// A failed authority check retries the full header inventory and shard probe.
+// Repeated failures back off so a persistently slow host cannot be pinned in a
+// rescan loop (oqto-6qff); one success resets to the fast first retry.
+const RETRY_MIN: Duration = Duration::from_secs(5);
+const RETRY_MAX: Duration = Duration::from_secs(60);
 static HEADER_SCANNER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Handle for nudging the ingest task about a session that was just read.
@@ -260,8 +265,9 @@ async fn run_at(
 ) {
     let mut tick = tokio::time::interval(SWEEP_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut retry = tokio::time::interval(Duration::from_secs(5));
-    retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut retry_delay = RETRY_MIN;
+    let retry = tokio::time::sleep(RETRY_MIN);
+    tokio::pin!(retry);
     let mut recent: HashMap<String, Instant> = HashMap::new();
     let mut discovery = initial.map(DiscoveryReadJob::new);
     let mut epoch = 0u64;
@@ -322,8 +328,10 @@ async fn run_at(
                 }
                 legacy = list_session_files(&home).into();
             }
-            _ = retry.tick(), if (*status.borrow() == DiscoveryReadiness::Failed || health.unavailable()) && discovery.is_none() => {
+            _ = &mut retry, if (*status.borrow() == DiscoveryReadiness::Failed || health.unavailable()) && discovery.is_none() => {
                 if let Some(source) = &source { discovery = Some(Discovery::start_job(source.clone(), health.generation())); }
+                retry.as_mut().reset(tokio::time::Instant::now() + retry_delay);
+                retry_delay = (retry_delay * 2).min(RETRY_MAX);
             }
             event = async { match &mut discovery { Some(work) => work.wait().await, None => std::future::pending().await } } => {
                 discovery = None;
@@ -334,11 +342,29 @@ async fn run_at(
                             continue;
                         }
                         health.verified.store(generation, std::sync::atomic::Ordering::SeqCst);
+                        retry_delay = RETRY_MIN;
                         // Retry may follow a committed pin whose post-write
                         // verification failed. Never expose an old cached list.
                         crate::history_read::invalidate_catalog(&home).await;
                         status.send_replace(if pass.is_some() { DiscoveryReadiness::Discovering } else { DiscoveryReadiness::Ready });
                         discovery = pass.and_then(|pass| pass.next_job(epoch, None));
+                    }
+                    DiscoveryEvent::Scanned { pass, result } => {
+                        if health.unavailable() {
+                            status.send_replace(DiscoveryReadiness::Failed);
+                            continue;
+                        }
+                        match result {
+                            Ok(()) => {
+                                debug!("Native header inventory progress: {} headers, scanning={}", pass.scan.as_ref().map_or(pass.headers.len(), |scan| scan.headers.len()), pass.scan.is_some());
+                                discovery = pass.next_job(epoch, None);
+                                if discovery.is_none() { status.send_replace(DiscoveryReadiness::Ready); }
+                            }
+                            Err(error) => {
+                                status.send_replace(DiscoveryReadiness::Failed);
+                                warn!("Native header inventory failed: {error:#}");
+                            }
+                        }
                     }
                     DiscoveryEvent::Started { result: Err(error), .. } => {
                         status.send_replace(DiscoveryReadiness::Failed);
@@ -422,6 +448,10 @@ enum DiscoveryEvent {
         generation: u64,
         result: anyhow::Result<Option<Discovery>>,
     },
+    Scanned {
+        pass: Discovery,
+        result: anyhow::Result<()>,
+    },
     Prepared {
         pass: Discovery,
         header: crate::personal_source::NativeHeader,
@@ -459,8 +489,8 @@ fn discovery_defaults(home: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 fn discovery_headers(
     source: &crate::personal_source::PersonalSource,
+    headers: Vec<crate::personal_source::NativeHeader>,
 ) -> anyhow::Result<Vec<crate::personal_source::NativeHeader>> {
-    let headers = source.headers()?;
     let mut counts = HashMap::new();
     for header in &headers {
         *counts.entry(header.external_id.clone()).or_insert(0usize) += 1;
@@ -496,6 +526,8 @@ fn discovery_headers(
 
 struct Discovery {
     home: PathBuf,
+    source: crate::personal_source::PersonalSource,
+    scan: Option<crate::personal_source::HeaderScan>,
     headers: std::vec::IntoIter<crate::personal_source::NativeHeader>,
     inventory: ops::native_source::DiscoveryBatch,
 }
@@ -517,35 +549,63 @@ impl Discovery {
     async fn start(
         source: &crate::personal_source::PersonalSource,
     ) -> anyhow::Result<Option<Self>> {
-        let owned = source.clone();
-        let snapshot = async {
-            let permit = HEADER_SCANNER.acquire().await?;
-            tokio::task::spawn_blocking(move || {
-                // Cancellation cannot return the permit while this job is still
-                // doing filesystem work; retries cannot fan out scanner threads.
-                let _permit = permit;
-                discovery_headers(&owned)
-            })
-            .await?
-        };
-        let headers = tokio::time::timeout(Duration::from_secs(5), snapshot)
-            .await
-            .map_err(|_| anyhow::anyhow!("Native header inventory deadline exceeded"))??;
+        // A complete shard probe still fences authority. Header discovery is
+        // cooperative work, not authority failure just because the disk is cold.
         let inventory = ops::native_source::DiscoveryBatch::open(&source.home).await?;
-        if headers.is_empty() {
-            return Ok(None);
-        }
         Ok(Some(Self {
             home: source.home.clone(),
-            headers: headers.into_iter(),
+            source: source.clone(),
+            scan: Some(crate::personal_source::HeaderScan::default()),
+            headers: Vec::new().into_iter(),
             inventory,
         }))
+    }
+    async fn scan_next(&mut self) -> anyhow::Result<()> {
+        let Some(mut scan) = self.scan.take() else {
+            return Ok(());
+        };
+        let source = self.source.clone();
+        let permit = HEADER_SCANNER.acquire().await?;
+        let (scan, headers) = tokio::task::spawn_blocking(move || {
+            // Cancellation cannot release the scanner permit while filesystem
+            // work still runs. A chunk yields its owned cursor, never restarts.
+            let _permit = permit;
+            #[cfg(not(test))]
+            let budget = Duration::from_secs(5);
+            #[cfg(test)]
+            let budget = Duration::from_millis(
+                source
+                    .scan_budget_ms
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
+            if scan.advance(&source, 16, budget)? {
+                // Ambiguity is global: do not publish fresh adoptions from a
+                // partial scan before checking the full native/default tree.
+                let headers = discovery_headers(&source, std::mem::take(&mut scan.headers))?;
+                Ok::<_, anyhow::Error>((None, Some(headers)))
+            } else {
+                Ok((Some(scan), None))
+            }
+        })
+        .await??;
+        self.scan = scan;
+        if let Some(headers) = headers {
+            self.headers = headers.into_iter();
+        }
+        Ok(())
     }
     fn next_job(
         mut self,
         epoch: u64,
         retry: Option<crate::personal_source::NativeHeader>,
     ) -> Option<DiscoveryReadJob> {
+        if self.scan.is_some() {
+            return Some(DiscoveryReadJob::new(async move {
+                let result = self.scan_next().await;
+                tokio::task::yield_now().await;
+                DiscoveryEvent::Scanned { pass: self, result }
+            }));
+        }
         let header = retry.or_else(|| self.headers.next())?;
         Some(DiscoveryReadJob::new(async move {
             let result = self.inventory.prepare(&header.external_id).await;
@@ -565,6 +625,9 @@ async fn discover(
     user: &str,
 ) -> anyhow::Result<()> {
     if let Some(mut pass) = Discovery::start(source).await? {
+        while pass.scan.is_some() {
+            pass.scan_next().await?;
+        }
         for header in pass.headers {
             let prepared = pass.inventory.prepare(&header.external_id).await?;
             pass.inventory
@@ -887,6 +950,10 @@ async fn ingest_file(
 }
 
 #[cfg(test)]
+#[path = "jsonl_ingest/discovery_tests.rs"]
+mod discovery_tests;
+
+#[cfg(test)]
 mod tests {
     #[tokio::test]
     async fn dropped_discovery_job_releases_its_owned_read_work() -> anyhow::Result<()> {
@@ -944,6 +1011,201 @@ mod tests {
     }
     use super::*;
 
+    fn process_cpu() -> Duration {
+        // SAFETY: getrusage only writes the provided, fully owned struct.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let time = |t: libc::timeval| {
+            Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64)
+        };
+        time(usage.ru_utime) + time(usage.ru_stime)
+    }
+
+    /// oqto-6qff end to end: a personal host with 230 Workspace shards and
+    /// many already-pinned native Sessions must finish its discovery pass and go
+    /// idle quickly, with history answering well under two seconds. Before the
+    /// fix every pinned Session re-attached all shards twice per sweep.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn pinned_discovery_over_230_shards_reaches_ready_and_goes_idle() -> anyhow::Result<()> {
+        const WORKSPACES: usize = 230;
+        const HEADERS: usize = 1200;
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        let (home, native, work, sockets) = (
+            root.join("service"),
+            root.join("native/.pi/agent/sessions"),
+            root.join("work"),
+            root.join("sockets"),
+        );
+        for path in [&home, &native, &work, &sockets] {
+            std::fs::create_dir_all(path)?;
+        }
+        let workspaces: Vec<PathBuf> = (0..WORKSPACES)
+            .map(|n| {
+                let path = work.join(format!("repo-{n}"));
+                std::fs::create_dir_all(&path)?;
+                std::fs::create_dir_all(
+                    native.join(oqto_pi::session_files::cwd_to_safe_dirname(&path)),
+                )?;
+                Ok(path)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        for n in 0..HEADERS {
+            let cwd = &workspaces[n % WORKSPACES];
+            let id = format!("native-{n}");
+            std::fs::write(
+                native
+                    .join(oqto_pi::session_files::cwd_to_safe_dirname(cwd))
+                    .join(format!("2026-10-19_{id}.jsonl")),
+                format!(
+                    "{}\nNOT JSON BODY: header discovery only\n",
+                    serde_json::json!({"type":"session","id":id,"cwd":cwd})
+                ),
+            )?;
+        }
+        let source = std::sync::Arc::new(crate::personal_source::PersonalSource::new(
+            home.clone(),
+            native,
+            sockets,
+            vec![work],
+        )?);
+        let headers = source.headers()?;
+        assert_eq!(headers.len(), HEADERS);
+        // Pin every header in its Workspace shard, as on a long-running host.
+        let mut by_workspace: HashMap<String, Vec<&crate::personal_source::NativeHeader>> =
+            HashMap::new();
+        for header in &headers {
+            by_workspace
+                .entry(header.workspace.to_string_lossy().into_owned())
+                .or_default()
+                .push(header);
+        }
+        for (workspace, pinned) in by_workspace {
+            let db = oqto_history::oqto_log::paths::resolve_user_home_workspace_db_path(
+                &home, &workspace,
+            )?;
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true),
+                )
+                .await?;
+            sqlx::migrate!("../oqto-history/migrations_oqto_log")
+                .run(&pool)
+                .await?;
+            for header in pinned {
+                let public = platform_id_for_external_id(&header.external_id);
+                sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id,extensions_json) VALUES(?,?,?,'owner',?,json_object('personal_native_source',?))")
+                    .bind(&public).bind(&public).bind(&header.external_id).bind(&workspace).bind(&header.identity)
+                    .execute(&pool).await?;
+            }
+            pool.close().await;
+        }
+        let (ingest, release) =
+            spawn_paused_inventory_for_test(home.clone(), "owner".into(), source.clone());
+        let started = Instant::now();
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("inventory worker ended"))?;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while ingest.readiness() != DiscoveryReadiness::Ready {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("discovery pass did not finish within 30 s"))?;
+        let ready = started.elapsed();
+        let cpu = process_cpu();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let idle_cpu = process_cpu() - cpu;
+        let listed = Instant::now();
+        crate::history_read::read_authorized_source(
+            &home,
+            source.workspace_roots(),
+            crate::history_read::HistoryReadOperation::List {},
+        )
+        .await?;
+        let list = listed.elapsed();
+        eprintln!(
+            "oqto-6qff e2e: {WORKSPACES} shards, {HEADERS} pinned headers: Ready after {ready:?}, process CPU over 2 s idle {idle_cpu:?}, history list {list:?}"
+        );
+        assert_eq!(ingest.readiness(), DiscoveryReadiness::Ready);
+        assert!(ready < Duration::from_secs(15), "pass took {ready:?}");
+        assert!(list < Duration::from_secs(2), "history list took {list:?}");
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cold_slow_headers_progress_across_budgets_and_reach_ready() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        let (home, native, work, sockets) = (
+            root.join("home"),
+            root.join("native"),
+            root.join("work"),
+            root.join("sockets"),
+        );
+        for path in [&home, &native, &work, &sockets] {
+            std::fs::create_dir_all(path)?;
+        }
+        let directory = native.join(oqto_pi::session_files::cwd_to_safe_dirname(&work));
+        std::fs::create_dir(&directory)?;
+        for n in 0..6 {
+            std::fs::write(
+                directory.join(format!("date_slow-{n}.jsonl")),
+                format!(
+                    "{}\n",
+                    serde_json::json!({"type":"session","id":format!("slow-{n}"),"cwd":work})
+                ),
+            )?;
+        }
+        let source = std::sync::Arc::new(crate::personal_source::PersonalSource::new(
+            home.clone(),
+            native,
+            sockets,
+            vec![work],
+        )?);
+        source
+            .header_latency_ms
+            .store(1000, std::sync::atomic::Ordering::SeqCst);
+        source
+            .scan_budget_ms
+            .store(10, std::sync::atomic::Ordering::SeqCst);
+        let (ingest, release) =
+            spawn_paused_inventory_for_test(home.clone(), "owner".into(), source);
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("inventory ended"))?;
+        let started = Instant::now();
+        let mut saw_discovering = false;
+        tokio::time::timeout(Duration::from_secs(12), async {
+            loop {
+                let state = ingest.readiness();
+                anyhow::ensure!(
+                    state != DiscoveryReadiness::Failed,
+                    "slow disk discarded progress after {:?}",
+                    started.elapsed()
+                );
+                saw_discovering |= state == DiscoveryReadiness::Discovering;
+                if state == DiscoveryReadiness::Ready {
+                    break anyhow::Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+        assert!(saw_discovering);
+        let rows = ops::list_sessions(&home, None).await?;
+        assert_eq!(rows.len(), 6);
+        eprintln!(
+            "oqto-9e90 slow cold scan: 6 headers x 1 s latency, 10 ms chunk budget, Ready {:?}",
+            started.elapsed()
+        );
+        Ok(())
+    }
+
     fn write_session_file(home: &Path, external_id: &str, messages: &[&str]) -> PathBuf {
         let dir = home.join(".pi/agent/sessions/tmp-ingesttest");
         std::fs::create_dir_all(&dir).expect("create sessions dir");
@@ -959,13 +1221,10 @@ mod tests {
         }
         std::fs::write(&path, lines.join("\n")).expect("write session file");
         // Backdate mtime past the quiescence window.
-        let status = std::process::Command::new("touch")
-            .arg("-d")
-            .arg("2026-07-01T12:00:02Z")
-            .arg(&path)
-            .status()
-            .expect("touch");
-        assert!(status.success());
+        std::fs::File::open(&path)
+            .expect("session file")
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(120))
+            .expect("backdate session file");
         path
     }
 
@@ -1047,9 +1306,54 @@ mod tests {
         // Metadata failure cannot look like an empty retained default source.
         let broken = home.join(".pi/agent/sessions/broken-workspace");
         std::os::unix::fs::symlink(home.join("missing-workspace"), &broken)?;
-        assert!(Discovery::start(&source).await.is_err());
+        assert!(discover(&source, "native-owner").await.is_err());
         std::fs::remove_file(broken)?;
-        assert!(Discovery::start(&source).await.is_ok());
+        assert!(discover(&source, "native-owner").await.is_ok());
+        Ok(())
+    }
+
+    /// A subagent whose working folder was deleted afterwards (a removed
+    /// checkout) is still discovered and indexed, also on a cached rescan.
+    #[tokio::test]
+    async fn discovery_indexes_sessions_whose_folder_was_deleted() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        let (home, native, work, sockets) = (
+            root.join("service"),
+            root.join("native/.pi/agent/sessions"),
+            root.join("work"),
+            root.join("sockets"),
+        );
+        for path in [&home, &native, &work, &sockets] {
+            std::fs::create_dir_all(path)?;
+        }
+        let source = crate::personal_source::PersonalSource::new(
+            home.clone(),
+            native.clone(),
+            sockets,
+            vec![work.clone()],
+        )?;
+        let gone = work.join("elox/extracted/elox-vendor");
+        std::fs::create_dir_all(&gone)?;
+        let directory = native.join(oqto_pi::session_files::cwd_to_safe_dirname(&gone));
+        std::fs::create_dir(&directory)?;
+        let id = "subagent-in-deleted-folder";
+        std::fs::write(
+            directory.join(format!("2026-10-19_{id}.jsonl")),
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"session","id":id,"cwd":gone})
+            ),
+        )?;
+        // Warm the header cache while the folder exists, then delete it: the
+        // cached-header path must not reject what a fresh read accepts.
+        let _ = source.headers()?;
+        std::fs::remove_dir_all(work.join("elox"))?;
+        discover(&source, "native-owner").await?;
+        assert!(
+            ops::find_session_by_external(&home, id).await.is_some(),
+            "the transcript of a deleted folder stays indexed history"
+        );
         Ok(())
     }
 

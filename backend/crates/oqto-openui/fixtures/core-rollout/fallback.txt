@@ -1,0 +1,10 @@
+== Release 0.5.12 ==
+Pick how to roll it out
+! 1 host degraded: gamma runs 0.5.9 and failed its last health check.
+Host  | Runner | State
+alpha | 0.5.11 | healthy
+beta  | 0.5.11 | healthy
+gamma | 0.5.9  | degraded
+Strategy: Canary / All at once
+Note: ____
+[Roll out] [Not now]

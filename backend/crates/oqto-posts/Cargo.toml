@@ -1,0 +1,30 @@
+[package]
+name = "oqto-posts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Runner-owned local post store and dingz protocol endpoint"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+clap.workspace = true
+config = { version = "0.15", default-features = false, features = ["toml"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml.workspace = true
+uuid.workspace = true
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

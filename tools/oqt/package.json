@@ -1,0 +1,5 @@
+{
+	"name": "@oqto/standalone-experiment",
+	"private": true,
+	"type": "module"
+}

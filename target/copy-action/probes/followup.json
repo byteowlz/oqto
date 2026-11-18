@@ -1,0 +1,122 @@
+[
+  {
+    "label": "rsync-strict-unchanged-1",
+    "seconds": 0.918806,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289312785 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 112287 B\nFile list generation time: 0.379 seconds\nFile list transfer time: 0.048 seconds\nTotal sent: 112303 B\nTotal received: 20 B\n\nsent 112303 bytes  received 20 bytes  395364 bytes/sec\ntotal size is 289312785  speedup is 2575.72\n",
+    "stderr": ""
+  },
+  {
+    "label": "rsync-strict-unchanged-2",
+    "seconds": 0.933908,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289312785 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 112287 B\nFile list generation time: 0.409 seconds\nFile list transfer time: 0.068 seconds\nTotal sent: 112303 B\nTotal received: 20 B\n\nsent 112303 bytes  received 20 bytes  438590 bytes/sec\ntotal size is 289312785  speedup is 2575.72\n",
+    "stderr": ""
+  },
+  {
+    "label": "rsync-strict-unchanged-3",
+    "seconds": 0.918632,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289312785 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 112287 B\nFile list generation time: 0.381 seconds\nFile list transfer time: 0.052 seconds\nTotal sent: 112303 B\nTotal received: 20 B\n\nsent 112303 bytes  received 20 bytes  418959 bytes/sec\ntotal size is 289312785  speedup is 2575.72\n",
+    "stderr": ""
+  },
+  {
+    "label": "reverse-rsync-cold",
+    "seconds": 13.592107,
+    "stdout": "\nsent 44100 bytes  received 289499230 bytes  2895433300000 bytes/sec\ntotal size is 289312785  speedup is 1.00\nNumber of files: 2006\nNumber of files transferred: 2003\nTotal file size: 289312785 B\nTotal transferred file size: 289312785 B\nUnmatched data: 289312785 B\nMatched data: 0 B\nFile list size: 24373 B\nTotal sent: 44104 B\nTotal received: 289464170 B\n",
+    "stderr": ""
+  },
+  {
+    "label": "reverse-rsync-sha256",
+    "files": 2003,
+    "passed": true
+  },
+  {
+    "label": "reverse-scp-cold",
+    "seconds": 51.633505,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "label": "reverse-scp-sha256",
+    "files": 2003,
+    "passed": true
+  },
+  {
+    "label": "cpu-hash-1",
+    "seconds": 1.464854,
+    "stdout": "f12989d689cf49529a07e4583b2d4de8805230e951625cff2619cbbc32fd38d0\n",
+    "stderr": "hash20_bytes=2684354560 seconds=1.444482\n"
+  },
+  {
+    "label": "cpu-hash-2",
+    "seconds": 1.459207,
+    "stdout": "f12989d689cf49529a07e4583b2d4de8805230e951625cff2619cbbc32fd38d0\n",
+    "stderr": "hash20_bytes=2684354560 seconds=1.439271\n"
+  },
+  {
+    "label": "cpu-hash-3",
+    "seconds": 1.437119,
+    "stdout": "f12989d689cf49529a07e4583b2d4de8805230e951625cff2619cbbc32fd38d0\n",
+    "stderr": "hash20_bytes=2684354560 seconds=1.417677\n"
+  },
+  {
+    "label": "cpu-fixed-1",
+    "seconds": 0.092341,
+    "stderr": "fixed_bytes=134217728 seconds=0.073122\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "cpu-fixed-2",
+    "seconds": 0.09465,
+    "stderr": "fixed_bytes=134217728 seconds=0.075325\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "cpu-fixed-3",
+    "seconds": 0.093391,
+    "stderr": "fixed_bytes=134217728 seconds=0.073600\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "cpu-cdc-1",
+    "seconds": 0.144813,
+    "stderr": "cdc_bytes=134217728 seconds=0.125522\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "cpu-cdc-2",
+    "seconds": 0.147649,
+    "stderr": "cdc_bytes=134217728 seconds=0.127171\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "cpu-cdc-3",
+    "seconds": 0.149949,
+    "stderr": "cdc_bytes=134217728 seconds=0.129914\n",
+    "stdout_omitted": "Synthetic chunk manifest; timing retained"
+  },
+  {
+    "label": "shortcuts-mac",
+    "seconds": 0.66984,
+    "stdout": "[{\"method\": \"shutil-copyfile\", \"trial\": 1, \"seconds\": 0.02522316700196825, \"bytes\": 134217728}, {\"method\": \"cp-clone\", \"trial\": 1, \"seconds\": 0.005430832999991253, \"exit_code\": 0}, {\"method\": \"shutil-copyfile\", \"trial\": 2, \"seconds\": 0.02612562500871718, \"bytes\": 134217728}, {\"method\": \"cp-clone\", \"trial\": 2, \"seconds\": 0.004943000007187948, \"exit_code\": 0}, {\"method\": \"shutil-copyfile\", \"trial\": 3, \"seconds\": 0.026920499993138947, \"bytes\": 134217728}, {\"method\": \"cp-clone\", \"trial\": 3, \"seconds\": 0.006602791996556334, \"exit_code\": 0}]\n",
+    "stderr": ""
+  },
+  {
+    "label": "shortcuts-linux",
+    "seconds": 0.969875,
+    "stdout": "[{\"method\": \"shutil-copyfile\", \"trial\": 1, \"seconds\": 0.020845385268330574, \"bytes\": 134221824}, {\"method\": \"copy-file-range\", \"trial\": 1, \"seconds\": 0.020467683672904968}, {\"method\": \"cp-reflink\", \"trial\": 1, \"seconds\": 0.0027891844511032104, \"exit_code\": 1}, {\"method\": \"shutil-copyfile\", \"trial\": 2, \"seconds\": 0.020378567278385162, \"bytes\": 134221824}, {\"method\": \"copy-file-range\", \"trial\": 2, \"seconds\": 0.019555555656552315}, {\"method\": \"cp-reflink\", \"trial\": 2, \"seconds\": 0.0016963053494691849, \"exit_code\": 1}, {\"method\": \"shutil-copyfile\", \"trial\": 3, \"seconds\": 0.02182735502719879, \"bytes\": 134221824}, {\"method\": \"copy-file-range\", \"trial\": 3, \"seconds\": 0.02014920860528946}, {\"method\": \"cp-reflink\", \"trial\": 3, \"seconds\": 0.0017309430986642838, \"exit_code\": 1}]\n",
+    "stderr": ""
+  },
+  {
+    "label": "persisted-set-fixed",
+    "unchanged_missing_bytes": 0,
+    "changed_missing_bytes": 135270417,
+    "after_half_missing_bytes": 67375121,
+    "renamed_only_missing_bytes": 0
+  },
+  {
+    "label": "persisted-set-cdc",
+    "unchanged_missing_bytes": 0,
+    "changed_missing_bytes": 1439296,
+    "after_half_missing_bytes": 694436,
+    "renamed_only_missing_bytes": 0
+  }
+]

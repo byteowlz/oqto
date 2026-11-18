@@ -73,6 +73,48 @@ it("uses local SDK options without a server, with opaque preview identities", as
 	service.disconnect();
 });
 
+it("forwards an explicit local model directory without changing runtime or language", async () => {
+	const service = new STTService("", 1500, {
+		provider: "moonshine",
+		language: "de",
+		runtimeBaseUrl: "/speech/moonshine-0.1.5/",
+		modelBaseUrl: "/speech-candidates/tiny-de-revision-a/",
+	});
+	await service.connect();
+	expect(fake.prepare).toHaveBeenCalledExactlyOnceWith({
+		provider: "moonshine",
+		language: "de",
+		sampleRate: 24000,
+		runtimeBaseUrl: "/speech/moonshine-0.1.5/",
+		modelBaseUrl: "/speech-candidates/tiny-de-revision-a/",
+	});
+	service.disconnect();
+});
+
+it("preserves catalog selection by default and does not pass model URLs to remote recognition", async () => {
+	const local = new STTService("", 1500, {
+		provider: "moonshine",
+		language: "en",
+	});
+	await local.connect();
+	expect(fake.prepare.mock.calls[0][0]).not.toHaveProperty("modelBaseUrl");
+	local.disconnect();
+
+	const remote = new STTService("wss://speech.example.test/recognize", 1500, {
+		provider: "ears",
+		language: "de",
+		modelBaseUrl: "/speech-candidates/not-a-remote-option/",
+	});
+	await remote.connect();
+	expect(fake.prepare.mock.calls[1][0]).toEqual({
+		provider: "ears",
+		language: "de",
+		sampleRate: 24000,
+		url: "wss://speech.example.test/recognize",
+	});
+	remote.disconnect();
+});
+
 it("forwards cumulative model bytes without summing files and clears progress when ready", async () => {
 	const service = new STTService("", 1500, {
 		provider: "moonshine",

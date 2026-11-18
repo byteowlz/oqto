@@ -4,9 +4,11 @@ use super::*;
 use anyhow::ensure;
 use sqlx::Row;
 use std::time::Duration;
+mod catalog_pins;
 #[cfg(test)]
 mod inventory_tests;
 pub(super) mod reader;
+pub use catalog_pins::{CatalogPin, CatalogPins, catalog_pins};
 #[cfg(test)]
 mod resource_tests;
 
@@ -27,11 +29,70 @@ pub fn authority_unavailable(error: &anyhow::Error) -> bool {
 #[error("{0}")]
 struct IdentityConflict(&'static str);
 
+#[derive(Clone)]
 struct Identity {
     platform: String,
     external: Option<String>,
     workspace: String,
     source: Option<String>,
+}
+
+/// Identity facts read once per batch, in the same ATTACH that probes each
+/// shard (oqto-6qff). It can only decide Sessions that are ALREADY pinned,
+/// which discovery never writes (a no-op or a refused rebind). It is never
+/// write authority: every Session that might be written is still re-read from
+/// all current shards at commit time.
+struct Snapshot {
+    rows: Vec<Identity>,
+    by_external: std::collections::HashMap<String, Vec<usize>>,
+    by_id: std::collections::HashMap<String, Vec<usize>>,
+}
+impl Snapshot {
+    fn new(shards: Vec<Vec<(String, Identity)>>) -> Self {
+        let mut snapshot = Self {
+            rows: Vec::new(),
+            by_external: Default::default(),
+            by_id: Default::default(),
+        };
+        for (session, row) in shards.into_iter().flatten() {
+            let index = snapshot.rows.len();
+            if let Some(external) = &row.external {
+                snapshot
+                    .by_external
+                    .entry(external.clone())
+                    .or_default()
+                    .push(index);
+            }
+            snapshot
+                .by_id
+                .entry(row.platform.clone())
+                .or_default()
+                .push(index);
+            if session != row.platform {
+                snapshot.by_id.entry(session).or_default().push(index);
+            }
+            snapshot.rows.push(row);
+        }
+        snapshot
+    }
+    /// Same predicate as `shard_identities`: external_id=? OR platform_id=?
+    /// OR session_id=?, one entry per matching row across all shards.
+    fn identities(&self, public: &str, external: &str) -> Vec<Identity> {
+        let mut matched: Vec<usize> = self
+            .by_external
+            .get(external)
+            .into_iter()
+            .chain(self.by_id.get(public))
+            .flatten()
+            .copied()
+            .collect();
+        matched.sort_unstable();
+        matched.dedup();
+        matched
+            .into_iter()
+            .map(|index| self.rows[index].clone())
+            .collect()
+    }
 }
 
 // Unlike the general operational catalog iterator, this authority iterator must
@@ -90,6 +151,53 @@ async fn probe(path: &Path) -> Result<()> {
         "Missing native identity schema"
     );
     shard.finish().await
+}
+
+/// `probe` plus this shard's identity rows, in ONE attach. `Ok(None)` when the
+/// shard lacks a column the fresh per-Session read needs: the batch then has
+/// no snapshot and every Session takes the unchanged fresh path.
+async fn probe_snapshot(path: &Path) -> Result<Option<Vec<(String, Identity)>>> {
+    let mut shard = reader::ReadShard::open(path).await?;
+    let connection = shard.connection();
+    let columns =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('oqto_log_sessions')")
+            .fetch_all(&mut *connection)
+            .await?;
+    let has = |name: &str| columns.iter().any(|column| column == name);
+    ensure!(has("external_id"), "Missing native identity schema");
+    let rows = if ["session_id", "platform_id", "workspace_id"]
+        .iter()
+        .all(|name| has(name))
+    {
+        let source_expr = if has("extensions_json") {
+            "json_extract(extensions_json, '$.personal_native_source')"
+        } else {
+            "NULL"
+        };
+        let query = format!(
+            "SELECT session_id, platform_id, external_id, workspace_id, {source_expr} AS source FROM oqto_log_sessions"
+        );
+        let rows = sqlx::query(&query).fetch_all(&mut *connection).await?;
+        Some(
+            rows.into_iter()
+                .map(|row| {
+                    Ok((
+                        row.try_get("session_id")?,
+                        Identity {
+                            platform: row.try_get("platform_id")?,
+                            external: row.try_get("external_id")?,
+                            workspace: row.try_get("workspace_id")?,
+                            source: row.try_get("source")?,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        )
+    } else {
+        None
+    };
+    shard.finish().await?;
+    Ok(rows)
 }
 
 async fn shard_identities(path: &Path, public: &str, external: &str) -> Result<Vec<Identity>> {
@@ -152,8 +260,9 @@ async fn identities(home: &Path, public: &str, external: &str) -> Result<Vec<Ide
     let operation = async {
         use futures::{StreamExt, TryStreamExt, stream};
         // Use the existing TWO process-wide physical reader owners concurrently.
-        // No identity/schema cache: every prepare/commit still enumerates and
-        // reads every current shard, and any failure discards the whole result.
+        // No identity/schema cache here: every call enumerates and reads every
+        // current shard (DiscoveryBatch's snapshot only short-circuits no-ops),
+        // and any failure discards the whole result.
         // Cancellation safety remains owned by ReadShard's fixed worker slots.
         let shards: Vec<Vec<Identity>> = stream::iter(identity_paths(home).await?)
             .map(|path| async move { shard_identities(&path, public, external).await })
@@ -170,37 +279,50 @@ async fn identities(home: &Path, public: &str, external: &str) -> Result<Vec<Ide
     }
 }
 
-/// Completed read-only preflight request, not ownership evidence. No identity
-/// answers survive preparation; commit always re-enumerates/reads current facts.
+/// Completed read-only preflight request, not ownership evidence. Only a
+/// snapshot row carrying an existing pin survives preparation, and it can only
+/// decide a no-write outcome; any possible write re-reads current facts.
 pub struct PreparedDiscovery {
     home: PathBuf,
     external: String,
+    pinned: Option<Box<Identity>>,
 }
 
-/// No resident per-shard pools or schema/ownership cache. Every prepare enumerates
-/// and queries ALL current shards via the process-wide bounded read workers.
+/// No resident per-shard pools. `open` attaches every current shard once and
+/// keeps an identity snapshot that may only prove no-ops (oqto-6qff); without
+/// it a steady-state pass re-attached every shard twice per native Session.
+/// Every commit that may write enumerates and queries ALL current shards.
 /// An unavailable inventory/post-write verification poisons this whole batch.
 pub struct DiscoveryBatch {
     home: PathBuf,
     poisoned: bool,
+    snapshot: Option<Box<Snapshot>>,
     #[cfg(test)]
     after_write: Option<Box<dyn FnOnce() + Send>>,
 }
 impl DiscoveryBatch {
     pub async fn open(home: &Path) -> Result<Self> {
         let operation = async {
-            for path in identity_paths(home).await? {
-                probe(&path).await?;
-            }
-            Ok::<_, anyhow::Error>(())
+            use futures::{StreamExt, TryStreamExt, stream};
+            // Both process-wide readers, like `identities`; any failure still
+            // refuses the whole inventory.
+            let shards: Vec<Option<Vec<(String, Identity)>>> =
+                stream::iter(identity_paths(home).await?)
+                    .map(|path| async move { probe_snapshot(&path).await })
+                    .buffer_unordered(2)
+                    .try_collect()
+                    .await?;
+            Ok::<_, anyhow::Error>(shards.into_iter().collect::<Option<Vec<_>>>())
         };
-        tokio::time::timeout(SCAN_DEADLINE, operation)
+        let snapshot = tokio::time::timeout(SCAN_DEADLINE, operation)
             .await
             .map_err(|error| AuthorityUnavailable(error.into()))?
-            .map_err(AuthorityUnavailable)?;
+            .map_err(AuthorityUnavailable)?
+            .map(|shards| Box::new(Snapshot::new(shards)));
         Ok(Self {
             home: home.to_owned(),
             poisoned: false,
+            snapshot,
             #[cfg(test)]
             after_write: None,
         })
@@ -217,11 +339,25 @@ impl DiscoveryBatch {
         result
     }
     pub async fn prepare(&mut self, external: &str) -> Result<PreparedDiscovery> {
-        let found = self.read_facts(external).await?;
+        if self.poisoned {
+            return Err(AuthorityUnavailable(anyhow::anyhow!("Batch poisoned")).into());
+        }
+        let found = match &self.snapshot {
+            Some(snapshot) => snapshot.identities(
+                &crate::oqto_log::store::platform_id_for_external_id(external),
+                external,
+            ),
+            None => self.read_facts(external).await?,
+        };
         ensure!(found.len() <= 1, "Ambiguous native canonical identity");
         Ok(PreparedDiscovery {
             home: self.home.clone(),
             external: external.to_owned(),
+            pinned: found
+                .into_iter()
+                .next()
+                .filter(|row| self.snapshot.is_some() && row.source.is_some())
+                .map(Box::new),
         })
     }
     pub async fn commit(
@@ -238,6 +374,12 @@ impl DiscoveryBatch {
             prepared.home == self.home,
             "Wrong native inventory authority"
         );
+        // discover_identity never writes an existing pin: it reports the same
+        // no-op or refuses the rebind. Decide that from the snapshot row.
+        if let Some(row) = &prepared.pinned {
+            existing_row_pinned(row, workspace, &prepared.external, source)?;
+            return Ok(false);
+        }
         // Never adopt from a preflight snapshot, even if a caller retained its
         // request while a different writer or validator changed authority.
         let found = self.read_facts(&prepared.external).await?;
@@ -301,6 +443,26 @@ pub async fn discover(
         .await
 }
 
+/// discover_identity's decision for the one existing row: a denied rebind is
+/// an error; otherwise `true` when the row is already pinned (nothing to
+/// write) and `false` when it still needs this pin.
+fn existing_row_pinned(
+    row: &Identity,
+    workspace: &str,
+    external: &str,
+    source: &str,
+) -> Result<bool> {
+    ensure!(
+        row.external.as_deref() == Some(external)
+            && row.platform.starts_with("oqto-")
+            && row.platform != external
+            && row.workspace == workspace
+            && row.source.as_deref().is_none_or(|pin| pin == source),
+        "Native source rebind denied"
+    );
+    Ok(row.source.is_some())
+}
+
 async fn discover_identity(
     home: &Path,
     user: &str,
@@ -311,18 +473,10 @@ async fn discover_identity(
 ) -> Result<bool> {
     let public = crate::oqto_log::store::platform_id_for_external_id(external);
     ensure!(found.len() <= 1, "Ambiguous native canonical identity");
-    if let Some(row) = found.first() {
-        ensure!(
-            row.external.as_deref() == Some(external)
-                && row.platform.starts_with("oqto-")
-                && row.platform != external
-                && row.workspace == workspace
-                && row.source.as_deref().is_none_or(|pin| pin == source),
-            "Native source rebind denied"
-        );
-        if row.source.is_some() {
-            return Ok(false);
-        }
+    if let Some(row) = found.first()
+        && existing_row_pinned(row, workspace, external, source)?
+    {
+        return Ok(false);
     }
     let db = crate::oqto_log::paths::resolve_user_home_workspace_db_path(home, workspace)?;
     let pool = open_migrated_pool(&db, "native source discovery").await?;

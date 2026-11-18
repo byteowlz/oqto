@@ -157,8 +157,20 @@ pub enum InputAction {
     SetModel { provider: String, model_id: String },
     SetThinkingLevel { level: String },
     Abort,
+    SetSessionName { name: String },
 }
 impl InputAction {
+    /// How long Pi may take to answer before the outcome counts as uncertain. A model
+    /// switch can load or refresh provider credentials and took longer than 5 s
+    /// (owner report 2026-11-13); model and thinking changes are safe to repeat and
+    /// clients verify them. Prompts keep the short deadline: their effects are not.
+    fn deadline(&self) -> Duration {
+        match self {
+            Self::SetModel { .. } | Self::SetThinkingLevel { .. } => Duration::from_secs(25),
+            _ => Duration::from_secs(5),
+        }
+    }
+
     fn packet(&self) -> Result<Value> {
         let (kind, message) = match self {
             Self::Prompt { message } => ("prompt", Some(message)),
@@ -188,6 +200,18 @@ impl InputAction {
                 );
                 return Ok(
                     json!({"type":"set_thinking_level","id":uuid::Uuid::new_v4().to_string(),"level":level}),
+                );
+            }
+            Self::SetSessionName { name } => {
+                let name = name.trim();
+                ensure!(
+                    !name.is_empty()
+                        && name.chars().count() <= 200
+                        && !name.chars().any(char::is_control),
+                    "Invalid session name"
+                );
+                return Ok(
+                    json!({"type":"set_session_name","id":uuid::Uuid::new_v4().to_string(),"name":name}),
                 );
             }
             Self::Abort => ("abort", None),
@@ -266,6 +290,16 @@ impl InputLease {
     pub(super) fn active(&self) -> Arc<AtomicBool> {
         self.active.clone()
     }
+    pub(super) fn runtime_controller(
+        &self,
+        binding: &ObservationBinding,
+    ) -> Result<(String, String)> {
+        self.check(binding)?;
+        Ok((
+            self.permit.controller_id().into(),
+            self.permit.generation().into(),
+        ))
+    }
     fn check(&self, binding: &ObservationBinding) -> Result<()> {
         ensure!(self.active.load(Ordering::SeqCst), "Input lease ended");
         self.permit
@@ -336,6 +370,7 @@ impl TuiObserver {
     pub async fn input(&mut self, action: InputAction) -> Result<InputReceipt> {
         self.validate_setting(&action).await?;
         let packet = action.packet()?;
+        let deadline = action.deadline();
         let request_id = packet["id"]
             .as_str()
             .context("Missing request identity")?
@@ -360,7 +395,7 @@ impl TuiObserver {
             &mut self.pending,
             fence,
             packet,
-            Duration::from_secs(5),
+            deadline,
             true,
             self.snapshot_only,
         )

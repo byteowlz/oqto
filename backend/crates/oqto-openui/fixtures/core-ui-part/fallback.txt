@@ -1,0 +1,4 @@
+== Pick a sandbox profile ==
+For the new workspace
+Profile: Minimal / Strict
+[Create workspace] [Cancel]

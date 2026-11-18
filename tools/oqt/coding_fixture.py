@@ -4,6 +4,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 
@@ -113,7 +115,12 @@ def coding_world(script, prefix):
 
 
 def processes_with_env(needle):
-    """PIDs whose initial environment contains `needle` (owned by this user)."""
+    """PIDs whose initial environment contains `needle` (owned by this user).
+
+    Linux only: macOS 26 does not expose another process's environment
+    (KERN_PROCARGS2 omits it). Use host_processes/brain_processes instead."""
+    if sys.platform == 'darwin':
+        raise RuntimeError('process environments are not observable on macOS')
     found = []
     for entry in Path('/proc').iterdir():
         if not entry.name.isdigit():
@@ -128,7 +135,56 @@ def processes_with_env(needle):
     return found
 
 
+def _owned_pids():
+    listing = subprocess.run(['/bin/ps', '-o', 'pid=', '-U', str(os.getuid())],
+                             capture_output=True, text=True, check=True).stdout
+    return [int(line) for line in listing.split()]
+
+
+def _is_node(pid):
+    if sys.platform == 'darwin':
+        return os.path.basename(cmdline(pid).split(' ', 1)[0]) == 'node'
+    try:
+        return os.path.basename(os.readlink(f'/proc/{pid}/exe')) == 'node'
+    except OSError:
+        return False
+
+
+def host_processes(owner, work):
+    """Live oqt host pids serving this owner profile and workspace."""
+    if sys.platform != 'darwin':
+        return [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
+                if cmdline(pid).rstrip().endswith('host.ts') and _is_node(pid)]
+    # macOS: hosts publish their pid in the workspace profile's host.json.
+    from profile_namespace import workspace_profile_key
+    key = workspace_profile_key(work, 'coding', owner)
+    found = []
+    for manifest in Path('/private/var/tmp').glob(f'q{os.getuid()}-*/p/{key}/host.json'):
+        try:
+            pid = json.loads(manifest.read_text())['pid']
+        except (OSError, ValueError, KeyError):
+            continue
+        if cmdline(pid).rstrip().endswith('host.ts') and _is_node(pid):
+            found.append(pid)
+    return found
+
+
+def brain_processes(owner, work):
+    """Live confined session-worker (brain) node pids for this workspace."""
+    if sys.platform != 'darwin':
+        return [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
+                if pid in processes_with_env('__PI_INTERNAL_SPAWN=session-worker')
+                and 'session-worker.ts' in cmdline(pid) and _is_node(pid)]
+    # macOS: the worker's argv carries its Session metadata, including the
+    # workspace path; the oqt_brain launcher itself is not a node process.
+    return [pid for pid in _owned_pids()
+            if 'session-worker.ts' in cmdline(pid) and str(work) in cmdline(pid) and _is_node(pid)]
+
+
 def cmdline(pid):
+    if sys.platform == 'darwin':
+        return subprocess.run(['/bin/ps', '-ww', '-o', 'command=', '-p', str(pid)],
+                              capture_output=True, text=True).stdout.strip()
     try:
         return Path(f'/proc/{pid}/cmdline').read_bytes().replace(b'\0', b' ').decode('utf8', 'replace')
     except OSError:

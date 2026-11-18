@@ -178,3 +178,7 @@ src-tauri/gen/
 
 # Pinned Moonshine runtime assets are staged from the locked dependency.
 /public/speech/
+# vendored model releases (sync:waqy), never committed
+public/waqy/
+# Oqtopus mascot vector player, staged by scripts/sync-oqtopus-assets.mjs
+public/oqtopus/

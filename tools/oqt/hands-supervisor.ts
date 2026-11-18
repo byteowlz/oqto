@@ -1,15 +1,76 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+	type ChildProcessWithoutNullStreams,
+	execFile,
+	spawn,
+} from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import {
+	chmod,
+	copyFile,
+	mkdir,
+	mkdtemp,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/** macOS confines with Seatbelt and has no PID namespace (and no seccomp). */
+export const DARWIN = process.platform === "darwin";
+
+/** Create the private launch marker pair (see oqto_sandbox::process_tree)
+ * in an existing private directory. */
+export function createMarker(directory: string) {
+	for (const name of ["marker-allow", "marker-deny"])
+		writeFileSync(join(directory, name), "", { mode: 0o600, flag: "wx" });
+}
+
+/** macOS: SIGKILL and confirm gone every process carrying the marker in
+ * `directory`, whatever its ancestry. Rejects unless a complete scan found
+ * no live or undecidable member. */
+export function confirmReaped(launcher: string, directory: string) {
+	return new Promise<void>((resolve, reject) => {
+		execFile(
+			launcher,
+			["reap", directory],
+			{ timeout: 10_000, env: { PATH: "/usr/bin:/bin", HOME: homedir() } },
+			(error, stdout) => {
+				let report: unknown;
+				try {
+					report = JSON.parse(stdout);
+				} catch {}
+				if (
+					!error &&
+					report &&
+					typeof report === "object" &&
+					"confirmed" in report &&
+					report.confirmed === true
+				)
+					resolve();
+				else
+					reject(
+						new Error(
+							`Executor descendants not confirmed stopped: ${stdout.trim() || error?.message}`,
+						),
+					);
+			},
+		);
+	});
+}
+
 /** Guard-side owner of confined executor processes. Owns only processes it
  * spawned (no PID-file/reused-PID kills). Each generation has a fresh random
  * epoch; the transport handshake must name the current epoch, so a retained
- * brain-side Connection cannot reconnect after stop/replacement. bwrap PID
- * namespace teardown fences descendants.
+ * brain-side Connection cannot reconnect after stop/replacement.
+ *
+ * Linux: bwrap PID namespace teardown fences descendants. macOS: the launcher
+ * supervises its Seatbelt child and every spawned process carries this
+ * supervisor's launch marker; stop() succeeds only after a marker scan
+ * confirms that no member survived, including descendants that called
+ * setsid and were reparented. Otherwise stop() throws and replacement stays
+ * disabled (the authority remains frozen).
  */
 export class HandsSupervisor {
 	readonly children = new Set<ChildProcessWithoutNullStreams>();
@@ -20,6 +81,15 @@ export class HandsSupervisor {
 	readonly socketPath: string;
 	readonly launcher: string;
 	readonly workspace: string;
+	/** macOS: private TMPDIR/HOME, wiped for every generation. */
+	scratch: string | undefined;
+	/** Remote hands (ADR-0086): a guard-admitted, one-use per-call token that
+	 * routes this connection to the paired link instead of local hands. */
+	remoteRoute:
+		| ((
+				epoch: string,
+		  ) => ((socket: Socket, token: string, rest: Buffer) => void) | undefined)
+		| undefined;
 	#active = false;
 	#closed = false;
 	#epoch = "";
@@ -40,7 +110,8 @@ export class HandsSupervisor {
 		launcher: string;
 		workspace: string;
 		daemon: string;
-		bpf: string;
+		/** Compiled seccomp filter (Linux). There is no seccomp on macOS. */
+		bpf?: string;
 		protectedRoots: string[];
 		/** Directory for the private spec; defaults to a fresh /var/tmp/oqh-*. */
 		parent?: string;
@@ -49,6 +120,8 @@ export class HandsSupervisor {
 		readPaths?: string[];
 		writePaths?: string[];
 		network?: boolean;
+		/** macOS: private scratch directory; created here when absent. */
+		scratch?: string;
 	}) {
 		const directory = await mkdtemp(join(options.parent ?? "/var/tmp", "oqh-"));
 		await chmod(directory, 0o700);
@@ -59,6 +132,12 @@ export class HandsSupervisor {
 			options.socketPath,
 		);
 		try {
+			if (DARWIN) {
+				createMarker(directory);
+				supervisor.scratch =
+					options.scratch ?? (await mkdtemp(join("/var/tmp", "oqx-")));
+				await chmod(supervisor.scratch, 0o700);
+			}
 			await supervisor.writeSpec(options);
 			await new Promise<void>((resolve, reject) => {
 				supervisor.server.once("error", reject);
@@ -75,7 +154,9 @@ export class HandsSupervisor {
 			throw error;
 		}
 	}
-	#base: { daemon: string; bpf: string; protectedRoots: string[] } | undefined;
+	#base:
+		| { daemon: string; bpf: string | undefined; protectedRoots: string[] }
+		| undefined;
 	/** Replace the trusted spec. Only valid while frozen (between stop and install). */
 	async writeSpec(options: {
 		daemon?: string;
@@ -91,7 +172,7 @@ export class HandsSupervisor {
 		// later replacements may only change the approved resource grants.
 		this.#base ??= {
 			daemon: options.daemon ?? "",
-			bpf: options.bpf ?? "",
+			bpf: options.bpf,
 			protectedRoots: [...(options.protectedRoots ?? []), this.directory],
 		};
 		const base = this.#base;
@@ -100,7 +181,11 @@ export class HandsSupervisor {
 			JSON.stringify({
 				workspace: this.workspace,
 				daemon: base.daemon,
-				bpf: base.bpf,
+				// Linux: compiled seccomp filter. macOS: no seccomp; the launch
+				// marker and a private scratch directory instead.
+				...(DARWIN
+					? { marker: this.directory, scratch: this.scratch }
+					: { bpf: base.bpf ?? "" }),
 				protected_roots: base.protectedRoots,
 				read_paths: options.readPaths ?? [],
 				write_paths: options.writePaths ?? [],
@@ -169,9 +254,19 @@ export class HandsSupervisor {
 					typeof value.token !== "string" ||
 					!/^[a-f0-9]{32}$/.test(value.token) ||
 					!("epoch" in value) ||
-					value.epoch !== this.#epoch
+					typeof value.epoch !== "string"
 				)
-					throw new Error("Invalid or stale daemon transport handshake");
+					throw new Error("Invalid daemon transport handshake");
+				if (value.epoch !== this.#epoch) {
+					const route = this.remoteRoute?.(value.epoch);
+					if (!route) throw new Error("Stale daemon transport handshake");
+					socket.off("data", handshake);
+					clearTimeout(timer);
+					// The remote connection is the guard's to track and close.
+					this.sockets.delete(socket);
+					route(socket, value.token, header.subarray(newline + 1));
+					return;
+				}
 				socket.off("data", handshake);
 				clearTimeout(timer);
 				child = spawn(
@@ -222,6 +317,11 @@ export class HandsSupervisor {
 		while (this.#replacement) await this.#replacement.catch(() => {});
 		const current = (async () => {
 			await this.stop();
+			// Fresh hands start with an empty scratch, as bwrap's private /tmp.
+			if (this.scratch) {
+				await rm(this.scratch, { recursive: true, force: true });
+				await mkdir(this.scratch, { mode: 0o700 });
+			}
 			if (spec) await this.writeSpec(spec);
 			this.install();
 		})();
@@ -263,11 +363,16 @@ export class HandsSupervisor {
 			),
 		);
 		if (this.children.size !== 0) throw new Error("Executor drain incomplete");
+		// The launchers reap their own launch; confirm independently, because
+		// a killed launcher could not, and a setsid descendant has no parent
+		// we could wait for.
+		if (DARWIN) await confirmReaped(this.launcher, this.directory);
 	}
 	async close() {
 		this.#closed = true;
 		await this.stop();
 		await new Promise<void>((resolve) => this.server.close(() => resolve()));
 		await rm(this.directory, { recursive: true, force: true });
+		if (this.scratch) await rm(this.scratch, { recursive: true, force: true });
 	}
 }

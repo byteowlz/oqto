@@ -1,0 +1,11 @@
+{
+  "contract": "session-announce",
+  "version": 1,
+  "source": "oqto-protocol/src/session_announce.rs",
+  "files": {
+    "fixtures.json": "f3ee5d0310476b19f4fc80865b5db29097e3635f4bec5367093a453d8c9f9f19",
+    "index.ts": "1f0136fa04e27b637c87eccb4e6175c067e4215a45beaf9de1eb0e195428c48e",
+    "operations.json": "c02027e1bd44486229e551b5f0e26afc6898d71519f3bbedb4418cfb7cad1352",
+    "spec.md": "e5b71c3ae7711f1c7a3c09a5ad420b4f2b990f17125395fe2b2d236c5769e80a"
+  }
+}

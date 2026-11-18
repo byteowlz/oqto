@@ -178,8 +178,9 @@ if (options.runtimeInfo) {
 	process.exit(0);
 }
 
-if (process.platform !== "linux" || process.arch !== "x64")
-	fail("This experimental runtime requires Linux x86_64");
+const linux = process.platform === "linux" && process.arch === "x64";
+if (!linux && !(process.platform === "darwin" && process.arch === "arm64"))
+	fail("This experimental runtime requires Linux x86_64 or macOS arm64");
 
 const workdir =
 	realpathSync(options.workdir) ?? fail("Work directory must exist");
@@ -242,10 +243,18 @@ const environment: Record<string, string> = {
 	OQT_SERVER_DIR: state.profile,
 	OQT_CARRIER: asset("carrier"),
 	OQT_HANDS: asset("hands"),
+	OQT_LINK: asset("link"),
+	OQT_HANDS_LINK_CONFIG:
+		process.env.OQT_HANDS_LINK_CONFIG ??
+		join(process.env.XDG_CONFIG_HOME || `${process.env.HOME}/.config`, "oqt/hands-link.toml"),
+	OQT_HANDS_LINK_STATE:
+		process.env.OQT_HANDS_LINK_STATE ??
+		join(process.env.XDG_STATE_HOME || `${process.env.HOME}/.local/state`, "oqt/hands-link"),
 	OQT_BRAIN: asset("brain"),
 	OQT_ENV_DAEMON: asset("daemon"),
 	OQT_SANDBOX_SHIM: asset("shim"),
-	OQT_SECCOMP_BPF: asset("bpf"),
+	// Linux confines with a compiled seccomp filter; there is none on macOS.
+	...(linux ? { OQT_SECCOMP_BPF: asset("bpf") } : {}),
 	OQT_SANDBOX_CONFIG:
 		process.env.OQT_SANDBOX_CONFIG ??
 		`${process.env.HOME}/.config/oqto/sandbox.toml`,

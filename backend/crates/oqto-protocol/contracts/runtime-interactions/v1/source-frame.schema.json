@@ -1,0 +1,1642 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeSourceFrame",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "request",
+        "type"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "#/definitions/RuntimeSourceRequest"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "interaction_source"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "response",
+        "type"
+      ],
+      "properties": {
+        "response": {
+          "$ref": "#/definitions/RuntimeSourceResponse"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "interaction_source_response"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "code",
+        "type"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/RuntimeSourceStatusCode"
+        },
+        "requestId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "interaction_source_status"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "RuntimeAllowMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "confirm",
+        "timeout"
+      ]
+    },
+    "RuntimeArgumentContract": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "raw_string"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "schema"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "json_schema"
+              ]
+            },
+            "schema": true
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeAutoDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "RuntimeAvailability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "available"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "state"
+          ],
+          "properties": {
+            "reason": {
+              "$ref": "#/definitions/RuntimeUnavailableReason"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "unavailable"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeCapability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "family",
+            "state"
+          ],
+          "properties": {
+            "family": {
+              "$ref": "#/definitions/RuntimeFamily"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "available"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "family",
+            "reason",
+            "state"
+          ],
+          "properties": {
+            "family": {
+              "$ref": "#/definitions/RuntimeFamily"
+            },
+            "reason": {
+              "$ref": "#/definitions/RuntimeUnavailableReason"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "unavailable"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeCatalogCoverage": {
+      "type": "string",
+      "enum": [
+        "full",
+        "registered_only",
+        "partial"
+      ]
+    },
+    "RuntimeCommandCatalog": {
+      "type": "object",
+      "required": [
+        "commands",
+        "coverage",
+        "generation"
+      ],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeCommandDescriptor"
+          }
+        },
+        "coverage": {
+          "$ref": "#/definitions/RuntimeCatalogCoverage"
+        },
+        "generation": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeCommandDescriptor": {
+      "type": "object",
+      "required": [
+        "arguments",
+        "availability",
+        "commandId",
+        "invocation",
+        "origin",
+        "requiredInteractions"
+      ],
+      "properties": {
+        "arguments": {
+          "$ref": "#/definitions/RuntimeArgumentContract"
+        },
+        "availability": {
+          "$ref": "#/definitions/RuntimeAvailability"
+        },
+        "commandId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invocation": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/definitions/RuntimeCommandOrigin"
+        },
+        "requiredInteractions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeFamily"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeCommandDisposition": {
+      "type": "string",
+      "enum": [
+        "rejected",
+        "handled",
+        "queued",
+        "started"
+      ]
+    },
+    "RuntimeCommandOrigin": {
+      "type": "string",
+      "enum": [
+        "builtin",
+        "extension",
+        "prompt",
+        "skill"
+      ]
+    },
+    "RuntimeCommandReceipt": {
+      "type": "object",
+      "required": [
+        "commandId",
+        "disposition",
+        "operationId"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "disposition": {
+          "$ref": "#/definitions/RuntimeCommandDisposition"
+        },
+        "operationId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "rejection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeRejectCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeCursor": {
+      "type": "object",
+      "required": [
+        "generation",
+        "revision"
+      ],
+      "properties": {
+        "generation": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        },
+        "revision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeDigest": {
+      "description": "SHA-256 binding over the producer's canonical operation/subject. Not authority.",
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "RuntimeError": {
+      "type": "object",
+      "required": [
+        "code",
+        "eventId",
+        "message",
+        "phase",
+        "recoverable",
+        "source",
+        "uncertain"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "eventId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "message": {
+          "type": "string"
+        },
+        "operationId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "recoverable": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimeErrorSource"
+        },
+        "uncertain": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeErrorSnapshot": {
+      "type": "object",
+      "required": [
+        "cursor",
+        "errors"
+      ],
+      "properties": {
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeError"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeErrorSource": {
+      "type": "string",
+      "enum": [
+        "command",
+        "permission",
+        "queue",
+        "engine",
+        "transport",
+        "provider",
+        "tool",
+        "extension"
+      ]
+    },
+    "RuntimeFamily": {
+      "type": "string",
+      "enum": [
+        "commands",
+        "queue",
+        "permissions",
+        "permission_config",
+        "errors"
+      ]
+    },
+    "RuntimeGeneration": {
+      "description": "Preserve an engine-issued token's representation; numeric producer epochs are not minted IDs.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      ]
+    },
+    "RuntimeId": {
+      "description": "Opaque source-issued identity. Names, timestamps and visible order are not IDs.",
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "RuntimeOperation": {
+      "description": "Untrusted requests contain comparisons only; Session routing/actor authority is external.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "capabilities"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "command_catalog"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "catalogGeneration",
+            "commandId",
+            "op"
+          ],
+          "properties": {
+            "args": {
+              "type": "string"
+            },
+            "catalogGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "commandId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "command_dispatch"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "permission_snapshot"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "controllerGeneration",
+            "controllerId",
+            "decision",
+            "handleId",
+            "op",
+            "producerGeneration",
+            "requestRevision"
+          ],
+          "properties": {
+            "controllerGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "controllerId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "decision": {
+              "$ref": "#/definitions/RuntimePermissionDecision"
+            },
+            "handleId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "permission_decide"
+              ]
+            },
+            "optionId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RuntimeId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "producerGeneration": {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            "requestRevision": {
+              "$ref": "#/definitions/RuntimeRevision"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "policy_read"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "changes",
+            "expected",
+            "op"
+          ],
+          "properties": {
+            "changes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RuntimePolicyChange"
+              }
+            },
+            "expected": {
+              "$ref": "#/definitions/RuntimeCursor"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "policy_apply"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "queue_snapshot"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "expected",
+            "op"
+          ],
+          "properties": {
+            "action": {
+              "$ref": "#/definitions/RuntimeQueueAction"
+            },
+            "expected": {
+              "$ref": "#/definitions/RuntimeCursor"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "queue_apply"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "afterEventId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RuntimeId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "error_list"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "op",
+            "operationId"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "receipt_get"
+              ]
+            },
+            "operationId": {
+              "$ref": "#/definitions/RuntimeId"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimePermissionDecision": {
+      "type": "string",
+      "enum": [
+        "allow_once",
+        "deny",
+        "cancel"
+      ]
+    },
+    "RuntimePermissionOption": {
+      "type": "object",
+      "required": [
+        "effectDigest",
+        "optionId"
+      ],
+      "properties": {
+        "effectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "optionId": {
+          "$ref": "#/definitions/RuntimeId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionOutcome": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "started",
+        "completed",
+        "failed",
+        "cancelled",
+        "expired",
+        "uncertain"
+      ]
+    },
+    "RuntimePermissionPolicy": {
+      "type": "object",
+      "required": [
+        "allowMode",
+        "allowedKinds",
+        "allowedModels",
+        "autoDecision",
+        "confirmTimeoutMs",
+        "cursor",
+        "maxSubagents"
+      ],
+      "properties": {
+        "allowMode": {
+          "$ref": "#/definitions/RuntimeAllowMode"
+        },
+        "allowedKinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "autoDecision": {
+          "$ref": "#/definitions/RuntimeAutoDecision"
+        },
+        "confirmTimeoutMs": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "maxSubagents": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionPresentation": {
+      "type": "object",
+      "required": [
+        "ceilingDigest",
+        "expiresAtMs",
+        "handleId",
+        "operationDigest",
+        "options",
+        "requestId",
+        "requestRevision",
+        "subjectDigest"
+      ],
+      "properties": {
+        "ceilingDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "expiresAtMs": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "handleId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "operationDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionOption"
+          }
+        },
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "requestRevision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeSpawnSubject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subjectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionReceipt": {
+      "description": "Producer receipt identity is its issued generation + producer revision, not an invented ID. Journaling acknowledgements do not imply fsync, native entry identity or effect completion.",
+      "type": "object",
+      "required": [
+        "atMs",
+        "controllerId",
+        "cursor",
+        "handleId",
+        "kind",
+        "nativeSessionDigest",
+        "operationDigest",
+        "outcome",
+        "reason",
+        "requestId",
+        "requestRevision",
+        "restored",
+        "source",
+        "subjectDigest"
+      ],
+      "properties": {
+        "atMs": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "handleId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "kind": {
+          "$ref": "#/definitions/RuntimePermissionReceiptKind"
+        },
+        "nativeSessionDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "operationDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "optionId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/RuntimePermissionOutcome"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "requestRevision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "restored": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimePermissionSource"
+        },
+        "subjectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionReceiptKind": {
+      "type": "string",
+      "enum": [
+        "decision",
+        "start_intent",
+        "result",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "RuntimePermissionSnapshot": {
+      "type": "object",
+      "required": [
+        "active",
+        "cursor",
+        "receipts"
+      ],
+      "properties": {
+        "active": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionPresentation"
+          }
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionReceipt"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionSource": {
+      "type": "string",
+      "enum": [
+        "tui",
+        "rpc",
+        "adapter"
+      ]
+    },
+    "RuntimePolicyChange": {
+      "description": "Separate owner-authorized policy write; never carried in an answer payload.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allow_mode"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeAllowMode"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "auto_decision"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeAutoDecision"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allowed_models"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "allowed_kinds"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "max_subagents"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "setting",
+            "value"
+          ],
+          "properties": {
+            "setting": {
+              "type": "string",
+              "enum": [
+                "confirm_timeout_ms"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/RuntimeRevision"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeQueueAction": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "steer"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "follow_up"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemId"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "cancel_item"
+              ]
+            },
+            "itemId": {
+              "$ref": "#/definitions/RuntimeId"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "clear"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemId",
+            "text"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "update_item"
+              ]
+            },
+            "itemId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "itemIds"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "reorder"
+              ]
+            },
+            "itemIds": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RuntimeId"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeQueueActionKind": {
+      "type": "string",
+      "enum": [
+        "steer",
+        "follow_up",
+        "cancel_item",
+        "clear",
+        "update_item",
+        "reorder"
+      ]
+    },
+    "RuntimeQueueCompleteness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ]
+    },
+    "RuntimeQueueItem": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "itemId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeQueueSnapshot": {
+      "type": "object",
+      "required": [
+        "completeness",
+        "cursor",
+        "followUp",
+        "steering",
+        "supportedActions"
+      ],
+      "properties": {
+        "completeness": {
+          "$ref": "#/definitions/RuntimeQueueCompleteness"
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "followUp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueItem"
+          }
+        },
+        "steering": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueItem"
+          }
+        },
+        "supportedActions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueActionKind"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeRejectCode": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "unknown_command",
+        "ambiguous_command",
+        "stale_generation",
+        "stale_revision",
+        "unknown_request",
+        "already_consumed",
+        "expired",
+        "cancelled",
+        "authority_denied",
+        "policy_denied",
+        "subject_mismatch",
+        "journal_unavailable",
+        "engine_failure"
+      ]
+    },
+    "RuntimeResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "capabilities",
+            "kind"
+          ],
+          "properties": {
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RuntimeCapability"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "capabilities"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "catalog",
+            "kind"
+          ],
+          "properties": {
+            "catalog": {
+              "$ref": "#/definitions/RuntimeCommandCatalog"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "catalog"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "receipt"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "command_receipt"
+              ]
+            },
+            "receipt": {
+              "$ref": "#/definitions/RuntimeCommandReceipt"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "snapshot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "permissions"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/RuntimePermissionSnapshot"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "receipt"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "permission_receipt"
+              ]
+            },
+            "receipt": {
+              "$ref": "#/definitions/RuntimePermissionReceipt"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "policy"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "policy"
+              ]
+            },
+            "policy": {
+              "$ref": "#/definitions/RuntimePermissionPolicy"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "snapshot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "queue"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/RuntimeQueueSnapshot"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "snapshot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "errors"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/RuntimeErrorSnapshot"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "family",
+            "kind",
+            "reason"
+          ],
+          "properties": {
+            "family": {
+              "$ref": "#/definitions/RuntimeFamily"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unavailable"
+              ]
+            },
+            "reason": {
+              "$ref": "#/definitions/RuntimeUnavailableReason"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "kind"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/definitions/RuntimeRejectCode"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rejected"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeRevision": {
+      "description": "JSON-safe revision, independent from a request revision or generation.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "RuntimeSourceIdentity": {
+      "description": "Native source identity is comparison evidence from a verified channel, never host authority.",
+      "type": "object",
+      "required": [
+        "nativeSessionId",
+        "runtimeGeneration"
+      ],
+      "properties": {
+        "nativeSessionId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "runtimeGeneration": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeSourceRequest": {
+      "description": "No public Session/controller binding crosses the native source boundary.",
+      "type": "object",
+      "required": [
+        "operation",
+        "requestId",
+        "source",
+        "version"
+      ],
+      "properties": {
+        "operation": {
+          "$ref": "#/definitions/RuntimeOperation"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimeSourceIdentity"
+        },
+        "version": {
+          "$ref": "#/definitions/RuntimeVersion"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeSourceResponse": {
+      "description": "Source results are not RuntimeResponses: only the authenticated host adds a binding.",
+      "type": "object",
+      "required": [
+        "requestId",
+        "result",
+        "source",
+        "version"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "result": {
+          "$ref": "#/definitions/RuntimeResult"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimeSourceIdentity"
+        },
+        "version": {
+          "$ref": "#/definitions/RuntimeVersion"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeSourceStatusCode": {
+      "description": "Pre-result refusal cannot fabricate a missing/stale source identity or host binding.",
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "not_negotiated",
+        "source_unavailable",
+        "source_changed",
+        "authority_denied",
+        "unsupported_operation"
+      ]
+    },
+    "RuntimeSpawnSubject": {
+      "description": "Sanitized effect summary. Private task/title stay in the owning producer.",
+      "type": "object",
+      "required": [
+        "effectDigest",
+        "kind",
+        "model"
+      ],
+      "properties": {
+        "effectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "loadout": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeUnavailableReason": {
+      "type": "string",
+      "enum": [
+        "sdk_engine_absent",
+        "generated_dto_not_vendored",
+        "port_not_configured",
+        "engine_unavailable",
+        "unsupported_operation"
+      ]
+    },
+    "RuntimeVersion": {
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 1.0,
+      "minimum": 1.0
+    }
+  }
+}

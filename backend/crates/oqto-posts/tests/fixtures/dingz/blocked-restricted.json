@@ -1,0 +1,17 @@
+{
+  "title": "Need a decision on the customer export",
+  "body": "The export contains account numbers. Should the report include them?",
+  "kind": "blocked",
+  "links": [
+    {
+      "url": "https://oqto.example/sessions/01JRESTRICTED",
+      "label": "Session"
+    }
+  ],
+  "task": "acme-2c11",
+  "project": "acme/finance",
+  "labels": [
+    "restricted",
+    "route:local"
+  ]
+}

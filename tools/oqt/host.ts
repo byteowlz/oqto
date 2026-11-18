@@ -1,6 +1,7 @@
 // Detached oqt coding host: upstream server + guard for one workspace profile.
 // Launchers attach to it; it retires when no client or worker remains.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
@@ -10,6 +11,7 @@ import lockfile from "proper-lockfile";
 import { loadProjectContextFiles } from "../core/resource-loader.ts";
 import { configureClassicImportHost } from "./classic-import-host.ts";
 import { Guard } from "./guard.ts";
+import { confirmReaped, DARWIN } from "./hands-supervisor.ts";
 import { OwnerBroker } from "./owner-broker.ts";
 import { ownerModelDefaults } from "./owner-models.ts";
 import { ownerRefresh } from "./owner-refresh.ts";
@@ -39,7 +41,9 @@ const agent = required("PI_CODING_AGENT_DIR");
 const trusted = required("OQT_TRUSTED_SOURCE_ROOT");
 const checkout = required("OQT_SOURCE_CHECKOUT");
 const runtimeRoot = required("OQT_RUNTIME_ROOT");
-const bpf = required("OQT_SECCOMP_BPF");
+// Linux confines with a compiled seccomp filter. There is no seccomp on macOS.
+const bpf = DARWIN ? undefined : required("OQT_SECCOMP_BPF");
+const handsLauncher = required("OQT_HANDS");
 const experimental = dirname(fileURLToPath(import.meta.url));
 const snapshot = resolve(experimental, "../../../..");
 const plugin = join(
@@ -56,8 +60,34 @@ if (existsSync(modelsPath))
 	rejectCommands(await readOwnedJson(modelsPath, false));
 await mkdir(sessionDir, { recursive: true, mode: 0o700 });
 
-// A host killed outright leaves its private guard state behind (its carriers
-// and hands die with it). Sweep directories whose host liveness lock is stale.
+/** Command line of a live pid, or "" when it is gone or unreadable. */
+async function processCommand(pid: number) {
+	if (!Number.isSafeInteger(pid) || pid <= 0) return "";
+	if (!DARWIN) return readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "");
+	try {
+		return execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], {
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+	} catch {
+		return "";
+	}
+}
+
+/** macOS: no PID namespace ended a dead host's confined processes. Reap and
+ * confirm every launch marker it left (hands `oqh-*`, brains `b-*`). */
+async function reapDeadLaunches(dir: string) {
+	for (const session of readdirSync(dir)) {
+		if (!/^s\d+$/.test(session)) continue;
+		for (const launch of readdirSync(join(dir, session)))
+			if (/^(oqh|b)-[A-Za-z0-9]+$/.test(launch))
+				await confirmReaped(handsLauncher, join(dir, session, launch));
+	}
+}
+
+// A host killed outright leaves its private guard state behind (on Linux its
+// carriers and hands die with it; on macOS their launch markers are reaped
+// here first). Sweep directories whose host liveness lock is stale.
 async function sweepDeadGuards() {
 	for (const name of readdirSync("/var/tmp")) {
 		if (!name.startsWith("oqg-")) continue;
@@ -77,10 +107,7 @@ async function sweepDeadGuards() {
 			let dead = false;
 			try {
 				const pid = Number(await readFile(join(dir, "host.pid"), "utf8"));
-				const command = await readFile(`/proc/${pid}/cmdline`, "utf8").catch(
-					() => "",
-				);
-				dead = !command.includes("host.ts");
+				dead = !(await processCommand(pid)).includes("host.ts");
 			} catch {}
 			if (
 				!dead &&
@@ -90,6 +117,8 @@ async function sweepDeadGuards() {
 				}))
 			)
 				continue;
+			// Keep the directory (and its markers) when a stop is unconfirmed.
+			if (DARWIN) await reapDeadLaunches(dir);
 			let roots: unknown = [];
 			try {
 				roots = JSON.parse(await readFile(join(dir, "roots.json"), "utf8"));
@@ -97,7 +126,7 @@ async function sweepDeadGuards() {
 			for (const root of Array.isArray(roots) ? roots : [])
 				if (
 					typeof root === "string" &&
-					/^\/var\/tmp\/oqs-[A-Za-z0-9]+$/.test(root)
+					/^\/var\/tmp\/oq[sx]-[A-Za-z0-9]+$/.test(root)
 				)
 					await rm(root, { recursive: true, force: true });
 			await rm(dir, { recursive: true, force: true });
@@ -117,7 +146,11 @@ const guard = await Guard.open({
 			process.env.OQT_SANDBOX_CONFIG ||
 			join(home, ".config", "oqto", "sandbox.toml"),
 		home,
-		hardDeny: [agent],
+		// The link's private state (device keys) is never grantable to hands.
+		hardDeny: [
+			agent,
+			...(process.env.OQT_HANDS_LINK_STATE ? [process.env.OQT_HANDS_LINK_STATE] : []),
+		],
 	},
 	authorityRoot: join(directory, "authority"),
 	protectedRoots: [
@@ -130,10 +163,15 @@ const guard = await Guard.open({
 			: []),
 	],
 	hands: {
-		launcher: required("OQT_HANDS"),
+		launcher: handsLauncher,
 		daemon: required("OQT_ENV_DAEMON"),
 		bpf,
 	},
+	// Remote hands (ADR-0086): the guard-owned link adapter. Its controller
+	// namespace derives from this profile; no config means no machines.
+	...(process.env.OQT_LINK
+		? { link: { binary: process.env.OQT_LINK, profile: directory } }
+		: {}),
 	broker: new OwnerBroker(owner, ownerRefresh(owner)),
 	rulesPath: join(directory, "permission-rules.json"),
 	// Same chain as classic pi: owner global AGENTS.md, then ancestors to the workspace.

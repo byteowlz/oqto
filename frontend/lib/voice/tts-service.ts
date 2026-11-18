@@ -73,6 +73,8 @@ export class TTSService {
 
 	// Flag to reject incoming audio after stopPlayback is called
 	private isStopped = false;
+	private playbackGeneration = 0;
+	private pendingDecodes = 0;
 
 	// Scheduled playback: track when the next audio should start
 	private nextPlayTime = 0;
@@ -198,6 +200,7 @@ export class TTSService {
 				}
 				this.isProcessing = false;
 				this.processNextInQueue();
+				this.scheduleStopCheck();
 				break;
 
 			// Streaming mode messages
@@ -262,6 +265,8 @@ export class TTSService {
 			return;
 		}
 
+		const generation = this.playbackGeneration;
+		this.pendingDecodes++;
 		try {
 			// Create AudioContext on first chunk (user interaction required)
 			if (!this.audioContext) {
@@ -290,6 +295,7 @@ export class TTSService {
 				await this.audioContext.resume();
 			}
 
+			if (generation !== this.playbackGeneration) return;
 			// Decode base64 audio
 			const binaryString = atob(base64Chunk);
 			const bytes = new Uint8Array(binaryString.length);
@@ -298,6 +304,7 @@ export class TTSService {
 			}
 
 			const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer);
+			if (generation !== this.playbackGeneration) return;
 			if (this.stopTimer) {
 				window.clearTimeout(this.stopTimer);
 				this.stopTimer = null;
@@ -307,6 +314,13 @@ export class TTSService {
 			this.scheduleAudioBuffer(audioBuffer);
 		} catch (error) {
 			console.error("[TTS] Failed to decode audio chunk:", error);
+			if (generation === this.playbackGeneration)
+				this.callbacks.onError?.("Audio decoding failed");
+		} finally {
+			if (generation === this.playbackGeneration) {
+				this.pendingDecodes--;
+				this.scheduleStopCheck();
+			}
 		}
 	}
 
@@ -390,7 +404,12 @@ export class TTSService {
 				}
 				return;
 			}
-			if (this.isProcessing || this.synthesisQueue.length > 0) {
+			if (
+				this.isProcessing ||
+				this.synthesisQueue.length > 0 ||
+				this.pendingDecodes > 0 ||
+				this.scheduledSources.length > 0
+			) {
 				this.scheduleStopCheck();
 				return;
 			}
@@ -666,6 +685,8 @@ export class TTSService {
 
 		// Set stopped flag to reject any audio chunks that arrive after this
 		this.isStopped = true;
+		this.playbackGeneration++;
+		this.pendingDecodes = 0;
 		if (this.stopTimer) {
 			window.clearTimeout(this.stopTimer);
 			this.stopTimer = null;
@@ -673,6 +694,7 @@ export class TTSService {
 
 		// Stop all scheduled sources
 		for (const source of this.scheduledSources) {
+			source.onended = null;
 			try {
 				source.stop();
 				source.disconnect();

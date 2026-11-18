@@ -1,0 +1,27 @@
+[package]
+name = "oqto-personal-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Platform-neutral pinned Personal-host client and admission state"
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek = "2.2"
+getrandom = "0.2"
+oqto-personal-wire = { path = "../oqto-personal-wire", features = ["tls"] }
+oqto-session-relations = { path = "../oqto-session-relations" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rcgen = "0.13"
+
+[lints]
+workspace = true

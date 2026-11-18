@@ -25,6 +25,7 @@ pub mod personal_peer;
 mod personal_sessions;
 pub mod personal_source;
 mod personal_terminal;
+mod personal_voice;
 pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;
@@ -32,6 +33,7 @@ pub mod provider_login;
 mod recovery_child;
 pub mod reverse_bridge;
 pub mod runtime_guard;
+pub mod session_announce;
 pub mod session_resume;
 #[cfg(unix)]
 mod socket_lease;

@@ -12,6 +12,7 @@ pub mod policy_bwrap;
 pub mod policy_editor;
 pub mod policy_seatbelt;
 pub mod policy_translate;
+pub mod process_tree;
 pub mod seatbelt;
 mod spawn;
 pub mod workspace_config;

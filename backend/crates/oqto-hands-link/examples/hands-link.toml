@@ -1,0 +1,17 @@
+# oqt remote hands (ADR-0086), origin side: $XDG_CONFIG_HOME/oqt/hands-link.toml
+# (override with OQT_HANDS_LINK_CONFIG). Every value is required; unknown keys
+# and out-of-range values fail closed. These are the conservative values.
+#:schema ../schemas/hands-link.schema.json
+version = 1
+
+[machines.linux-box]
+# Pairing record written by `oqt_link pair --name linux-box ...` (state, not config).
+pairing = "linux-box"
+# Destination binding the destination owner delegated to this guard device.
+binding = "workspace"
+# Fixed lease offered by each renewal (2000..=10000 ms).
+lease_ms = 10000
+# Destination renewal challenge interval (250..=lease_ms/2 ms).
+renew_ms = 3000
+# Calls that may hold a lease on this machine at once (1..=8).
+max_concurrent_calls = 4

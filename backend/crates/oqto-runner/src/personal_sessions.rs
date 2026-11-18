@@ -378,6 +378,7 @@ impl Sessions {
                     SessionInput::SetModel { provider, model_id } => crate::tui_rpc::InputAction::SetModel { provider, model_id },
                     SessionInput::SetThinkingLevel { level } => crate::tui_rpc::InputAction::SetThinkingLevel { level },
                     SessionInput::Abort => crate::tui_rpc::InputAction::Abort,
+                    SessionInput::SetSessionName { name } => crate::tui_rpc::InputAction::SetSessionName { name },
                 };
                 let receipt = attachment.observer.input(input).await.map_err(|_| ActionFailure::OutcomeUnknown)?;
                 Ok(serde_json::to_value(receipt).map_err(|_| ActionFailure::OutcomeUnknown)?)

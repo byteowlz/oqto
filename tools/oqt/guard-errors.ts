@@ -33,6 +33,20 @@ const messages = {
 		"Invocation teardown not confirmed; inspect effects before continuing.",
 	resource_session_only:
 		"Resource access is granted per session, never always.",
+	import_staging:
+		"Session import staging: effects and input are unavailable until publication.",
+	machine_unknown:
+		"Unknown machine: no such named machine is configured. The call was not started; there is no local fallback.",
+	machine_unavailable:
+		"The named machine is offline, unpaired, unbound or refused the call. The call was not started; there is no local fallback.",
+	machine_attention:
+		"The named machine needs attention: a remote stop was not confirmed. No new calls go there until the owner inspects it.",
+	machine_duplicate:
+		"This exact remote call was already claimed; it is never dispatched again. Inspect it before retrying.",
+	machine_outcome_unknown:
+		"The remote call's outcome is unknown (link lost, lease ended or stop unconfirmed). Effects may have occurred; it is never replayed. Inspect before retrying.",
+	import_rewritten:
+		"Classic source rewritten or native ID reused since import; reconciliation required, nothing imported.",
 } as const;
 export type GuardErrorCode = keyof typeof messages;
 export interface GuardOperationalFeedback {

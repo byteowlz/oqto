@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/popover";
 import {
 	DictationMicButton,
+	DictationSettingsPanel,
 	DictationStatus,
 } from "@/components/voice/ComposerDictation";
 import type { Features, PiModelInfo } from "@/features/chat/api";
@@ -1289,6 +1290,8 @@ export function ChatView({
 
 	// Dictation hook
 	const dictationSendRef = useRef<HTMLButtonElement>(null);
+	// Settings are an overlay above the prompt box, not a modal (oqto-623a).
+	const [dictationSettingsOpen, setDictationSettingsOpen] = useState(false);
 	const dictation = useDictation({
 		scopeKey: JSON.stringify([
 			resolvedStorageKeyPrefix,
@@ -1311,8 +1314,6 @@ export function ChatView({
 			[draftStorageKey, setInput],
 		),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
-		autoSendOnFinal: false,
-		autoSendDelayMs: 50,
 		onAutoSend: () => dictationSendRef.current?.click(),
 	});
 
@@ -2685,7 +2686,14 @@ export function ChatView({
 
 				{/* Chat input - canonical chat input */}
 				<div className="chat-input-container composer-dictation-anchor flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
-					<DictationStatus dictation={dictation} />
+					<div className="composer-dictation-layer">
+						<DictationStatus dictation={dictation} />
+						<DictationSettingsPanel
+							dictation={dictation}
+							open={dictationSettingsOpen}
+							onClose={() => setDictationSettingsOpen(false)}
+						/>
+					</div>
 					<div className="flex items-center gap-2">
 						{/* File upload button */}
 						<button
@@ -2703,7 +2711,15 @@ export function ChatView({
 						</button>
 
 						{/* Voice menu button */}
-						{hasVoice && <DictationMicButton dictation={dictation} />}
+						{hasVoice && (
+							<DictationMicButton
+								dictation={dictation}
+								settingsOpen={dictationSettingsOpen}
+								onToggleSettings={() =>
+									setDictationSettingsOpen((open) => !open)
+								}
+							/>
+						)}
 
 						{/* Textarea wrapper with slash command popup */}
 						<div

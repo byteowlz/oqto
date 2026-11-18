@@ -1,0 +1,7 @@
+== Pick a sandbox profile ==
+For the new workspace ~/work/sldr
+== profile ==
+Profile: Minimal / Development / Strict
+Network: Open / Via proxy / Isolated
+Extra write paths: ____
+[Create workspace] [Cancel]

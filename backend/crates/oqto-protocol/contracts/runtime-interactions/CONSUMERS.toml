@@ -1,0 +1,55 @@
+schema = 1
+# Registry of repositories that consume the shared runtime-interaction bundle.
+#
+# Core owns the canonical bundle and its qualified manifest. A consumer either
+# vendors that bundle byte-for-byte (state = "vendored") or is tracked here as
+# not-yet-adopted ("planned"/"package"). Only "vendored" rows are gated for drift.
+#
+# `bundle` is relative to the consumer repository root and names the v1
+# directory. `SOURCE.json` is expected as its sibling unless `source` says
+# otherwise. `gate` is the consumer command that exercises its own codec; it is
+# recorded so a human or a nightly job runs the same check everywhere.
+#
+# Verify one consumer:
+#   just check-runtime-interactions-consumer ../pi-agent-extensions/runtime-interactions/protocol/runtime-interactions/v1
+# Verify every registered consumer:
+#   just check-runtime-interactions-consumers
+
+core_path = "backend/crates/oqto-protocol/contracts/runtime-interactions/v1"
+
+[[consumer]]
+name = "pi-agent-extensions"
+repo = "pi-agent-extensions"
+bundle = "runtime-interactions/protocol/runtime-interactions/v1"
+state = "vendored"
+gate = "bun test runtime-interactions pi-tui-rpc"
+note = "Independent TS consumer package plus the personal producer (pi-tui-rpc)."
+
+[[consumer]]
+name = "oqto-mobile"
+repo = "oqto-mobile"
+bundle = "vendor/oqto-runtime-interactions/v1"
+state = "planned"
+note = "Rust core consumes oqto-runner-client; UniFFI bindings are a later qualified step. No bundle vendored yet."
+
+[[consumer]]
+name = "oqto-desktop"
+repo = "oqto-desktop"
+bundle = "vendor/oqto-runtime-interactions/v1"
+state = "planned"
+note = "Consumes oqto-runner-client over its transport adapter; no bundle vendored yet."
+
+[[consumer]]
+name = "oqt"
+repo = "oqto"
+bundle = "tools/oqt/vendor/runtime-interactions/v1"
+state = "planned"
+note = "Standalone host/guard producer own ports; bundle vendoring not started."
+
+[[consumer]]
+name = "frontend"
+repo = "oqto"
+bundle = "frontend/src/generated/runtime-interactions/v1"
+state = "package"
+gate = "bun test"
+note = "Consumes @byteowlz/runtime-interactions; the package build gate runs its codec tests."

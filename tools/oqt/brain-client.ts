@@ -6,6 +6,7 @@ import type {
 	Credential,
 	CredentialStore,
 } from "@earendil-works/pi-ai";
+import { Connection, RemoteExecutionEnv } from "@earendil-works/pi-env";
 import type { CodingGate, CodingOperation } from "./gated-tool.ts";
 import type { WireClient } from "./guard-wire.ts";
 import type { HandsClient } from "./hands-client.ts";
@@ -19,6 +20,15 @@ export class GuardGate implements CodingGate {
 	readonly hands: HandsClient;
 	readonly #deadlines = new Map<string, number>();
 	readonly #pinned = new Map<string, unknown>();
+	/** Per-call remote hands (ADR-0086): a fresh Connection for exactly one
+	 * guard-admitted call, closed at finish; never reused or reconnected. */
+	readonly #remote = new Map<
+		string,
+		{ machine: string; cwd: string; connection: Connection }
+	>();
+	#remoteCount = 0;
+	/** Set once the guard offered named machines: results then name theirs. */
+	namedMachines = false;
 	constructor(guard: WireClient, hands: HandsClient) {
 		this.guard = guard;
 		this.hands = hands;
@@ -30,13 +40,56 @@ export class GuardGate implements CodingGate {
 		return result;
 	}
 	async prepare(operation: CodingOperation, context: Context) {
-		const result = this.#adopt(
-			await this.guard.call("prepare", { operation }, context.abortSignal),
+		const raw = await this.guard.call(
+			"prepare",
+			{ operation },
+			context.abortSignal,
 		);
-		if (typeof result.expires_at !== "number")
+		if (!object(raw) || typeof raw.expires_at !== "number")
 			throw new Error("Guard returned no invocation deadline");
-		this.#deadlines.set(operation.request_id, result.expires_at);
+		const remote = raw.remote;
+		if (object(remote)) {
+			if (
+				typeof remote.machine !== "string" ||
+				typeof remote.cwd !== "string" ||
+				typeof remote.epoch !== "string" ||
+				!/^[a-f0-9]{32}$/.test(remote.epoch)
+			)
+				throw new Error("Guard returned an invalid remote admission");
+			// The guard routes this one-use token to the paired machine; the
+			// brain holds no key, address or link of its own.
+			const connection = new Connection({
+				command: [
+					process.execPath,
+					this.hands.proxy,
+					this.hands.socketPath,
+					remote.epoch,
+				],
+			});
+			const env = new RemoteExecutionEnv({
+				connection,
+				id: `oqt-remote-${remote.machine}-${++this.#remoteCount}`,
+				cwd: remote.cwd,
+			});
+			this.#remote.set(operation.request_id, {
+				machine: remote.machine,
+				cwd: remote.cwd,
+				connection,
+			});
+			this.#deadlines.set(operation.request_id, raw.expires_at);
+			this.#pinned.set(operation.request_id, env);
+			return;
+		}
+		const result = this.#adopt(raw);
+		this.#deadlines.set(operation.request_id, result.expires_at as number);
 		this.#pinned.set(operation.request_id, this.hands.current);
+	}
+	/** Where an admitted call ran: named machine and its cwd. */
+	target(operation: CodingOperation) {
+		const remote = this.#remote.get(operation.request_id);
+		return remote
+			? { machine: remote.machine, cwd: remote.cwd }
+			: { machine: "local", cwd: this.hands.workspace };
 	}
 	env(operation: CodingOperation) {
 		const pinned = this.#pinned.get(operation.request_id);
@@ -75,13 +128,32 @@ export class GuardGate implements CodingGate {
 			expires_at: number;
 		};
 	}
-	async drain() {
-		this.#adopt(await this.guard.call("drain"));
+	async drain(operation: CodingOperation) {
+		// The remote stream closes first, so the destination generation drains.
+		this.#remote.get(operation.request_id)?.connection.close();
+		this.#adopt(await this.guard.call("drain", { id: operation.request_id }));
 	}
 	async finish(operation: CodingOperation) {
 		this.#deadlines.delete(operation.request_id);
 		this.#pinned.delete(operation.request_id);
+		this.#remote.get(operation.request_id)?.connection.close();
+		this.#remote.delete(operation.request_id);
 		await this.guard.call("finish", { id: operation.request_id });
+	}
+	/** Named machines the guard offers (names and descriptions only). */
+	async machines() {
+		const value = await this.guard.call("machines");
+		return Array.isArray(value)
+			? value.filter(
+					(
+						row,
+					): row is {
+						machine: string;
+						platform: string | null;
+						cwd: string | null;
+					} => object(row) && typeof row.machine === "string",
+				)
+			: [];
 	}
 }
 

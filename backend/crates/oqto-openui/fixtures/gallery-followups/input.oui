@@ -1,0 +1,6 @@
+root = Stack([card, next])
+card = Card([head, gallery, md])
+head = CardHeader("Logo directions", "Three candidates from the Logo Factory run")
+gallery = ImageGallery([{src: "https://example.invalid/owl-a.png", alt: "Owl A, geometric", details: "Sharp, mono line"}, {src: "https://example.invalid/owl-b.png", alt: "Owl B, rounded", details: "Soft, friendly"}, {src: "https://example.invalid/owl-c.png", alt: "Owl C, pixel", details: "Departure Mono feel"}])
+md = MarkDownRenderer("**Recommendation:** Owl A fits the sharp oqto identity; B suits moss.")
+next = ListBlock([ListItem("Refine Owl A", "Three weight variants", null, "Go", @Answer("refine-a")), ListItem("Compare in context", "Render on app icon and favicon", null, "Go", @Answer("context")), ListItem("Start over", "New brief", null, "Go", @Answer("restart"))])

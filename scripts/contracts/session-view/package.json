@@ -1,0 +1,9 @@
+{
+  "name": "oqto-session-view-contract-capture",
+  "private": true,
+  "type": "module",
+  "description": "Captures golden frames for the session-view contract from the pinned upstream Pi Durable release. Not shipped.",
+  "dependencies": {
+    "@earendil-works/pi-durable": "1.5.2"
+  }
+}

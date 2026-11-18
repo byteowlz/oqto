@@ -1,0 +1,590 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "description": "The whole configuration.",
+  "type": "object",
+  "properties": {
+    "cache": {
+      "description": "The encrypted local cache.",
+      "default": {
+        "enabled": true,
+        "key": "auto",
+        "max_entries": 2000
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/CacheConfig"
+        }
+      ]
+    },
+    "connection": {
+      "description": "Connection settings.",
+      "default": {
+        "connect_timeout_ms": 5000,
+        "page_size": 50
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/ConnectionConfig"
+        }
+      ]
+    },
+    "display": {
+      "description": "What the transcript shows.",
+      "default": {
+        "thinking": "collapsed",
+        "tool_lines": 3
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/DisplayConfig"
+        }
+      ]
+    },
+    "host": {
+      "description": "Name of the entry in `hosts` to attach to.",
+      "default": "local",
+      "type": "string"
+    },
+    "hosts": {
+      "description": "Hosts this client knows.",
+      "default": [
+        {
+          "name": "local",
+          "secret_env": "BYOAGNT_SECRET",
+          "session": "ses_chat",
+          "url": "ws://127.0.0.1:8787/session"
+        }
+      ],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HostConfig"
+      }
+    },
+    "keys": {
+      "description": "Key bindings.",
+      "default": {
+        "bindings": {
+          "app.clear": [
+            "ctrl+c"
+          ],
+          "app.exit": [
+            "ctrl+d"
+          ],
+          "app.interrupt": [
+            "escape"
+          ],
+          "app.message.followUp": [
+            "alt+enter"
+          ],
+          "app.thinking.toggle": [
+            "ctrl+t"
+          ],
+          "app.tools.expand": [
+            "ctrl+o"
+          ],
+          "oqt.copy.last": [
+            "leader y"
+          ],
+          "oqt.focus.composer": [
+            "i",
+            "escape"
+          ],
+          "oqt.focus.transcript": [
+            "leader up",
+            "pageup"
+          ],
+          "oqt.help": [
+            "leader ?"
+          ],
+          "oqt.model.show": [
+            "leader m"
+          ],
+          "oqt.note.save": [
+            "leader w"
+          ],
+          "oqt.palette": [
+            "leader :",
+            "ctrl+k"
+          ],
+          "oqt.quit": [
+            "leader q"
+          ],
+          "oqt.session.stop": [
+            "leader x"
+          ],
+          "oqt.transcript.earlier": [
+            "leader e"
+          ],
+          "oqt.transcript.missing": [
+            "leader g"
+          ],
+          "tui.altScreen.bottom": [
+            "G",
+            "end"
+          ],
+          "tui.altScreen.halfPageDown": [
+            "ctrl+d"
+          ],
+          "tui.altScreen.halfPageUp": [
+            "ctrl+u"
+          ],
+          "tui.altScreen.lineDown": [
+            "j",
+            "down"
+          ],
+          "tui.altScreen.lineUp": [
+            "k",
+            "up"
+          ],
+          "tui.altScreen.pageDown": [
+            "pagedown",
+            "space"
+          ],
+          "tui.altScreen.pageUp": [
+            "pageup"
+          ],
+          "tui.altScreen.top": [
+            "g g",
+            "home"
+          ],
+          "tui.input.newLine": [
+            "shift+enter",
+            "ctrl+j"
+          ],
+          "tui.input.submit": [
+            "enter"
+          ]
+        },
+        "leader": "ctrl+space"
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/KeysConfig"
+        }
+      ]
+    },
+    "terminal": {
+      "description": "Terminal features; `auto` decides from the terminal's replies, never from `TERM`.",
+      "default": {
+        "herdr": "auto",
+        "images": "auto",
+        "kitty_keyboard": "auto",
+        "probe_timeout_ms": 150,
+        "status": "auto",
+        "synchronized_output": "auto"
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/TerminalConfig"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "CacheConfig": {
+      "description": "The encrypted cache.",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "description": "Cache directory; default `$XDG_CACHE_HOME/oqt-tui/sessions`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "Keep a cache so a Session shows at once.",
+          "default": true,
+          "type": "boolean"
+        },
+        "key": {
+          "description": "Where the encryption key lives.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CacheKeyStore"
+            }
+          ]
+        },
+        "max_entries": {
+          "description": "Entries kept per Session; older pages are read again on demand.",
+          "default": 2000,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "CacheKeyStore": {
+      "description": "Where the cache key lives.",
+      "oneOf": [
+        {
+          "description": "The OS keychain, falling back to a 0600 file.",
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "description": "A 0600 file next to the cache.",
+          "type": "string",
+          "enum": [
+            "file"
+          ]
+        }
+      ]
+    },
+    "ConnectionConfig": {
+      "description": "Connection settings.",
+      "type": "object",
+      "properties": {
+        "connect_timeout_ms": {
+          "description": "Connect timeout in milliseconds.",
+          "default": 5000,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "page_size": {
+          "description": "Entries per `read_entries` page.",
+          "default": 50,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "window_min": {
+          "description": "Window size asked for on attach; the host's default when absent.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "DisplayConfig": {
+      "description": "Display settings.",
+      "type": "object",
+      "properties": {
+        "thinking": {
+          "description": "Thinking blocks.",
+          "default": "collapsed",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Thinking"
+            }
+          ]
+        },
+        "tool_lines": {
+          "description": "Lines of tool output shown on a collapsed tool card.",
+          "default": 3,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostConfig": {
+      "description": "One host speaking `oqto.session-view`.",
+      "type": "object",
+      "required": [
+        "name",
+        "session",
+        "url"
+      ],
+      "properties": {
+        "name": {
+          "description": "Name used by `host` and `--host`.",
+          "type": "string"
+        },
+        "secret_env": {
+          "description": "Environment variable holding the bearer secret (never put the secret here).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secret_file": {
+          "description": "File holding the bearer secret (must not be readable by others).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "description": "Session id to attach to.",
+          "type": "string"
+        },
+        "url": {
+          "description": "WebSocket URL of the host's `/session` path (`ws://127.0.0.1:PORT/session`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Images": {
+      "description": "Image output.",
+      "oneOf": [
+        {
+          "description": "Kitty graphics when the terminal replied; Unicode placeholders inside tmux; else text.",
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "description": "Direct Kitty placements.",
+          "type": "string",
+          "enum": [
+            "kitty"
+          ]
+        },
+        {
+          "description": "Kitty Unicode placeholders.",
+          "type": "string",
+          "enum": [
+            "placeholders"
+          ]
+        },
+        {
+          "description": "Text only.",
+          "type": "string",
+          "enum": [
+            "off"
+          ]
+        }
+      ]
+    },
+    "KeysConfig": {
+      "description": "Key bindings by action id. Every binding is configurable; missing ids keep their default.",
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "description": "Action id to key paths, for example `\"oqt.palette\" = [\"leader :\", \"ctrl+k\"]`. A path is keys separated by spaces; `leader` stands for the leader key.",
+          "default": {
+            "app.clear": [
+              "ctrl+c"
+            ],
+            "app.exit": [
+              "ctrl+d"
+            ],
+            "app.interrupt": [
+              "escape"
+            ],
+            "app.message.followUp": [
+              "alt+enter"
+            ],
+            "app.thinking.toggle": [
+              "ctrl+t"
+            ],
+            "app.tools.expand": [
+              "ctrl+o"
+            ],
+            "oqt.copy.last": [
+              "leader y"
+            ],
+            "oqt.focus.composer": [
+              "i",
+              "escape"
+            ],
+            "oqt.focus.transcript": [
+              "leader up",
+              "pageup"
+            ],
+            "oqt.help": [
+              "leader ?"
+            ],
+            "oqt.model.show": [
+              "leader m"
+            ],
+            "oqt.note.save": [
+              "leader w"
+            ],
+            "oqt.palette": [
+              "leader :",
+              "ctrl+k"
+            ],
+            "oqt.quit": [
+              "leader q"
+            ],
+            "oqt.session.stop": [
+              "leader x"
+            ],
+            "oqt.transcript.earlier": [
+              "leader e"
+            ],
+            "oqt.transcript.missing": [
+              "leader g"
+            ],
+            "tui.altScreen.bottom": [
+              "G",
+              "end"
+            ],
+            "tui.altScreen.halfPageDown": [
+              "ctrl+d"
+            ],
+            "tui.altScreen.halfPageUp": [
+              "ctrl+u"
+            ],
+            "tui.altScreen.lineDown": [
+              "j",
+              "down"
+            ],
+            "tui.altScreen.lineUp": [
+              "k",
+              "up"
+            ],
+            "tui.altScreen.pageDown": [
+              "pagedown",
+              "space"
+            ],
+            "tui.altScreen.pageUp": [
+              "pageup"
+            ],
+            "tui.altScreen.top": [
+              "g g",
+              "home"
+            ],
+            "tui.input.newLine": [
+              "shift+enter",
+              "ctrl+j"
+            ],
+            "tui.input.submit": [
+              "enter"
+            ]
+          },
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "leader": {
+          "description": "The leader key that starts key progressions (`leader s`). Default `ctrl+space`.",
+          "default": "ctrl+space",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TerminalConfig": {
+      "description": "Terminal features.",
+      "type": "object",
+      "properties": {
+        "herdr": {
+          "description": "herdr `report-agent` when `HERDR_ENV` is set.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Toggle"
+            }
+          ]
+        },
+        "images": {
+          "description": "Images.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Images"
+            }
+          ]
+        },
+        "kitty_keyboard": {
+          "description": "Kitty keyboard protocol.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Toggle"
+            }
+          ]
+        },
+        "probe_timeout_ms": {
+          "description": "How long the start-up probe waits for replies, in milliseconds.",
+          "default": 150,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "status": {
+          "description": "OSC 7501 program status.",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Toggle"
+            }
+          ]
+        },
+        "synchronized_output": {
+          "description": "Synchronized output (DEC mode 2026).",
+          "default": "auto",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Toggle"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Thinking": {
+      "description": "How thinking blocks show.",
+      "oneOf": [
+        {
+          "description": "One line with its length; `ctrl+t` expands.",
+          "type": "string",
+          "enum": [
+            "collapsed"
+          ]
+        },
+        {
+          "description": "Full text.",
+          "type": "string",
+          "enum": [
+            "shown"
+          ]
+        },
+        {
+          "description": "Not shown.",
+          "type": "string",
+          "enum": [
+            "hidden"
+          ]
+        }
+      ]
+    },
+    "Toggle": {
+      "description": "`auto` follows the terminal's replies; `on` forces; `off` disables.",
+      "oneOf": [
+        {
+          "description": "From the probe.",
+          "type": "string",
+          "enum": [
+            "auto"
+          ]
+        },
+        {
+          "description": "Always.",
+          "type": "string",
+          "enum": [
+            "on"
+          ]
+        },
+        {
+          "description": "Never.",
+          "type": "string",
+          "enum": [
+            "off"
+          ]
+        }
+      ]
+    }
+  }
+}

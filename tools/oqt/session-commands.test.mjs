@@ -17,7 +17,11 @@ test("classic resume parser and native prefix selection preserve explicit identi
 			join(source, "packages/coding-agent/src/experimental/services"),
 			join(dir, "services"),
 		);
-		for (const name of ["session-commands.ts", "session-forks.ts"])
+		for (const name of [
+			"session-commands.ts",
+			"session-forks.ts",
+			"session-forks-service.ts",
+		])
 			await copyFile(new URL(name, import.meta.url), join(dir, name));
 		const { createOqtSessionFacet } = await import(
 			pathToFileURL(join(dir, "session-commands.ts"))

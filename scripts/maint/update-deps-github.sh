@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="$ROOT/dependencies.toml"
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -54,7 +54,8 @@ while IFS= read -r line; do
     continue
   fi
 
-  sed -i "s/^${key} = \"[^\"]*\"/${key} = \"${version}\"/" "$MANIFEST"
+  sed "s/^${key} = \"[^\"]*\"/${key} = \"${version}\"/" "$MANIFEST" > "${MANIFEST}.tmp"
+  mv "${MANIFEST}.tmp" "$MANIFEST"
   if [[ "$version" != "$old_val" ]]; then
     echo "  $key: $old_val -> $version"
   else

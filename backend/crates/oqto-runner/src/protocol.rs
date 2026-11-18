@@ -2011,6 +2011,12 @@ fn decode_agent_message_parts(
         }];
     }
 
+    if !is_assistant_error
+        && (msg.content.is_null() || msg.content.as_array().is_some_and(Vec::is_empty))
+    {
+        return Vec::new();
+    }
+
     // Assistant / user messages: decode the content array into structured
     // parts. Fall back to a single text part for plain strings or unknown
     // shapes.
@@ -2185,6 +2191,8 @@ fn decode_agent_message_parts(
 /// Lossy reverse of `agent_msg_to_chat_proto` -- used as a temporary bridge
 /// while `ws_multiplexed` still expects `AgentMessage` from `pi_get_messages`.
 pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> oqto_pi::AgentMessage {
+    let assistant_error = matches!(proto.role.as_str(), "assistant" | "agent")
+        && proto.parts.iter().any(|part| part.part_type == "error");
     // Extract text content from parts
     let (content, tool_call_id, tool_name, is_error) =
         if proto.parts.len() == 1 && (proto.parts[0].part_type == "tool_result") {
@@ -2230,7 +2238,7 @@ pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> oqto_pi::AgentMessage
         provider: proto.provider_id,
         model: proto.model_id,
         usage: None, // Token info is split in proto, not easily reconstructed
-        stop_reason: None,
+        stop_reason: assistant_error.then(|| "error".to_string()),
         extra: std::collections::HashMap::new(),
     }
 }
@@ -2851,6 +2859,52 @@ mod tests {
             extract_client_id_from_extra(&extra).as_deref(),
             Some("cid-camel")
         );
+    }
+
+    #[test]
+    fn history_error_parts_keep_failure_semantics_across_the_agent_message_bridge()
+    -> anyhow::Result<()> {
+        let proto: ChatMessageProto = serde_json::from_value(serde_json::json!({
+            "id":"synthetic-message", "session_id":"synthetic-session", "role":"assistant",
+            "created_at":1_700_000_000_000_i64,
+            "parts":[{"id":"synthetic-message:part:0","part_type":"error","text":"Synthetic subscription request failed."}]
+        }))?;
+        let native = chat_proto_to_agent_msg(proto);
+        assert_eq!(native.stop_reason.as_deref(), Some("error"));
+        assert_eq!(
+            native.content.as_str(),
+            Some("Synthetic subscription request failed.")
+        );
+        let projected = agent_msg_to_chat_proto(&native, 0, "synthetic-session");
+        assert_eq!(projected.parts[0].part_type, "error");
+        assert_eq!(
+            projected.parts[0].text.as_deref(),
+            Some("Synthetic subscription request failed.")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_nonerror_content_is_not_json_text_and_authored_json_stays_text() -> anyhow::Result<()>
+    {
+        for content in [serde_json::json!([]), serde_json::Value::Null] {
+            let native = serde_json::from_value(serde_json::json!({
+                "role":"assistant", "content":content, "stopReason":"stop"
+            }))?;
+            assert!(
+                agent_msg_to_chat_proto(&native, 0, "synthetic-session")
+                    .parts
+                    .is_empty()
+            );
+        }
+        let native = serde_json::from_value(serde_json::json!({
+            "role":"assistant", "content":"[]", "stopReason":"stop"
+        }))?;
+        let projected = agent_msg_to_chat_proto(&native, 0, "synthetic-session");
+        assert_eq!(projected.parts[0].part_type, "text");
+        assert_eq!(projected.parts[0].text.as_deref(), Some("[]"));
+        assert!(chat_proto_to_agent_msg(projected).stop_reason.is_none());
+        Ok(())
     }
 
     #[test]

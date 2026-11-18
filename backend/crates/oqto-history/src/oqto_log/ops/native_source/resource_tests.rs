@@ -97,6 +97,99 @@ async fn commit_rereads_shards_added_after_preparation_instead_of_caching_owners
     Ok(())
 }
 
+/// oqto-6qff: a personal host with 230 shards and thousands of already-pinned
+/// native Sessions spent hours re-attaching every shard twice per Session on
+/// every five-minute sweep. A steady-state pass must read each shard a bounded
+/// number of times, not once per Session, while writes keep the fresh re-read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn steady_state_discovery_pass_reads_each_shard_once_not_once_per_session() -> Result<()> {
+    const SHARDS: usize = 230;
+    const PINNED: usize = 40;
+    let temp = tempfile::tempdir()?;
+    let home = temp.path();
+    let workspace = |n: usize| format!("/synthetic/shard-{n}");
+    for n in 0..SHARDS {
+        let db = prefix_shard(home, &workspace(n), usize::MAX).await?;
+        let pinned: Vec<usize> = (0..PINNED).filter(|s| s * 7 % SHARDS == n).collect();
+        if pinned.is_empty() {
+            continue;
+        }
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(&db))
+            .await?;
+        for s in pinned {
+            let external = format!("native-{s}");
+            let public = crate::oqto_log::store::platform_id_for_external_id(&external);
+            sqlx::query("INSERT INTO oqto_log_sessions(session_id,platform_id,external_id,user_id,workspace_id,extensions_json) VALUES(?,?,?,'owner',?,json_object('personal_native_source',?))")
+                .bind(&public).bind(&public).bind(&external).bind(workspace(n)).bind(format!("pin-{s}"))
+                .execute(&pool).await?;
+        }
+        pool.close().await;
+    }
+    let before = reader::attaches_under(home);
+    let started = std::time::Instant::now();
+    let mut batch = DiscoveryBatch::open(home).await?;
+    for s in 0..PINNED {
+        let changed = batch
+            .discover(
+                "owner",
+                &workspace(s * 7 % SHARDS),
+                &format!("native-{s}"),
+                &format!("pin-{s}"),
+            )
+            .await?;
+        assert!(!changed, "an already-pinned Session is a no-op");
+    }
+    // Pinned under another encoding/source (e.g. a version-1 pin) or asked for
+    // another Workspace: discover_identity never writes an existing pin, so
+    // these refuse from the snapshot too, every sweep, without re-reading.
+    for s in 0..PINNED {
+        let error = batch
+            .discover(
+                "owner",
+                &workspace(s * 7 % SHARDS),
+                &format!("native-{s}"),
+                &format!("legacy-pin-{s}"),
+            )
+            .await
+            .unwrap_err();
+        assert!(!authority_unavailable(&error));
+        assert!(error.to_string().contains("Native source rebind denied"));
+    }
+    assert!(
+        batch
+            .discover("owner", &workspace(7), "native-0", "pin-0")
+            .await
+            .is_err(),
+        "a pinned Session cannot be rebound to another Workspace"
+    );
+    let steady = reader::attaches_under(home) - before;
+    let elapsed = started.elapsed();
+    // A genuinely new Session still writes after a complete fresh re-read.
+    assert!(
+        batch
+            .discover("owner", &workspace(3), "native-new", "pin-new")
+            .await?
+    );
+    validate(
+        home,
+        &crate::oqto_log::store::platform_id_for_external_id("native-new"),
+        "native-new",
+        &workspace(3),
+        &["pin-new"],
+    )
+    .await?;
+    eprintln!(
+        "oqto-6qff steady-state pass: {SHARDS} shards, {PINNED} pinned Sessions (+{PINNED} denied rebinds), {steady} ATTACHes, {elapsed:?}"
+    );
+    assert!(
+        steady <= 2 * SHARDS,
+        "steady-state pass attached {steady} times for {SHARDS} shards and {PINNED} pinned Sessions"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn initial_inventory_failure_refuses_all_adoption_and_new_batch_recovers() -> Result<()> {
     let temp = tempfile::tempdir()?;

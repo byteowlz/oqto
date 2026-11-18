@@ -216,6 +216,8 @@ export class WakeService {
 	private generation = 0;
 	private playback = false;
 	private cooldown = new Map<string, number>();
+	/** User override of the release threshold (debug tuning); null keeps the release value. */
+	private thresholdOverride: number | null = null;
 	private busy = Promise.resolve();
 	private unlisten?: () => void;
 
@@ -234,6 +236,15 @@ export class WakeService {
 	get phrases(): string[] {
 		return this.manifest?.classifiers ?? [];
 	}
+	/** Threshold detections are judged against: the override, else the release's. */
+	get threshold(): number | null {
+		return this.thresholdOverride ?? this.manifest?.threshold ?? null;
+	}
+	/** Set or clear (null) a local threshold. Only values in (0, 1) are accepted. */
+	setThreshold(threshold: number | null): void {
+		this.thresholdOverride =
+			threshold !== null && threshold > 0 && threshold < 1 ? threshold : null;
+	}
 
 	private setState(state: WakeState) {
 		if (this.state === state) return;
@@ -247,17 +258,23 @@ export class WakeService {
 		const token = ++this.generation;
 		this.setState("loading");
 		try {
-			const { manifest, models } = await loadVerifiedRelease(
-				this.location,
-				this.deps,
-			);
-			if (token !== this.generation) return;
-			this.manifest = manifest;
-			this.engine ??= await this.deps.createEngine(models, {
-				threshold: manifest.threshold,
-			});
-			if (token !== this.generation) return;
-			this.engine.reset();
+			// Load and verify once per service; re-arming after a dictation only
+			// reopens the microphone instead of re-fetching and rebuilding the engine.
+			if (!this.engine || !this.manifest) {
+				const { manifest, models } = await loadVerifiedRelease(
+					this.location,
+					this.deps,
+				);
+				if (token !== this.generation) return;
+				const engine = await this.deps.createEngine(models, {
+					threshold: manifest.threshold,
+				});
+				if (token !== this.generation) return;
+				this.manifest = manifest;
+				this.engine = engine;
+			}
+			const engine = this.engine;
+			engine.reset();
 			if (!this.deps.openCapture) {
 				this.setState("unavailable");
 				return;
@@ -315,7 +332,15 @@ export class WakeService {
 			.then(async () => {
 				for (const result of await engine.push(pcm)) {
 					this.callbacks.onScores?.(result.scores);
-					for (const phrase of result.detections)
+					// Without an override the engine's own crossings decide, unchanged.
+					const override = this.thresholdOverride;
+					const crossed =
+						override === null
+							? result.detections
+							: Object.keys(result.scores).filter(
+									(phrase) => (result.scores[phrase] ?? 0) >= override,
+								);
+					for (const phrase of crossed)
 						this.detect(phrase, result.scores[phrase] ?? 0);
 				}
 			})

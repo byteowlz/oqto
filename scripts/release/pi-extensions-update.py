@@ -37,7 +37,15 @@ MANIFEST = ROOT / "dependencies.toml"
 POLICY = ROOT / "scripts/dist/pi-extension-supersessions.json"
 DEFAULTS = ROOT / "scripts/dist/pi-default-extensions.txt"
 LOAD_TEST = ROOT / "scripts/dist/test-shipped-extensions.mjs"
-REPO = "https://github.com/byteowlz/pi-agent-extensions.git"
+# The pin must exist on the public mirror: release and deployment builds clone it.
+# The private working repository keeps original history and may carry commits that
+# were never published, so a candidate from there is only admitted once the mirror
+# serves the same commit.
+PUBLIC_REPO = os.environ.get(
+    "PI_AGENT_EXTENSIONS_PUBLIC_URL",
+    "https://github.com/byteowlz/pi-agent-extensions.git",
+)
+REPO = PUBLIC_REPO
 PIN = re.compile(r'^(pi-extensions\s*=\s*")([0-9a-f]{40})(".*)$', re.MULTILINE)
 
 
@@ -166,6 +174,42 @@ def qualify(args) -> dict:
             "gates": [],
         }
         log(f"candidate {revision[:9]} (pinned {pinned[:9]})")
+        # A pin that the mirror cannot serve breaks release and deployment builds.
+        if args.repo.rstrip("/") != PUBLIC_REPO.rstrip("/"):
+            fetched = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "fetch",
+                    "--quiet",
+                    "--no-tags",
+                    PUBLIC_REPO,
+                    revision,
+                ],
+                check=False,
+                capture_output=True,
+            )
+            served = fetched.returncode == 0 or (
+                subprocess.run(
+                    ["git", "-C", str(repo), "fetch", "--quiet", "--no-tags", PUBLIC_REPO],
+                    check=False,
+                    capture_output=True,
+                ).returncode
+                == 0
+            )
+            if not served or subprocess.run(
+                ["git", "-C", str(repo), "cat-file", "-e", f"{revision}^{{commit}}"],
+                check=False,
+                capture_output=True,
+            ).returncode != 0:
+                raise GateFailed(
+                    f"public-mirror: {revision[:9]} is not on {PUBLIC_REPO}; "
+                    "publish it first (byt publish) — a private-only commit cannot be pinned"
+                )
+            receipt["gates"].append(
+                {"gate": "public-mirror", "repository": PUBLIC_REPO}
+            )
         # Moving forward only: the candidate must contain the current pin.
         ancestry = subprocess.run(
             ["git", "-C", str(repo), "merge-base", "--is-ancestor", pinned, revision],

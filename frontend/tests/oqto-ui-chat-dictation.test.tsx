@@ -28,6 +28,8 @@ vi.mock("@/components/voice/ComposerDictation", () => ({
 			</span>
 		</>
 	),
+	// The overlay panel is presentation-only here; the wiring under test is the hook.
+	DictationSettingsPanel: () => null,
 	DictationStatus: ({ dictation }: { dictation: UseDictationReturn }) =>
 		dictation.isActive ? (
 			<div>

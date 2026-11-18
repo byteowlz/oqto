@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from coding_fixture import coding_world
+from coding_fixture import cmdline, coding_world
 from profile_namespace import workspace_profile_key
 from tui_test import Terminal
 
@@ -30,11 +30,19 @@ def kill_fixture_host(work, owner):
     assert len(profiles) == 1, 'cannot uniquely identify this fixture host'
     profile = profiles[0]
     host = json.loads((profile / 'host.json').read_text())
+    expected = str(profile.parents[1] / 'pi-source/packages/coding-agent/src/experimental/host.ts')
+    if sys.platform == 'darwin':
+        # No pidfd and no readable environment on macOS: bind by command line
+        # and the unchanged manifest, then signal the pid.
+        assert expected in cmdline(host['pid']) or expected.replace('/var/', '/private/var/', 1) in cmdline(host['pid']), \
+            'fixture host executable binding changed'
+        assert json.loads((profile / 'host.json').read_text())['pid'] == host['pid']
+        os.kill(host['pid'], signal.SIGKILL)
+        return
     descriptor = os.pidfd_open(host['pid'])
     try:
         command = Path(f"/proc/{host['pid']}/cmdline").read_bytes().split(b'\0')
-        expected = str(profile.parents[1] / 'pi-source/packages/coding-agent/src/experimental/host.ts').encode()
-        assert expected in command, 'fixture host executable binding changed'
+        assert expected.encode() in command, 'fixture host executable binding changed'
         environment = Path(f"/proc/{host['pid']}/environ").read_bytes().split(b'\0')
         assert os.fsencode(f'OQT_OWNER_AGENT_DIR={owner.resolve()}') in environment, 'fixture host owner binding changed'
         assert json.loads((profile / 'host.json').read_text())['pid'] == host['pid']

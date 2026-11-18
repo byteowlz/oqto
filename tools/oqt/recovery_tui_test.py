@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from coding_fixture import cmdline, coding_world, processes_with_env, snapshot, tool_results
+from coding_fixture import brain_processes, coding_world, host_processes, snapshot, tool_results
 from tui_test import Terminal
 
 LOOP = 'while true; do echo tick >> heartbeat; sleep 0.05; done'
@@ -52,10 +52,7 @@ with coding_world(script, 'oqt-recovery-') as (provider, owner, work):
                 break
             time.sleep(0.025)
         assert size(heartbeat) > 20, 'approved shell never started'
-        brains = [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
-                  if pid in processes_with_env('__PI_INTERNAL_SPAWN=session-worker')
-                  and 'session-worker.ts' in cmdline(pid)
-                  and os.path.basename(os.readlink(f'/proc/{pid}/exe')) == 'node']
+        brains = brain_processes(owner, work)
         assert len(brains) == 1, brains
         os.kill(brains[0], signal.SIGKILL)
         time.sleep(1.5)
@@ -85,10 +82,8 @@ with coding_world(script, 'oqt-recovery-') as (provider, owner, work):
 
 
 # Second scenario: the whole host (server + guard) is killed mid-call.
-def host_pids(owner):
-    return [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
-            if cmdline(pid).rstrip().endswith('host.ts')
-            and os.path.basename(os.readlink(f'/proc/{pid}/exe')) == 'node']
+def host_pids(owner, work):
+    return host_processes(owner, work)
 
 
 def guard_dirs(since):
@@ -120,7 +115,7 @@ with coding_world(script, 'oqt-host-crash-') as (provider, owner, work):
                 break
             time.sleep(0.025)
         assert size(heartbeat) > 20, 'approved shell never started'
-        hosts = host_pids(owner)
+        hosts = host_pids(owner, work)
         assert len(hosts) == 1, hosts
         dead_dirs = guard_dirs(started)
         assert dead_dirs, 'guard directory not found'

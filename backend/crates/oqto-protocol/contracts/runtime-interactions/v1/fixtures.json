@@ -1,0 +1,1186 @@
+{
+  "contract": "oqto.runtime-interactions",
+  "version": 1,
+  "normative": true,
+  "scope": "DTO/codec/CLI semantic mapping only; no routing or effect authority",
+  "requests": [
+    {
+      "name": "capabilities",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        }
+      },
+      "cli": [
+        "runtime",
+        "capabilities"
+      ]
+    },
+    {
+      "name": "catalog",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "cli": [
+        "runtime",
+        "commands",
+        "list"
+      ]
+    },
+    {
+      "name": "dispatch_raw",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "command_dispatch",
+          "catalogGeneration": "fixture-catalog",
+          "commandId": "fixture-command",
+          "args": "  --value='literal /name' \n"
+        }
+      },
+      "cli": [
+        "runtime",
+        "commands",
+        "run"
+      ]
+    },
+    {
+      "name": "permissions",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_snapshot"
+        }
+      },
+      "cli": [
+        "runtime",
+        "permissions",
+        "list"
+      ]
+    },
+    {
+      "name": "decide",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      },
+      "cli": [
+        "runtime",
+        "permissions",
+        "decide"
+      ]
+    },
+    {
+      "name": "policy",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "policy_read"
+        }
+      },
+      "cli": [
+        "runtime",
+        "policy",
+        "get"
+      ]
+    },
+    {
+      "name": "policy_apply",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "policy_apply",
+          "expected": {
+            "generation": "fixture-runtime",
+            "revision": 4
+          },
+          "changes": [
+            {
+              "setting": "allowed_models",
+              "value": [
+                "fixture/model"
+              ]
+            }
+          ]
+        }
+      },
+      "cli": [
+        "runtime",
+        "policy",
+        "apply"
+      ]
+    },
+    {
+      "name": "queue",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "queue_snapshot"
+        }
+      },
+      "cli": [
+        "runtime",
+        "queue",
+        "get"
+      ]
+    },
+    {
+      "name": "queue_apply",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "queue_apply",
+          "expected": {
+            "generation": "fixture-runtime",
+            "revision": 4
+          },
+          "action": {
+            "action": "cancel_item",
+            "itemId": "fixture-q1"
+          }
+        }
+      },
+      "cli": [
+        "runtime",
+        "queue",
+        "apply"
+      ]
+    },
+    {
+      "name": "errors",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "error_list",
+          "afterEventId": null
+        }
+      },
+      "cli": [
+        "runtime",
+        "errors",
+        "list"
+      ]
+    },
+    {
+      "name": "receipt",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "receipt_get",
+          "operationId": "fixture-operation"
+        }
+      },
+      "cli": [
+        "runtime",
+        "receipts",
+        "get"
+      ]
+    }
+  ],
+  "responses": [
+    {
+      "name": "capabilities",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "capabilities",
+          "capabilities": [
+            {
+              "state": "unavailable",
+              "family": "commands",
+              "reason": "sdk_engine_absent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "catalog",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "command_receipt",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "fixture-operation",
+            "commandId": "fixture-command",
+            "disposition": "started",
+            "rejection": null
+          }
+        }
+      }
+    },
+    {
+      "name": "permissions",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "permissions",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "active": [
+              {
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "subject": {
+                  "kind": "pi",
+                  "model": "fixture/alternate",
+                  "loadout": null,
+                  "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "ceilingDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "expiresAtMs": 10000,
+                "options": [
+                  {
+                    "optionId": "allow",
+                    "model": "fixture/alternate",
+                    "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "optionId": "deny",
+                    "model": null,
+                    "effectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  }
+                ],
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "receipts": [
+              {
+                "cursor": {
+                  "generation": 12,
+                  "revision": 4
+                },
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "kind": "decision",
+                "outcome": "allow",
+                "optionId": "allow",
+                "reason": "allowed",
+                "source": "adapter",
+                "controllerId": "fixture-controller",
+                "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "atMs": 10000,
+                "restored": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "permission_receipt",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "permission_receipt",
+          "receipt": {
+            "cursor": {
+              "generation": 12,
+              "revision": 4
+            },
+            "handleId": "fixture-handle",
+            "requestId": "fixture-permission-request",
+            "requestRevision": 0,
+            "kind": "decision",
+            "outcome": "allow",
+            "optionId": "allow",
+            "reason": "allowed",
+            "source": "adapter",
+            "controllerId": "fixture-controller",
+            "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "atMs": 10000,
+            "restored": false
+          }
+        }
+      }
+    },
+    {
+      "name": "policy",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "policy",
+          "policy": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "allowMode": "confirm",
+            "autoDecision": "deny",
+            "allowedModels": [
+              "fixture/model"
+            ],
+            "allowedKinds": [
+              "pi"
+            ],
+            "maxSubagents": 2,
+            "confirmTimeoutMs": 10000
+          }
+        }
+      }
+    },
+    {
+      "name": "queue",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "errors",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "errors",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "errors": [
+              {
+                "eventId": "fixture-error",
+                "operationId": "fixture-operation",
+                "source": "extension",
+                "code": "fixture_error",
+                "message": "Safe synthetic failure",
+                "phase": "dispatch",
+                "recoverable": true,
+                "uncertain": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "unavailable",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "unavailable",
+          "family": "queue",
+          "reason": "sdk_engine_absent"
+        }
+      }
+    },
+    {
+      "name": "rejected",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "rejected",
+          "code": "stale_generation"
+        }
+      }
+    },
+    {
+      "name": "numeric_producer_epoch",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": 12,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": 2
+        },
+        "result": {
+          "kind": "permission_receipt",
+          "receipt": {
+            "cursor": {
+              "generation": 12,
+              "revision": 4
+            },
+            "handleId": "fixture-handle",
+            "requestId": "fixture-permission-request",
+            "requestRevision": 0,
+            "kind": "decision",
+            "outcome": "allow",
+            "optionId": "allow",
+            "reason": "allowed",
+            "source": "adapter",
+            "controllerId": "fixture-controller",
+            "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "atMs": 10000,
+            "restored": false
+          }
+        }
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "queue",
+      "value": {
+        "version": 1,
+        "eventId": "fixture-event",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "payload": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "permissions",
+      "value": {
+        "version": 1,
+        "eventId": "fixture-event",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "payload": {
+          "kind": "permissions",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "active": [
+              {
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "subject": {
+                  "kind": "pi",
+                  "model": "fixture/alternate",
+                  "loadout": null,
+                  "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "ceilingDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "expiresAtMs": 10000,
+                "options": [
+                  {
+                    "optionId": "allow",
+                    "model": "fixture/alternate",
+                    "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "optionId": "deny",
+                    "model": null,
+                    "effectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  }
+                ],
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "receipts": [
+              {
+                "cursor": {
+                  "generation": 12,
+                  "revision": 4
+                },
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "kind": "decision",
+                "outcome": "allow",
+                "optionId": "allow",
+                "reason": "allowed",
+                "source": "adapter",
+                "controllerId": "fixture-controller",
+                "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "atMs": 10000,
+                "restored": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "error",
+      "value": {
+        "version": 1,
+        "eventId": "fixture-event",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "payload": {
+          "kind": "error",
+          "error": {
+            "eventId": "fixture-error",
+            "operationId": "fixture-operation",
+            "source": "extension",
+            "code": "fixture_error",
+            "message": "Safe synthetic failure",
+            "phase": "dispatch",
+            "recoverable": true,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "name": "command_outcome",
+      "value": {
+        "version": 1,
+        "eventId": "fixture-event",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "payload": {
+          "kind": "command_outcome",
+          "operationId": "fixture-operation",
+          "state": "uncertain",
+          "errorId": "fixture-error"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "version_0",
+      "frame": "request",
+      "value": {
+        "version": 0,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        }
+      }
+    },
+    {
+      "name": "version_2",
+      "frame": "request",
+      "value": {
+        "version": 2,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        }
+      }
+    },
+    {
+      "name": "version_1",
+      "frame": "request",
+      "value": {
+        "version": "1",
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        }
+      }
+    },
+    {
+      "name": "version_null",
+      "frame": "request",
+      "value": {
+        "version": null,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        }
+      }
+    },
+    {
+      "name": "forged_authority",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "capabilities"
+        },
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        }
+      }
+    },
+    {
+      "name": "literal_prompt_not_operation",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "prompt",
+          "message": "/fixture"
+        }
+      }
+    },
+    {
+      "name": "missing_catalog_generation",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "command_dispatch",
+          "commandId": "fixture-command",
+          "args": "  --value='literal /name' \n"
+        }
+      }
+    },
+    {
+      "name": "empty_generation",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "command_dispatch",
+          "catalogGeneration": "",
+          "commandId": "fixture-command",
+          "args": "  --value='literal /name' \n"
+        }
+      }
+    },
+    {
+      "name": "unsafe_request_revision",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 9007199254740992,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      }
+    },
+    {
+      "name": "negative_request_revision",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": -1,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      }
+    },
+    {
+      "name": "answer_cannot_change_model",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow",
+          "model": "forged/model"
+        }
+      }
+    },
+    {
+      "name": "selection_not_permission",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "selected",
+          "optionId": "allow"
+        }
+      }
+    },
+    {
+      "name": "answer_cannot_write_policy",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow",
+          "changes": [
+            {
+              "setting": "allow_mode",
+              "value": "auto"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "missing_queue_CAS",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "queue_apply",
+          "action": {
+            "action": "cancel_item",
+            "itemId": "fixture-q1"
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_disposition",
+      "frame": "response",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "fixture-operation",
+            "commandId": "fixture-command",
+            "disposition": "completed",
+            "rejection": null
+          }
+        }
+      }
+    },
+    {
+      "name": "task_text_not_receipt",
+      "frame": "response",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "permission_receipt",
+          "receipt": {
+            "cursor": {
+              "generation": 12,
+              "revision": 4
+            },
+            "handleId": "fixture-handle",
+            "requestId": "fixture-permission-request",
+            "requestRevision": 0,
+            "kind": "decision",
+            "outcome": "allow",
+            "optionId": "allow",
+            "reason": "allowed",
+            "source": "adapter",
+            "controllerId": "fixture-controller",
+            "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "atMs": 10000,
+            "restored": false,
+            "task": "must not disclose"
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_error_field",
+      "frame": "event",
+      "value": {
+        "version": 1,
+        "eventId": "fixture-event",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "payload": {
+          "kind": "error",
+          "error": {
+            "eventId": "fixture-error",
+            "operationId": "fixture-operation",
+            "source": "extension",
+            "code": "fixture_error",
+            "message": "Safe synthetic failure",
+            "phase": "dispatch",
+            "recoverable": true,
+            "uncertain": false,
+            "secret": "not a field"
+          }
+        }
+      }
+    },
+    {
+      "name": "unsafe_snapshot_revision",
+      "frame": "response",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 9007199254740992
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "unbound_ceiling_digest",
+      "frame": "response",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "binding": {
+          "publicSessionId": "oqto-fixture",
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "fixture-runtime",
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation"
+        },
+        "result": {
+          "kind": "permissions",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "active": [
+              {
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "subject": {
+                  "kind": "pi",
+                  "model": "fixture/alternate",
+                  "loadout": null,
+                  "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "ceilingDigest": "not-a-digest",
+                "expiresAtMs": 10000,
+                "options": [
+                  {
+                    "optionId": "allow",
+                    "model": "fixture/alternate",
+                    "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "optionId": "deny",
+                    "model": null,
+                    "effectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  }
+                ],
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "receipts": [
+              {
+                "cursor": {
+                  "generation": 12,
+                  "revision": 4
+                },
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "kind": "decision",
+                "outcome": "allow",
+                "optionId": "allow",
+                "reason": "allowed",
+                "source": "adapter",
+                "controllerId": "fixture-controller",
+                "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "atMs": 10000,
+                "restored": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "unsafe_producer_epoch",
+      "frame": "request",
+      "value": {
+        "version": 1,
+        "requestId": "fixture-request",
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": 9007199254740992,
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      }
+    }
+  ]
+}

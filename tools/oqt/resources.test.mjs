@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -78,11 +84,12 @@ test(
 				});
 				const resource = requests.find((r) => r.kind === "resource");
 				assert.equal(resource.capability, "read");
-				assert.equal(resource.resource, outside);
+				// Grants name the resolved path (macOS: /var/tmp is /private/var/tmp).
+				assert.equal(resource.resource, await realpath(outside));
 				assert.equal(resource.argumentsText, "compare with the shared library");
 				assert.deepEqual(
 					guardSession.state().resources.map((r) => [r.capability, r.resource]),
-					[["read", outside]],
+					[["read", await realpath(outside)]],
 				);
 				await operator.call("revoke_all", { session });
 				assert.deepEqual(guardSession.state().resources, []);
@@ -195,7 +202,7 @@ test(
 				// Only the requestable path reached the operator.
 				assert.deepEqual(
 					requests.map((r) => r.resource),
-					[outside],
+					[await realpath(outside)],
 				);
 			},
 			{ decide: decideAll, ceiling: 'network = "deny"' },

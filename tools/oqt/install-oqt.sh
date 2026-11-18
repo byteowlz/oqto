@@ -13,18 +13,26 @@ while (($#)); do
  esac
 done
 [[ "$data" == /* ]] || { echo 'Runtime data root must be absolute' >&2; exit 2; }
-cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+# Linux pins the build to one CPU; macOS has no taskset.
+if [[ $(uname -s) == Linux ]]; then
+ pinning=(taskset -c "$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')")
+else
+ pinning=()
+fi
+# macOS needs a self-contained node (official nodejs.org build); the
+# installer refuses one that links libraries outside /usr/lib and /System.
+node=${OQT_NODE:-$(command -v node)}
 export CARGO_BUILD_JOBS=1
 fixture=$(mktemp -d /var/tmp/oqt-package.XXXXXX)
 trap 'rm -rf -- "$fixture"' EXIT
 mkdir -m 700 "$fixture/owner" "$fixture/workspace"
 cd "$root"
-timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/build-assets.py "$source" >/dev/null
-timeout --kill-after=5s 90s taskset -c "$cpu" nice -n 19 python3 tools/oqt/prepare.py "$source" "$fixture/workspace" coding "$fixture/owner" > "$fixture/prepared.json"
-args=(install --prepared-json "$fixture/prepared.json" --launcher tools/oqt/installed-entry.sh --node "$(command -v node)" --data-root "$data"
+timeout --kill-after=5s 600s "${pinning[@]}" nice -n 19 python3 tools/oqt/build-assets.py "$source" >/dev/null
+timeout --kill-after=5s 90s "${pinning[@]}" nice -n 19 python3 tools/oqt/prepare.py "$source" "$fixture/workspace" coding "$fixture/owner" > "$fixture/prepared.json"
+args=(install --prepared-json "$fixture/prepared.json" --launcher tools/oqt/installed-entry.sh --node "$node" --data-root "$data"
  --runtime-file profile_namespace.py=tools/oqt/profile_namespace.py
  --runtime-file preparation_lock.py=tools/oqt/preparation_lock.py)
 if ((activate)); then
  args+=(--activate --launcher-destination "$HOME/.local/bin/oqt")
 fi
-timeout --kill-after=5s 600s taskset -c "$cpu" nice -n 19 python3 tools/oqt/install-runtime.py "${args[@]}"
+timeout --kill-after=5s 600s "${pinning[@]}" nice -n 19 python3 tools/oqt/install-runtime.py "${args[@]}"

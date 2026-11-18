@@ -130,6 +130,10 @@ type ApiErrorResponse = {
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
 const controlPlaneStorageKey = "oqto:controlPlaneUrl";
 
+// Optional Node host global, guarded below. This file-local type emits nothing
+// and does not inject Node timer/global types into the browser compilation.
+declare const process: { env: Record<string, string | undefined> } | undefined;
+
 const env =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> })
 		.env ?? (typeof process !== "undefined" ? process.env : {});

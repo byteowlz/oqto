@@ -1,0 +1,28 @@
+{
+  "contract": "session-announce",
+  "version": 1,
+  "transport": "unix-socket-jsonl",
+  "socket_name": "pi-session-announce.sock",
+  "pointer_name": "oqto-session-announce.path",
+  "max_line_bytes": 8192,
+  "read_deadline_ms": 2000,
+  "reasons": ["start", "new", "switch", "fork", "resume"],
+  "outcomes": {
+    "listed": { "ok": true, "meaning": "admitted now" },
+    "duplicate": { "ok": true, "meaning": "already admitted" },
+    "denied": { "ok": false, "meaning": "file failed admission" },
+    "invalid": { "ok": false, "meaning": "announce refused before any file was read" }
+  },
+  "invalid_codes": [
+    "empty",
+    "not_utf8",
+    "malformed",
+    "wrong_kind",
+    "wrong_version",
+    "invalid_path",
+    "invalid_id",
+    "invalid_pid",
+    "too_large"
+  ],
+  "authority": "none: the announce only names a file the Runner validates itself"
+}

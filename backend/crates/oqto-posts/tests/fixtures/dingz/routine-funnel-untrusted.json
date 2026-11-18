@@ -1,0 +1,16 @@
+{
+  "title": "Link analysed: release notes",
+  "body": "Summary filed to the project wiki.",
+  "kind": "routine",
+  "links": [
+    {
+      "url": "https://oqto.example/sessions/01JFUNNELITEM",
+      "label": "Item"
+    }
+  ],
+  "funnel": "link-analysis",
+  "project": "home",
+  "labels": [
+    "untrusted-source"
+  ]
+}

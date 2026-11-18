@@ -7,7 +7,14 @@ python3 scripts/dist/verify-worktree-ownership.py --root "$ROOT_DIR"
 
 DIST_CACHE_DIR="${OQTO_DIST_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/oqto/dist-sources}"
 OQTO_TEMPLATES_URL="${OQTO_TEMPLATES_URL:-https://github.com/byteowlz/oqto-templates.git}"
-PI_AGENT_EXTENSIONS_URL="${PI_AGENT_EXTENSIONS_URL:-https://github.com/byteowlz/pi-agent-extensions.git}"
+# shellcheck source=scripts/dist/pi-ext-sources.sh
+source "$ROOT_DIR/scripts/dist/pi-ext-sources.sh"
+# Public source is the default. Development builds can opt into a private source
+# with PI_AGENT_EXTENSIONS_URL; release pins must still exist on the public mirror.
+# Public history was rewritten, so some pins only exist there (pi-ext-sources.sh).
+PI_AGENT_EXTENSIONS_URL="${PI_AGENT_EXTENSIONS_URL:-$PI_EXT_PUBLIC_URL_DEFAULT}"
+PI_AGENT_EXTENSIONS_PUBLIC_URL="${PI_AGENT_EXTENSIONS_PUBLIC_URL:-$PI_EXT_PUBLIC_URL_DEFAULT}"
+PI_AGENT_EXTENSIONS_URLS="$PI_AGENT_EXTENSIONS_URL $PI_AGENT_EXTENSIONS_PUBLIC_URL"
 # The release and the installed Pi runtime must use the same locked inputs.
 # Never package a moving `main` checkout as though it were a reproducible build.
 read_source_pin() {
@@ -38,56 +45,8 @@ fi
 [[ $# -eq 0 ]] || { echo "error: unknown sync arg: $1" >&2; exit 2; }
 
 resolve_source_repo() {
-  local name="$1" local_path="$2" url="$3" ref="$4"
-  local cached_path="$DIST_CACHE_DIR/$name"
-
-  # A sibling development checkout is used only when it is exactly the pinned,
-  # clean commit. Otherwise (work in progress, other branch, not git) it is
-  # left alone and the pinned commit comes from a private cached clone; a
-  # release never contains uncommitted or unpinned bytes either way.
-  if [[ -e "$local_path" ]]; then
-    local actual expected
-    actual="$(git -C "$local_path" rev-parse HEAD 2>/dev/null || true)"
-    expected="$(git -C "$local_path" rev-parse "${ref}^{commit}" 2>/dev/null || true)"
-    if [[ -n "$actual" && "$actual" == "$expected" \
-      && -z "$(git -C "$local_path" status --porcelain 2>/dev/null)" ]]; then
-      echo "$local_path"
-      return 0
-    fi
-    echo "[dist-sync] $name at $local_path is not the clean pinned commit $ref; using a pinned clone" >&2
-  fi
-
-  if ! command -v git >/dev/null 2>&1; then
-    echo "error: $name source missing at $local_path and git is not available to fetch $url" >&2
-    return 1
-  fi
-
-  mkdir -p "$DIST_CACHE_DIR"
-  if [[ ! -d "$cached_path/.git" ]]; then
-    [[ ! -e "$cached_path" ]] || {
-      echo "error: refusing to overwrite unknown $name cache at $cached_path" >&2
-      return 1
-    }
-    echo "[dist-sync] cloning $name from $url into $cached_path" >&2
-    git clone --filter=blob:none "$url" "$cached_path" >&2
-  else
-    echo "[dist-sync] updating cached $name checkout $cached_path" >&2
-    git -C "$cached_path" fetch --tags --prune origin >&2
-  fi
-
-  [[ -z "$(git -C "$cached_path" status --porcelain)" ]] || {
-    echo "error: refusing to switch dirty $name cache at $cached_path" >&2
-    return 1
-  }
-  git -C "$cached_path" checkout --detach "$ref" >&2
-  local actual expected
-  actual="$(git -C "$cached_path" rev-parse HEAD)"
-  expected="$(git -C "$cached_path" rev-parse "${ref}^{commit}")"
-  [[ "$actual" == "$expected" && -z "$(git -C "$cached_path" status --porcelain)" ]] || {
-    echo "error: cached $name is dirty or not at pinned commit $ref" >&2
-    return 1
-  }
-  echo "$cached_path"
+  local name="$1" local_path="$2" urls="$3" ref="$4"
+  pi_ext_resolve_source "$DIST_CACHE_DIR/$name" "$local_path" "$urls" "$ref" "$name"
 }
 
 TEMPLATES_REPO="$(resolve_source_repo \
@@ -98,7 +57,7 @@ TEMPLATES_REPO="$(resolve_source_repo \
 EXTENSIONS_REPO="$(resolve_source_repo \
   pi-agent-extensions \
   "${PI_AGENT_EXTENSIONS_REPO:-$ROOT_DIR/../pi-agent-extensions}" \
-  "$PI_AGENT_EXTENSIONS_URL" \
+  "$PI_AGENT_EXTENSIONS_URLS" \
   "$PI_AGENT_EXTENSIONS_REF")"
 
 mkdir -p dist/immutable/defaults/pi-agent \

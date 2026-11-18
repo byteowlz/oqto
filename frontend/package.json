@@ -6,11 +6,11 @@
 	"scripts": {
 		"sync:visual-runtime-assets": "node scripts/sync-visual-runtime-assets.mjs",
 		"sync:ears-browser-sdk": "bun scripts/sync-ears-browser-sdk.mjs",
-		"sync:speech-runtime-assets": "bun scripts/sync-speech-runtime-assets.mjs",
-		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && vite",
-		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && vite build",
+		"sync:speech-runtime-assets": "bun scripts/sync-speech-runtime-assets.mjs && bun scripts/sync-phonon-runtime-assets.mjs",
+		"dev": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && bun run sync:oqtopus && vite",
+		"build": "bun run sync:visual-runtime-assets && bun run sync:speech-runtime-assets && bun run sync:wake-assets && bun run sync:oqtopus && vite build",
 		"preview": "vite preview",
-		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail && bun run typecheck:oqto-ui && bun run lint:oqto-ui-guardrails",
+		"lint": "bun scripts/lint-tracked.mjs && bun run lint:useeffect-guardrail && bun run typecheck:oqto-ui && bun run lint:oqto-ui-guardrails",
 		"lint:useeffect-guardrail": "bun scripts/check-useeffect-guardrail.mjs",
 		"lint:oqto-ui-guardrails": "node scripts/check-oqto-ui-guardrails.mjs",
 		"typecheck:oqto-ui": "tsc -p tsconfig.oqto-ui.json --noEmit",
@@ -21,7 +21,9 @@
 		"test:run": "mkdir -p .tmp && TMPDIR=$PWD/.tmp vitest run --maxWorkers=1",
 		"format:generated-types": "bunx biome format --write src/generated",
 		"sync:wake-assets": "bun scripts/sync-wake-assets.mjs",
-		"sync:wake-browser": "bun scripts/sync-wake-browser.mjs"
+		"sync:wake-browser": "bun scripts/sync-wake-browser.mjs",
+		"sync:waqy": "bun scripts/sync-waqy-runtime-assets.mjs",
+		"sync:oqtopus": "bun scripts/sync-oqtopus-assets.mjs"
 	},
 	"dependencies": {
 		"@byteowlz/ears-browser": "file:vendor/ears-browser",
@@ -81,6 +83,7 @@
 		"morphdom": "^2.7.7",
 		"next-themes": "^0.4.6",
 		"onnxruntime-web": "1.23.2",
+		"phonon-tts": "0.4.0",
 		"pixi.js": "^8.19.0",
 		"qrcode": "^1.5.4",
 		"react": "^19.0.0",
@@ -121,7 +124,5 @@
 		"vite": "^5.4.10",
 		"vitest": "^3.2.4"
 	},
-	"trustedDependencies": [
-		"@byteowlz/oqto-app-sdk"
-	]
+	"trustedDependencies": ["@byteowlz/oqto-app-sdk"]
 }

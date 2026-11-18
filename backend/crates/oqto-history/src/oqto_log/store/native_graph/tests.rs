@@ -299,3 +299,54 @@ async fn live_branch_pages_equal_the_imported_projection_and_follow_the_live_hea
     );
     Ok(())
 }
+
+/// Owner 2026-11-13: Pi switched models between turns and nothing showed it. Live
+/// branch pages carry each assistant message's recorded provider and model.
+#[test]
+fn live_branch_pages_carry_each_assistant_message_model() -> Result<()> {
+    use crate::oqto_log::projector::project_native_branch_page;
+    let native = "33333333-4444-5555-6666-777777777777";
+    let public = platform_id_for_external_id(native);
+    let lines = [
+        serde_json::json!({"type":"session","id":native,"cwd":"/synthetic"}),
+        serde_json::json!({"type":"model_change","id":"mc0","parentId":null,"provider":"claude-bridge","modelId":"claude-opus-5-5"}),
+        serde_json::json!({"type":"message","id":"u1","parentId":"mc0","message":{"role":"user","content":[{"type":"text","text":"first"}],"timestamp":1_700_000_000_000_u64}}),
+        serde_json::json!({"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":"one"}],"provider":"claude-bridge","model":"claude-opus-5-5","timestamp":1_700_000_000_001_u64}}),
+        serde_json::json!({"type":"model_change","id":"mc1","parentId":"a1","provider":"opencode-go","modelId":"deepseek-v4.1-flash"}),
+        serde_json::json!({"type":"message","id":"u2","parentId":"mc1","message":{"role":"user","content":[{"type":"text","text":"second"}],"timestamp":1_700_000_000_002_u64}}),
+        serde_json::json!({"type":"message","id":"a2","parentId":"u2","message":{"role":"assistant","content":[{"type":"text","text":"two"}],"provider":"opencode-go","model":"deepseek-v4.1-flash","timestamp":1_700_000_000_003_u64}}),
+        serde_json::json!({"type":"message","id":"a3","parentId":"a2","message":{"role":"assistant","content":[{"type":"text","text":"bad"}],"provider":"x","model":"evil\u{7}model","timestamp":1_700_000_000_004_u64}}),
+    ];
+    let bytes = lines
+        .iter()
+        .map(|v| format!("{v}\n"))
+        .collect::<String>()
+        .into_bytes();
+    let graph = NativeGraph::parse(&bytes, native, "/synthetic", Some("a3"))?;
+    let page = project_native_branch_page(&public, &graph.branch_messages(&public), 50, None)?;
+    let models: Vec<(String, Option<String>, Option<String>)> = page
+        .messages
+        .iter()
+        .map(|m| (m.role.clone(), m.provider_id.clone(), m.model_id.clone()))
+        .collect();
+    assert_eq!(
+        models,
+        vec![
+            ("user".into(), None, None),
+            (
+                "assistant".into(),
+                Some("claude-bridge".into()),
+                Some("claude-opus-5-5".into())
+            ),
+            ("user".into(), None, None),
+            (
+                "assistant".into(),
+                Some("opencode-go".into()),
+                Some("deepseek-v4.1-flash".into())
+            ),
+            ("assistant".into(), Some("x".into()), None),
+        ],
+        "assistant rows carry their model; control characters are dropped, never shown"
+    );
+    Ok(())
+}

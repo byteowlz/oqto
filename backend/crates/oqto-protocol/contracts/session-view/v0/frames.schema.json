@@ -1,0 +1,1066 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:oqto:contract:session-view:v0:frames",
+  "title": "oqto.session-view v0 frames",
+  "description": "Every frame of the session-view contract, client to host and host to client. Envelopes are strict; values inside view ops belong to upstream Pi Durable and are open.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/client_frame"
+    },
+    {
+      "$ref": "#/definitions/host_frame"
+    }
+  ],
+  "definitions": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "entry_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        }
+      }
+    },
+    "seg": {
+      "oneOf": [
+        {
+          "type": "string",
+          "not": {
+            "enum": [
+              "__proto__",
+              "constructor",
+              "prototype"
+            ]
+          }
+        },
+        {
+          "type": "integer",
+          "minimum": 0
+        }
+      ]
+    },
+    "path": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/seg"
+      }
+    },
+    "non_empty_path": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/seg"
+      }
+    },
+    "op": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": [
+            {
+              "const": "r"
+            },
+            {}
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "const": "s"
+            },
+            {
+              "$ref": "#/definitions/non_empty_path"
+            },
+            {}
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": [
+            {
+              "const": "d"
+            },
+            {
+              "$ref": "#/definitions/non_empty_path"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "const": "a"
+            },
+            {
+              "$ref": "#/definitions/non_empty_path"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "const": "t"
+            },
+            {
+              "$ref": "#/definitions/non_empty_path"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": [
+            {
+              "const": "p"
+            },
+            {
+              "$ref": "#/definitions/path"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "const": "m"
+            },
+            {
+              "$ref": "#/definitions/path"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "conversation_view": {
+      "description": "The value a base op carries: upstream ConversationView. Only the fields below are required; everything else is upstream-owned and open.",
+      "type": "object",
+      "required": [
+        "conversation",
+        "entries",
+        "docs"
+      ],
+      "properties": {
+        "conversation": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/entry_id"
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/entry"
+          }
+        },
+        "before": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "docs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "conversationId",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "conversationId": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "A committed entry. Entries never change once committed; an id names the same content for the life of the store.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "oqto.ui"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/definitions/ui_part"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ui_part": {
+      "description": "data of an oqto.ui entry (revision 2.2): one state of a generative UI part (ADR-0074). The host writes it for a tool or the persona; a later state of the same part is a new entry with the same partId. Rendering a part grants nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "part",
+        "state"
+      ],
+      "properties": {
+        "part": {
+          "description": "The oqto.openui.part.v1 envelope of the Oqto OpenUI profile.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "partId",
+            "profile",
+            "body",
+            "fallback"
+          ],
+          "properties": {
+            "schema": {
+              "const": "oqto.openui.part.v1"
+            },
+            "partId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,64}$",
+              "description": "Stable id; states of one part reconcile by this id, never by text or position."
+            },
+            "profile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "version"
+              ],
+              "properties": {
+                "id": {
+                  "const": "oqto"
+                },
+                "version": {
+                  "type": "string",
+                  "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+                }
+              }
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768,
+              "description": "OpenUI Lang program; at most max_ui_body_bytes UTF-8 bytes."
+            },
+            "fallback": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000,
+              "description": "Required plain text shown wherever the body is not rendered natively."
+            },
+            "answer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema",
+                "timeoutSeconds"
+              ],
+              "properties": {
+                "schema": {
+                  "type": "object"
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
+              }
+            }
+          }
+        },
+        "state": {
+          "enum": [
+            "shown",
+            "answered",
+            "expired",
+            "withdrawn"
+          ],
+          "description": "shown: on screen, answerable when part.answer is present; the others are final."
+        },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "call": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Tool callId that produced the part."
+            },
+            "entry": {
+              "$ref": "#/definitions/entry_id"
+            }
+          }
+        }
+      }
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,4096}$",
+      "description": "Opaque continuation of one read; only ever sent back unchanged with the same bounds and order."
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "prompt",
+            "steer",
+            "follow_up"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768,
+          "pattern": "\\S"
+        }
+      }
+    },
+    "attach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "v",
+        "session"
+      ],
+      "properties": {
+        "type": {
+          "const": "attach"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "v": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "window": {
+          "$ref": "#/definitions/window"
+        }
+      }
+    },
+    "detach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "attachment"
+      ],
+      "properties": {
+        "type": {
+          "const": "detach"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "attachment": {
+          "$ref": "#/definitions/id"
+        }
+      }
+    },
+    "submit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session",
+        "request_id",
+        "input"
+      ],
+      "properties": {
+        "type": {
+          "const": "submit"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "input": {
+          "$ref": "#/definitions/input"
+        }
+      }
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session",
+        "request_id",
+        "entry"
+      ],
+      "properties": {
+        "type": {
+          "const": "write"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "entry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "not": {
+                "pattern": "^(pi\\.|oqto\\.ui$)"
+              },
+              "description": "Client-chosen kind. pi.* is reserved for upstream; oqto.ui entries are written by the host only."
+            },
+            "data": {}
+          }
+        }
+      }
+    },
+    "abort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session",
+        "request_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "abort"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        }
+      }
+    },
+    "receipt_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session",
+        "request_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "receipt_query"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        }
+      }
+    },
+    "read_entries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session"
+      ],
+      "properties": {
+        "type": {
+          "const": "read_entries"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "min": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "max": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "order": {
+          "enum": [
+            "ascending",
+            "descending"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "$ref": "#/definitions/cursor"
+        }
+      }
+    },
+    "client_frame": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/attach"
+        },
+        {
+          "$ref": "#/definitions/detach"
+        },
+        {
+          "$ref": "#/definitions/submit"
+        },
+        {
+          "$ref": "#/definitions/write"
+        },
+        {
+          "$ref": "#/definitions/abort"
+        },
+        {
+          "$ref": "#/definitions/receipt_query"
+        },
+        {
+          "$ref": "#/definitions/read_entries"
+        }
+      ]
+    },
+    "attached": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "v",
+        "attachment",
+        "session",
+        "store",
+        "window",
+        "upstream",
+        "max_frame_bytes"
+      ],
+      "properties": {
+        "type": {
+          "const": "attached"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "v": {
+          "const": 0
+        },
+        "attachment": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "store": {
+          "$ref": "#/definitions/id",
+          "description": "Names the storage the Session lives in. It changes whenever that storage is replaced; a client keys its cache by host, Session and store."
+        },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 400
+            }
+          }
+        },
+        "upstream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "package",
+            "version"
+          ],
+          "properties": {
+            "package": {
+              "const": "@earendil-works/pi-durable"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+            }
+          }
+        },
+        "max_frame_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 16777216
+        }
+      }
+    },
+    "detached": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "attachment"
+      ],
+      "properties": {
+        "type": {
+          "const": "detached"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "attachment": {
+          "$ref": "#/definitions/id"
+        }
+      }
+    },
+    "entries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "session",
+        "items"
+      ],
+      "properties": {
+        "type": {
+          "const": "entries"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/entry"
+          }
+        },
+        "next": {
+          "$ref": "#/definitions/cursor"
+        }
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "attachment",
+        "seq",
+        "ops"
+      ],
+      "properties": {
+        "type": {
+          "const": "view"
+        },
+        "attachment": {
+          "$ref": "#/definitions/id"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/op"
+          }
+        },
+        "retired": {
+          "const": true
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "session",
+        "request_id",
+        "kind",
+        "status"
+      ],
+      "properties": {
+        "type": {
+          "const": "receipt"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "session": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "kind": {
+          "enum": [
+            "prompt",
+            "steer",
+            "follow_up",
+            "write",
+            "abort",
+            "continue"
+          ]
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "placed",
+            "done",
+            "unanswered"
+          ]
+        },
+        "entry": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "answer": {
+          "$ref": "#/definitions/entry_id"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "detail": {}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unanswered"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "queued"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "entry"
+                  ]
+                },
+                {
+                  "required": [
+                    "answer"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "placed"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "answer"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "abort"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "done"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "entry"
+                  ]
+                },
+                {
+                  "required": [
+                    "answer"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "write"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "queued",
+                  "done",
+                  "unanswered"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "answer"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ended": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "attachment",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "const": "ended"
+        },
+        "attachment": {
+          "$ref": "#/definitions/id"
+        },
+        "reason": {
+          "enum": [
+            "host_closed",
+            "failed",
+            "denied"
+          ]
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "code"
+      ],
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "id": {
+          "$ref": "#/definitions/id"
+        },
+        "code": {
+          "enum": [
+            "invalid",
+            "too_large",
+            "unsupported",
+            "unsupported_version",
+            "unknown_session",
+            "unknown_attachment",
+            "unknown_request",
+            "request_conflict",
+            "busy",
+            "idle",
+            "denied",
+            "unavailable"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "supported": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "host_frame": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/attached"
+        },
+        {
+          "$ref": "#/definitions/detached"
+        },
+        {
+          "$ref": "#/definitions/view"
+        },
+        {
+          "$ref": "#/definitions/entries"
+        },
+        {
+          "$ref": "#/definitions/receipt"
+        },
+        {
+          "$ref": "#/definitions/ended"
+        },
+        {
+          "$ref": "#/definitions/error"
+        }
+      ]
+    }
+  }
+}

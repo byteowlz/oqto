@@ -18,7 +18,7 @@ The oqto backend is responsible for user authentication and management. The back
 
 ![architecture](./diagrams/oqto_architecture.svg)
 
-The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). It is agent-runtime agnostic in principle -- the backend translates between the canonical protocol and agent-specific protocols like pi rpc mode.
+The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). Runners translate harness-native events into the canonical protocol; the backend routes requests through runners. Runner sessions use `oqto-log` as durable history authority.
 
 ---
 
@@ -34,7 +34,7 @@ The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api
 | -------------- | ------------------------------------------------------------------------------------------- |
 | `oqto`         | Main backend server                                                                         |
 | `oqtoctl`      | CLI for server management                                                                   |
-| `oqto-runner`  | Multi-user process daemon (Linux only)                                                      |
+| `oqto-runner`  | Agent execution and native-event translation; multi-user provisioning is Linux-only                                                      |
 | `oqto-sandbox` | Sandbox wrapper using bwrap/sandbox-exec                                                    |
 | `oqto-browser` | brower for agents inspired by [agent-broswer](https://github.com/vercel-labs/agent-browser) |
 | `pi-bridge`    | HTTP/WebSocket bridge for Pi in containers                                                  |
@@ -42,14 +42,12 @@ The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api
 
 ---
 
-### Runtime modes
+### Runner placements
 
-| Mode        | Description              | Use Case                         |
-| ----------- | ------------------------ | -------------------------------- |
-| `local`     | Via `oqto-runner` daemon | Single-user and multi-user Linux |
-| `container` | Inside Docker/Podman     | Full container isolation         |
-
-Even in local mode, agents are spawned through oqto-runner, never directly by the backend. Container mode is still experimental, the current focus lies on making local multi-user mode as good as possible.
+All execution goes through a Runner. Local, remote and container placements use
+the same semantic runner contract; placement is not a separate execution or
+history authority. Linux setup is the current deployment focus. Container
+placement remains experimental; see [SETUP.md](SETUP.md) for setup requirements.
 
 ---
 
@@ -59,7 +57,7 @@ oqto integrates the following stand-alone tools that are being actively developm
 
 | Service   | Purpose                                                                                 |
 | --------- | --------------------------------------------------------------------------------------- |
-| `hstry`   | Chat history storage (per-user SQLite)                                                  |
+| `hstry`   | Legacy history interoperability, not runner Session history authority                                                  |
 | `mmry`    | Memory system (semantic search, embeddings)                                             |
 | `trx`     | Issue/task tracking                                                                     |
 | `skdlr`   | CLI for scheduling tasks                                                                |
@@ -77,6 +75,12 @@ oqto integrates the following stand-alone tools that are being actively developm
 In multi-user mode each platform user maps to a Linux user (`oqto_{username}`). Per-user oqto-runner daemons manage agent processes and per-user mmry instances provide memory via HTTP API.
 
 Auth uses JWT with invite codes. A progressive onboarding system with agent-driven UI unlock guides new users (planned).
+
+## Repository layout
+
+See [repository layout and source hygiene](docs/development/repository-layout.md)
+for component boundaries, the experimental `just oqt` source entrypoint and
+tracked-source checks. Generated output and raw execution evidence are not source.
 
 ## Quick Start
 

@@ -6,6 +6,16 @@ STATE_DIR="${ROOT_DIR}/.tmp"
 STAMP_FILE="${STATE_DIR}/agent-check.last"
 PROFILE="${1:-quick}"
 
+# macOS ships shasum; Linux commonly ships sha256sum. Both produce SHA-256.
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH_COMMAND=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  HASH_COMMAND=(shasum -a 256)
+else
+  printf '%s\n' '[agent-check] SHA-256 tool unavailable (need sha256sum or shasum)' >&2
+  exit 1
+fi
+
 mkdir -p "${STATE_DIR}"
 
 current_sig="$(
@@ -22,10 +32,10 @@ current_sig="$(
         if [[ -L "$file" ]]; then
           readlink -- "$file"
         elif [[ -f "$file" ]]; then
-          sha256sum -- "$file"
+          "${HASH_COMMAND[@]}" -- "$file"
         fi
       done < <(git ls-files --others --exclude-standard -z)
-    } | sha256sum | awk '{print $1}'
+    } | "${HASH_COMMAND[@]}" | awk '{print $1}'
 )"
 last_sig=""
 if [[ -f "${STAMP_FILE}" ]]; then

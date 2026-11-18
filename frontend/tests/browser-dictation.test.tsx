@@ -2,6 +2,7 @@ import { DictationOverlay } from "@/components/voice/DictationOverlay";
 import { RecognitionControls } from "@/components/voice/RecognitionControls";
 import { useDictation } from "@/features/voice/hooks/useDictation";
 import { appendCompletedDraft } from "@/lib/chat-draft-storage";
+import { DEFAULT_RECOGNITION_SETTINGS } from "@/lib/voice/recognition-settings";
 import type {
 	STTCallbacks,
 	STTRecognitionSettings,
@@ -81,13 +82,15 @@ describe("standalone Oqto dictation", () => {
 					scopeKey,
 					config: null,
 					onTranscript: insert,
-					autoSendOnFinal: true,
-					autoSendDelayMs: 50,
 					onAutoSend: send,
 				}),
 			{ initialProps: { scopeKey: "workspace-a:session-a" } },
 		);
 		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(50);
+		});
 		act(() => instances[0]?.callbacks.onFinal?.("completed in A"));
 		rerender({ scopeKey: "workspace-a:session-b" });
 		act(() => {
@@ -161,7 +164,6 @@ describe("standalone Oqto dictation", () => {
 			useDictation({
 				config: null,
 				onTranscript: insert,
-				autoSendOnFinal: true,
 				onAutoSend: send,
 			}),
 		);
@@ -191,11 +193,11 @@ describe("standalone Oqto dictation", () => {
 				onTranscript: (text) => {
 					draft = appendCompletedDraft(key, draft, text);
 				},
-				autoSendOnFinal: true,
 				onAutoSend: send,
 			}),
 		);
 		await act(() => result.current.start());
+		act(() => result.current.setAutoSendEnabled(true));
 		act(() => instances[0]?.callbacks.onPreview?.("wrong preview"));
 		expect(localStorage.getItem(key)).toBe("typed draft");
 		await act(async () => {
@@ -214,11 +216,11 @@ describe("standalone Oqto dictation", () => {
 			useDictation({
 				config: null,
 				onTranscript: insert,
-				autoSendOnFinal: true,
 				onAutoSend: send,
 			}),
 		);
 		await act(() => result.current.start());
+		act(() => result.current.setAutoSendEnabled(true));
 		act(() => instances[0]?.callbacks.onPreview?.("wrong preview"));
 		await act(async () => {
 			result.current.stop();
@@ -275,19 +277,196 @@ describe("standalone Oqto dictation", () => {
 		);
 		expect(result.current.download).toBeNull();
 	});
-	it("turning auto-send off clears already scheduled work", async () => {
+	it("sends once after a pause, not per completed sentence", async () => {
+		vi.useFakeTimers();
+		const insert = vi.fn();
+		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: insert, onAutoSend: send }),
+		);
+		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(2000);
+		});
+		act(() => instances[0]?.callbacks.onFinal?.("first sentence."));
+		act(() => vi.advanceTimersByTime(1200));
+		// New speech restarts the pause instead of sending the first sentence.
+		act(() => instances[0]?.callbacks.onPreview?.("second"));
+		act(() => instances[0]?.callbacks.onFinal?.("second sentence."));
+		act(() => vi.advanceTimersByTime(1500));
+		expect(send).not.toHaveBeenCalled();
+		act(() => vi.advanceTimersByTime(500));
+		expect(send).toHaveBeenCalledOnce();
+		expect(insert).toHaveBeenCalledTimes(2);
+	});
+
+	it("ends the dictation after sending so the wake phrase listens again", async () => {
 		vi.useFakeTimers();
 		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn(), onAutoSend: send }),
+		);
+		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(1000);
+		});
+		expect(result.current.isActive).toBe(true);
+		act(() => instances[0]?.callbacks.onFinal?.("send me."));
+		act(() => vi.advanceTimersByTime(1000));
+		expect(send).toHaveBeenCalledOnce();
+		expect(result.current.isActive).toBe(false);
+		expect(instances[0]?.listening).toBe(false);
+		// A late engine final cannot re-send; the capture is already closed.
+		act(() => instances[0]?.callbacks.onFinal?.("late"));
+		act(() => vi.advanceTimersByTime(5000));
+		expect(send).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the configured pause across dictations", async () => {
+		vi.useFakeTimers();
+		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn(), onAutoSend: send }),
+		);
+		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(5000);
+		});
+		expect(result.current.autoSendPauseMs).toBe(5000);
+		act(() => instances[0]?.callbacks.onFinal?.("one."));
+		act(() => vi.advanceTimersByTime(4000));
+		expect(send).not.toHaveBeenCalled();
+		act(() => vi.advanceTimersByTime(1000));
+		expect(send).toHaveBeenCalledOnce();
+	});
+
+	it("remembers auto-send and its pause as dictation settings", async () => {
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn() }),
+		);
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(3000);
+		});
+		const stored = JSON.parse(
+			localStorage.getItem("oqto-recognition-settings") ?? "{}",
+		);
+		expect(stored).toMatchObject({
+			autoSendEnabled: true,
+			autoSendPauseMs: 3000,
+			microphoneId: null,
+		});
+	});
+
+	it("with wake on, a dictation finishes by itself after the configured silence", async () => {
+		vi.useFakeTimers();
+		const insert = vi.fn();
+		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: insert, onAutoSend: send }),
+		);
+		act(() => {
+			result.current.setWakeEnabled(true);
+			result.current.setWakeSilenceTimeoutMs(10_000);
+		});
+		await act(() => result.current.start());
+		expect(result.current.isActive).toBe(true);
+		// Speech extends the window.
+		act(() => vi.advanceTimersByTime(8_000));
+		act(() => instances[0]?.callbacks.onPreview?.("still talking"));
+		act(() => vi.advanceTimersByTime(8_000));
+		expect(result.current.isActive).toBe(true);
+		// Silence ends it: finished (engine final delivered), not cancelled, not sent.
+		await act(async () => {
+			vi.advanceTimersByTime(2_000);
+			await Promise.resolve();
+		});
+		expect(insert).toHaveBeenCalledWith("engine final");
+		expect(result.current.isActive).toBe(false);
+		expect(instances[0]?.listening).toBe(false);
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it("without wake, or with 'never', dictation keeps listening", async () => {
+		vi.useFakeTimers();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn() }),
+		);
+		await act(() => result.current.start());
+		act(() => vi.advanceTimersByTime(120_000));
+		expect(result.current.isActive).toBe(true);
+		act(() => result.current.cancel());
+		act(() => {
+			result.current.setWakeEnabled(true);
+			result.current.setWakeSilenceTimeoutMs(0);
+		});
+		await act(() => result.current.start());
+		act(() => vi.advanceTimersByTime(120_000));
+		expect(result.current.isActive).toBe(true);
+	});
+
+	it("exposes the pending send as a countdown that speech resets and sending clears", async () => {
+		vi.useFakeTimers();
+		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn(), onAutoSend: send }),
+		);
+		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(2000);
+		});
+		expect(result.current.sendCountdown).toBeNull();
+		act(() => instances[0]?.callbacks.onFinal?.("first."));
+		const first = result.current.sendCountdown;
+		expect(first?.durationMs).toBe(2000);
+		// New speech cancels the pending send; the next final starts a fresh one.
+		act(() => vi.advanceTimersByTime(1000));
+		act(() => instances[0]?.callbacks.onPreview?.("more"));
+		expect(result.current.sendCountdown).toBeNull();
+		act(() => instances[0]?.callbacks.onFinal?.("second."));
+		expect(result.current.sendCountdown?.startedAt).toBeGreaterThan(
+			first?.startedAt ?? 0,
+		);
+		act(() => vi.advanceTimersByTime(2000));
+		expect(send).toHaveBeenCalledOnce();
+		expect(result.current.sendCountdown).toBeNull();
+	});
+
+	it("reports a 'sent' cue when an auto-send fires, for the mascot", async () => {
+		vi.useFakeTimers();
 		const { result } = renderHook(() =>
 			useDictation({
 				config: null,
 				onTranscript: vi.fn(),
-				autoSendOnFinal: true,
-				autoSendDelayMs: 1000,
-				onAutoSend: send,
+				onAutoSend: vi.fn(),
 			}),
 		);
 		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(1000);
+		});
+		expect(result.current.voiceCue).toBeNull();
+		act(() => instances[0]?.callbacks.onFinal?.("send it."));
+		act(() => vi.advanceTimersByTime(1000));
+		expect(result.current.voiceCue?.kind).toBe("sent");
+	});
+
+	it("turning auto-send off clears already scheduled work", async () => {
+		vi.useFakeTimers();
+		const send = vi.fn();
+		const { result } = renderHook(() =>
+			useDictation({ config: null, onTranscript: vi.fn(), onAutoSend: send }),
+		);
+		await act(() => result.current.start());
+		act(() => {
+			result.current.setAutoSendEnabled(true);
+			result.current.setAutoSendPauseMs(1000);
+		});
 		act(() => instances[0]?.callbacks.onFinal?.("completed"));
 		act(() => result.current.setAutoSendEnabled(false));
 		act(() => vi.advanceTimersByTime(1000));
@@ -336,7 +515,7 @@ describe("dictation surface", () => {
 		const language = vi.fn();
 		render(
 			<RecognitionControls
-				recognition={{ provider: "moonshine", language: "en", wakeEnabled: false, wakePhrase: "hey_oqto" }}
+				recognition={{ ...DEFAULT_RECOGNITION_SETTINGS }}
 				remoteAvailable={false}
 				onProviderChange={vi.fn()}
 				onLanguageChange={language}

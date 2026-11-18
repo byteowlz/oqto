@@ -37,7 +37,16 @@ done
 
 read_pin() {
   local key="$1"
-  sed -n '/^\[external\]/,/^\[/{s/^'"$key"' *= *"\([^"]*\)".*/\1/p}' "$MANIFEST" | head -1
+  awk -v key="$key" '
+    /^\[external\]/ { inside = 1; next }
+    /^\[/           { inside = 0 }
+    inside && index($0, key " = \"") == 1 {
+      line = substr($0, length(key) + 4)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ' "$MANIFEST"
 }
 
 CURRENT="$(read_pin pi)"

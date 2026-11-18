@@ -478,3 +478,88 @@ async fn generic_shell_session_grant_covers_prefixed_commands_but_not_vice_versa
         Admission::Allowed(_)
     ));
 }
+
+/// Requests carry resolved paths. A deny written through a symlinked
+/// ancestor (macOS /etc, /var and /tmp live under /private) must also
+/// deny the resolved location, and a symlink inside an allowed tree must
+/// not hide a denied target behind its lexical name.
+#[test]
+fn denies_written_through_symlinked_ancestors_match_resolved_requests() {
+    let dir = TempDir::new().unwrap();
+    let real = dir.path().canonicalize().unwrap().join("real");
+    std::fs::create_dir_all(real.join("protected")).unwrap();
+    let alias = dir.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let mut input = input(None, None);
+    input.hard_deny.push(alias.join("protected"));
+    input.hard_deny.push(alias.join("not-created-yet"));
+    let p = compile_ceiling(&input).unwrap();
+    for denied in [
+        alias.join("protected"),
+        real.join("protected"),
+        real.join("protected/file"),
+        real.join("not-created-yet"),
+    ] {
+        assert_eq!(
+            p.mode(&read(&denied.display().to_string())),
+            RuleMode::Deny,
+            "{}",
+            denied.display()
+        );
+    }
+    #[cfg(target_os = "macos")]
+    assert_eq!(p.mode(&read("/private/etc/shadow")), RuleMode::Deny);
+}
+
+#[test]
+fn remote_machine_targets_never_inherit_local_auto_rules() -> anyhow::Result<()> {
+    let policy = try_compile(
+        Some("read = \"auto\"\nedit = \"auto\"\nshell = \"auto\"\nauto_shell = [\"cargo test\"]"),
+        None,
+    )?;
+    // Local: auto everywhere.
+    assert_eq!(policy.mode(&exec(WORKSPACE_WRITE)), RuleMode::Allow);
+    assert_eq!(policy.mode(&exec("shell:cargo test")), RuleMode::Allow);
+    // Remote: reads follow the read rule; edits and shell always ask.
+    assert_eq!(
+        policy.mode(&exec("remote:linux-box:workspace-read")),
+        RuleMode::Allow
+    );
+    assert_eq!(
+        policy.mode(&exec("remote:linux-box:workspace-write")),
+        RuleMode::Ask
+    );
+    assert_eq!(
+        policy.mode(&exec("remote:linux-box:workspace-shell")),
+        RuleMode::Ask
+    );
+    assert_eq!(
+        policy.mode(&exec("remote:linux-box:shell:cargo test")),
+        RuleMode::Ask
+    );
+    // A local deny still denies remotely; malformed remote targets deny.
+    let denied = try_compile(Some("shell = \"deny\"\nedit = \"deny\""), None)?;
+    assert_eq!(
+        denied.mode(&exec("remote:linux-box:workspace-shell")),
+        RuleMode::Deny
+    );
+    assert_eq!(
+        denied.mode(&exec("remote:linux-box:workspace-write")),
+        RuleMode::Deny
+    );
+    assert_eq!(
+        denied.denial_code(&exec("remote:linux-box:workspace-write")),
+        DenialCode::ConfiguredCeiling
+    );
+    for bad in [
+        "remote:local:workspace-write",
+        "remote:Arch:workspace-write",
+        "remote:linux-box:path:/etc",
+        "remote:linux-box",
+        "remote::workspace-read",
+        "remote:linux-box:shell:a;b",
+    ] {
+        assert_eq!(policy.mode(&exec(bad)), RuleMode::Deny, "{bad}");
+    }
+    Ok(())
+}

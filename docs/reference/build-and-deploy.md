@@ -30,6 +30,10 @@ just lint-dist-manifest-strict
 just dist-package
 ```
 
+Source staging defaults to public dependency URLs. A development build can set
+`PI_AGENT_EXTENSIONS_URL` explicitly to use another source; public release pins
+must remain available from the public mirror.
+
 See `.github/workflows/release.yml` for the build-host prerequisites and supported
 targets. Build prerequisites belong on the build host, not an installation host.
 Run the relevant tests and validators before treating an artifact as deployable.

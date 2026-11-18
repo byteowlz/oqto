@@ -63,6 +63,12 @@ pub enum HostAction {
         path: String,
     },
     TerminalsList,
+    /// Open or reattach this device's terminal for the exact authorized Session cwd.
+    SessionTerminalOpen {
+        session_id: String,
+        rows: u16,
+        cols: u16,
+    },
     TerminalOpen {
         cwd: String,
         rows: u16,
@@ -126,17 +132,76 @@ pub enum HostAction {
     SessionDetach {
         attachment_id: String,
     },
+    /// Speech the Host offers through its own local engines (eaRS, spqx). A separate
+    /// action, not HostCapabilities fields: installed clients parse those strictly.
+    VoiceCapabilities,
+    /// Live dictation: PCM16 little-endian mono audio, appended in bounded chunks.
+    VoiceTranscribeOpen {
+        sample_rate: u32,
+        language: Option<String>,
+    },
+    VoiceTranscribeAppend {
+        transcription_id: String,
+        /// Base64 PCM16 LE mono at the opened sample rate; at most MAX_VOICE_CHUNK bytes decoded.
+        audio: String,
+    },
+    VoiceTranscribeFinish {
+        transcription_id: String,
+    },
+    VoiceTranscribeCancel {
+        transcription_id: String,
+    },
+    /// Speech output: text in, PCM16 LE mono out, read incrementally.
+    VoiceSpeakOpen {
+        text: String,
+    },
+    VoiceSpeakRead {
+        stream_id: String,
+    },
+    VoiceSpeakClose {
+        stream_id: String,
+    },
+}
+
+/// Decoded audio bytes per VoiceTranscribeAppend (fits the action body limit as base64).
+pub const MAX_VOICE_CHUNK: usize = 512 * 1024;
+/// Characters of text per VoiceSpeakOpen.
+pub const MAX_VOICE_TEXT: usize = 16 * 1024;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VoiceCapabilities {
+    /// eaRS reachable on the Host.
+    #[serde(default)]
+    pub transcribe: bool,
+    /// spqx available on the Host.
+    #[serde(default)]
+    pub speak: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionInput {
-    Prompt { message: String },
-    Steer { message: String },
-    FollowUp { message: String },
-    SetModel { provider: String, model_id: String },
-    SetThinkingLevel { level: String },
+    Prompt {
+        message: String,
+    },
+    Steer {
+        message: String,
+    },
+    FollowUp {
+        message: String,
+    },
+    SetModel {
+        provider: String,
+        model_id: String,
+    },
+    SetThinkingLevel {
+        level: String,
+    },
     Abort,
+    /// The Session's display name, as Pi's `/name` (owner 2026-11-11: rename from the phone).
+    SetSessionName {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -159,6 +224,9 @@ pub struct HostCapabilities {
     pub full_user_terminal_granted: bool,
     pub files_supported: bool,
     pub terminal_supported: bool,
+    /// Never inferred from raw PTY support; older Hosts default to unavailable.
+    #[serde(default)]
+    pub session_terminal_supported: bool,
     pub session_observe_supported: bool,
     pub session_control_supported: bool,
 }

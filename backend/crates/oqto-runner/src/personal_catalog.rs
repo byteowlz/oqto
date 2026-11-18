@@ -26,6 +26,8 @@ const CACHE_ENTRIES: usize = 8192;
 const DEADLINE: Duration = Duration::from_secs(4);
 const LIVE_TTL: Duration = Duration::from_secs(3);
 
+mod relations;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NativeSummary {
     pub name: Option<String>,
@@ -46,12 +48,36 @@ pub(crate) struct NativeRoots {
     pub socket_root: PathBuf,
 }
 
+/// Actual signed SessionsList caller supplies its trusted source explicitly.
+/// No source/HOME inference, row partitioning, or catalog truncation here.
+pub(crate) async fn enrich_relations(
+    data: &mut Value,
+    rows: &[OqtoLogSessionRow],
+    home: &Path,
+    roots: &[PathBuf],
+    source: Option<&crate::personal_source::PersonalSource>,
+) {
+    relations::enrich_catalog(
+        data,
+        source.map(|source| relations::CatalogContext {
+            source,
+            rows,
+            home,
+            roots,
+        }),
+    )
+    .await;
+}
+
 pub(crate) async fn enrich(
     data: &mut Value,
     rows: &[OqtoLogSessionRow],
     roots: &NativeRoots,
     workspace_roots: &[PathBuf],
 ) {
+    // No legacy parent-column inference. Explicit source admission/context is
+    // required before any producer relation can be supplied here.
+    relations::enrich(data, None).await;
     let Some(sessions) = data.get_mut("sessions").and_then(Value::as_array_mut) else {
         return;
     };

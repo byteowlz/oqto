@@ -1,0 +1,1015 @@
+{
+  "contract": "oqto.session-view",
+  "v": 0,
+  "note": "Hand-written frames. Every valid frame must pass frames.schema.json; every invalid frame must fail it. Frames captured from upstream are in scenarios/.",
+  "valid": [
+    {
+      "name": "attach with defaults",
+      "frame": {
+        "type": "attach",
+        "id": "c1",
+        "v": 0,
+        "session": "ses_example"
+      }
+    },
+    {
+      "name": "attach resuming after entry 41",
+      "frame": {
+        "type": "attach",
+        "id": "c2",
+        "v": 0,
+        "session": "ses_example",
+        "window": {
+          "from": 42,
+          "min": 50,
+          "max": 100
+        }
+      }
+    },
+    {
+      "name": "detach",
+      "frame": {
+        "type": "detach",
+        "id": "c3",
+        "attachment": "att_1"
+      }
+    },
+    {
+      "name": "prompt",
+      "frame": {
+        "type": "submit",
+        "id": "c4",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "input": {
+          "kind": "prompt",
+          "text": "Run the tests"
+        }
+      }
+    },
+    {
+      "name": "steer",
+      "frame": {
+        "type": "submit",
+        "id": "c5",
+        "session": "ses_example",
+        "request_id": "req-2",
+        "input": {
+          "kind": "steer",
+          "text": "Use bun"
+        }
+      }
+    },
+    {
+      "name": "follow-up",
+      "frame": {
+        "type": "submit",
+        "id": "c6",
+        "session": "ses_example",
+        "request_id": "req-3",
+        "input": {
+          "kind": "follow_up",
+          "text": "Then commit"
+        }
+      }
+    },
+    {
+      "name": "passive write",
+      "frame": {
+        "type": "write",
+        "id": "c7",
+        "session": "ses_example",
+        "request_id": "req-4",
+        "entry": {
+          "kind": "app.note",
+          "data": {
+            "text": "opened a file"
+          }
+        }
+      }
+    },
+    {
+      "name": "abort",
+      "frame": {
+        "type": "abort",
+        "id": "c8",
+        "session": "ses_example",
+        "request_id": "req-5"
+      }
+    },
+    {
+      "name": "receipt query",
+      "frame": {
+        "type": "receipt_query",
+        "id": "c9",
+        "session": "ses_example",
+        "request_id": "req-1"
+      }
+    },
+    {
+      "name": "attached",
+      "frame": {
+        "type": "attached",
+        "id": "c1",
+        "v": 0,
+        "attachment": "att_1",
+        "session": "ses_example",
+        "window": {
+          "min": 50,
+          "max": 100
+        },
+        "upstream": {
+          "package": "@earendil-works/pi-durable",
+          "version": "1.5.2"
+        },
+        "max_frame_bytes": 8388608,
+        "store": "store_a"
+      }
+    },
+    {
+      "name": "detached",
+      "frame": {
+        "type": "detached",
+        "id": "c3",
+        "attachment": "att_1"
+      }
+    },
+    {
+      "name": "base view frame",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 1,
+        "ops": [
+          [
+            "r",
+            {
+              "conversation": {
+                "id": 1
+              },
+              "entries": [],
+              "docs": {
+                "pi.live": {}
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "streamed text",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 7,
+        "ops": [
+          [
+            "a",
+            [
+              "docs",
+              "pi.live",
+              "generation",
+              "message",
+              "content",
+              0,
+              "text"
+            ],
+            "Hello"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "every op verb",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 8,
+        "ops": [
+          [
+            "s",
+            [
+              "docs",
+              "x"
+            ],
+            {}
+          ],
+          [
+            "d",
+            [
+              "docs",
+              "x"
+            ]
+          ],
+          [
+            "t",
+            [
+              "docs",
+              "y",
+              "text"
+            ],
+            3
+          ],
+          [
+            "p",
+            [
+              "entries"
+            ],
+            0,
+            2,
+            []
+          ],
+          [
+            "m",
+            [
+              "entries"
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "name": "retired with no ops",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 9,
+        "ops": [],
+        "retired": true
+      }
+    },
+    {
+      "name": "receipt queued",
+      "frame": {
+        "type": "receipt",
+        "id": "c5",
+        "session": "ses_example",
+        "request_id": "req-2",
+        "kind": "steer",
+        "status": "queued"
+      }
+    },
+    {
+      "name": "receipt placed",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-2",
+        "kind": "steer",
+        "status": "placed",
+        "entry": 12
+      }
+    },
+    {
+      "name": "receipt done for an input",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "kind": "prompt",
+        "status": "done",
+        "entry": 7,
+        "answer": 11
+      }
+    },
+    {
+      "name": "receipt unanswered",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "kind": "prompt",
+        "status": "unanswered",
+        "entry": 7,
+        "reason": "aborted"
+      }
+    },
+    {
+      "name": "receipt for a write",
+      "frame": {
+        "type": "receipt",
+        "id": "c7",
+        "session": "ses_example",
+        "request_id": "req-4",
+        "kind": "write",
+        "status": "done",
+        "entry": 13
+      }
+    },
+    {
+      "name": "receipt for an abort",
+      "frame": {
+        "type": "receipt",
+        "id": "c8",
+        "session": "ses_example",
+        "request_id": "req-5",
+        "kind": "abort",
+        "status": "done"
+      }
+    },
+    {
+      "name": "receipt for a host-started continue",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-6",
+        "kind": "continue",
+        "status": "placed"
+      }
+    },
+    {
+      "name": "ended",
+      "frame": {
+        "type": "ended",
+        "attachment": "att_1",
+        "reason": "host_closed"
+      }
+    },
+    {
+      "name": "error busy",
+      "frame": {
+        "type": "error",
+        "id": "c4",
+        "code": "busy",
+        "message": "a run is working"
+      }
+    },
+    {
+      "name": "error unsupported version",
+      "frame": {
+        "type": "error",
+        "id": "c1",
+        "code": "unsupported_version",
+        "supported": [
+          0
+        ]
+      }
+    },
+    {
+      "name": "read older entries, newest first",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "max": 41,
+        "order": "descending",
+        "limit": 50
+      }
+    },
+    {
+      "name": "continue a read",
+      "frame": {
+        "type": "read_entries",
+        "id": "c11",
+        "session": "ses_example",
+        "min": 12,
+        "max": 41,
+        "order": "ascending",
+        "limit": 20,
+        "cursor": "eyJhZnRlciI6MjB9"
+      }
+    },
+    {
+      "name": "entries page with more to come",
+      "frame": {
+        "type": "entries",
+        "id": "c10",
+        "session": "ses_example",
+        "items": [
+          {
+            "id": 41,
+            "conversationId": 1,
+            "kind": "pi.assistant",
+            "model": []
+          },
+          {
+            "id": 38,
+            "conversationId": 1,
+            "kind": "pi.user",
+            "model": []
+          }
+        ],
+        "next": "eyJhZnRlciI6Mzh9"
+      }
+    },
+    {
+      "name": "last entries page",
+      "frame": {
+        "type": "entries",
+        "id": "c11",
+        "session": "ses_example",
+        "items": []
+      }
+    },
+    {
+      "name": "entries page with a ui part",
+      "frame": {
+        "type": "entries",
+        "id": "c12",
+        "session": "ses_example",
+        "items": [
+          {
+            "id": 42,
+            "conversationId": 1,
+            "kind": "oqto.ui",
+            "data": {
+              "part": {
+                "schema": "oqto.openui.part.v1",
+                "partId": "part_example_1",
+                "profile": {
+                  "id": "oqto",
+                  "version": "0.2.2"
+                },
+                "body": "root = Stack([TextContent(\"Pick one\")])",
+                "fallback": "Pick one"
+              },
+              "state": "shown",
+              "origin": {
+                "call": "call_1"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown frame type",
+      "frame": {
+        "type": "approve",
+        "id": "c1",
+        "session": "ses_example"
+      },
+      "why": "there is no approve operation in this contract"
+    },
+    {
+      "name": "attach without version",
+      "frame": {
+        "type": "attach",
+        "id": "c1",
+        "session": "ses_example"
+      },
+      "why": "v is required"
+    },
+    {
+      "name": "attach with caller identity",
+      "frame": {
+        "type": "attach",
+        "id": "c1",
+        "v": 0,
+        "session": "ses_example",
+        "user": "owner"
+      },
+      "why": "frames never carry caller identity; unknown fields are refused"
+    },
+    {
+      "name": "attach with a path as Session",
+      "frame": {
+        "type": "attach",
+        "id": "c1",
+        "v": 0,
+        "session": "/home/owner/session.sqlite"
+      },
+      "why": "Session ids are opaque, not paths"
+    },
+    {
+      "name": "window min zero",
+      "frame": {
+        "type": "attach",
+        "id": "c1",
+        "v": 0,
+        "session": "ses_example",
+        "window": {
+          "min": 0
+        }
+      },
+      "why": "min is at least 1"
+    },
+    {
+      "name": "submit without request_id",
+      "frame": {
+        "type": "submit",
+        "id": "c4",
+        "session": "ses_example",
+        "input": {
+          "kind": "prompt",
+          "text": "hi"
+        }
+      },
+      "why": "every effect needs an idempotency key"
+    },
+    {
+      "name": "submit with blank text",
+      "frame": {
+        "type": "submit",
+        "id": "c4",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "input": {
+          "kind": "prompt",
+          "text": "   "
+        }
+      },
+      "why": "text must contain a non-space character"
+    },
+    {
+      "name": "submit with an unknown input kind",
+      "frame": {
+        "type": "submit",
+        "id": "c4",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "input": {
+          "kind": "continue",
+          "text": "go"
+        }
+      },
+      "why": "clients cannot request a continue in v0"
+    },
+    {
+      "name": "submit carrying a model",
+      "frame": {
+        "type": "submit",
+        "id": "c4",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "input": {
+          "kind": "prompt",
+          "text": "hi",
+          "model": "x"
+        }
+      },
+      "why": "model selection is not part of v0"
+    },
+    {
+      "name": "write with a pi. kind",
+      "frame": {
+        "type": "write",
+        "id": "c7",
+        "session": "ses_example",
+        "request_id": "req-4",
+        "entry": {
+          "kind": "pi.user",
+          "data": {}
+        }
+      },
+      "why": "built-in kinds are reserved"
+    },
+    {
+      "name": "write with model messages",
+      "frame": {
+        "type": "write",
+        "id": "c7",
+        "session": "ses_example",
+        "request_id": "req-4",
+        "entry": {
+          "kind": "app.note",
+          "model": [
+            {
+              "role": "user",
+              "content": "x"
+            }
+          ]
+        }
+      },
+      "why": "a passive write carries only kind and data, so it cannot change what the model sees"
+    },
+    {
+      "name": "view without seq",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "ops": []
+      },
+      "why": "seq is required"
+    },
+    {
+      "name": "view seq zero",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 0,
+        "ops": []
+      },
+      "why": "seq starts at 1"
+    },
+    {
+      "name": "view carrying a value beside ops",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [],
+        "value": {}
+      },
+      "why": "the value travels only as a base op"
+    },
+    {
+      "name": "op with unknown verb",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "x",
+            [
+              "a"
+            ],
+            1
+          ]
+        ]
+      },
+      "why": "unknown verbs are refused, never skipped"
+    },
+    {
+      "name": "op with a reserved segment",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "s",
+            [
+              "docs",
+              "__proto__",
+              "polluted"
+            ],
+            true
+          ]
+        ]
+      },
+      "why": "reserved segments are refused"
+    },
+    {
+      "name": "op with a negative index",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "d",
+            [
+              "entries",
+              -1
+            ]
+          ]
+        ]
+      },
+      "why": "indices are non-negative integers"
+    },
+    {
+      "name": "set on the root",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "s",
+            [],
+            1
+          ]
+        ]
+      },
+      "why": "only r, p and m may target the root"
+    },
+    {
+      "name": "wire-compressed op",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "a",
+            "more text"
+          ]
+        ]
+      },
+      "why": "v0 carries decoded ops with inline paths only"
+    },
+    {
+      "name": "path id definition",
+      "frame": {
+        "type": "view",
+        "attachment": "att_1",
+        "seq": 2,
+        "ops": [
+          [
+            "#",
+            1,
+            [
+              "docs",
+              "pi.live"
+            ]
+          ]
+        ]
+      },
+      "why": "path interning is not part of v0"
+    },
+    {
+      "name": "receipt unanswered without reason",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "kind": "prompt",
+        "status": "unanswered"
+      },
+      "why": "an unanswered receipt says why"
+    },
+    {
+      "name": "receipt done with a reason",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "kind": "prompt",
+        "status": "done",
+        "entry": 7,
+        "answer": 11,
+        "reason": "ok"
+      },
+      "why": "reason belongs to unanswered only"
+    },
+    {
+      "name": "receipt queued with an entry",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-2",
+        "kind": "steer",
+        "status": "queued",
+        "entry": 3
+      },
+      "why": "a queued input is not in the transcript yet"
+    },
+    {
+      "name": "receipt with an approved status",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-1",
+        "kind": "prompt",
+        "status": "approved"
+      },
+      "why": "receipts report admission and settlement, never approval"
+    },
+    {
+      "name": "abort receipt that is not done",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-5",
+        "kind": "abort",
+        "status": "placed"
+      },
+      "why": "an abort receipt is only ever done"
+    },
+    {
+      "name": "write receipt with an answer",
+      "frame": {
+        "type": "receipt",
+        "session": "ses_example",
+        "request_id": "req-4",
+        "kind": "write",
+        "status": "done",
+        "entry": 13,
+        "answer": 14
+      },
+      "why": "a write is never answered"
+    },
+    {
+      "name": "error without id",
+      "frame": {
+        "type": "error",
+        "code": "invalid"
+      },
+      "why": "errors answer a request"
+    },
+    {
+      "name": "error with an unknown code",
+      "frame": {
+        "type": "error",
+        "id": "c1",
+        "code": "retry_now"
+      },
+      "why": "codes are a closed set"
+    },
+    {
+      "name": "ended with an unknown reason",
+      "frame": {
+        "type": "ended",
+        "attachment": "att_1",
+        "reason": "timeout"
+      },
+      "why": "reasons are a closed set"
+    },
+    {
+      "name": "attached for another version",
+      "frame": {
+        "type": "attached",
+        "id": "c1",
+        "v": 1,
+        "attachment": "att_1",
+        "session": "ses_example",
+        "window": {
+          "min": 50,
+          "max": 100
+        },
+        "upstream": {
+          "package": "@earendil-works/pi-durable",
+          "version": "1.5.2"
+        },
+        "max_frame_bytes": 8388608,
+        "store": "store_a"
+      },
+      "why": "this schema describes version 0"
+    },
+    {
+      "name": "attached without store",
+      "frame": {
+        "type": "attached",
+        "id": "c1",
+        "v": 0,
+        "attachment": "att_1",
+        "session": "ses_example",
+        "window": {
+          "min": 50,
+          "max": 100
+        },
+        "upstream": {
+          "package": "@earendil-works/pi-durable",
+          "version": "1.5.2"
+        },
+        "max_frame_bytes": 8388608
+      },
+      "why": "clients key their cache by store"
+    },
+    {
+      "name": "read with limit zero",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "limit": 0
+      },
+      "why": "limit is 1 to 200"
+    },
+    {
+      "name": "read with limit too large",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "limit": 201
+      },
+      "why": "limit is 1 to 200"
+    },
+    {
+      "name": "read with an unknown order",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "order": "sideways"
+      },
+      "why": "order is ascending or descending"
+    },
+    {
+      "name": "read with a cursor that is not base64url",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "cursor": "a/b"
+      },
+      "why": "cursors are opaque base64url text"
+    },
+    {
+      "name": "read by text search",
+      "frame": {
+        "type": "read_entries",
+        "id": "c10",
+        "session": "ses_example",
+        "query": "tests"
+      },
+      "why": "v0 reads by entry id range only"
+    },
+    {
+      "name": "entries without items",
+      "frame": {
+        "type": "entries",
+        "id": "c10",
+        "session": "ses_example"
+      },
+      "why": "items is required, even when empty"
+    },
+    {
+      "name": "entries item without kind",
+      "frame": {
+        "type": "entries",
+        "id": "c10",
+        "session": "ses_example",
+        "items": [
+          {
+            "id": 1,
+            "conversationId": 1
+          }
+        ]
+      },
+      "why": "every entry has id, conversationId and kind"
+    },
+    {
+      "name": "ui part without a fallback",
+      "why": "every part carries its required plain-text fallback",
+      "frame": {
+        "type": "entries",
+        "id": "c12",
+        "session": "ses_example",
+        "items": [
+          {
+            "id": 42,
+            "conversationId": 1,
+            "kind": "oqto.ui",
+            "data": {
+              "part": {
+                "schema": "oqto.openui.part.v1",
+                "partId": "part_example_1",
+                "profile": {
+                  "id": "oqto",
+                  "version": "0.2.2"
+                },
+                "body": "root = Stack([TextContent(\"Pick one\")])"
+              },
+              "state": "shown"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ui part with an unknown state",
+      "why": "states are a closed set",
+      "frame": {
+        "type": "entries",
+        "id": "c12",
+        "session": "ses_example",
+        "items": [
+          {
+            "id": 42,
+            "conversationId": 1,
+            "kind": "oqto.ui",
+            "data": {
+              "part": {
+                "schema": "oqto.openui.part.v1",
+                "partId": "part_example_1",
+                "profile": {
+                  "id": "oqto",
+                  "version": "0.2.2"
+                },
+                "body": "root = Stack([TextContent(\"Pick one\")])",
+                "fallback": "Pick one"
+              },
+              "state": "approved"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "write with an oqto.ui kind",
+      "why": "parts are written by the host only; a client cannot forge one",
+      "frame": {
+        "type": "write",
+        "id": "c13",
+        "session": "ses_example",
+        "request_id": "req-7",
+        "entry": {
+          "kind": "oqto.ui",
+          "data": {
+            "part": {
+              "schema": "oqto.openui.part.v1",
+              "partId": "part_example_1",
+              "profile": {
+                "id": "oqto",
+                "version": "0.2.2"
+              },
+              "body": "root = Stack([TextContent(\"Pick one\")])",
+              "fallback": "Pick one"
+            },
+            "state": "shown"
+          }
+        }
+      }
+    }
+  ]
+}

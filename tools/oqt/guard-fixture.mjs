@@ -36,7 +36,14 @@ export const call = (name, args, id) =>
 /** `decide(request, operator)` runs for each newly pending request. */
 export async function withGuard(
 	run,
-	{ policy = "ask", ceiling, workspaceCeiling, decide, rules = false } = {},
+	{
+		policy = "ask",
+		ceiling,
+		workspaceCeiling,
+		decide,
+		rules = false,
+		link,
+	} = {},
 ) {
 	const root = await mkdtemp("/var/tmp/oqt-guard-proof-");
 	await chmod(root, 0o700);
@@ -73,6 +80,8 @@ export async function withGuard(
 		broker: new OwnerBroker(owner),
 		ceiling: { userConfig, home: root, hardDeny: [] },
 		parent: root,
+		// Remote hands (ADR-0086): the real oqt_link with the caller's config.
+		...(link ? { link } : {}),
 	});
 	const session = "coding-public-session";
 	const guardSession = guard.session(session, workspace);
@@ -102,6 +111,8 @@ export async function withGuard(
 	const tool = await WireClient.connect(guardSession.toolPath);
 	const hands = new HandsClient(guardSession.handsPath, workspace);
 	const gate = new GuardGate(tool, hands);
+	const machines = link ? await gate.machines() : [];
+	gate.namedMachines = machines.length > 0;
 	const faux = fauxProvider();
 	const models = createModels();
 	models.setProvider(faux.provider);
@@ -118,6 +129,7 @@ export async function withGuard(
 			hands,
 			refresh: () => gate.refresh(),
 			requestAccess: (params, signal) => gate.requestAccess(params, signal),
+			machines,
 		});
 		receipts = await installOperatorReceipts(
 			{

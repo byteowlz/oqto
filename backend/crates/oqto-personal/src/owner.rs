@@ -41,6 +41,11 @@ pub enum OwnerCommand {
     Revoke {
         device_id: String,
     },
+    /// Record persistent volume identities for file grants. `apply` false is a
+    /// dry run; `apply` true is the owner's approval for remounted roots.
+    GrantVolumes {
+        apply: bool,
+    },
 }
 /// Definitive rejection BEFORE ticket issuance. Other failures remain uncertain.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -110,6 +115,9 @@ impl PairingAuthority {
         supported: Supported,
     ) -> Result<serde_json::Value> {
         match command {
+            OwnerCommand::GrantVolumes { apply } => Ok(serde_json::to_value(
+                self.repair_grant_volumes(apply).await?,
+            )?),
             OwnerCommand::HandsRequests => self.hands_requests().await,
             OwnerCommand::HandsDecide { id, root } => {
                 Ok(serde_json::json!({"applied":self.decide_hands(&id, root.as_deref()).await?}))

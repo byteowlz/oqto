@@ -18,6 +18,22 @@ struct Options {
     #[command(flatten)]
     options: PairOptions,
 }
+// The default macOS TMPDIR is too long for the production Unix-socket budget.
+// Keep this isolated fixture short; never relax production path validation.
+fn fixture_dir() -> Result<tempfile::TempDir> {
+    Ok(tempfile::Builder::new()
+        .prefix("oqpw-")
+        .tempdir_in("/tmp")?)
+}
+
+#[test]
+fn fixture_control_path_fits_the_portable_unix_socket_budget() -> Result<()> {
+    let home = fixture_dir()?;
+    let socket = pair_control::root(&home.path().canonicalize()?).join("host/owner.sock");
+    ensure!(socket.as_os_str().len() < 104);
+    Ok(())
+}
+
 fn parse(args: &[&str]) -> Result<PairOptions> {
     Ok(Options::try_parse_from(std::iter::once("pair").chain(args.iter().copied()))?.options)
 }
@@ -54,7 +70,7 @@ fn headless_requires_complete_explicit_confirmed_options() -> Result<()> {
 }
 #[test]
 fn flags_plan_is_explicit_and_roots_are_canonical() -> Result<()> {
-    let home = tempfile::tempdir()?;
+    let home = fixture_dir()?;
     std::fs::create_dir(home.path().join("work"))?;
     symlink(home.path().join("work"), home.path().join("alias"))?;
     let roots = canonical_roots(
@@ -116,7 +132,7 @@ fn state_symlinks_and_lock_contention_fail_without_mutating_targets() -> Result<
         ensure!(status.success(), "isolated pairing lock test failed");
         return Ok(());
     }
-    let home = tempfile::tempdir()?;
+    let home = fixture_dir()?;
     let canonical_home = home.path().canonicalize()?;
     let target = canonical_home.join("target");
     std::fs::create_dir(&target)?;
@@ -220,7 +236,7 @@ fn plan(home: &Path) -> Result<ListenerPlan> {
 }
 #[tokio::test]
 async fn hot_enable_same_pid_pair_and_restart_preserve_identity() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = fixture_dir()?;
     let home = temp.path().canonicalize()?;
     std::fs::create_dir(home.join("work"))?;
     std::fs::create_dir(home.join("runtime"))?;
@@ -355,7 +371,7 @@ async fn prebound_split_source_hot_enables_without_changing_service_home() -> Re
 
 #[tokio::test]
 async fn occupied_port_and_native_home_mismatch_leave_primary_runner_alive() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = fixture_dir()?;
     let home = temp.path().canonicalize()?;
     std::fs::create_dir(home.join("work"))?;
     std::fs::create_dir(home.join("runtime"))?;
@@ -390,7 +406,7 @@ async fn occupied_port_and_native_home_mismatch_leave_primary_runner_alive() -> 
 }
 #[test]
 fn real_headless_cli_errors_are_usage_errors_and_do_not_create_state() -> Result<()> {
-    let home = tempfile::tempdir()?;
+    let home = fixture_dir()?;
     for args in [
         vec!["pair"],
         vec!["pair", "--interactive"],

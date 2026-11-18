@@ -855,7 +855,10 @@ impl AppRuntimeService {
             return Ok(None);
         }
         let resource_root = work_directory.root.join(resource.path);
-        Ok(Some((resource_root.join(relative), resource_root)))
+        Ok(Some((
+            granted_file_path(&resource_root, &relative),
+            resource_root,
+        )))
     }
 
     pub async fn file_list(
@@ -1476,9 +1479,55 @@ fn valid_app_id(value: &str) -> bool {
         && !value.contains("--")
 }
 
+/// Resolve a path below a granted resource root.
+///
+/// A bare role reference (no relative part) names the resource itself. It must not
+/// go through `Path::join("")`, which appends a trailing separator: for a granted
+/// document (`data/report.json`) that yields `data/report.json/`, and every read,
+/// stat and watch then fails with ENOTDIR.
+fn granted_file_path(resource_root: &Path, relative: &Path) -> PathBuf {
+    if relative.as_os_str().is_empty() {
+        resource_root.to_path_buf()
+    } else {
+        resource_root.join(relative)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bare_role_reference_names_the_granted_document_itself() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let document = dir.path().join("data").join("analytics.snapshot.json");
+        std::fs::create_dir_all(document.parent().context("parent")?)?;
+        std::fs::write(&document, b"{}")?;
+
+        let resolved = granted_file_path(&document, Path::new(""));
+        assert_eq!(resolved, document);
+        // The previous `join("")` appended a separator (`analytics.snapshot.json/`).
+        assert_ne!(document.join("").as_os_str(), document.as_os_str());
+        // On Linux (where hosts run) that form fails with ENOTDIR - the OUTATIME
+        // Analytics "Host operation failed". macOS realpath tolerates it.
+        #[cfg(target_os = "linux")]
+        assert!(document.join("").canonicalize().is_err());
+        assert_eq!(resolved.canonicalize()?, document.canonicalize()?);
+        Ok(())
+    }
+
+    #[test]
+    fn collection_children_still_resolve_below_the_root() {
+        let root = Path::new("/w/data");
+        assert_eq!(
+            granted_file_path(root, Path::new("episodes/a.json")),
+            PathBuf::from("/w/data/episodes/a.json")
+        );
+        assert_eq!(
+            granted_file_path(root, Path::new("")),
+            PathBuf::from("/w/data")
+        );
+    }
 
     const PINNED: &str = "pinned-digest";
 

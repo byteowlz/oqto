@@ -1,0 +1,1821 @@
+{
+  "contract": "oqto.runtime-interactions.source",
+  "version": 1,
+  "normative": true,
+  "scope": "Native source framing/correlation only, never authenticated host admission",
+  "pairs": [
+    {
+      "name": "capabilities",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-0",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "capabilities"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-0",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "capabilities",
+          "capabilities": [
+            {
+              "state": "unavailable",
+              "family": "commands",
+              "reason": "sdk_engine_absent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "catalog",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "dispatch_raw",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-2",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_dispatch",
+          "catalogGeneration": "fixture-catalog",
+          "commandId": "fixture-command",
+          "args": "  --value='literal /name' \n"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-2",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "fixture-operation",
+            "commandId": "fixture-command",
+            "disposition": "started",
+            "rejection": null
+          }
+        }
+      }
+    },
+    {
+      "name": "permissions",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-3",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "permission_snapshot"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-3",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "permissions",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "active": [
+              {
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "subject": {
+                  "kind": "pi",
+                  "model": "fixture/alternate",
+                  "loadout": null,
+                  "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "ceilingDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "expiresAtMs": 10000,
+                "options": [
+                  {
+                    "optionId": "allow",
+                    "model": "fixture/alternate",
+                    "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "optionId": "deny",
+                    "model": null,
+                    "effectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  }
+                ],
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "receipts": [
+              {
+                "cursor": {
+                  "generation": 12,
+                  "revision": 4
+                },
+                "handleId": "fixture-handle",
+                "requestId": "fixture-permission-request",
+                "requestRevision": 0,
+                "kind": "decision",
+                "outcome": "allow",
+                "optionId": "allow",
+                "reason": "allowed",
+                "source": "adapter",
+                "controllerId": "fixture-controller",
+                "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "atMs": 10000,
+                "restored": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "decide",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-4",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-4",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "permission_receipt",
+          "receipt": {
+            "cursor": {
+              "generation": 12,
+              "revision": 4
+            },
+            "handleId": "fixture-handle",
+            "requestId": "fixture-permission-request",
+            "requestRevision": 0,
+            "kind": "decision",
+            "outcome": "allow",
+            "optionId": "allow",
+            "reason": "allowed",
+            "source": "adapter",
+            "controllerId": "fixture-controller",
+            "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "atMs": 10000,
+            "restored": false
+          }
+        }
+      }
+    },
+    {
+      "name": "policy",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-5",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "policy_read"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-5",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "policy",
+          "policy": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "allowMode": "confirm",
+            "autoDecision": "deny",
+            "allowedModels": [
+              "fixture/model"
+            ],
+            "allowedKinds": [
+              "pi"
+            ],
+            "maxSubagents": 2,
+            "confirmTimeoutMs": 10000
+          }
+        }
+      }
+    },
+    {
+      "name": "policy_apply",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-6",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "policy_apply",
+          "expected": {
+            "generation": "fixture-runtime",
+            "revision": 4
+          },
+          "changes": [
+            {
+              "setting": "allowed_models",
+              "value": [
+                "fixture/model"
+              ]
+            }
+          ]
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-6",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "policy",
+          "policy": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "allowMode": "confirm",
+            "autoDecision": "deny",
+            "allowedModels": [
+              "fixture/model"
+            ],
+            "allowedKinds": [
+              "pi"
+            ],
+            "maxSubagents": 2,
+            "confirmTimeoutMs": 10000
+          }
+        }
+      }
+    },
+    {
+      "name": "queue",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-7",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "queue_snapshot"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-7",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "queue_apply",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-8",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "queue_apply",
+          "expected": {
+            "generation": "fixture-runtime",
+            "revision": 4
+          },
+          "action": {
+            "action": "cancel_item",
+            "itemId": "fixture-q1"
+          }
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-8",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "errors",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-9",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "error_list",
+          "afterEventId": null
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-9",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "errors",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "errors": [
+              {
+                "eventId": "fixture-error",
+                "operationId": "fixture-operation",
+                "source": "extension",
+                "code": "fixture_error",
+                "message": "Safe synthetic failure",
+                "phase": "dispatch",
+                "recoverable": true,
+                "uncertain": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "receipt",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-10",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "receipt_get",
+          "operationId": "fixture-operation"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-10",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "fixture-operation",
+            "commandId": "fixture-command",
+            "disposition": "started",
+            "rejection": null
+          }
+        }
+      }
+    }
+  ],
+  "frames": [
+    {
+      "name": "capabilities_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "capabilities_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "capabilities",
+            "capabilities": [
+              {
+                "state": "unavailable",
+                "family": "commands",
+                "reason": "sdk_engine_absent"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "catalog_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-1",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "command_catalog"
+          }
+        }
+      }
+    },
+    {
+      "name": "catalog_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-1",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "catalog",
+            "catalog": {
+              "generation": "fixture-catalog",
+              "coverage": "full",
+              "commands": [
+                {
+                  "commandId": "fixture-command",
+                  "invocation": "/fixture",
+                  "description": null,
+                  "origin": "builtin",
+                  "arguments": {
+                    "kind": "raw_string"
+                  },
+                  "availability": {
+                    "state": "available"
+                  },
+                  "requiredInteractions": []
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "dispatch_raw_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-2",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "command_dispatch",
+            "catalogGeneration": "fixture-catalog",
+            "commandId": "fixture-command",
+            "args": "  --value='literal /name' \n"
+          }
+        }
+      }
+    },
+    {
+      "name": "dispatch_raw_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-2",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "command_receipt",
+            "receipt": {
+              "operationId": "fixture-operation",
+              "commandId": "fixture-command",
+              "disposition": "started",
+              "rejection": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "permissions_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-3",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "permission_snapshot"
+          }
+        }
+      }
+    },
+    {
+      "name": "permissions_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-3",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "permissions",
+            "snapshot": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "active": [
+                {
+                  "handleId": "fixture-handle",
+                  "requestId": "fixture-permission-request",
+                  "requestRevision": 0,
+                  "subject": {
+                    "kind": "pi",
+                    "model": "fixture/alternate",
+                    "loadout": null,
+                    "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "ceilingDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "expiresAtMs": 10000,
+                  "options": [
+                    {
+                      "optionId": "allow",
+                      "model": "fixture/alternate",
+                      "effectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    },
+                    {
+                      "optionId": "deny",
+                      "model": null,
+                      "effectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    }
+                  ],
+                  "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              ],
+              "receipts": [
+                {
+                  "cursor": {
+                    "generation": 12,
+                    "revision": 4
+                  },
+                  "handleId": "fixture-handle",
+                  "requestId": "fixture-permission-request",
+                  "requestRevision": 0,
+                  "kind": "decision",
+                  "outcome": "allow",
+                  "optionId": "allow",
+                  "reason": "allowed",
+                  "source": "adapter",
+                  "controllerId": "fixture-controller",
+                  "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                  "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "atMs": 10000,
+                  "restored": false
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "decide_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-4",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "permission_decide",
+            "producerGeneration": "fixture-runtime",
+            "handleId": "fixture-handle",
+            "requestRevision": 0,
+            "controllerId": "fixture-controller",
+            "controllerGeneration": "fixture-controller-generation",
+            "decision": "allow_once",
+            "optionId": "allow"
+          }
+        }
+      }
+    },
+    {
+      "name": "decide_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-4",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "permission_receipt",
+            "receipt": {
+              "cursor": {
+                "generation": 12,
+                "revision": 4
+              },
+              "handleId": "fixture-handle",
+              "requestId": "fixture-permission-request",
+              "requestRevision": 0,
+              "kind": "decision",
+              "outcome": "allow",
+              "optionId": "allow",
+              "reason": "allowed",
+              "source": "adapter",
+              "controllerId": "fixture-controller",
+              "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "atMs": 10000,
+              "restored": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "policy_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-5",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "policy_read"
+          }
+        }
+      }
+    },
+    {
+      "name": "policy_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-5",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "policy",
+            "policy": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "allowMode": "confirm",
+              "autoDecision": "deny",
+              "allowedModels": [
+                "fixture/model"
+              ],
+              "allowedKinds": [
+                "pi"
+              ],
+              "maxSubagents": 2,
+              "confirmTimeoutMs": 10000
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "policy_apply_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-6",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "policy_apply",
+            "expected": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "changes": [
+              {
+                "setting": "allowed_models",
+                "value": [
+                  "fixture/model"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "policy_apply_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-6",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "policy",
+            "policy": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "allowMode": "confirm",
+              "autoDecision": "deny",
+              "allowedModels": [
+                "fixture/model"
+              ],
+              "allowedKinds": [
+                "pi"
+              ],
+              "maxSubagents": 2,
+              "confirmTimeoutMs": 10000
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "queue_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-7",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "queue_snapshot"
+          }
+        }
+      }
+    },
+    {
+      "name": "queue_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-7",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "queue",
+            "snapshot": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "completeness": "complete",
+              "steering": [
+                {
+                  "itemId": "fixture-q1",
+                  "text": "same text"
+                },
+                {
+                  "itemId": "fixture-q2",
+                  "text": "same text"
+                }
+              ],
+              "followUp": [],
+              "supportedActions": [
+                "steer",
+                "follow_up",
+                "cancel_item"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "queue_apply_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-8",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "queue_apply",
+            "expected": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "action": {
+              "action": "cancel_item",
+              "itemId": "fixture-q1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "queue_apply_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-8",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "queue",
+            "snapshot": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "completeness": "complete",
+              "steering": [
+                {
+                  "itemId": "fixture-q1",
+                  "text": "same text"
+                },
+                {
+                  "itemId": "fixture-q2",
+                  "text": "same text"
+                }
+              ],
+              "followUp": [],
+              "supportedActions": [
+                "steer",
+                "follow_up",
+                "cancel_item"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "errors_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-9",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "error_list",
+            "afterEventId": null
+          }
+        }
+      }
+    },
+    {
+      "name": "errors_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-9",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "errors",
+            "snapshot": {
+              "cursor": {
+                "generation": "fixture-runtime",
+                "revision": 4
+              },
+              "errors": [
+                {
+                  "eventId": "fixture-error",
+                  "operationId": "fixture-operation",
+                  "source": "extension",
+                  "code": "fixture_error",
+                  "message": "Safe synthetic failure",
+                  "phase": "dispatch",
+                  "recoverable": true,
+                  "uncertain": false
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "receipt_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-10",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "receipt_get",
+            "operationId": "fixture-operation"
+          }
+        }
+      }
+    },
+    {
+      "name": "receipt_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-10",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "command_receipt",
+            "receipt": {
+              "operationId": "fixture-operation",
+              "commandId": "fixture-command",
+              "disposition": "started",
+              "rejection": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "status_invalid_request",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": null,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "status_not_negotiated",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": "source-request-0",
+        "code": "not_negotiated"
+      }
+    },
+    {
+      "name": "status_source_unavailable",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": "source-request-0",
+        "code": "source_unavailable"
+      }
+    },
+    {
+      "name": "status_source_changed",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": "source-request-0",
+        "code": "source_changed"
+      }
+    },
+    {
+      "name": "status_authority_denied",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": "source-request-0",
+        "code": "authority_denied"
+      }
+    },
+    {
+      "name": "status_unsupported_operation",
+      "value": {
+        "type": "interaction_source_status",
+        "requestId": "source-request-0",
+        "code": "unsupported_operation"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "caller_binding_on_request",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          },
+          "binding": {
+            "publicSessionId": "oqto-fixture",
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "fixture-runtime",
+            "controllerId": "fixture-controller",
+            "controllerGeneration": "fixture-controller-generation"
+          }
+        }
+      }
+    },
+    {
+      "name": "caller_binding_on_response",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "capabilities",
+            "capabilities": [
+              {
+                "state": "unavailable",
+                "family": "commands",
+                "reason": "sdk_engine_absent"
+              }
+            ]
+          },
+          "binding": {
+            "publicSessionId": "oqto-fixture",
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "fixture-runtime",
+            "controllerId": "fixture-controller",
+            "controllerGeneration": "fixture-controller-generation"
+          }
+        }
+      }
+    },
+    {
+      "name": "public_identity_is_not_source_evidence",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111",
+            "publicSessionId": "forged"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "controller_is_not_source_evidence",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111",
+            "controllerId": "forged"
+          },
+          "result": {
+            "kind": "capabilities",
+            "capabilities": [
+              {
+                "state": "unavailable",
+                "family": "commands",
+                "reason": "sdk_engine_absent"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "missing_runtime_epoch",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "unsafe_runtime_epoch",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": 9007199254740992
+          },
+          "result": {
+            "kind": "capabilities",
+            "capabilities": [
+              {
+                "state": "unavailable",
+                "family": "commands",
+                "reason": "sdk_engine_absent"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_version",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 2,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_source_frame",
+      "value": {
+        "type": "interaction",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_result_kind",
+      "value": {
+        "type": "interaction_source_response",
+        "response": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "result": {
+            "kind": "assistant_message",
+            "text": "not an error projection"
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown_frame_field",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        },
+        "authority": "forged"
+      }
+    },
+    {
+      "name": "invalid_native_id",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-0",
+          "source": {
+            "nativeSessionId": "../not-an-id",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "capabilities"
+          }
+        }
+      }
+    },
+    {
+      "name": "permission_response_cannot_write_policy",
+      "value": {
+        "type": "interaction_source",
+        "request": {
+          "version": 1,
+          "requestId": "source-request-4",
+          "source": {
+            "nativeSessionId": "native-fixture",
+            "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+          },
+          "operation": {
+            "op": "permission_decide",
+            "producerGeneration": "fixture-runtime",
+            "handleId": "fixture-handle",
+            "requestRevision": 0,
+            "controllerId": "fixture-controller",
+            "controllerGeneration": "fixture-controller-generation",
+            "decision": "allow_once",
+            "optionId": "allow",
+            "changes": [
+              {
+                "setting": "allow_mode",
+                "value": "auto"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "mismatches": [
+    {
+      "name": "wrong_request_id",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "another-request",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_native_session",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "another-native",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_runtime_epoch",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "another-runtime"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_result_operation",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "queue",
+          "snapshot": {
+            "cursor": {
+              "generation": "fixture-runtime",
+              "revision": 4
+            },
+            "completeness": "complete",
+            "steering": [
+              {
+                "itemId": "fixture-q1",
+                "text": "same text"
+              },
+              {
+                "itemId": "fixture-q2",
+                "text": "same text"
+              }
+            ],
+            "followUp": [],
+            "supportedActions": [
+              "steer",
+              "follow_up",
+              "cancel_item"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_unavailable_family",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "unavailable",
+          "family": "permission_config",
+          "reason": "unsupported_operation"
+        }
+      }
+    },
+    {
+      "name": "numeric_epoch_is_not_string_epoch",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": 17
+        },
+        "operation": {
+          "op": "command_catalog"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-1",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "17"
+        },
+        "result": {
+          "kind": "catalog",
+          "catalog": {
+            "generation": "fixture-catalog",
+            "coverage": "full",
+            "commands": [
+              {
+                "commandId": "fixture-command",
+                "invocation": "/fixture",
+                "description": null,
+                "origin": "builtin",
+                "arguments": {
+                  "kind": "raw_string"
+                },
+                "availability": {
+                  "state": "available"
+                },
+                "requiredInteractions": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_commandId",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-2",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "command_dispatch",
+          "catalogGeneration": "fixture-catalog",
+          "commandId": "fixture-command",
+          "args": "  --value='literal /name' \n"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-2",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "fixture-operation",
+            "commandId": "another-identity",
+            "disposition": "started",
+            "rejection": null
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_handleId",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-4",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "permission_decide",
+          "producerGeneration": "fixture-runtime",
+          "handleId": "fixture-handle",
+          "requestRevision": 0,
+          "controllerId": "fixture-controller",
+          "controllerGeneration": "fixture-controller-generation",
+          "decision": "allow_once",
+          "optionId": "allow"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-4",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "permission_receipt",
+          "receipt": {
+            "cursor": {
+              "generation": 12,
+              "revision": 4
+            },
+            "handleId": "another-identity",
+            "requestId": "fixture-permission-request",
+            "requestRevision": 0,
+            "kind": "decision",
+            "outcome": "allow",
+            "optionId": "allow",
+            "reason": "allowed",
+            "source": "adapter",
+            "controllerId": "fixture-controller",
+            "nativeSessionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "subjectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "atMs": 10000,
+            "restored": false
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong_operationId",
+      "request": {
+        "version": 1,
+        "requestId": "source-request-10",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "operation": {
+          "op": "receipt_get",
+          "operationId": "fixture-operation"
+        }
+      },
+      "response": {
+        "version": 1,
+        "requestId": "source-request-10",
+        "source": {
+          "nativeSessionId": "native-fixture",
+          "runtimeGeneration": "ir:11111111-1111-4111-8111-111111111111"
+        },
+        "result": {
+          "kind": "command_receipt",
+          "receipt": {
+            "operationId": "another-identity",
+            "commandId": "fixture-command",
+            "disposition": "started",
+            "rejection": null
+          }
+        }
+      }
+    }
+  ]
+}

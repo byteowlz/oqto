@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OriginConfig",
+  "description": "Origin (guard) side: `$XDG_CONFIG_HOME/oqt/hands-link.toml`.",
+  "type": "object",
+  "required": [
+    "machines",
+    "version"
+  ],
+  "properties": {
+    "machines": {
+      "description": "Named remote machines, keyed by the `machine` argument value.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/MachineConfig"
+      }
+    },
+    "version": {
+      "description": "Configuration format version; must be 1.",
+      "type": "integer",
+      "format": "uint8",
+      "minimum": 0.0
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "MachineConfig": {
+      "description": "Timing and concurrency the origin owner chose for one machine binding.",
+      "type": "object",
+      "required": [
+        "binding",
+        "lease_ms",
+        "max_concurrent_calls",
+        "pairing",
+        "renew_ms"
+      ],
+      "properties": {
+        "binding": {
+          "description": "Destination binding to use; the destination owner installed it.",
+          "type": "string"
+        },
+        "lease_ms": {
+          "description": "Fixed execution lease offered by each renewal, in milliseconds.",
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 10000.0,
+          "minimum": 2000.0
+        },
+        "max_concurrent_calls": {
+          "description": "Calls that may hold a lease on this machine at the same time.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 8.0,
+          "minimum": 1.0
+        },
+        "pairing": {
+          "description": "Pairing record created by `oqt_link pair` (state, not config).",
+          "type": "string"
+        },
+        "renew_ms": {
+          "description": "Interval between destination renewal challenges; at most half the lease.",
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 5000.0,
+          "minimum": 250.0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

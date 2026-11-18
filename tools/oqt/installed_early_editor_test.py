@@ -22,6 +22,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tui_test
+import coding_fixture
 from coding_fixture import coding_world
 
 RUNTIME = os.environ.get('OQT_INSTALLED_TEST_RUNTIME')
@@ -32,12 +33,20 @@ runtime = Path(RUNTIME).resolve(strict=True)
 samples = int(os.environ.get('OQT_EARLY_SAMPLES', '3'))
 entry = Path(tempfile.mkdtemp(prefix='oqt-installed-entry-'))
 (entry/'oqt').symlink_to(runtime/'oqt')
-tui_test.ROOT = entry  # Terminal executes ROOT/oqt -> staged runtime entry
 
 
 def retire(state_root, owner):
     for manifest in state_root.glob('p/*/host.json'):
         info = json.loads(manifest.read_text())
+        if sys.platform == 'darwin':
+            # No pidfd and no readable environment on macOS: this fixture's
+            # state root names the host; bind by its command line.
+            command = coding_fixture.cmdline(info['pid'])
+            if command:
+                if str(runtime) not in command or '/host.ts' not in command:
+                    raise AssertionError('Refusing to signal an unproven fixture host')
+                os.kill(info['pid'], signal.SIGTERM)
+            continue
         try:
             descriptor = os.pidfd_open(info['pid'])
         except ProcessLookupError:
@@ -60,7 +69,7 @@ def retire(state_root, owner):
 
 
 def first_frame(owner, work, env, label, draft):
-    terminal = tui_test.Terminal(['--owner-profile', str(owner), '--workdir', str(work)], cwd=work, env=env)
+    terminal = tui_test.Terminal(['--owner-profile', str(owner), '--workdir', str(work)], cwd=work, env=env, launcher=entry/'oqt')
     terminal.deadline = time.monotonic()+120
     try:
         terminal.expect('Loading oqt')

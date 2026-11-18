@@ -38,6 +38,7 @@ import {
 	Permissions,
 } from "../../examples/plugins/oq-permissions/src/contract.ts";
 import type { SessionWorkerRuntime } from "./services/worker.ts";
+import { createSessionRouter } from "./session-router.ts";
 import type { runSessionWorkerWithHarness } from "./session-worker.ts";
 
 type WorkerFactory = Parameters<typeof runSessionWorkerWithHarness>[1];
@@ -344,17 +345,24 @@ export async function createOqtHarness(
 			BACKGROUND_CONTEXT,
 		);
 		const model = faux.getModel();
-		const conversation = await harness.root(BACKGROUND_CONTEXT, {
+		// Creates the root conversation and its agent document.
+		await harness.root(BACKGROUND_CONTEXT, {
 			agent: {
 				cwd: options.metadata.cwd,
 				model: { provider: model.provider, modelId: model.id },
 			},
 		});
+		// The client's session commands (/tree, /branch) need the worker's
+		// SessionForks service; the demo serves it through the same router as
+		// coding, over the root conversation created above.
+		const router = await createSessionRouter({ harness }, BACKGROUND_CONTEXT);
 		return {
 			harness,
-			conversation,
+			conversation: router.conversation,
+			conversationFacet: router.conversationFacet,
 			facetLoader: createStaticFacetLoader([facet]),
 			cleanup: async () => {
+				router.close();
 				await tools.close();
 				await operator.close();
 			},

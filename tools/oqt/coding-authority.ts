@@ -96,6 +96,10 @@ function object(value: unknown): value is Record<string, unknown> {
  * Lives outside the brain: the brain reaches it only through the per-session
  * tool channel, the operator only through the guard's operator socket.
  */
+/** Fixed operator text; never carries paths, pids or exception text. */
+const ATTENTION =
+	"Confined tools could not be confirmed stopped. No new grants or tool calls until they are; restart oqt and inspect effects before retrying.";
+
 export class CodingAuthority {
 	tools!: Carrier;
 	readonly operator: Carrier;
@@ -108,6 +112,7 @@ export class CodingAuthority {
 	readonly #ceiling: CeilingInput;
 	#frozen = false;
 	#transition: Promise<void> | undefined;
+	#attention: string | undefined;
 	private constructor(
 		session: string,
 		directory: string,
@@ -322,15 +327,32 @@ export class CodingAuthority {
 		});
 	}
 	/** Freeze; run `step` (ledger mutation + confirmed hands replacement);
-	 * unfreeze only if every step succeeded. Uncertain stops stay frozen. */
+	 * unfreeze only if every step succeeded. Uncertain stops stay frozen and
+	 * the Session reports that it needs attention. */
 	async transition(step: () => Promise<void>) {
+		// Serialize behind a transition still in flight (a revoke racing a
+		// drain, for example); only a failed one keeps the authority frozen.
+		while (this.#frozen && this.#transition && !this.#attention)
+			await this.#transition.catch(() => {});
 		if (this.#frozen) throw new Error("Authority is already frozen");
 		this.#frozen = true;
 		this.#transition = (async () => {
-			await step();
+			try {
+				await step();
+			} catch (error) {
+				this.#attention = ATTENTION;
+				// Republish so every operator surface sees the frozen state.
+				this.publish([...this.pending.values()]);
+				throw error;
+			}
 			this.#frozen = false;
 		})();
 		await this.#transition;
+	}
+	/** Set once a transition failed: the authority stays frozen (no grants,
+	 * no tool calls) until the host is restarted and recovery runs. */
+	get attention(): string | undefined {
+		return this.#attention;
 	}
 	async revokeAll() {
 		await this.transition(async () => {

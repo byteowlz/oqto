@@ -1,0 +1,8 @@
+root = Stack([card])
+card = Card([head, form])
+head = CardHeader("Pick a sandbox profile", "For the new workspace ~/work/sldr")
+form = Form("profile", btns, [FormControl("Profile", cards, "You can change this later in workspace settings."), FormControl("Network", net), FormControl("Extra write paths", paths)])
+cards = OptionCards("profile", "single", [OptionCard("minimal", "Minimal", "Home readable, /tmp writable"), OptionCard("development", "Development", "Toolchains + caches, no secrets"), OptionCard("strict", "Strict", "Workspace only, no network")], null, "development")
+net = Chips("network", "single", [ChipItem("open", "Open"), ChipItem("proxy", "Via proxy"), ChipItem("isolated", "Isolated")], null, "proxy")
+paths = Input("paths", "~/.cache/sldr")
+btns = Buttons([Button("Create workspace", @Answer({profile: $profile, network: $network, paths: $paths})), Button("Cancel", @Answer({cancelled: true}), "tertiary")])

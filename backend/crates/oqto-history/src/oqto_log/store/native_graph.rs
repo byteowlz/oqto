@@ -183,6 +183,8 @@ impl Entry {
             role: normalize_role(&message.role).to_owned(),
             content: extract_text(&message.content),
             json_payload: serde_json::to_string(message).ok()?,
+            provider: message.provider.clone(),
+            model: message.model.clone(),
             created_at_ms: message
                 .timestamp
                 .and_then(|value| i64::try_from(value).ok())

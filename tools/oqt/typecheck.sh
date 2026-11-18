@@ -24,6 +24,7 @@ paths.update({
     '@earendil-works/pi-durable/tools': [str(source / 'packages/durable/src/tools/index.ts')],
     '@earendil-works/pi-durable/storage/sqlite/node': [str(source / 'packages/durable/src/storage/sqlite/node.ts')],
     '@earendil-works/pi-env': [str(source / 'packages/env/src/index.ts')],
+    '@earendil-works/pi-codemode': [str(source / 'packages/codemode/src/index.ts')],
     '@earendil-works/chord': [str(source / 'node_modules/@earendil-works/chord/dist/index.d.ts')],
     '@earendil-works/chord/*': [str(source / 'node_modules/@earendil-works/chord/dist/*/index.d.ts')],
     '@earendil-works/pi-coding-agent/experimental/plugin': [str(snap / 'packages/coding-agent/src/experimental/plugin.ts')],
@@ -40,6 +41,7 @@ out.write_text(json.dumps({'extends': str(source / 'tsconfig.base.json'), 'compi
     'verbatimModuleSyntax': False, 'allowImportingTsExtensions': True,
     'typeRoots': [str(source / 'node_modules/@types')], 'paths': paths}, 'files': files}))
 PY
-cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
-timeout 200 taskset -c "$cpu" nice -n 19 "$source/node_modules/.bin/tsc" -p "$work/tsconfig.json"
+pinning=()
+if [[ $(uname -s) == Linux ]]; then pinning=(taskset -c "$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"); fi
+timeout 200 "${pinning[@]}" nice -n 19 "$source/node_modules/.bin/tsc" -p "$work/tsconfig.json"
 echo "typecheck: clean"

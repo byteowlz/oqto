@@ -1,0 +1,1419 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "ui-part",
+ "description": "Revision 2.2: a tool shows a generative UI part as an oqto.ui entry written by the host; a later state of the same part is a new entry with the same partId; a client write of kind oqto.ui is refused.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "entry_kinds": [
+   "pi.user",
+   "pi.system",
+   "pi.assistant",
+   "oqto.ui",
+   "pi.tool-result",
+   "pi.assistant",
+   "oqto.ui"
+  ],
+  "receipts": {
+   "req-part-1": [
+    "placed",
+    "done"
+   ]
+  },
+  "errors": {
+   "req-forge-1": "invalid"
+  },
+  "idle": true
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c1",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 4,
+     "max": 8
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-part-1",
+    "input": {
+     "kind": "prompt",
+     "text": "Set up the workspace"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 2,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "turns": 0,
+       "first": 7
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Set up the workspace",
+          "timestamp": 1767225600024
+         }
+        ],
+        "kind": "pi.user",
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "3debfd38ab59d9bd52135518fa80ce195c73c73f3289d7979a300ef1aea3e091"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-part-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7,
+    "id": "c2"
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 3,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      1,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "system",
+          "content": "",
+          "toolsAdded": [
+           {
+            "name": "show_part",
+            "description": "Show a generative UI part to the user.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "partId": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "partId"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "echo",
+            "description": "Return the given text.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "text": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "text"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "gate",
+            "description": "Wait until the fixture releases the named gate.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "name": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           }
+          ],
+          "timestamp": 1767225600041
+         }
+        ],
+        "kind": "pi.system",
+        "id": 10,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "2973d13dda1848ef06404c486f477ecb6631ab547c738aa3f26f86e7fdf15516"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 4,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "5f2b2fb488fc6257f016b3c417e97fba80932731248343e5377ba9e8180c0eb0"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 5,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ],
+      [
+       {
+        "callId": "call_part_1",
+        "name": "show_part",
+        "taskId": 12,
+        "status": "pending"
+       }
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "turns"
+      ],
+      1
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1"
+      ],
+      {
+       "input": 0,
+       "output": 10,
+       "cacheRead": 0,
+       "cacheWrite": 157,
+       "totalTokens": 167,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      2,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "toolCall",
+            "id": "call_part_1",
+            "name": "show_part",
+            "arguments": {
+             "partId": "part_profile_1"
+            }
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 10,
+           "cacheRead": 0,
+           "cacheWrite": 157,
+           "totalTokens": 167,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 11,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "34273b8b367047b99143783f6da02fbee51260efc8e7973793889895bf984589"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 6,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "running"
+     ]
+    ]
+   },
+   "value_sha256": "103b62a45067fda330c6c63e83e0ee2737f837595022dc1de6260ec64855ba7a"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 7,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      3,
+      0,
+      [
+       {
+        "kind": "oqto.ui",
+        "data": {
+         "part": {
+          "schema": "oqto.openui.part.v1",
+          "partId": "part_profile_1",
+          "profile": {
+           "id": "oqto",
+           "version": "0.2.2"
+          },
+          "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+          "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+          "answer": {
+           "schema": {
+            "type": "object",
+            "properties": {
+             "profile": {
+              "enum": [
+               "minimal",
+               "strict"
+              ]
+             },
+             "cancelled": {
+              "type": "boolean"
+             }
+            }
+           },
+           "timeoutSeconds": 600
+          }
+         },
+         "state": "shown",
+         "origin": {
+          "call": "call_part_1"
+         }
+        },
+        "id": 13,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "1082f9268160e80bf4fb54f0359b09b4d29e02592d7a7925d049af5ff361c500"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 8,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "output"
+      ],
+      "shown:part_profile_1"
+     ]
+    ]
+   },
+   "value_sha256": "0b3c259ecf68052aece98d09b829eef4201a53103881c3de22f25725d40347cd"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 9,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "done"
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "entry"
+      ],
+      15
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "output"
+      ]
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      4,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "toolResult",
+          "toolCallId": "call_part_1",
+          "toolName": "show_part",
+          "content": [
+           {
+            "type": "text",
+            "text": "shown:part_profile_1"
+           }
+          ],
+          "isError": false,
+          "durationMs": 1,
+          "timestamp": 1767225600089
+         }
+        ],
+        "data": {
+         "diagnostics": []
+        },
+        "kind": "pi.tool-result",
+        "id": 15,
+        "conversationId": 1,
+        "byTaskId": 12
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "b7980eef72e9f5732eb17d2ebaa055b37e7d82f5a653ad87ff1110e298f2db6f"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 10,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "taskId"
+      ],
+      16
+     ]
+    ]
+   },
+   "value_sha256": "c513e45409716e2247d1a370aac9df18b434b726ca29ccba8d9adfbd624f2bfe"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 11,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "bdbbb476986bdac86f28e08775e70258ba72084e55452f25f81a279349157684"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 12,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "output"
+      ],
+      19
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheRead"
+      ],
+      157
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheWrite"
+      ],
+      180
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "totalTokens"
+      ],
+      356
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      5,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "Pick a profile in the form above."
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 9,
+           "cacheRead": 157,
+           "cacheWrite": 23,
+           "totalTokens": 189,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "stop",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 17,
+        "conversationId": 1,
+        "byTaskId": 16
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "a8419675e8ef6e5367976b86710de9638cf924f54ebd82c03b0969cc5ab0d25c"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-part-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 17
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 13,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      6,
+      0,
+      [
+       {
+        "kind": "oqto.ui",
+        "data": {
+         "part": {
+          "schema": "oqto.openui.part.v1",
+          "partId": "part_profile_1",
+          "profile": {
+           "id": "oqto",
+           "version": "0.2.2"
+          },
+          "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+          "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+          "answer": {
+           "schema": {
+            "type": "object",
+            "properties": {
+             "profile": {
+              "enum": [
+               "minimal",
+               "strict"
+              ]
+             },
+             "cancelled": {
+              "type": "boolean"
+             }
+            }
+           },
+           "timeoutSeconds": 600
+          }
+         },
+         "state": "withdrawn",
+         "origin": {
+          "call": "call_part_1"
+         }
+        },
+        "id": 18,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "8a726c58fb5edbab4acef94429cb8e768b19acfe99cf65a62499b182dcafb58d"
+  },
+  {
+   "client": {
+    "id": "c3",
+    "type": "write",
+    "session": "ses_fixture",
+    "request_id": "req-forge-1",
+    "entry": {
+     "kind": "oqto.ui",
+     "data": {
+      "part": {
+       "schema": "oqto.openui.part.v1",
+       "partId": "part_forged_1",
+       "profile": {
+        "id": "oqto",
+        "version": "0.2.2"
+       },
+       "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+       "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+       "answer": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "profile": {
+           "enum": [
+            "minimal",
+            "strict"
+           ]
+          },
+          "cancelled": {
+           "type": "boolean"
+          }
+         }
+        },
+        "timeoutSeconds": 600
+       }
+      },
+      "state": "shown",
+      "origin": {
+       "call": "call_forged"
+      }
+     }
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "error",
+    "id": "c3",
+    "code": "invalid",
+    "message": "oqto.ui entries are written by the host"
+   }
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "Set up the workspace",
+      "timestamp": 1767225600024
+     }
+    ],
+    "kind": "pi.user",
+    "id": 7,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "system",
+      "content": "",
+      "toolsAdded": [
+       {
+        "name": "show_part",
+        "description": "Show a generative UI part to the user.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "partId": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "partId"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "echo",
+        "description": "Return the given text.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "text"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "gate",
+        "description": "Wait until the fixture releases the named gate.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "name"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "timestamp": 1767225600041
+     }
+    ],
+    "kind": "pi.system",
+    "id": 10,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "toolCall",
+        "id": "call_part_1",
+        "name": "show_part",
+        "arguments": {
+         "partId": "part_profile_1"
+        }
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 10,
+       "cacheRead": 0,
+       "cacheWrite": 157,
+       "totalTokens": 167,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 11,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "kind": "oqto.ui",
+    "data": {
+     "part": {
+      "schema": "oqto.openui.part.v1",
+      "partId": "part_profile_1",
+      "profile": {
+       "id": "oqto",
+       "version": "0.2.2"
+      },
+      "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+      "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+      "answer": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "profile": {
+          "enum": [
+           "minimal",
+           "strict"
+          ]
+         },
+         "cancelled": {
+          "type": "boolean"
+         }
+        }
+       },
+       "timeoutSeconds": 600
+      }
+     },
+     "state": "shown",
+     "origin": {
+      "call": "call_part_1"
+     }
+    },
+    "id": 13,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "toolResult",
+      "toolCallId": "call_part_1",
+      "toolName": "show_part",
+      "content": [
+       {
+        "type": "text",
+        "text": "shown:part_profile_1"
+       }
+      ],
+      "isError": false,
+      "durationMs": 1,
+      "timestamp": 1767225600089
+     }
+    ],
+    "data": {
+     "diagnostics": []
+    },
+    "kind": "pi.tool-result",
+    "id": 15,
+    "conversationId": 1,
+    "byTaskId": 12
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Pick a profile in the form above."
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 9,
+       "cacheRead": 157,
+       "cacheWrite": 23,
+       "totalTokens": 189,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 17,
+    "conversationId": 1,
+    "byTaskId": 16
+   },
+   {
+    "kind": "oqto.ui",
+    "data": {
+     "part": {
+      "schema": "oqto.openui.part.v1",
+      "partId": "part_profile_1",
+      "profile": {
+       "id": "oqto",
+       "version": "0.2.2"
+      },
+      "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+      "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+      "answer": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "profile": {
+          "enum": [
+           "minimal",
+           "strict"
+          ]
+         },
+         "cancelled": {
+          "type": "boolean"
+         }
+        }
+       },
+       "timeoutSeconds": 600
+      }
+     },
+     "state": "withdrawn",
+     "origin": {
+      "call": "call_part_1"
+     }
+    },
+    "id": 18,
+    "conversationId": 1
+   }
+  ],
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {},
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {
+     "faux/faux-1": {
+      "input": 0,
+      "output": 19,
+      "cacheRead": 157,
+      "cacheWrite": 180,
+      "totalTokens": 356,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     }
+    },
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Set up the workspace",
+     "timestamp": 1767225600024
+    }
+   ],
+   "kind": "pi.user",
+   "id": 7,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "system",
+     "content": "",
+     "toolsAdded": [
+      {
+       "name": "show_part",
+       "description": "Show a generative UI part to the user.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "partId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "partId"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "echo",
+       "description": "Return the given text.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "gate",
+       "description": "Wait until the fixture releases the named gate.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "timestamp": 1767225600041
+    }
+   ],
+   "kind": "pi.system",
+   "id": 10,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "toolCall",
+       "id": "call_part_1",
+       "name": "show_part",
+       "arguments": {
+        "partId": "part_profile_1"
+       }
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 10,
+      "cacheRead": 0,
+      "cacheWrite": 157,
+      "totalTokens": 167,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 11,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "kind": "oqto.ui",
+   "data": {
+    "part": {
+     "schema": "oqto.openui.part.v1",
+     "partId": "part_profile_1",
+     "profile": {
+      "id": "oqto",
+      "version": "0.2.2"
+     },
+     "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+     "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+     "answer": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "profile": {
+         "enum": [
+          "minimal",
+          "strict"
+         ]
+        },
+        "cancelled": {
+         "type": "boolean"
+        }
+       }
+      },
+      "timeoutSeconds": 600
+     }
+    },
+    "state": "shown",
+    "origin": {
+     "call": "call_part_1"
+    }
+   },
+   "id": 13,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "toolResult",
+     "toolCallId": "call_part_1",
+     "toolName": "show_part",
+     "content": [
+      {
+       "type": "text",
+       "text": "shown:part_profile_1"
+      }
+     ],
+     "isError": false,
+     "durationMs": 1,
+     "timestamp": 1767225600089
+    }
+   ],
+   "data": {
+    "diagnostics": []
+   },
+   "kind": "pi.tool-result",
+   "id": 15,
+   "conversationId": 1,
+   "byTaskId": 12
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "Pick a profile in the form above."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 9,
+      "cacheRead": 157,
+      "cacheWrite": 23,
+      "totalTokens": 189,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 17,
+   "conversationId": 1,
+   "byTaskId": 16
+  },
+  {
+   "kind": "oqto.ui",
+   "data": {
+    "part": {
+     "schema": "oqto.openui.part.v1",
+     "partId": "part_profile_1",
+     "profile": {
+      "id": "oqto",
+      "version": "0.2.2"
+     },
+     "body": "root = Stack([card])\ncard = Card([head, form])\nhead = CardHeader(\"Pick a sandbox profile\", \"For the new workspace\")\nform = Form(\"profile\", btns, [FormControl(\"Profile\", choice)])\nchoice = RadioGroup(\"profile\", [RadioItem(\"Minimal\", \"Home readable, /tmp writable\", \"minimal\"), RadioItem(\"Strict\", \"Workspace only, no network\", \"strict\")], \"minimal\")\nbtns = Buttons([Button(\"Create workspace\", @Answer({profile: $profile})), Button(\"Cancel\", @Answer({cancelled: true}), \"tertiary\")])",
+     "fallback": "== Pick a sandbox profile ==\nFor the new workspace\nProfile: Minimal / Strict\n[Create workspace] [Cancel]",
+     "answer": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "profile": {
+         "enum": [
+          "minimal",
+          "strict"
+         ]
+        },
+        "cancelled": {
+         "type": "boolean"
+        }
+       }
+      },
+      "timeoutSeconds": 600
+     }
+    },
+    "state": "withdrawn",
+    "origin": {
+     "call": "call_part_1"
+    }
+   },
+   "id": 18,
+   "conversationId": 1
+  }
+ ]
+}

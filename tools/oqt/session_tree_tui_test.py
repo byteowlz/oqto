@@ -19,13 +19,14 @@ def runtime_inputs():
     # before asserting reopen; otherwise a new catalog masquerades as data loss.
     root = Path(__file__).resolve().parents[2]
     lane = root / 'tools/oqt'
-    paths = [root / 'oqt', lane / 'prepare.py', lane / 'build-assets.py',
+    paths = [lane / 'dev.sh', lane / 'prepare.py', lane / 'build-assets.py',
              lane / 'preparation_lock.py', lane / 'profile_namespace.py',
              lane / 'source_patches.py', lane / 'hands-proxy.mjs']
     paths += list(lane.glob('*.ts'))
     paths += [path for path in (lane / 'plugin').rglob('*') if path.is_file()]
     result = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-    for path in [root / 'backend/target/debug/examples' / name for name in
+    target = Path(os.environ.get('OQT_TARGET_DIR') or root / 'backend/target')
+    for path in [target / 'debug/examples' / name for name in
                  ['permission_carrier', 'oqt_hands', 'oqt_shim', 'oqt_brain']]:
         meta = path.stat()
         result[str(path.relative_to(root))] = (meta.st_ino, meta.st_size, meta.st_mtime_ns)

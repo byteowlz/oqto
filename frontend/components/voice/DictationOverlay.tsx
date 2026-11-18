@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Mic, Send, X } from "lucide-react";
 import type * as React from "react";
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	RecognitionControls,
 	type RecognitionControlsProps,
@@ -63,6 +64,8 @@ export function DictationOverlay({
 	textareaRef,
 	className,
 }: DictationOverlayProps) {
+	const { t } = useTranslation();
+	const key = (name: string) => `voice.dictationSettings.${name}`;
 	const fallbackRef = useRef<HTMLTextAreaElement>(null);
 
 	useEffect(() => {
@@ -108,7 +111,7 @@ export function DictationOverlay({
 								? "bg-primary/15 text-primary"
 								: "text-muted-foreground hover:text-foreground hover:bg-muted/50",
 						)}
-						title={autoSend ? "Auto-send enabled" : "Auto-send disabled"}
+						title={t(autoSend ? key("autoSendOn") : key("autoSendOff"))}
 					>
 						<Send className="size-3" />
 						<span>Auto</span>
@@ -121,14 +124,14 @@ export function DictationOverlay({
 							disabled={Boolean(preparation)}
 							onClick={onFinish}
 						>
-							Finish
+							{t(key("finish"))}
 						</Button>
 					)}
 					<Button
 						type="button"
 						variant="ghost"
 						size="icon-sm"
-						aria-label="Cancel dictation"
+						aria-label={t(key("cancelDictation"))}
 						onClick={onStop}
 					>
 						<X className="size-4" />
@@ -141,7 +144,7 @@ export function DictationOverlay({
 					<RecognitionControls {...recognitionControls} disabled />
 				)}
 				<textarea
-					aria-label="Message"
+					aria-label={t(key("messageLabel"))}
 					ref={textareaRef ?? fallbackRef}
 					autoComplete="off"
 					autoCorrect="off"
@@ -167,7 +170,7 @@ export function DictationOverlay({
 				{liveTranscript && (
 					<div
 						className="break-words text-sm text-muted-foreground"
-						aria-label="Provisional transcript"
+						aria-label={t(key("provisionalTranscript"))}
 					>
 						{liveTranscript}
 					</div>
@@ -175,8 +178,8 @@ export function DictationOverlay({
 				<output className="block min-h-[1.25rem] text-xs text-muted-foreground">
 					{preparation ??
 						(liveTranscript
-							? "Preview only · waiting for completion"
-							: "Waiting for speech…")}
+							? t(key("previewOnly"))
+							: t(key("waitingForSpeech")))}
 				</output>
 
 				<div className="h-1">

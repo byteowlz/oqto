@@ -1,0 +1,144 @@
+{
+  "capabilities": {
+    "cliPath": [
+      "runtime",
+      "capabilities"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "command_catalog": {
+    "cliPath": [
+      "runtime",
+      "commands",
+      "list"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "command_dispatch": {
+    "cliPath": [
+      "runtime",
+      "commands",
+      "run"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "error_list": {
+    "cliPath": [
+      "runtime",
+      "errors",
+      "list"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "permission_decide": {
+    "cliPath": [
+      "runtime",
+      "permissions",
+      "decide"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "permission_snapshot": {
+    "cliPath": [
+      "runtime",
+      "permissions",
+      "list"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "policy_apply": {
+    "cliPath": [
+      "runtime",
+      "policy",
+      "apply"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "policy_read": {
+    "cliPath": [
+      "runtime",
+      "policy",
+      "get"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "queue_apply": {
+    "cliPath": [
+      "runtime",
+      "queue",
+      "apply"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "queue_snapshot": {
+    "cliPath": [
+      "runtime",
+      "queue",
+      "get"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  },
+  "receipt_get": {
+    "cliPath": [
+      "runtime",
+      "receipts",
+      "get"
+    ],
+    "implementation": "contract_only",
+    "requiredAdapters": [
+      "personal_tui",
+      "managed_rpc",
+      "cli_api"
+    ]
+  }
+}

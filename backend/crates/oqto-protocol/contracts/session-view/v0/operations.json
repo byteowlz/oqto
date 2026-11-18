@@ -1,0 +1,224 @@
+{
+  "contract": "oqto.session-view",
+  "version": 0,
+  "status": "draft: revision 2.2 for review (2.1 plus generative UI parts as oqto.ui entries); nothing implements it except the capture reference mapping, the byoagnt kit and the Rust session-view crates",
+  "upstream": {
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/chord": "1.5.2",
+    "captured_with": "scripts/contracts/session-view/capture.mjs"
+  },
+  "authority": "none: frames carry no caller identity and grant nothing; the binding authenticates the client and the host decides admission",
+  "client_requests": {
+    "attach": "start observing one Session; reply attached, then view frames",
+    "detach": "stop one attachment; reply detached",
+    "submit": "admit user input (prompt, steer, follow_up); reply receipt or error",
+    "write": "append a passive entry that never starts a run; reply receipt or error",
+    "abort": "stop the Session's current work and withdraw queued inputs; reply receipt",
+    "receipt_query": "read the current receipt of a request_id; reply receipt or error",
+    "read_entries": "read committed entries by id range, one page at a time; reply entries or error"
+  },
+  "host_frames": [
+    "attached",
+    "detached",
+    "view",
+    "receipt",
+    "entries",
+    "ended",
+    "error"
+  ],
+  "input_kinds": {
+    "prompt": {
+      "upstream": {
+        "type": "input",
+        "whenBusy": "reject"
+      },
+      "refused_when": "busy"
+    },
+    "steer": {
+      "upstream": {
+        "type": "input",
+        "whenBusy": "steer",
+        "whenIdle": "reject"
+      },
+      "refused_when": "idle"
+    },
+    "follow_up": {
+      "upstream": {
+        "type": "input"
+      },
+      "refused_when": null
+    }
+  },
+  "receipts": {
+    "kinds": [
+      "prompt",
+      "steer",
+      "follow_up",
+      "write",
+      "abort",
+      "continue"
+    ],
+    "statuses": [
+      "queued",
+      "placed",
+      "done",
+      "unanswered"
+    ],
+    "terminal": [
+      "done",
+      "unanswered"
+    ],
+    "transitions": {
+      "queued": [
+        "placed",
+        "done",
+        "unanswered"
+      ],
+      "placed": [
+        "done",
+        "unanswered"
+      ],
+      "done": [],
+      "unanswered": []
+    },
+    "meaning": {
+      "queued": "admitted, waiting in the Session's inbox",
+      "placed": "in the transcript and owned by a running run",
+      "done": "input: answered; write: appended; abort: the Session is idle",
+      "unanswered": "terminal without an answer; reason says why"
+    },
+    "delivery": "The reply to a request carries its receipt. That first receipt is also pushed to every other connection attached to the Session, and every later change goes to the requesting connection (attached or not) and to every connection attached to the Session. A resend of a known request is answered only to its sender.",
+    "ordering": "On a connection attached to the Session, a receipt naming entry or answer is sent only after a view frame or entries reply on that connection delivered that entry, or when the entry is at or below the before of that connection's attachment (committed and readable with read_entries).",
+    "retention": "request_id records, including the content fingerprint behind request_conflict, last as long as the Session and survive host restarts.",
+    "tracking": "A host tracks every request's status itself, independent of attachments; a request settles and receipt_query reports it even when no client is attached."
+  },
+  "error_codes": {
+    "invalid": "malformed or out-of-bounds request; nothing was done",
+    "too_large": "request or a field exceeds a limit; nothing was done",
+    "unsupported": "unknown request type",
+    "unsupported_version": "attach asked for a version the host does not speak; supported lists what it does",
+    "unknown_session": "no such Session for this client",
+    "unknown_attachment": "no such attachment for this client",
+    "unknown_request": "no such request_id for this Session",
+    "request_conflict": "request_id was used before with different content",
+    "busy": "prompt refused because a run is working",
+    "idle": "steer refused because no run is working",
+    "denied": "the client may not do this (hosts with authorization)",
+    "unavailable": "the host cannot serve the Session now; retry later with the same request_id"
+  },
+  "ended_reasons": {
+    "host_closed": "the host stopped serving the Session in an orderly way",
+    "failed": "the Session failed; state after the last frame is unknown",
+    "denied": "the client's access ended"
+  },
+  "ops": {
+    "r": "[\"r\", value]: replace the whole value",
+    "s": "[\"s\", path, value]: set an object key, replace an array element, or append exactly at the array end",
+    "d": "[\"d\", path]: delete an object key, or remove one array element and shift the rest",
+    "a": "[\"a\", path, text]: append text to an existing string",
+    "t": "[\"t\", path, count]: drop count leading UTF-16 code units of an existing string",
+    "p": "[\"p\", path, index, remove, items]: splice an array; path may be empty for a root array",
+    "m": "[\"m\", path, permutation]: reorder an array, new[i] = old[permutation[i]]"
+  },
+  "op_refusals": {
+    "invalid_op": "not a tuple, unknown verb, wrong arity or payload shape, path not an array, empty path where one is required, permutation not a bijection",
+    "unsafe_path": "reserved segment, negative or non-integer index, string index into an array, array index past the end",
+    "unresolvable_path": "a parent on the path is missing or not a container, or the target has the wrong type"
+  },
+  "reserved_segments": [
+    "__proto__",
+    "constructor",
+    "prototype"
+  ],
+  "limits": {
+    "max_request_bytes": 262144,
+    "max_text_bytes": 32768,
+    "max_write_data_bytes": 65536,
+    "max_id_bytes": 128,
+    "max_frame_bytes": {
+      "default": 8388608,
+      "minimum": 65536,
+      "maximum": 16777216
+    },
+    "window_min": {
+      "default": 50,
+      "minimum": 1,
+      "maximum": 200
+    },
+    "window_max": {
+      "default": "2 * min",
+      "maximum": 400
+    },
+    "read_limit": {
+      "default": 50,
+      "minimum": 1,
+      "maximum": 200
+    },
+    "max_cursor_bytes": 4096,
+    "note": "Byte limits count UTF-8 bytes and are normative; schema maxLength values count characters and are only an outer bound.",
+    "max_ui_body_bytes": 32768,
+    "max_ui_fallback_chars": 4000
+  },
+  "stable_view_subset": [
+    "conversation.id",
+    "entries[].id",
+    "entries[].conversationId",
+    "entries[].kind",
+    "entries[].model",
+    "entries[].data",
+    "entries[].byTaskId",
+    "before",
+    "docs[\"pi.live\"].run",
+    "docs[\"pi.live\"].run.inputs",
+    "docs[\"pi.live\"].generation.message",
+    "docs[\"pi.live\"].tools[].callId",
+    "docs[\"pi.live\"].tools[].name",
+    "docs[\"pi.live\"].tools[].status",
+    "docs[\"pi.live\"].tools[].output",
+    "docs[\"pi.live\"].runFailure.reason",
+    "docs[\"pi.live\"].runFailure.detail",
+    "docs[\"pi.inbox\"].items[].id",
+    "docs[\"pi.inbox\"].items[].mode"
+  ],
+  "not_in_v0": [
+    "interaction requests and owner decisions (permission prompts)",
+    "Session catalog, creation and switching (planned for v1)",
+    "withdrawing one queued submission",
+    "requesting a continue",
+    "filtering or redacting documents in the view",
+    "model route labels",
+    "path-interned wire ops",
+    "a normative binding for the signed personal transport",
+    "context edits (owner only; entries that change what the model sees)",
+    "forks (Session catalog)",
+    "partial or filtered views",
+    "answering a ui part (oqto.interactions answer, planned)"
+  ],
+  "content_equality": "Two requests with the same request_id have the same content when the canonical JSON (keys sorted, no whitespace, UTF-8) of [kind, payload] is equal: submit [input.kind, input.text], write [\"write\", entry], abort [\"abort\", null]. A request refused with busy or idle leaves no record, so its request_id may be reused.",
+  "malformed_request": "A request that is not a JSON object, has no valid id, or reuses an id already used on the connection cannot be answered unambiguously; the host closes the connection, and that connection's attachments end silently. Requests with a valid, unused id are always answered, with error when malformed.",
+  "caching": {
+    "entries_never_change": "A committed entry id names the same content for the life of the store. Cached entries never need checking again.",
+    "cache_key": "host, Session and store from attached. A different store means the cache is invalid and must be dropped.",
+    "fast_start": "Show the cache first, then attach with window.from = newest cached id + 1. If attached base has before equal to that newest id, nothing was missed.",
+    "gaps": "If before is past the newest cached id, the entries in between are missing: keep the cache, mark the gap, and fill it with read_entries (min = newest cached + 1, max = before, ascending).",
+    "earlier": "Load older entries with read_entries (max = oldest held - 1, descending) page by page until next is absent.",
+    "instant_send": "A client may show a sent input at once under its request_id until the entry its receipt names arrives.",
+    "purge": "On ended denied, error denied or unknown_session for a Session, delete its cache. Store caches encrypted at rest where the platform allows.",
+    "pending_requests": "Unsettled request_ids may be cached and resent unchanged after a reconnect; the host never runs one twice."
+  },
+  "visibility": "A client sees the whole Session view or nothing (denied). Partial views are not part of v0; a future version must announce them in attached and caches must then be kept per filter.",
+  "ui_parts": {
+    "kind": "oqto.ui",
+    "writer": "the host only, for a tool or the persona; a client write of kind oqto.ui is refused with invalid",
+    "data": "frames.schema.json definitions.ui_part: part (the oqto.openui.part.v1 envelope), state, optional origin",
+    "states": {
+      "shown": "on screen; answerable when part.answer is present",
+      "answered": "final: an answer was accepted",
+      "expired": "final: answer.timeoutSeconds passed",
+      "withdrawn": "final: the host took the part back"
+    },
+    "identity": "A later state of a part is a new entry with the same partId; entries never change. Clients show the newest state per partId and reconcile only by partId.",
+    "rendering": "Clients render the Oqto profile's core components natively and the part's fallback text otherwise: for unknown components, unknown profile major or minor versions, and parts over the size or nesting bounds (fail closed).",
+    "authority": "Rendering a part grants nothing. OpenUI actions never call tools, URLs or MCP servers. Answers travel as oqto.interactions answers keyed by partId and are validated by the host against part.answer.schema; not part of v0."
+  }
+}

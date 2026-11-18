@@ -1,27 +1,34 @@
 // Installed state and catalog identity. Ports installed_state_test.py to the
 // implementation that actually runs at launch (installed-state.ts, ADR-0072).
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	symlinkSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { ipcAlias, prepareState, profileKey } from "./installed-state.ts";
 
 const ARTIFACT = "ab".repeat(32);
+// Resolved: macOS temporary directories live under the /var symlink, and the
+// state checks refuse symlinked ancestors. Aliases need a short parent there
+// (104-byte socket paths), so macOS uses /tmp (a root-owned system link).
+const DARWIN = process.platform === "darwin";
+const tmpdir = () => (DARWIN ? "/tmp" : realpathSync(systemTmpdir()));
 let root;
 let home;
 
 before(() => {
-	root = mkdtempSync(join(tmpdir(), "oqt-installed-state-"));
+	root = mkdtempSync(join(realpathSync(systemTmpdir()), "oqt-installed-state-"));
 	home = join(root, "state");
 	mkdirSync(home, { mode: 0o700 });
 	mkdirSync(join(root, "workspace"));
@@ -55,6 +62,28 @@ test("catalog identity matches the Python implementation that wrote existing sta
 	// repartition state and hide every existing Session.
 	mkdirSync("/var/tmp/oqt-state-fixture/ws", { recursive: true });
 	mkdirSync("/var/tmp/oqt-state-fixture/owner", { recursive: true });
+	if (DARWIN) {
+		// The goldens hash Linux's unresolved /var/tmp; on macOS it resolves to
+		// /private/var/tmp, so compare with the Python implementation directly.
+		const python = (args) =>
+			spawnSync(
+				"python3",
+				[
+					"-c",
+					"import sys; from profile_namespace import workspace_profile_key as k; print(k(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None))",
+					...args,
+				],
+				{ cwd: import.meta.dirname, encoding: "utf8" },
+			).stdout.trim();
+		const ws = "/var/tmp/oqt-state-fixture/ws";
+		const ownerPath = "/var/tmp/oqt-state-fixture/owner";
+		assert.equal(
+			profileKey(ws, "coding", ownerPath),
+			python([ws, "coding", ownerPath]),
+		);
+		assert.equal(profileKey(ws, "demo", null), python([ws, "demo"]));
+		return;
+	}
 	assert.equal(
 		profileKey(
 			"/var/tmp/oqt-state-fixture/ws",

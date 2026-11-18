@@ -24,6 +24,10 @@ pub enum ActionFailure {
     Unavailable,
     OutcomeUnknown,
     Invalid,
+    /// A file grant's root no longer proves to be the selected folder (for
+    /// example a remount before its volume identity was recorded). The owner
+    /// must approve it again; retrying cannot help.
+    GrantReapproval,
 }
 impl ActionFailure {
     fn response(self) -> Response {
@@ -34,6 +38,7 @@ impl ActionFailure {
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
             Self::OutcomeUnknown => (StatusCode::CONFLICT, "outcome_unknown_do_not_retry"),
             Self::Invalid => (StatusCode::BAD_REQUEST, "invalid_action"),
+            Self::GrantReapproval => (StatusCode::FORBIDDEN, "file_grant_reapproval"),
         };
         (status, Json(serde_json::json!({"error":code}))).into_response()
     }
@@ -75,6 +80,7 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::FileRemove { root_id, .. }
         | HostAction::DirectoryCreate { root_id, .. } => Access::FileWrite(root_id),
         HostAction::TerminalsList
+        | HostAction::SessionTerminalOpen { .. }
         | HostAction::TerminalOpen { .. }
         | HostAction::TerminalRead { .. }
         | HostAction::TerminalWrite { .. }
@@ -88,7 +94,15 @@ fn access(action: &HostAction) -> Access<'_> {
         | HostAction::SessionAttach { .. }
         | HostAction::SessionRead { .. }
         | HostAction::SessionModels { .. }
-        | HostAction::SessionDetach { .. } => Access::SessionObserve,
+        | HostAction::SessionDetach { .. }
+        | HostAction::VoiceCapabilities
+        | HostAction::VoiceTranscribeOpen { .. }
+        | HostAction::VoiceTranscribeAppend { .. }
+        | HostAction::VoiceTranscribeFinish { .. }
+        | HostAction::VoiceTranscribeCancel { .. }
+        | HostAction::VoiceSpeakOpen { .. }
+        | HostAction::VoiceSpeakRead { .. }
+        | HostAction::VoiceSpeakClose { .. } => Access::SessionObserve,
         HostAction::SessionRequestControl { .. }
         | HostAction::SessionReleaseControl { .. }
         | HostAction::SessionInput { .. } => Access::SessionControl,

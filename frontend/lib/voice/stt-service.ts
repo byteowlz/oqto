@@ -4,6 +4,7 @@ import {
 	type RecognitionProvider,
 	Recognizer,
 } from "@byteowlz/ears-browser";
+import { moonshineHostPool } from "./moonshine-host-pool";
 
 export interface MicrophoneDevice {
 	deviceId: string;
@@ -14,6 +15,8 @@ export interface STTRecognitionSettings {
 	provider: RecognitionProvider;
 	language: RecognitionLanguage;
 	runtimeBaseUrl?: string;
+	/** Explicit immutable model directory; omission preserves the SDK catalog. */
+	modelBaseUrl?: string;
 }
 export interface ModelDownloadProgress {
 	/** Cumulative bytes across the whole model, not the current file. */
@@ -34,7 +37,10 @@ export interface STTCallbacks {
 
 /** Oqto owns capture/permissions/visualization; eaRS owns inference and finality. */
 export class STTService {
-	private recognizer = new Recognizer();
+	// The pool keeps the local model loaded between dictations (oqto-623a).
+	private recognizer = new Recognizer({
+		loadMoonshineHost: moonshineHostPool.loader,
+	});
 	private callbacks: STTCallbacks = {};
 	private audioContext: AudioContext | null = null;
 	private mediaStream: MediaStream | null = null;
@@ -108,6 +114,9 @@ export class STTService {
 						runtimeBaseUrl:
 							this.selection.runtimeBaseUrl ??
 							`${import.meta.env.BASE_URL}speech/moonshine-0.1.5/`,
+						...(this.selection.modelBaseUrl !== undefined
+							? { modelBaseUrl: this.selection.modelBaseUrl }
+							: {}),
 					}
 				: {
 						provider: "ears",

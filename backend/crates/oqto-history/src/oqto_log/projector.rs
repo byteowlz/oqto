@@ -621,7 +621,7 @@ pub async fn project_session_messages_for_workspace(
 fn projected_parts_from_payload(
     msg_id: &str,
     role: &str,
-    fallback_content: Option<String>,
+    mut fallback_content: Option<String>,
     json_payload: Option<&str>,
 ) -> Vec<ProjectedChatMessagePart> {
     let Some(payload) = json_payload else {
@@ -630,8 +630,12 @@ fn projected_parts_from_payload(
     let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
         return fallback_text_part(msg_id, fallback_content);
     };
-    let Some(content) = value.get("content") else {
-        return fallback_text_part(msg_id, fallback_content);
+    let assistant_error = matches!(role, "assistant" | "agent")
+        && value.get("stopReason").and_then(serde_json::Value::as_str) == Some("error");
+    let content = match value.get("content") {
+        Some(content) => content,
+        None if assistant_error => &serde_json::Value::Null,
+        None => return fallback_text_part(msg_id, fallback_content),
     };
     if matches!(role, "tool" | "toolResult") {
         let tool_call_id = value
@@ -672,12 +676,66 @@ fn projected_parts_from_payload(
                 }
             }
         }
-        _ => return fallback_text_part(msg_id, fallback_content),
+        serde_json::Value::Null => {}
+        _ => parts = fallback_text_part(msg_id, fallback_content.take()),
     }
-    if parts.is_empty() {
-        fallback_text_part(msg_id, fallback_content)
-    } else {
-        parts
+    // Empty structured content is semantic emptiness, never serialized []/null.
+    // Keep unknown nonempty shapes on the existing lossless fallback path.
+    if parts.is_empty() && !content.is_null() && content.as_array().is_none_or(|a| !a.is_empty()) {
+        parts = fallback_text_part(msg_id, fallback_content);
+    }
+    if assistant_error {
+        project_assistant_failure(msg_id, &value, &mut parts);
+    }
+    parts
+}
+
+fn project_assistant_failure(
+    msg_id: &str,
+    payload: &serde_json::Value,
+    parts: &mut Vec<ProjectedChatMessagePart>,
+) {
+    for part in parts.iter_mut().filter(|part| part.part_type == "text") {
+        part.part_type = "error".into();
+    }
+    // Same provider-metadata fallbacks as live Pi translation, without losing
+    // an explicit diagnostic when a failed response also contains partial text.
+    let diagnostic = ["errorMessage", "message", "error"]
+        .into_iter()
+        .filter_map(|key| payload.get(key).and_then(serde_json::Value::as_str))
+        .chain(
+            payload
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str),
+        )
+        .find(|text| !text.trim().is_empty());
+    let diagnostic = diagnostic.or_else(|| {
+        (!parts.iter().any(|part| {
+            part.part_type == "error"
+                && part
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty())
+        }))
+        .then_some("Assistant response failed.")
+    });
+    if let Some(text) = diagnostic
+        && !parts
+            .iter()
+            .any(|part| part.part_type == "error" && part.text.as_deref() == Some(text))
+    {
+        let has_parts = !parts.is_empty();
+        parts.extend(
+            fallback_text_part(msg_id, Some(text.to_owned()))
+                .into_iter()
+                .map(|mut part| {
+                    if has_parts {
+                        part.id = format!("{msg_id}:part:error");
+                    }
+                    part.part_type = "error".into();
+                    part
+                }),
+        );
     }
 }
 
@@ -1238,6 +1296,10 @@ pub struct NativeBranchMessage {
     pub content: String,
     pub json_payload: String,
     pub created_at_ms: i64,
+    /// The provider and model Pi recorded on an assistant message, so clients can
+    /// show where a Session switched models between turns (owner 2026-11-13).
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 /// Cursors for live native pages; distinct from stored-page cursors.
@@ -1303,6 +1365,16 @@ pub fn project_native_branch_page(
     })
 }
 
+/// Bounded, printable provider/model metadata of an assistant message; nothing for
+/// other roles (a user or tool row has no model of its own).
+fn assistant_metadata(message: &NativeBranchMessage, value: Option<&str>) -> Option<String> {
+    (message.role == "assistant")
+        .then_some(value?)
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && v.len() <= 256 && !v.chars().any(char::is_control))
+        .map(str::to_owned)
+}
+
 fn native_projected_message(
     session_id: &str,
     message: &NativeBranchMessage,
@@ -1316,8 +1388,8 @@ fn native_projected_message(
         created_at: message.created_at_ms,
         completed_at: Some(message.created_at_ms),
         parent_id: message.parent_turn_id.clone(),
-        model_id: None,
-        provider_id: None,
+        model_id: assistant_metadata(message, message.model.as_deref()),
+        provider_id: assistant_metadata(message, message.provider.as_deref()),
         agent: None,
         summary_title: None,
         tokens_input: None,

@@ -22,10 +22,22 @@ import { applyClassicImport } from "./classic-import-worker.ts";
 import { type CodingGate, gatedTool } from "./gated-tool.ts";
 import { permissionFeedback, permissionFeedbackText } from "./permission-feedback.ts";
 import type { HandsClient } from "./hands-client.ts";
+import { codeModeTool } from "./code-mode.ts";
+import { type MachineInfo, withMachine } from "./machine-tools.ts";
 
 /** Confinement and permission rules the model must know (prompt addendum). */
 export const OQT_RULES =
 	"You are a coding assistant using confined executors limited to the workspace, without network. Every coding call needs local-operator approval. Use request_access to ask for a specific outside path or for network, with a reason; never try to work around a denial. Protected runtime, credentials, and authority are unavailable. Interrupted effects are uncertain: inspect before retrying. No skills, codemode, subagents, or unrestricted execution are available.";
+
+/** The rules plus the named-machine addendum when machines are offered. */
+export function oqtRules(machines: readonly MachineInfo[]) {
+	if (machines.length === 0) return OQT_RULES;
+	const names = machines.map((m) => m.machine).join(", ");
+	return OQT_RULES.replace(
+		"No skills, codemode, subagents,",
+		`Named machines: ${names}. Pass machine to read, write, edit or bash to run that call on the machine's own confined workspace; omit it for this machine. An unknown or unavailable machine fails the call without running it, never locally. Every result names its machine and cwd. The code tool runs a JavaScript cell that may only call these tools (with machine) for fan-out; each call is approved and receipted separately. No skills, subagents,`,
+	);
+}
 
 /** Brain-side protected coding composition. No NodeExecutionEnv, skills,
  * shell config commands, codemode, or unreviewed plugin registry. Authority
@@ -47,16 +59,28 @@ export async function openCodingHarness(options: {
 	requestAccess?: GuardGate["requestAccess"];
 	/** Full system prompt sections (pi's structure); falls back to the oqt rules only. */
 	promptSections?: (input: PromptInput) => Record<string, string>;
+	/** Named remote machines the guard offers (ADR-0086). */
+	machines?: readonly MachineInfo[];
 }) {
 	const workspace = resolve(options.workspace);
 	const registry = createRegistry();
 	const coding = createCodingTools();
-	registry.install({
-		...coding,
-		tools: options.environments
-			? (await import("./environment-tools.ts")).environmentTools(coding.tools ?? [], options.environments, options.session)
-			: coding.tools?.map((tool) => gatedTool(tool, options.gate, options.session)),
-	});
+	const machines = options.machines ?? [];
+	const gated = options.environments
+		? (await import("./environment-tools.ts")).environmentTools(coding.tools ?? [], options.environments, options.session)
+		: coding.tools?.map((tool) =>
+				gatedTool(withMachine(tool, machines), options.gate, options.session),
+			);
+	registry.install({ ...coding, tools: gated });
+	// Code-mode fan-out across named machines: nested calls are ordinary
+	// gated tool tasks, so each keeps its machine and its own receipt.
+	if (machines.length > 0 && !options.environments)
+		registry.install(
+			defineExtension({
+				name: "oqt-code-mode",
+				tools: [codeModeTool(gated ?? [], machines)],
+			}),
+		);
 	const requestAccess = options.requestAccess;
 	if (requestAccess)
 		registry.install(

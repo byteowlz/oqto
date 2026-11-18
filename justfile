@@ -25,7 +25,11 @@ build-frontend:
 # =============================================================================
 
 # Run all linters
-lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority
+lint: lint-repository-hygiene lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority lint-no-persisted-mount-instance
+
+# Tracked-source layout; ignored local scratch and runtime state are not scanned.
+lint-repository-hygiene:
+    uv run --no-project python -B scripts/lint/repository_hygiene.py
 
 # Lint backend (clippy + fmt check)
 lint-backend:
@@ -63,6 +67,10 @@ lint-backend-crate-boundaries:
 # Guardrail: prevent reintroduction of hstry-as-authority read paths
 lint-no-legacy-history-authority:
     ./scripts/lint/no-legacy-history-authority.sh
+
+# Persisted file identity must not use st_dev (a macOS mount-instance number).
+lint-no-persisted-mount-instance:
+    ./scripts/lint/no-persisted-mount-instance.sh
 
 # Validate dist/manifest.toml structure and asset references
 lint-dist-manifest:
@@ -107,7 +115,7 @@ dist-package version="" target="":
 # =============================================================================
 
 # Run all tests
-test: agent-check-on-change test-backend test-frontend
+test: agent-check-on-change test-repository-hygiene test-backend test-frontend
 
 # Test backend
 test-backend:
@@ -130,8 +138,134 @@ schema-update:
 test-sandbox-schema:
     cd backend && cargo test -p oqto-sandbox --test schema
 
+# Extended-runtime DTOs only; never starts a runtime, installs or controls a Session.
+[positional-arguments]
+export-runtime-interactions output:
+    cargo run --locked --manifest-path backend/Cargo.toml -p oqto-protocol --example export_runtime_interactions -- "$1"
+
+check-runtime-interactions:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd backend
+    cargo fmt -p oqto-protocol --check
+    cargo check --locked -p oqto-protocol --all-targets
+    output=$(mktemp -d "${TMPDIR:-/tmp}/oqto-runtime-contract.XXXXXX")
+    trap 'rm -rf -- "$output"' EXIT
+    cargo run --locked -p oqto-protocol --example export_runtime_interactions -- "$output"
+    diff -ru crates/oqto-protocol/contracts/runtime-interactions/v1 "$output"
+    cd ..
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/runtime_interactions_contract.py
+    ./frontend/node_modules/.bin/tsc --project scripts/lint/runtime-contract-tsconfig.json
+
+test-runtime-interactions: check-runtime-interactions
+    # Legacy export_bindings tests rewrite unrelated tracked frontend files.
+    # This bundle's full transitive export is tested separately above.
+    cd backend && cargo test --locked -p oqto-protocol -- --skip export_bindings_
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/test_runtime_interactions_contract.py
+
+# Session-view contract bundle (ADR-0080): schema, fixtures, op vectors and captured
+# scenarios checked against each other. Reads files only; never starts a runtime.
+check-session-view:
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/session_view_contract.py
+
+test-session-view: check-session-view
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/test_session_view_contract.py
+
+# Rust session-view crates and the terminal client (ADR-0087). The live host and PTY
+# tests run when OQT_BYOAGNT_DIR points at a byoagnt checkout (needs bun and tmux).
+test-oqt-tui:
+    cd backend && cargo test --locked -p oqto-session-view -p oqto-session-client -p oqto-openui -p oqt-tui
+    cd backend && cargo clippy --locked -p oqto-session-view -p oqto-session-client -p oqto-openui -p oqt-tui --all-targets -- -D warnings
+
+lint-session-view:
+    uvx ruff check scripts/lint/session_view_contract.py scripts/lint/test_session_view_contract.py
+
+# Re-capture the golden frames from the pinned upstream Pi Durable release (in memory,
+# deterministic fake model) and require them to equal the committed bundle. Needs the
+# pinned npm packages; installs them from the lockfile without running package scripts.
+check-session-view-capture:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd scripts/contracts/session-view
+    bun install --frozen-lockfile --ignore-scripts
+    output=$(mktemp -d "${TMPDIR:-/tmp}/oqto-session-view.XXXXXX")
+    trap 'rm -rf -- "$output"' EXIT
+    bun run capture.mjs "$output"
+    bundle=../../../backend/crates/oqto-protocol/contracts/session-view/v0
+    diff -ru "$bundle/scenarios" "$output/scenarios"
+    diff -u "$bundle/ops-vectors.json" "$output/ops-vectors.json"
+
+lint-runtime-interactions:
+    cd backend && cargo clippy --locked -p oqto-protocol --all-targets -- -D warnings
+    uvx ruff check scripts/lint/runtime_interactions_contract.py scripts/lint/test_runtime_interactions_contract.py
+
+# Trusted host binding projection using disposable native peers; no installed Pi/runtime.
+test-runtime-binding:
+    cd backend && cargo fmt -p oqto-runner --check
+    cd backend && cargo check --locked -p oqto-runner
+    cd backend && cargo test --locked -p oqto-runner --lib tui_rpc::
+    cd backend && cargo clippy --locked -p oqto-runner --all-targets -- -D warnings
+
+# Root/source hygiene contracts, using synthetic Git indexes.
+test-repository-hygiene: lint-repository-hygiene
+    uv run --no-project python -B scripts/lint/test_repository_hygiene.py
+    uv run --no-project python -B scripts/tests/test-agent-check-root.py
+
+# Whole-crate provenance only; admission/handler and consumer gates remain separate.
+[positional-arguments]
+check-personal-wire-provenance vendor source_ref:
+    uv run --no-project python -B scripts/lint/personal_wire_provenance.py --vendor "$1" --source-ref "$2"
+
+test-personal-wire-provenance:
+    uv run --no-project python -B scripts/lint/test_personal_wire_provenance.py
+
+# Disposable contracts only: no install, provider call or live profile/session.
+check-personal-wire-baseline:
+    cd backend && cargo fmt -p oqto-personal-wire -p oqto-personal -p oqto-runner --check
+    cd backend && cargo check --locked -p oqto-personal-wire -p oqto-personal -p oqto-runner
+
+# Host-neutral Personal client only; ephemeral synthetic peers, no live profiles.
+test-personal-client:
+    cd backend && cargo fmt -p oqto-personal-client -- --check
+    cd backend && cargo check --locked --offline -p oqto-personal-client --all-targets
+    cd backend && cargo test --locked --offline -p oqto-personal-client --all-targets
+    cd backend && cargo clippy --locked --offline -p oqto-personal-client --all-targets -- -D warnings
+
+# Full native Runner qualification, including isolated process/transport fixtures.
+test-runner:
+    cd backend && cargo test --locked -p oqto-runner --all-targets --no-fail-fast
+
+# Readiness regression: ephemeral header cache, resumable cold scans and idle cost.
+test-personal-discovery:
+    cd backend && cargo test --locked -p oqto-runner --lib personal_source::tests -- --nocapture
+    cd backend && cargo test --locked -p oqto-runner --lib daemon::jsonl_ingest -- --nocapture
+    cd backend && cargo test --locked -p oqto-runner --test personal_host
+
+# Actual-binary HTTPS/PTY tests use their own HOME, source, stores and fake peers.
+test-personal-wire-baseline: check-personal-wire-baseline test-personal-wire-provenance
+    cd backend && cargo test --locked -p oqto-personal-wire --all-features
+    cd backend && cargo test --locked -p oqto-personal
+    cd backend && cargo test --locked -p oqto-runner --lib runtime_guard::tests
+    cd backend && cargo test --locked -p oqto-runner --test personal_host
+    cd backend && cargo test --locked -p oqto-runner --test pair_wizard
+
+lint-personal-wire-baseline:
+    cd backend && cargo clippy --locked -p oqto-personal-wire -p oqto-personal -p oqto-runner --all-targets -- -D warnings
+
+# Source-only oqt entrypoint. Installed oqt is a separate runtime snapshot.
+# Quoted positional arguments preserve spaces and do not become shell source.
+[positional-arguments]
+oqt *ARGS:
+    ./tools/oqt/dev.sh "$@"
+
+# Cheap source-entrypoint gates; no Pi checkout or native build is needed.
+test-oqt-source:
+    bash -n tools/oqt/dev.sh
+    uv run --no-project python -B tools/oqt/source_launcher_test.py
+    node --test tools/oqt/classic-cli.test.mjs
+
 # Experimental source-only Durable runtime. Never installs or touches live profiles.
-test-oqt-core: test-sandbox-schema
+test-oqt-core: test-oqt-source test-sandbox-schema
     python3 tools/oqt/preparation_lock_test.py
     python3 tools/oqt/profile_namespace_test.py
     cd backend && cargo fmt -p oq-permissions -p oqto-sandbox --check
@@ -143,7 +277,7 @@ test-oqt-core: test-sandbox-schema
 
 # Owned derivative uses its pinned SDK's Biome, not the separate frontend version.
 test-oqt-lint PI_SOURCE:
-    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/input-leases.ts tools/oqt/input-leases.test.mjs tools/oqt/classic-*.ts tools/oqt/classic-*.mjs tools/oqt/session-*.ts tools/oqt/session-*.mjs tools/oqt/operator-*.ts tools/oqt/operator-*.mjs tools/oqt/guard*.ts tools/oqt/guard*.mjs tools/oqt/launcher.ts tools/oqt/coding-worker.ts tools/oqt/plugin/src/guard-client.ts tools/oqt/plugin/src/tui.ts tools/oqt/presentation-*.ts tools/oqt/presentation-*.mjs tools/oqt/brain-grants*.ts tools/oqt/brain-grants*.mjs tools/oqt/coding-composition.ts tools/oqt/operator-results-service.ts tools/oqt/program-status.ts tools/oqt/host2/*.ts
+    "{{PI_SOURCE}}/node_modules/.bin/biome" check tools/oqt/input-leases.ts tools/oqt/input-leases.test.mjs tools/oqt/classic-*.ts tools/oqt/classic-*.mjs tools/oqt/session-*.ts tools/oqt/session-*.mjs tools/oqt/operator-*.ts tools/oqt/operator-*.mjs tools/oqt/guard*.ts tools/oqt/guard*.mjs tools/oqt/launcher.ts tools/oqt/coding-worker.ts tools/oqt/plugin/src/guard-client.ts tools/oqt/plugin/src/tui.ts tools/oqt/presentation-*.ts tools/oqt/presentation-*.mjs tools/oqt/brain-grants*.ts tools/oqt/brain-grants*.mjs tools/oqt/coding-composition.ts tools/oqt/operator-results-service.ts tools/oqt/program-status.ts tools/oqt/host2/*.ts tools/oqt/hands-link.ts tools/oqt/code-mode.ts tools/oqt/machine-tools.ts tools/oqt/remote-hands.test.mjs tools/oqt/machine-tools.test.mjs tools/oqt/remote-qualify.test.mjs tools/oqt/remote-link-qualify.mjs
 
 test-oqt-typecheck PI_SOURCE:
     bash tools/oqt/typecheck.sh "{{PI_SOURCE}}"
@@ -175,6 +309,17 @@ test-oqt-import-tui:
 
 test-oqt-hands PI_SOURCE DAEMON BPF:
     bash tools/oqt/test-hands.sh "{{PI_SOURCE}}" "{{DAEMON}}" "{{BPF}}"
+
+# Remote hands (ADR-0086) through the real guard, oqt_link, pinned TLS,
+# pairing, foreground oqto-hands-host and confined hands, on loopback.
+test-oqt-remote-hands PI_SOURCE DAEMON BPF:
+    bash tools/oqt/test-remote-hands.sh "{{PI_SOURCE}}" "{{DAEMON}}" "{{BPF}}"
+
+# oqto-hands-link crate gates (wire, journal, host, client, loopback TLS).
+test-hands-link:
+    cd backend && cargo fmt -p oqto-hands-link --check
+    cd backend && cargo clippy --locked -p oqto-hands-link --all-targets -- -D warnings
+    cd backend && cargo test --locked -p oqto-hands-link
 
 test-oqt-ui:
     OQT_HOST_IDLE_SECONDS=1 timeout --kill-after=5s 160s python3 tools/oqt/tui_test.py
@@ -244,8 +389,39 @@ gen-types:
     bash scripts/dev/generate-types.sh
 
 # Check all Rust code compiles
-check: agent-check-on-change
+check: agent-check-on-change check-runtime-interactions check-session-view
     cd backend && cargo check
+    cd backend && cargo test -q -p oqto-runner-client
+
+# Fast contract gate for the pre-commit hook: only when the contract, its bundle,
+# the consumer crate or the verifier tooling is staged. Integrity + corpus, no
+# regeneration (that is the push gate above).
+check-runtime-contract-staged:
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/runtime_contract_staged.py
+
+# Everything the pre-commit hook runs: read-only, no index rewrites, fast.
+# `just check` remains the push gate.
+pre-commit: check-runtime-contract-staged
+
+# Refresh dependencies.toml from sibling checkouts and GitHub releases. Deliberately
+# NOT part of pre-commit: it rewrites and stages the manifest, and a sibling checkout
+# whose newest tag lags the committed value would silently downgrade it on commit.
+pre-commit-deps:
+    ./scripts/maint/update-deps-precommit.sh
+
+# Verify ONE vendored consumer bundle, from any repository (bytes/pin + corpus).
+[positional-arguments]
+check-runtime-interactions-consumer bundle:
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/runtime_consumer_verify.py --bundle "$bundle"
+
+# Cross-repository drift against CONSUMERS.toml (nightly job and by hand).
+check-runtime-interactions-consumers *ARGS:
+    uv run --no-project --with jsonschema==4.26.0 python -B scripts/lint/runtime_consumer_drift.py --check {{ARGS}}
+
+# Gates for the consumer crate and the verifier tooling itself.
+test-runtime-consumer:
+    uv run --no-project --with jsonschema==4.26.0 python -B -m unittest discover -s scripts/lint -p 'test_runtime_consumer_verify.py'
+    cd backend && cargo test -q -p oqto-runner-client
 
 # =============================================================================
 # Dev Server
@@ -468,7 +644,7 @@ update-deps:
     echo "Updating dependencies.toml..."
 
     OQTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-    sed -i '/^\[oqto\]$/,/^\[/{s/^\(version = \)"[^"]*"/\1"'"$OQTO_VERSION"'"/}' "$MANIFEST"
+    python3 -B scripts/maint/set-oqto-version.py "$MANIFEST" "$OQTO_VERSION"
     echo "  oqto: $OQTO_VERSION"
 
     in_section=false
@@ -518,7 +694,7 @@ update-deps:
 
       if [[ -z "$version" && -f "$repo_dir/go.mod" ]]; then
         version=$(grep -rh '[vV]ersion\s*=\s*"[0-9]' "$repo_dir"/*.go "$repo_dir"/cmd/ "$repo_dir"/internal/ 2>/dev/null \
-          | grep -m1 -oP '"\K[0-9]+\.[0-9]+\.[0-9]+' || true)
+          | sed -n 's/.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' | head -1 || true)
         if [[ -z "$version" ]]; then
           version=$(cd "$repo_dir" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
         fi
@@ -532,7 +708,8 @@ update-deps:
       fi
 
       if [[ -n "$version" ]]; then
-        sed -i "s|^\($key = \"\)[^\"]*\"|\1$version\"|" "$MANIFEST"
+        sed "s|^\($key = \"\)[^\"]*\"|\1$version\"|" "$MANIFEST" > "$MANIFEST.tmp"
+        mv "$MANIFEST.tmp" "$MANIFEST"
         if [[ "$version" != "$old_val" ]]; then
           echo "  $key: $old_val -> $version"
         else
@@ -897,8 +1074,8 @@ bump version:
     echo "Bumping $current -> $new_version"
     python3 "$ROOT/scripts/release/sync-platform-pin.py" "$new_version"
 
-    sed -i 's/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/backend/Cargo.toml"
-    sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
+    python3 -B scripts/maint/set-first-version.py "$ROOT/backend/Cargo.toml" "$new_version"
+    python3 -B scripts/maint/set-first-version.py "$ROOT/frontend/src-tauri/Cargo.toml" "$new_version"
 
     cd "$ROOT/backend" && cargo check --quiet 2>/dev/null || cargo generate-lockfile
     echo "Cargo.lock regenerated"
@@ -948,8 +1125,13 @@ release version:
 add:
     git add --all -- ':!uploads/'
 
-# Install git hooks (uses .githooks)
-install-hooks:
+# Enable the tracked git hooks (house pattern). Per-clone, hence restartable.
+setup-hooks:
+    chmod +x .githooks/pre-commit
+    git config core.hooksPath .githooks
+    @echo "hooks enabled (.githooks): pre-commit runs 'just pre-commit'"
+
+install-hooks: setup-hooks
     #!/usr/bin/env bash
     set -euo pipefail
     ROOT="$(pwd)"
@@ -1047,6 +1229,7 @@ test-release-version-sync:
 test-dist-sync-pins:
     ./scripts/tests/test-dist-sync-pins.sh
     bash scripts/tests/test-dist-extension-closure.sh
+    bash scripts/tests/test-dist-extension-sources.sh
 
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:
@@ -1146,6 +1329,20 @@ test-personal-host:
 # Opt-in synthetic 328MB native index/page probe; no real Sessions or services.
 test-personal-native-history-bench:
     cd backend && cargo test --release --locked -p oqto-history --lib synthetic_large_index_and_cached_page_timings -- --ignored --nocapture
+
+# Runner post-store pilot; honors caller's toolchain and CARGO_TARGET_DIR.
+check-posts:
+    cd backend && cargo check --locked -p oqto-posts -j 4
+
+test-posts:
+    cd backend && cargo test --locked -p oqto-posts -j 4
+
+lint-posts:
+    cd backend && cargo clippy --locked -p oqto-posts --all-targets -j 4 -- -D warnings
+    rustfmt --edition 2024 --check backend/crates/oqto-posts/src/*.rs backend/crates/oqto-posts/tests/*.rs backend/crates/oqto-posts/tests/common/mod.rs
+
+test-posts-dingz:
+    cd backend && cargo test --locked -p oqto-posts -j 4 --test dingz -- --ignored --nocapture
 
 # =============================================================================
 # Agent Quality Gate

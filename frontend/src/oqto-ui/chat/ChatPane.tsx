@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import type { ChatTurnDraft } from "../platform/chat-contract";
 import {
 	DictationMicButton,
+	DictationSettingsPanel,
 	DictationStatus,
 	appendCompletedDraft,
 	readChatDraft,
@@ -220,12 +221,13 @@ function ScopedChatPane({
 		updatePrompt("");
 	};
 	const voiceConfig = useVoiceFeatures(true);
+	// Settings are an overlay above the prompt box, not a modal (oqto-623a).
+	const [dictationSettingsOpen, setDictationSettingsOpen] = useState(false);
 	const dictation = useDictation({
 		scopeKey,
 		// Same capability document as the legacy UI; local recognition needs no server.
 		config: voiceConfig,
 		wakeRelease: voiceConfig?.wake ?? null,
-		autoSendOnFinal: false,
 		onTranscript: (text) => {
 			if (!currentRef.current) return;
 			const value = appendCompletedDraft(storageKey, promptRef.current, text);
@@ -508,7 +510,14 @@ function ScopedChatPane({
 			<TaskProgress tasks={tasks} placement="desktop" />
 
 			<footer className="wb-composer relative">
-				<DictationStatus dictation={dictation} />
+				<div className="composer-dictation-layer">
+					<DictationStatus dictation={dictation} />
+					<DictationSettingsPanel
+						dictation={dictation}
+						open={dictationSettingsOpen}
+						onClose={() => setDictationSettingsOpen(false)}
+					/>
+				</div>
 				<button
 					className="wb-icon-button"
 					type="button"
@@ -529,7 +538,12 @@ function ScopedChatPane({
 						}
 					}}
 				/>
-				<DictationMicButton dictation={dictation} className="wb-icon-button" />
+				<DictationMicButton
+					dictation={dictation}
+					className="wb-icon-button"
+					settingsOpen={dictationSettingsOpen}
+					onToggleSettings={() => setDictationSettingsOpen((open) => !open)}
+				/>
 				{streaming ? (
 					<button
 						className="wb-icon-button"

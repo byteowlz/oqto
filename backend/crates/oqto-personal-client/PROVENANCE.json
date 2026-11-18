@@ -1,0 +1,44 @@
+{
+  "extraction_kind": "adapted extraction; not a byte-identical source vendor",
+  "mobile_source_commit": "9f7995c36c5ad759f02f03e0abcf265f5f1144c3",
+  "mobile_source_tree": "854d76991122f2bf14a490712e0cac62422a1af7",
+  "personal_wire_source_commit": "67906b7fbe2d3949f6fc22956ff003a1b135014e",
+  "personal_wire_version": 1,
+  "personal_wire_package_version": "0.5.11",
+  "signing_dependency_commit": "d3494fc17353da63abdd1b16282ec882c2c723bf",
+  "signing_domain": "OQTO_PERSONAL_V1",
+  "source_files": [
+    {
+      "path": "crates/oqto-mobile-core/src/personal.rs",
+      "sha256": "5a6b6b90d28d1bd3a1da6821eac0235ea3f70f5ccc6f4eb633d1da1fdcffea06",
+      "bytes": 8636
+    },
+    {
+      "path": "crates/oqto-mobile-core/src/personal/transport.rs",
+      "sha256": "f6e68b85ba145eaff8159312b4aa024caa981d70c0410d65f0e9945780da9389",
+      "bytes": 13608
+    },
+    {
+      "path": "crates/oqto-mobile-core/src/personal/state.rs",
+      "sha256": "f330c4141ceaea21dacffcbe3a6cda9fb90db7a4c18bec29ca80412252ff116a",
+      "bytes": 17308
+    },
+    {
+      "path": "crates/oqto-mobile-core/src/personal/state/sessions.rs",
+      "sha256": "979a0d7e8dd12fcb596655543f201136955a5761d1d2ff6653ed1994e491e080",
+      "bytes": 22577
+    },
+    {
+      "path": "crates/oqto-mobile-core/src/personal/state/observation.rs",
+      "sha256": "a9de3af67f47bb97b1a31591e6db398f404e83b34d8063d850f33682ace78355",
+      "bytes": 6456
+    },
+    {
+      "path": "crates/oqto-mobile-core/src/personal/history.rs",
+      "sha256": "250ce22d0eee9477b4f2959e4ebf76907c4ca6ef11a7fe52c4a5b1c0b8d19a41",
+      "bytes": 17369
+    }
+  ],
+  "scope": "client transport, custody, neutral projection DTOs, admission and observation; no platform UI/FFI or Runner",
+  "consumer_integration": "Mobile adaptation and Desktop native acceptance are separate"
+}

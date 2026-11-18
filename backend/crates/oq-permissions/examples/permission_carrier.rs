@@ -2,11 +2,12 @@
 //! authentication route. The trusted test supervisor creates separate pipes
 //! for tools and operator; tools cannot select the control role over the wire.
 //! History is a bounded fixture, not direct access to real history stores.
+#[cfg(target_os = "macos")]
+mod oqt_launch;
+
 use anyhow::{Context, Result, bail, ensure};
 use oq_permissions::*;
-use oqto_sandbox::{
-    SandboxConfig, SandboxStdin, SeccompMode, build_sandbox_command, configure_bwrap_pre_exec,
-};
+use oqto_sandbox::{SandboxConfig, SandboxStdin, build_sandbox_command, configure_bwrap_pre_exec};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -107,8 +108,16 @@ fn confined_read(directory: &std::path::Path) -> Result<String> {
     // oqt executors are not Pi/Claude harness sessions: never create or bind
     // history shards inside the owner's ~/.pi or ~/.claude (preserve-first).
     config.scoped_paths.clear();
-    config.seccomp_mode = SeccompMode::Enforce;
-    config.seccomp_bpf_path = Some(std::env::var("OQ_ADAPTIVE_SECCOMP_BPF")?);
+    // Linux: seccomp enforced. macOS: Seatbelt only (there is no seccomp),
+    // with the Linux-only guarantees switched off explicitly.
+    #[cfg(target_os = "linux")]
+    {
+        config.prune_absent_system_denies();
+        config.seccomp_mode = oqto_sandbox::SeccompMode::Enforce;
+        config.seccomp_bpf_path = Some(std::env::var("OQ_ADAPTIVE_SECCOMP_BPF")?);
+    }
+    #[cfg(target_os = "macos")]
+    oqt_launch::seatbelt_compatible(&mut config);
     let args = vec!["-c".into(), "4096".into(), file.display().to_string()];
     let workdir = directory.join("workdir");
     let mut command = build_sandbox_command(

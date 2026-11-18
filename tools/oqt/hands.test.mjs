@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { createMarker, DARWIN } from "./hands-supervisor.ts";
 
 const require = createRequire(join(process.env.OQT_PI_SOURCE, "package.json"));
 const { BACKGROUND_CONTEXT } = await import(
@@ -23,8 +24,9 @@ const { Connection, RemoteExecutionEnv } = await import(
 const launcher = process.env.OQT_HANDS;
 const daemon = process.env.OQT_ENV_DAEMON;
 const bpf = process.env.OQT_SECCOMP_BPF;
+// There is no seccomp on macOS; Linux requires the enforcing filter.
 assert.ok(
-	launcher && daemon && bpf,
+	launcher && daemon && (bpf || DARWIN),
 	"explicit confined launcher, daemon and enforcing BPF required",
 );
 
@@ -47,12 +49,17 @@ test(
 		const stagedDaemon = join(root, "pi-env");
 		await copyFile(daemon, stagedDaemon);
 		const spec = join(root, "hands.json");
+		const scratch = join(root, "scratch");
+		if (DARWIN) {
+			createMarker(root);
+			await mkdir(scratch, { mode: 0o700 });
+		}
 		await writeFile(
 			spec,
 			JSON.stringify({
 				workspace,
 				daemon: stagedDaemon,
-				bpf,
+				...(DARWIN ? { marker: root, scratch } : { bpf }),
 				protected_roots: [authority],
 			}),
 			{ mode: 0o600 },

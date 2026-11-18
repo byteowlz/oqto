@@ -37,6 +37,8 @@ pub mod messages;
 pub mod parts;
 pub mod projection;
 pub mod runner;
+pub mod runtime_interactions;
+pub mod session_announce;
 pub mod timeline;
 
 // Re-export canonical part types as the top-level content unit.

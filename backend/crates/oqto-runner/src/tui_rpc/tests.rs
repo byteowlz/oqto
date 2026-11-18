@@ -1,5 +1,7 @@
 use super::*;
 
+mod context_usage;
+mod discovery;
 mod personal_options;
 
 #[test]

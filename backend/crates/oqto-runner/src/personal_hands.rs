@@ -37,6 +37,8 @@ pub async fn execute(
         );
     }
     let mut policy = SandboxConfig::strict();
+    // Hosts without an Oqto installation lack /etc/oqto and friends.
+    policy.prune_absent_system_denies();
     policy.allow_write.clear();
     policy.allow_read.clear();
     policy.seccomp_mode = SeccompMode::Enforce;

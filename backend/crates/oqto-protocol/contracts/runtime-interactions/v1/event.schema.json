@@ -1,0 +1,599 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeEvent",
+  "type": "object",
+  "required": [
+    "binding",
+    "eventId",
+    "payload",
+    "version"
+  ],
+  "properties": {
+    "binding": {
+      "$ref": "#/definitions/RuntimeBinding"
+    },
+    "eventId": {
+      "$ref": "#/definitions/RuntimeId"
+    },
+    "payload": {
+      "$ref": "#/definitions/RuntimeEventPayload"
+    },
+    "version": {
+      "$ref": "#/definitions/RuntimeVersion"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "RuntimeBinding": {
+      "description": "Returned by the authenticated adapter, never accepted as caller authority.",
+      "type": "object",
+      "required": [
+        "nativeSessionId",
+        "publicSessionId",
+        "runtimeGeneration"
+      ],
+      "properties": {
+        "controllerGeneration": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeGeneration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controllerId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nativeSessionId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "publicSessionId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "runtimeGeneration": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeCursor": {
+      "type": "object",
+      "required": [
+        "generation",
+        "revision"
+      ],
+      "properties": {
+        "generation": {
+          "$ref": "#/definitions/RuntimeGeneration"
+        },
+        "revision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeDigest": {
+      "description": "SHA-256 binding over the producer's canonical operation/subject. Not authority.",
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "RuntimeEffectState": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "started",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "uncertain"
+      ]
+    },
+    "RuntimeError": {
+      "type": "object",
+      "required": [
+        "code",
+        "eventId",
+        "message",
+        "phase",
+        "recoverable",
+        "source",
+        "uncertain"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "eventId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "message": {
+          "type": "string"
+        },
+        "operationId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "recoverable": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimeErrorSource"
+        },
+        "uncertain": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeErrorSource": {
+      "type": "string",
+      "enum": [
+        "command",
+        "permission",
+        "queue",
+        "engine",
+        "transport",
+        "provider",
+        "tool",
+        "extension"
+      ]
+    },
+    "RuntimeEventPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "snapshot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "queue"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/RuntimeQueueSnapshot"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "snapshot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "permissions"
+              ]
+            },
+            "snapshot": {
+              "$ref": "#/definitions/RuntimePermissionSnapshot"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/RuntimeError"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "error"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "operationId",
+            "state"
+          ],
+          "properties": {
+            "errorId": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RuntimeId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "command_outcome"
+              ]
+            },
+            "operationId": {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            "state": {
+              "$ref": "#/definitions/RuntimeEffectState"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeGeneration": {
+      "description": "Preserve an engine-issued token's representation; numeric producer epochs are not minted IDs.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        {
+          "$ref": "#/definitions/RuntimeRevision"
+        }
+      ]
+    },
+    "RuntimeId": {
+      "description": "Opaque source-issued identity. Names, timestamps and visible order are not IDs.",
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "RuntimePermissionOption": {
+      "type": "object",
+      "required": [
+        "effectDigest",
+        "optionId"
+      ],
+      "properties": {
+        "effectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "optionId": {
+          "$ref": "#/definitions/RuntimeId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionOutcome": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "started",
+        "completed",
+        "failed",
+        "cancelled",
+        "expired",
+        "uncertain"
+      ]
+    },
+    "RuntimePermissionPresentation": {
+      "type": "object",
+      "required": [
+        "ceilingDigest",
+        "expiresAtMs",
+        "handleId",
+        "operationDigest",
+        "options",
+        "requestId",
+        "requestRevision",
+        "subjectDigest"
+      ],
+      "properties": {
+        "ceilingDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "expiresAtMs": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "handleId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "operationDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionOption"
+          }
+        },
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "requestRevision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeSpawnSubject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subjectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionReceipt": {
+      "description": "Producer receipt identity is its issued generation + producer revision, not an invented ID. Journaling acknowledgements do not imply fsync, native entry identity or effect completion.",
+      "type": "object",
+      "required": [
+        "atMs",
+        "controllerId",
+        "cursor",
+        "handleId",
+        "kind",
+        "nativeSessionDigest",
+        "operationDigest",
+        "outcome",
+        "reason",
+        "requestId",
+        "requestRevision",
+        "restored",
+        "source",
+        "subjectDigest"
+      ],
+      "properties": {
+        "atMs": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "handleId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "kind": {
+          "$ref": "#/definitions/RuntimePermissionReceiptKind"
+        },
+        "nativeSessionDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "operationDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "optionId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/RuntimePermissionOutcome"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RuntimeId"
+        },
+        "requestRevision": {
+          "$ref": "#/definitions/RuntimeRevision"
+        },
+        "restored": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/definitions/RuntimePermissionSource"
+        },
+        "subjectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionReceiptKind": {
+      "type": "string",
+      "enum": [
+        "decision",
+        "start_intent",
+        "result",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "RuntimePermissionSnapshot": {
+      "type": "object",
+      "required": [
+        "active",
+        "cursor",
+        "receipts"
+      ],
+      "properties": {
+        "active": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionPresentation"
+          }
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimePermissionReceipt"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimePermissionSource": {
+      "type": "string",
+      "enum": [
+        "tui",
+        "rpc",
+        "adapter"
+      ]
+    },
+    "RuntimeQueueActionKind": {
+      "type": "string",
+      "enum": [
+        "steer",
+        "follow_up",
+        "cancel_item",
+        "clear",
+        "update_item",
+        "reorder"
+      ]
+    },
+    "RuntimeQueueCompleteness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ]
+    },
+    "RuntimeQueueItem": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "itemId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeQueueSnapshot": {
+      "type": "object",
+      "required": [
+        "completeness",
+        "cursor",
+        "followUp",
+        "steering",
+        "supportedActions"
+      ],
+      "properties": {
+        "completeness": {
+          "$ref": "#/definitions/RuntimeQueueCompleteness"
+        },
+        "cursor": {
+          "$ref": "#/definitions/RuntimeCursor"
+        },
+        "followUp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueItem"
+          }
+        },
+        "steering": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueItem"
+          }
+        },
+        "supportedActions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeQueueActionKind"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeRevision": {
+      "description": "JSON-safe revision, independent from a request revision or generation.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740991.0,
+      "minimum": 0.0
+    },
+    "RuntimeSpawnSubject": {
+      "description": "Sanitized effect summary. Private task/title stay in the owning producer.",
+      "type": "object",
+      "required": [
+        "effectDigest",
+        "kind",
+        "model"
+      ],
+      "properties": {
+        "effectDigest": {
+          "$ref": "#/definitions/RuntimeDigest"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "loadout": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeVersion": {
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 1.0,
+      "minimum": 1.0
+    }
+  }
+}

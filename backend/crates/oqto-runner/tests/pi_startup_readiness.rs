@@ -23,7 +23,12 @@ impl Drop for Fixture {
 
 impl Fixture {
     async fn start(mode: &str) -> Result<Self> {
-        let home = tempfile::tempdir()?;
+        let home = tempfile::Builder::new()
+            .prefix("oqsu-")
+            .tempdir_in("/tmp")?;
+        oqto_runner::pair_control::validate_socket_path(
+            &oqto_runner::pair_control::root(home.path()).join("control.sock"),
+        )?;
         let pi = home.path().join("pi");
         std::fs::write(
             &pi,
@@ -66,6 +71,8 @@ for line in sys.stdin:
             ),
         )?;
         let socket = home.path().join("runner.sock");
+        let log_path = home.path().join("runner.log");
+        let log = std::fs::File::create(&log_path)?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_oqto-runner"));
         command
             .args(["--no-sandbox", "--socket"])
@@ -81,7 +88,7 @@ for line in sys.stdin:
             .env("XDG_STATE_HOME", home.path().join("state"))
             .env("XDG_CACHE_HOME", home.path().join("cache"))
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(log);
         if mode == "rejected-probe" {
             command
                 .args(["check-pi", "--workdir"])
@@ -103,7 +110,8 @@ for line in sys.stdin:
                     }
                     anyhow::ensure!(
                         fixture.child.try_wait()?.is_none(),
-                        "fixture daemon exited before readiness"
+                        "fixture daemon exited before readiness: {}",
+                        std::fs::read_to_string(&log_path).unwrap_or_default()
                     );
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }

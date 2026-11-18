@@ -1,0 +1,17 @@
+[package]
+name = "oqto-session-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "oqto.session-view v0 for native clients: frames, the Chord op applier, the view and the cached transcript. No IO, no async, no terminal code."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

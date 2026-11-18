@@ -1,0 +1,55 @@
+[package]
+name = "oqto-hands-link"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Paired, guard-owned remote hands link (ADR-0086): wire, enforcer, destination host and origin adapter"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "oqto-hands-host"
+path = "src/bin/oqto-hands-host.rs"
+
+[[bin]]
+name = "oqt_link"
+path = "src/bin/oqt_link.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+ed25519-dalek = "2.2"
+futures.workspace = true
+hex.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+log.workspace = true
+env_logger.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rustix = { version = "1", features = ["process", "fs", "time"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tower.workspace = true
+uuid.workspace = true
+oqto-personal = { path = "../oqto-personal" }
+oqto-personal-wire = { path = "../oqto-personal-wire", features = ["tls"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

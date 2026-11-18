@@ -15,7 +15,7 @@ with coding_world(lambda request: ('text', 'oqt-coding-ready'), 'oqt-prompt-') a
     (owner / 'AGENTS.md').write_text('GLOBAL-MARKER-5521 owner instructions')
     (work.parent / 'AGENTS.md').write_text('ANCESTOR-MARKER-7713 parent instructions')
     (work / 'AGENTS.md').write_text('PROJECT-MARKER-3390 project instructions')
-    result = subprocess.run([str(ROOT / 'oqt'), '--smoke', '--owner-profile', str(owner), '--workdir', str(work)],
+    result = subprocess.run([str(ROOT / 'tools/oqt/dev.sh'), '--smoke', '--owner-profile', str(owner), '--workdir', str(work)],
                             capture_output=True, text=True, timeout=200)
     assert result.returncode == 0, result.stderr[-2000:]
     system = json.dumps([m for m in provider.calls[0]['messages'] if m['role'] in ('system', 'developer')])

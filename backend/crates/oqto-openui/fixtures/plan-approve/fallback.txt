@@ -1,0 +1,11 @@
+== Migrate pairing store ==
+Plan for oqto-8x3p.10.7.8 · needs your approval
+1. Back up - Hard-link the legacy marker and snapshot the store.
+2. Migrate marker - Write v2 marker with volume UUID + inode, under the singleton lock.
+3. Restart runner - One brief restart; native Pi sessions untouched.
+4. Verify - Listener active, same plan, mTLS health passes.
+-- Rollback --
+restore-owner-marker restores the original marker inode; the database is never written.
+-- What does not change --
+#keys #grants #tickets #native sessions
+[Approve plan] [Not now]

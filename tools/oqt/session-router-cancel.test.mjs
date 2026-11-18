@@ -47,13 +47,20 @@ async function fixture(run, childSelected = false) {
 			join(source, "packages/coding-agent/src/experimental/services"),
 			join(dir, "services"),
 		);
-		for (const name of ["session-router.ts", "session-forks.ts"])
+		for (const name of [
+			"session-router.ts",
+			"session-forks.ts",
+			"session-forks-service.ts",
+		])
 			await copyFile(new URL(name, import.meta.url), join(dir, name));
 		const { createSessionRouter, fenceConversationTransport } = await import(
 			pathToFileURL(join(dir, "session-router.ts"))
 		);
-		const { SelectedConversationDoc, SessionForks } = await import(
+		const { SelectedConversationDoc } = await import(
 			pathToFileURL(join(dir, "session-forks.ts"))
+		);
+		const { SessionForks } = await import(
+			pathToFileURL(join(dir, "session-forks-service.ts"))
 		);
 		const native = (name) =>
 			import(

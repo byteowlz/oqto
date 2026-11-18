@@ -1,0 +1,9 @@
+== Logo directions ==
+Three candidates from the Logo Factory run
+[image: Owl A, geometric]
+[image: Owl B, rounded]
+[image: Owl C, pixel]
+**Recommendation:** Owl A fits the sharp oqto identity; B suits moss.
+- Refine Owl A - Three weight variants
+- Compare in context - Render on app icon and favicon
+- Start over - New brief

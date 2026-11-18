@@ -4,6 +4,8 @@ import {
 } from "@/components/voice/ComposerDictation";
 import type { UseDictationReturn } from "@/features/voice/hooks/useDictation";
 import { initI18n } from "@/lib/i18n";
+import { DEFAULT_RECOGNITION_SETTINGS } from "@/lib/voice/recognition-settings";
+import { WakeMeter } from "@/lib/voice/wake-meter";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../../src/styles/globals.css";
@@ -52,17 +54,35 @@ function Fixture() {
 				? "Model download failed. Check your connection and retry."
 				: null,
 		dismissError: () => setState("idle"),
-		recognition: { provider: "moonshine", language: "en", wakeEnabled: false, wakePhrase: "hey_oqto" },
+		recognition: { ...DEFAULT_RECOGNITION_SETTINGS },
 		remoteAvailable: false,
 		setRecognitionProvider: noop,
+		microphones: [],
+		refreshMicrophones: async () => {},
+		setWakeSilenceTimeoutMs: noop,
+		setWakeSound: noop,
+		setSendSound: noop,
+		sendCountdown: null,
+		voiceCue: null,
+		setMicrophone: noop,
 		setRecognitionLanguage: noop,
 		autoSendEnabled: false,
+		autoSendPauseMs: 2000,
 		setAutoSendEnabled: noop,
+		setAutoSendPauseMs: noop,
 		start: async () => setState("download"),
 		stop: () => setState("finishing"),
 		cancel: () => setState("idle"),
+		wakeAvailable: false,
 		wakeState: "off",
+		wakePhrases: [],
+		setWakeEnabled: noop,
 		setWakePhrase: noop,
+		setWakeDebug: noop,
+		setWakeThreshold: noop,
+		wakeReleaseThreshold: null,
+		wakeMeter: new WakeMeter(),
+		wakeTriggerScore: null,
 		setWakePlayback: noop,
 	};
 	return (

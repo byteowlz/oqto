@@ -26,6 +26,46 @@ fn overlapping_tools_remain_visible_until_their_own_end_and_are_bounded() -> Res
 }
 
 #[tokio::test]
+async fn empty_scoped_falls_back_to_the_full_list_without_a_duplicate_section() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let path = fixture
+        .authority
+        .binding
+        .socket_root
+        .join(format!("pi-tui-rpc-{}.sock", std::process::id()));
+    let listener = UnixListener::bind(&path)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let mut state = fixture.native_state();
+    state["leafId"] = Value::Null;
+    state["isStreaming"] = false.into();
+    let commands = fixture.commands.clone();
+    fixture.tasks.push(tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(stream);
+        send(&mut reader, &json!({"type":"hello","v":1,"pid":std::process::id(),"commands":["get_state","get_available_models"]})).await.unwrap();
+        while let Ok(command) = read_frame(&mut reader).await {
+            commands.lock().unwrap().push(command.clone());
+            let data = match command["type"].as_str() {
+                Some("get_state") => state.clone(),
+                // Empty scoped: the full list IS the catalog; overlapping ids dedupe.
+                Some("get_available_models") => json!({"scoped":[],"models":[{"provider":"synthetic","id":"one","name":"One"},{"provider":"synthetic","id":"one","name":"One-dup"}]}),
+                _ => panic!("read-only observer sent mutation"),
+            };
+            if send(&mut reader, &json!({"type":"response","id":command["id"],"command":command["type"],"success":true,"data":data})).await.is_err() { break; }
+        }
+    }));
+    let mut observer =
+        TuiObserver::attach_snapshots(fixture.authority.clone(), "alice", "public-id").await?;
+    let options = observer.model_options().await?;
+    // The fallback IS the full list, reported as the source gave it (no primary
+    // dedupe: that is source authority, unchanged). A second section would
+    // duplicate every row, so all_models stays empty here.
+    assert_eq!(options["models"].as_array().unwrap().len(), 2);
+    assert_eq!(options["all_models"].as_array().map(Vec::len), Some(0));
+    Ok(())
+}
+
+#[tokio::test]
 async fn model_catalog_is_observe_only_scoped_filtered_and_settings_need_input() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let path = fixture
@@ -61,6 +101,9 @@ async fn model_catalog_is_observe_only_scoped_filtered_and_settings_need_input()
     let options = observer.model_options().await?;
     assert_eq!(options["models"].as_array().unwrap().len(), 1);
     assert_eq!(options["models"][0]["id"], "scoped");
+    // The full configured catalog rides along for operator switching.
+    assert_eq!(options["all_models"].as_array().map(Vec::len), Some(1));
+    assert_eq!(options["all_models"][0]["id"], "outside");
     assert!(!options.to_string().contains("synthetic-private"));
     assert!(!options.to_string().contains("headers"));
     assert_eq!(observer.details()["thinking_level"], "high");

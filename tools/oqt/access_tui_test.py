@@ -38,7 +38,8 @@ with coding_world(script, 'oqt-access-') as (provider, owner, work):
         marker = len(terminal.raw)
         terminal.send('Compare with the shared library.\r')
         terminal.expect('Access outside the workspace', marker)
-        terminal.expect(f'read {outside}', marker)
+        # The guard names the resolved path (macOS: /var/tmp is /private/var/tmp).
+        terminal.expect(f'read {outside.resolve()}', marker)
         terminal.expect('Reason: compare with the shared library', marker)
         terminal.expect('→ 1. Yes, for this session', marker)
         screen = terminal.raw[marker:].decode('utf8', 'replace')

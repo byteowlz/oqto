@@ -1,6 +1,25 @@
 .composer-dictation-anchor {
 	position: relative;
 }
+/* One overlay layer above the prompt box: status strip and settings stack. */
+.composer-dictation-layer {
+	position: absolute;
+	bottom: calc(100% + 8px);
+	inset-inline: 0;
+	z-index: 30;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	pointer-events: none;
+}
+.composer-dictation-layer > * {
+	pointer-events: auto;
+}
+.composer-dictation-layer .composer-dictation {
+	position: static;
+	inset-inline: auto;
+	bottom: auto;
+}
 .composer-dictation {
 	position: absolute;
 	bottom: calc(100% + 8px);
@@ -173,16 +192,124 @@
 .composer-dictation-mic--active {
 	color: var(--primary);
 }
+.composer-dictation-mic {
+	position: relative;
+}
+/* Wake listening holds the microphone open; show it on the icon (oqto-623a). */
+.composer-dictation-mic[data-wake="listening"] {
+	color: var(--primary);
+}
+.composer-dictation-mic__wake {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--primary);
+	box-shadow: 0 0 0 2px var(--background);
+}
+.composer-dictation-mic[data-wake="listening"] .composer-dictation-mic__wake {
+	animation: wake-listening 1.6s ease-in-out infinite;
+}
+.composer-dictation-mic[data-wake="muted"] .composer-dictation-mic__wake {
+	background: var(--muted-foreground);
+}
+.composer-dictation-mic[data-wake="loading"] .composer-dictation-mic__wake {
+	opacity: 0.45;
+}
+.composer-dictation-mic[data-wake="error"] .composer-dictation-mic__wake {
+	background: var(--destructive);
+}
+@keyframes wake-listening {
+	50% {
+		opacity: 0.35;
+	}
+}
 .composer-dictation-settings {
-	width: 300px;
-	max-width: calc(100vw - 24px);
+	box-sizing: border-box;
+	width: 100%;
+	/* Everything stays visible: no inner scrollbar, the panel sizes to its content. */
+	overflow: visible;
+	padding: 8px 10px 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md, 6px);
+	background: var(--background);
+	color: var(--foreground);
+	box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+	font-size: 12px;
+}
+.composer-dictation-settings__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+	font-weight: 600;
+}
+.composer-dictation-settings__close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm, 4px);
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+.composer-dictation-settings__info {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: help;
+}
+.composer-dictation-settings__info svg {
+	width: 13px;
+	height: 13px;
+}
+.composer-dictation-settings__close svg {
+	width: 14px;
+	height: 14px;
+}
+.composer-dictation-settings__pause {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 4px;
+}
+.composer-dictation-settings__pause select {
+	min-width: 88px;
+	min-height: 32px;
+	padding: 0 6px;
+	border: 1px solid var(--input, var(--border));
+	border-radius: var(--radius-sm, 4px);
+	background: var(--background);
+	color: inherit;
+	font: inherit;
+}
+.composer-dictation-settings__hint {
+	margin: 4px 0 0;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	line-height: 1.4;
 }
 .composer-dictation-settings__auto {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	font-size: 12px;
-	margin-top: 12px;
+	margin-top: 6px;
 }
 .composer-dictation-settings__start {
 	display: block;
@@ -207,6 +334,9 @@
 @media (prefers-reduced-motion: reduce) {
 	.composer-dictation__progress:indeterminate {
 		animation: none;
+	}
+	.composer-dictation-mic__wake {
+		animation: none !important;
 	}
 	.composer-dictation__meter i {
 		transition: none;
@@ -235,4 +365,74 @@
 		width: 36px;
 		min-height: 36px;
 	}
+}
+
+/* Live wake meter: the level eases between coalesced updates instead of flashing. */
+.composer-wake-meter__fill {
+	height: 100%;
+	background: var(--muted-foreground);
+	opacity: 0.6;
+	transition: width 100ms linear;
+}
+.composer-wake-meter__fill--above {
+	background: var(--primary);
+	opacity: 1;
+}
+.composer-wake-meter__peak,
+.composer-wake-meter__slider {
+	transition: left 100ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+	.composer-wake-meter__fill,
+	.composer-wake-meter__peak {
+		transition: none;
+	}
+}
+
+/* Auto-send countdown: a bar that drains over the configured pause. Pure CSS,
+   restarted by React key whenever speech resets the pause. */
+.composer-dictation__send-countdown {
+	height: 3px;
+	margin-top: 6px;
+	overflow: hidden;
+	border-radius: 2px;
+	background: var(--muted);
+}
+.composer-dictation__send-countdown i {
+	display: block;
+	height: 100%;
+	width: 100%;
+	background: var(--primary);
+	transform-origin: left center;
+	animation-name: send-countdown;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
+}
+@keyframes send-countdown {
+	from {
+		transform: scaleX(1);
+	}
+	to {
+		transform: scaleX(0);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	/* No motion: the "Sending…" label stays, the bar shows as a static full line. */
+	.composer-dictation__send-countdown i {
+		animation: none;
+	}
+}
+
+/* Oqtopus as the wake indicator: decorative, never takes pointer or focus. */
+.composer-dictation-mic__oqtopus {
+	width: 26px;
+	height: 26px;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	pointer-events: none;
+}
+.composer-dictation-mic[data-mascot] {
+	width: 34px;
+	height: 34px;
 }

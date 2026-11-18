@@ -9,6 +9,7 @@ import {
 	type ClassicImportSeed,
 	validateClassicImportSeed,
 } from "./classic-import-worker.ts";
+import { GuardOperationalError } from "./guard-errors.ts";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const PENDING = ".oqt-import-pending";
@@ -321,9 +322,7 @@ export async function operateClassicImport(
 					update.kind === "conflict" ||
 					!source.startsWith(previous.sourceText)
 				)
-					throw new Error(
-						"Classic source rewritten or native ID reused; reconciliation required",
-					);
+					throw new GuardOperationalError("import_rewritten");
 				predecessorSessionId = lastPublishedSessionId;
 			}
 		}

@@ -1,0 +1,24 @@
+# Standalone foreground hands host (ADR-0086), destination side. Every value is
+# required; unknown keys and out-of-range values fail closed.
+#:schema ../schemas/hands-host.schema.json
+version = 1
+# One explicit tailnet (or loopback) address; wildcards are refused.
+listen = "127.0.0.1:7443"
+# Canonical origin printed in pairing QRs; must reach the listener.
+origin = "https://127.0.0.1:7443/"
+# Private host state: pairing store and claim journal (created 0700).
+state_dir = "/path/to/state/oqto-hands-host"
+
+[launcher]
+oqt_hands = "/path/to/oqt-runtime/bin/oqt_hands"
+daemon = "/path/to/oqt-runtime/bin/pi-env"
+# macOS: no bpf or shim (Seatbelt; ADR-0084).
+# Never visible to the hands.
+protected_roots = ["/path/to/oqt-runtime", "/path/to/home/.ssh"]
+
+[bindings.workspace]
+# Native workspace mode: the hands' only writable tree on this machine.
+root = "/path/to/projects/remote-workspace"
+# Ceilings for what an origin may request (lease 2000..=10000 ms, calls 1..=8).
+max_lease_ms = 10000
+max_concurrent_calls = 4

@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from coding_fixture import cmdline, coding_world, last_user_text, processes_with_env, tool_results
+from coding_fixture import coding_world, host_processes, last_user_text, tool_results
 from tui_test import Terminal
 
 
@@ -22,8 +22,7 @@ def script(request):
 
 
 def hosts(owner):
-    return [pid for pid in processes_with_env(f'OQT_OWNER_AGENT_DIR={owner}')
-            if cmdline(pid).rstrip().endswith('host.ts') and 'node' in cmdline(pid)]
+    return host_processes(owner, work)
 
 
 with coding_world(script, 'oqt-multi-') as (provider, owner, work):

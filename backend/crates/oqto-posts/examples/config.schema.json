@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_connections": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "default": 2000,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "write_timeout_ms": {
+          "default": 2000,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Policy": {
+      "additionalProperties": false,
+      "properties": {
+        "max_age_secs": {
+          "default": 2592000,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "max_posts": {
+          "default": 10000,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "posts_per_minute": {
+          "default": 60,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Registration": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/definitions/Role"
+        },
+        "stamp": {
+          "$ref": "#/definitions/Stamp"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "stamp"
+      ],
+      "type": "object"
+    },
+    "Role": {
+      "enum": [
+        "agent",
+        "owner"
+      ],
+      "type": "string"
+    },
+    "Route": {
+      "enum": [
+        "local",
+        "private",
+        "cloud"
+      ],
+      "type": "string"
+    },
+    "Stamp": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "route": {
+          "$ref": "#/definitions/Route"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "route",
+        "workspace"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "database": {
+      "type": "string"
+    },
+    "enabled": {
+      "default": false,
+      "type": "boolean"
+    },
+    "identities": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/Registration"
+      },
+      "type": "array"
+    },
+    "limits": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Limits"
+        }
+      ],
+      "default": {
+        "max_connections": 64,
+        "request_timeout_ms": 2000,
+        "write_timeout_ms": 2000
+      }
+    },
+    "policy": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Policy"
+        }
+      ],
+      "default": {
+        "max_age_secs": 2592000,
+        "max_posts": 10000,
+        "posts_per_minute": 60
+      }
+    },
+    "socket_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "database",
+    "socket_directory"
+  ],
+  "stability": "draft",
+  "title": "ServiceConfig",
+  "type": "object",
+  "version": "1.0.0"
+}

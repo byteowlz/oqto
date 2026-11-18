@@ -177,6 +177,9 @@ pub struct Runner {
     expose_dir: Option<PathBuf>,
     /// Live reverse bridges keyed by exposed port.
     exposed_ports: Arc<tokio::sync::Mutex<HashMap<u16, crate::reverse_bridge::ReverseBridge>>>,
+    /// Instant Session announces from the Pi extension (oqto-0dfq). Dropping it
+    /// removes the socket and the sweep remains the fallback.
+    announce: Option<crate::session_announce::AnnounceListener>,
 }
 
 /// Basic-auth username for the session terminal.
@@ -707,6 +710,25 @@ impl Runner {
         ));
         let jsonl_ingest =
             super::jsonl_ingest::spawn_with_source(user_config.personal_source.clone());
+        // A personal host also listens for hint-only Session announces. Outside a
+        // runtime (unit tests) there is no listener; the sweep stays authoritative.
+        let announce = match (
+            &user_config.personal_source,
+            tokio::runtime::Handle::try_current(),
+        ) {
+            (Some(source), Ok(_)) => {
+                let home = source.home.clone();
+                let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                match crate::session_announce::spawn(std::sync::Arc::clone(source), home, user) {
+                    Ok(listener) => Some(listener),
+                    Err(error) => {
+                        log::warn!("Session announce listener unavailable: {error:#}");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
         Self {
             state: Arc::new(RwLock::new(RunnerState::new())),
             shutdown_tx,
@@ -719,7 +741,13 @@ impl Runner {
             jsonl_ingest,
             expose_dir,
             exposed_ports: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            announce,
         }
+    }
+
+    /// Announce socket path when this Runner listens for Session announces.
+    pub fn announce_socket(&self) -> Option<&std::path::Path> {
+        self.announce.as_ref().map(|listener| listener.socket())
     }
 
     /// Expose a loopback port. Idempotent per port. Host placements (no
@@ -4344,6 +4372,9 @@ impl Runner {
                                 jsonl_ingest: self.jsonl_ingest.clone(),
                                 expose_dir: self.expose_dir.clone(),
                                 exposed_ports: Arc::clone(&self.exposed_ports),
+                                // Owned by the long-lived Runner; a per-connection
+                                // clone must never drop (and so close) the socket.
+                                announce: None,
                             };
                             let connection_access = access.for_peer(accepted.client_cert_sha256);
                             tokio::spawn(async move {

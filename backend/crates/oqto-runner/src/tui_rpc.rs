@@ -7,6 +7,8 @@
 //! Input additionally requires host control authority and a terminal-confirmed,
 //! connection-scoped lease. No session switch, bulk history, spawn or kill exists.
 mod control;
+mod runtime_exchange;
+mod runtime_interactions;
 use anyhow::{Context, Result, bail, ensure};
 pub use control::{ControlAuthority, ControlPermit, InputAction, InputReceipt};
 use serde::Deserialize;
@@ -15,7 +17,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tokio::{
@@ -28,8 +30,10 @@ const FRAME_LIMIT: u64 = 1024 * 1024;
 /// of thousands of unrelated files, so the scan bound is generous and unrelated
 /// entries never consume a candidate slot or abort discovery.
 const MAX_SCANNED_ENTRIES: usize = 1_000_000;
-/// Live same-user Pi candidates actually probed, not directory entries.
-const MAX_CANDIDATES: usize = 64;
+/// Bound open probe connections/tasks, not the host's live Pi population.
+const MAX_CONCURRENT_PROBES: usize = 8;
+static PROBE_SLOTS: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_PROBES));
 const MAX_PENDING: usize = 16;
 const RPC_DEADLINE: Duration = Duration::from_millis(500);
 /// A snapshot drains every event queued since the previous one; a long streamed
@@ -172,6 +176,7 @@ pub struct TuiObserver {
     pending: VecDeque<ObservedEvent>,
     state: ObservedState,
     connection_leases: bool,
+    runtime_source_supported: bool,
     snapshot_only: bool,
     input_lease: Option<control::InputLease>,
     preview: LivePreview,
@@ -239,53 +244,30 @@ impl TuiObserver {
         snapshot_only: bool,
     ) -> Result<Self> {
         validate_source(&binding).await?;
-        let uid = rustix::process::geteuid().as_raw();
-        let mut entries = tokio::fs::read_dir(&binding.socket_root)
-            .await
-            .context("TUI socket root unavailable")?;
-        let mut candidates = Vec::new();
-        let mut count = 0;
-        while let Some(entry) = entries.next_entry().await.context("TUI discovery failed")? {
-            count += 1;
-            ensure!(
-                count <= MAX_SCANNED_ENTRIES,
-                "TUI discovery entry bound exceeded"
-            );
-            let Some((pid, path)) =
-                socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
-            else {
-                continue;
-            };
-            // Stale socket names are not candidates: probing them cannot match a
-            // live Pi and must never crowd out the real socket.
-            if !live_pid(pid) {
-                continue;
-            }
-            candidates.push((pid, path));
-            ensure!(
-                candidates.len() <= MAX_CANDIDATES,
-                "TUI discovery candidate bound exceeded"
-            );
-        }
         let mut found = None;
-        for (pid, path) in candidates {
-            authority.revalidate(&binding)?;
-            if let Ok(Ok(observer)) = tokio::time::timeout(
-                RPC_DEADLINE,
-                Self::probe(
-                    authority.clone(),
-                    binding.clone(),
-                    pid,
-                    &path,
-                    snapshot_only,
-                ),
-            )
-            .await
-            {
+        probe_sockets(
+            &binding.socket_root,
+            |pid, path| {
+                let authority = authority.clone();
+                let binding = binding.clone();
+                async move {
+                    authority.revalidate(&binding)?;
+                    Ok(tokio::time::timeout(
+                        RPC_DEADLINE,
+                        Self::probe(authority, binding, pid, &path, snapshot_only),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok))
+                }
+            },
+            |observer| {
                 ensure!(found.is_none(), "Ambiguous live TUI identity");
                 found = Some(observer);
-            }
-        }
+                Ok(())
+            },
+        )
+        .await?;
         authority.revalidate(&binding)?;
         found.context("No matching live TUI attachment")
     }
@@ -408,6 +390,11 @@ impl TuiObserver {
                 .collect(),
             state,
             connection_leases,
+            runtime_source_supported: hello["capabilities"].as_array().is_some_and(|caps| {
+                caps.iter().any(|cap| {
+                    cap == oqto_protocol::runtime_interactions::RUNTIME_SOURCE_CAPABILITY
+                })
+            }),
             snapshot_only,
             input_lease: None,
         })
@@ -487,6 +474,11 @@ impl TuiObserver {
                         ensure!(
                             state.matches_binding(&self.binding).await?,
                             "TUI Session binding changed"
+                        );
+                        ensure!(
+                            state.details.interaction_runtime_generation
+                                == self.details.interaction_runtime_generation,
+                            "Native runtime continuity changed; fresh attachment required"
                         );
                         self.authority.revalidate(&self.binding)?;
                         if let Some(line) = latest_update.take() {
@@ -674,6 +666,58 @@ pub(crate) struct LiveSession {
     pub leaf: Option<String>,
 }
 
+/// Stream the complete bounded directory through a fixed-size probe window.
+/// Dropping this future aborts its JoinSet, closing outstanding probe sockets.
+async fn probe_sockets<T, P, F, A>(socket_root: &Path, mut probe: P, mut accept: A) -> Result<()>
+where
+    T: Send + 'static,
+    P: FnMut(u32, PathBuf) -> F,
+    F: std::future::Future<Output = Result<Option<T>>> + Send + 'static,
+    A: FnMut(T) -> Result<()>,
+{
+    let uid = rustix::process::geteuid().as_raw();
+    let mut entries = tokio::fs::read_dir(socket_root)
+        .await
+        .context("TUI socket root unavailable")?;
+    let mut probes = tokio::task::JoinSet::new();
+    let mut count = 0;
+    while let Some(entry) = entries.next_entry().await.context("TUI discovery failed")? {
+        count += 1;
+        ensure!(
+            count <= MAX_SCANNED_ENTRIES,
+            "TUI discovery entry bound exceeded"
+        );
+        let Some((pid, path)) =
+            socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
+        else {
+            continue;
+        };
+        if !live_pid(pid) {
+            continue;
+        }
+        let future = probe(pid, path);
+        probes.spawn(async move {
+            let _slot = PROBE_SLOTS
+                .acquire()
+                .await
+                .context("TUI probe budget closed")?;
+            future.await
+        });
+        if probes.len() == MAX_CONCURRENT_PROBES
+            && let Some(result) = probes.join_next().await
+            && let Some(value) = result.context("TUI probe task failed")??
+        {
+            accept(value)?;
+        }
+    }
+    while let Some(result) = probes.join_next().await {
+        if let Some(value) = result.context("TUI probe task failed")?? {
+            accept(value)?;
+        }
+    }
+    Ok(())
+}
+
 /// Catalog-only liveness: which native Sessions a same-user pi-tui-rpc Pi has
 /// open, keyed by native Session ID. Read-only `get_state`, with the same
 /// socket and peer checks as attachment; it binds, leases and controls nothing,
@@ -683,54 +727,42 @@ pub(crate) async fn live_sessions(
     session_root: &Path,
 ) -> std::collections::HashMap<String, LiveSession> {
     let uid = rustix::process::geteuid().as_raw();
-    let mut candidates = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(socket_root).await {
-        let mut count = 0;
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            count += 1;
-            if count > MAX_SCANNED_ENTRIES || candidates.len() >= MAX_CANDIDATES {
-                break;
-            }
-            if let Some((pid, path)) =
-                socket_candidate(&entry.file_name().to_string_lossy(), &entry.path(), uid)
-                && live_pid(pid)
-            {
-                candidates.push((pid, path));
-            }
-        }
-    }
-    let mut probes = tokio::task::JoinSet::new();
-    for (pid, path) in candidates {
-        probes.spawn(async move {
-            tokio::time::timeout(RPC_DEADLINE, probe_live(pid, &path, uid))
-                .await
-                .ok()
-                .and_then(Result::ok)
-        });
-    }
     let mut live = std::collections::HashMap::new();
     let mut ambiguous = std::collections::HashSet::new();
-    while let Some(result) = probes.join_next().await {
-        let Ok(Some((id, mut session))) = result else {
-            continue;
-        };
-        // Normalize only the runtime report. Configured roots remain canonical;
-        // the history/attachment paths still validate the exact file and pin.
-        if !session.session_file.is_absolute() {
-            continue;
-        }
-        let Ok(file) = tokio::fs::canonicalize(&session.session_file).await else {
-            continue;
-        };
-        session.session_file = file;
-        if !session.session_file.starts_with(session_root) {
-            continue;
-        }
-        // Two Pi processes claiming one Session is not a live identity.
-        if ambiguous.contains(&id) || live.insert(id.clone(), session).is_some() {
-            live.remove(&id);
-            ambiguous.insert(id);
-        }
+    let result = probe_sockets(
+        socket_root,
+        |pid, path| async move {
+            let result = tokio::time::timeout(RPC_DEADLINE, probe_live(pid, &path, uid))
+                .await
+                .ok()
+                .and_then(Result::ok);
+            let Some((id, mut session)) = result else {
+                return Ok(None);
+            };
+            // Normalize only runtime reports; configured roots remain canonical.
+            if !session.session_file.is_absolute() {
+                return Ok(None);
+            }
+            let Ok(file) = tokio::fs::canonicalize(&session.session_file).await else {
+                return Ok(None);
+            };
+            session.session_file = file;
+            Ok(Some((id, session)))
+        },
+        |(id, session)| {
+            if session.session_file.starts_with(session_root) {
+                // Do not return a first match or hide duplicates in a later batch.
+                if ambiguous.contains(&id) || live.insert(id.clone(), session).is_some() {
+                    live.remove(&id);
+                    ambiguous.insert(id);
+                }
+            }
+            Ok(())
+        },
+    )
+    .await;
+    if let Err(error) = result {
+        log::debug!("Live TUI metadata discovery incomplete: {error:#}");
     }
     live
 }

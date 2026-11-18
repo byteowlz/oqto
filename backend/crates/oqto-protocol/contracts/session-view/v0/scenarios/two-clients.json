@@ -1,0 +1,1933 @@
+{
+ "contract": "oqto.session-view",
+ "v": 0,
+ "scenario": "two-clients",
+ "description": "Two connections attached to one Session: each sees the other's requests settle, after the entries they name; a resend is answered only to its sender; a reused frame id closes that connection.",
+ "upstream": {
+  "package": "@earendil-works/pi-durable",
+  "version": "1.5.2"
+ },
+ "session": "ses_fixture",
+ "attachment": "att_1",
+ "expect": {
+  "idle": true,
+  "errors": {},
+  "receipts_by_conn": {
+   "a": {
+    "req-a-1": [
+     "placed",
+     "done",
+     "done"
+    ],
+    "req-b-1": [
+     "queued",
+     "placed",
+     "done"
+    ]
+   },
+   "b": {
+    "req-a-1": [
+     "placed",
+     "done"
+    ],
+    "req-b-1": [
+     "queued",
+     "placed",
+     "done"
+    ]
+   }
+  },
+  "closed": [
+   "b"
+  ]
+ },
+ "steps": [
+  {
+   "client": {
+    "id": "c1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "c1",
+    "v": 0,
+    "attachment": "att_1",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "b1",
+    "type": "attach",
+    "v": 0,
+    "session": "ses_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    }
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "attached",
+    "id": "b1",
+    "v": 0,
+    "attachment": "att_2",
+    "session": "ses_fixture",
+    "store": "store_fixture",
+    "window": {
+     "min": 8,
+     "max": 16
+    },
+    "upstream": {
+     "package": "@earendil-works/pi-durable",
+     "version": "1.5.2"
+    },
+    "max_frame_bytes": 8388608
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 1,
+    "ops": [
+     [
+      "r",
+      {
+       "conversation": {
+        "id": 1
+       },
+       "entries": [],
+       "docs": {
+        "pi.agent": {
+         "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+         }
+        },
+        "pi.live": {},
+        "pi.inbox": {
+         "items": []
+        },
+        "pi.provider": {
+         "sessionId": "00000000-0000-7000-8000-000000000001"
+        },
+        "pi.usage": {
+         "models": {},
+         "tools": {}
+        }
+       }
+      }
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "094a787d380d8e004dba6a30ee883d0bf645eb461156c01b974311f3952943c1"
+  },
+  {
+   "client": {
+    "id": "c2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "input": {
+     "kind": "prompt",
+     "text": "Wait at the gate"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 2,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "turns": 0,
+       "first": 7
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Wait at the gate",
+          "timestamp": 1767225600024
+         }
+        ],
+        "kind": "pi.user",
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "38d95d9502cb8822d54e9310803a2b16255233feee69d606b613ec266f5bc601"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 2,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ],
+      {
+       "taskId": 9,
+       "inputs": [
+        8
+       ],
+       "turns": 0,
+       "first": 7
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      0,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Wait at the gate",
+          "timestamp": 1767225600024
+         }
+        ],
+        "kind": "pi.user",
+        "id": 7,
+        "conversationId": 1
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "38d95d9502cb8822d54e9310803a2b16255233feee69d606b613ec266f5bc601"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7,
+    "id": "c2"
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "kind": "prompt",
+    "status": "placed",
+    "entry": 7
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 3,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      1,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "system",
+          "content": "",
+          "toolsAdded": [
+           {
+            "name": "echo",
+            "description": "Return the given text.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "text": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "text"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "gate",
+            "description": "Wait until the fixture releases the named gate.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "name": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           }
+          ],
+          "timestamp": 1767225600041
+         }
+        ],
+        "kind": "pi.system",
+        "id": 10,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "406e8f547ccdf5b8834724f855f944ae79054e27dd0587216cd8bc6ef53fa4e3"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 3,
+    "ops": [
+     [
+      "p",
+      [
+       "entries"
+      ],
+      1,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "system",
+          "content": "",
+          "toolsAdded": [
+           {
+            "name": "echo",
+            "description": "Return the given text.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "text": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "text"
+             ],
+             "additionalProperties": false
+            }
+           },
+           {
+            "name": "gate",
+            "description": "Wait until the fixture releases the named gate.",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "name": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           }
+          ],
+          "timestamp": 1767225600041
+         }
+        ],
+        "kind": "pi.system",
+        "id": 10,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "406e8f547ccdf5b8834724f855f944ae79054e27dd0587216cd8bc6ef53fa4e3"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 4,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "ab3bcc5531f458116ccffe50d425a5e8f667c95a4b5bac1e97438ca450529e1d"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 4,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "ab3bcc5531f458116ccffe50d425a5e8f667c95a4b5bac1e97438ca450529e1d"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 5,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ],
+      [
+       {
+        "callId": "call_gate_1",
+        "name": "gate",
+        "taskId": 12,
+        "status": "pending"
+       }
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "turns"
+      ],
+      1
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1"
+      ],
+      {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 0,
+       "cacheWrite": 104,
+       "totalTokens": 109,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      2,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "toolCall",
+            "id": "call_gate_1",
+            "name": "gate",
+            "arguments": {
+             "name": "g1"
+            }
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 5,
+           "cacheRead": 0,
+           "cacheWrite": 104,
+           "totalTokens": 109,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 11,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "1e036536683162f5fe2f001f364ef96c56e2d353bb1bf656a1cfc751556d20c0"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 5,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ],
+      [
+       {
+        "callId": "call_gate_1",
+        "name": "gate",
+        "taskId": 12,
+        "status": "pending"
+       }
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "turns"
+      ],
+      1
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1"
+      ],
+      {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 0,
+       "cacheWrite": 104,
+       "totalTokens": 109,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      }
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      2,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "toolCall",
+            "id": "call_gate_1",
+            "name": "gate",
+            "arguments": {
+             "name": "g1"
+            }
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 5,
+           "cacheRead": 0,
+           "cacheWrite": 104,
+           "totalTokens": 109,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 11,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "1e036536683162f5fe2f001f364ef96c56e2d353bb1bf656a1cfc751556d20c0"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 6,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "running"
+     ]
+    ]
+   },
+   "value_sha256": "b3b65065efeebcbdfdecc14f9a4fdbf37e6a7aa472e6b3437a241a4a081f45c2"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 6,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "running"
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "b3b65065efeebcbdfdecc14f9a4fdbf37e6a7aa472e6b3437a241a4a081f45c2"
+  },
+  {
+   "client": {
+    "id": "b2",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "input": {
+     "kind": "steer",
+     "text": "Mention me too"
+    }
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 7,
+    "ops": [
+     [
+      "p",
+      [
+       "docs",
+       "pi.inbox",
+       "items"
+      ],
+      0,
+      0,
+      [
+       {
+        "id": 13,
+        "mode": "steer",
+        "content": "Mention me too"
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "20946c3c88c5f591a494ac7b94da8cf10a7e575ccbbd68a863f6280c6b58f675"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 7,
+    "ops": [
+     [
+      "p",
+      [
+       "docs",
+       "pi.inbox",
+       "items"
+      ],
+      0,
+      0,
+      [
+       {
+        "id": 13,
+        "mode": "steer",
+        "content": "Mention me too"
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "20946c3c88c5f591a494ac7b94da8cf10a7e575ccbbd68a863f6280c6b58f675"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "queued",
+    "id": "b2"
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "queued"
+   }
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 8,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "done"
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "entry"
+      ],
+      14
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      3,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "toolResult",
+          "toolCallId": "call_gate_1",
+          "toolName": "gate",
+          "content": [
+           {
+            "type": "text",
+            "text": "released:g1"
+           }
+          ],
+          "isError": false,
+          "durationMs": 1,
+          "timestamp": 1767225600087
+         }
+        ],
+        "data": {
+         "diagnostics": []
+        },
+        "kind": "pi.tool-result",
+        "id": 14,
+        "conversationId": 1,
+        "byTaskId": 12
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "88da45226dcafd440dd6f87d359e1f33033b5a8db4e0716d638cef769fbfcd2a"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 8,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "status"
+      ],
+      "done"
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "tools",
+       0,
+       "entry"
+      ],
+      14
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      3,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "toolResult",
+          "toolCallId": "call_gate_1",
+          "toolName": "gate",
+          "content": [
+           {
+            "type": "text",
+            "text": "released:g1"
+           }
+          ],
+          "isError": false,
+          "durationMs": 1,
+          "timestamp": 1767225600087
+         }
+        ],
+        "data": {
+         "diagnostics": []
+        },
+        "kind": "pi.tool-result",
+        "id": 14,
+        "conversationId": 1,
+        "byTaskId": 12
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "88da45226dcafd440dd6f87d359e1f33033b5a8db4e0716d638cef769fbfcd2a"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 9,
+    "ops": [
+     [
+      "p",
+      [
+       "docs",
+       "pi.inbox",
+       "items"
+      ],
+      0,
+      1,
+      []
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "taskId"
+      ],
+      16
+     ],
+     [
+      "p",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "inputs"
+      ],
+      1,
+      0,
+      [
+       13
+      ]
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      4,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Mention me too",
+          "timestamp": 1767225600108
+         }
+        ],
+        "kind": "pi.user",
+        "id": 15,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "ce8886a30caf45834d9a5920314c24ab02db569b5aa405351b4f9d346819fb08"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 9,
+    "ops": [
+     [
+      "p",
+      [
+       "docs",
+       "pi.inbox",
+       "items"
+      ],
+      0,
+      1,
+      []
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "tools"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "taskId"
+      ],
+      16
+     ],
+     [
+      "p",
+      [
+       "docs",
+       "pi.live",
+       "run",
+       "inputs"
+      ],
+      1,
+      0,
+      [
+       13
+      ]
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      4,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "user",
+          "content": "Mention me too",
+          "timestamp": 1767225600108
+         }
+        ],
+        "kind": "pi.user",
+        "id": 15,
+        "conversationId": 1,
+        "byTaskId": 9
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "ce8886a30caf45834d9a5920314c24ab02db569b5aa405351b4f9d346819fb08"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "placed",
+    "entry": 15
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "placed",
+    "entry": 15
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 10,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "value_sha256": "a8de95acff5ef2b1b35bd024340672ff44decd944d6df52ea93c954a582aacc5"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 10,
+    "ops": [
+     [
+      "s",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ],
+      {
+       "attempt": 1
+      }
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "a8de95acff5ef2b1b35bd024340672ff44decd944d6df52ea93c954a582aacc5"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_1",
+    "seq": 11,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "output"
+      ],
+      12
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheRead"
+      ],
+      104
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheWrite"
+      ],
+      124
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "totalTokens"
+      ],
+      240
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      5,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "Done, and I saw the steer."
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 7,
+           "cacheRead": 104,
+           "cacheWrite": 20,
+           "totalTokens": 131,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "stop",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 17,
+        "conversationId": 1,
+        "byTaskId": 16
+       }
+      ]
+     ]
+    ]
+   },
+   "value_sha256": "4c9367f36eebab2cfe78b17a7b4580ef21e5a260c9d8f55fb17ffb8cc6cc9c09"
+  },
+  {
+   "host": {
+    "type": "view",
+    "attachment": "att_2",
+    "seq": 11,
+    "ops": [
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "run"
+      ]
+     ],
+     [
+      "d",
+      [
+       "docs",
+       "pi.live",
+       "generation"
+      ]
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "output"
+      ],
+      12
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheRead"
+      ],
+      104
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "cacheWrite"
+      ],
+      124
+     ],
+     [
+      "s",
+      [
+       "docs",
+       "pi.usage",
+       "models",
+       "faux/faux-1",
+       "totalTokens"
+      ],
+      240
+     ],
+     [
+      "p",
+      [
+       "entries"
+      ],
+      5,
+      0,
+      [
+       {
+        "model": [
+         {
+          "role": "assistant",
+          "content": [
+           {
+            "type": "text",
+            "text": "Done, and I saw the steer."
+           }
+          ],
+          "api": "faux-fixture",
+          "provider": "faux",
+          "model": "faux-1",
+          "usage": {
+           "input": 0,
+           "output": 7,
+           "cacheRead": 104,
+           "cacheWrite": 20,
+           "totalTokens": 131,
+           "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+           }
+          },
+          "stopReason": "stop",
+          "timestamp": 1767225600000,
+          "thinkingLevel": "off"
+         }
+        ],
+        "kind": "pi.assistant",
+        "id": 17,
+        "conversationId": 1,
+        "byTaskId": 16
+       }
+      ]
+     ]
+    ]
+   },
+   "conn": "b",
+   "value_sha256": "4c9367f36eebab2cfe78b17a7b4580ef21e5a260c9d8f55fb17ffb8cc6cc9c09"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 17
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 17
+   },
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "done",
+    "entry": 15,
+    "answer": 17
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-b-1",
+    "kind": "steer",
+    "status": "done",
+    "entry": 15,
+    "answer": 17
+   },
+   "conn": "b"
+  },
+  {
+   "client": {
+    "id": "c3",
+    "type": "submit",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "input": {
+     "kind": "prompt",
+     "text": "Wait at the gate"
+    }
+   }
+  },
+  {
+   "host": {
+    "type": "receipt",
+    "session": "ses_fixture",
+    "request_id": "req-a-1",
+    "kind": "prompt",
+    "status": "done",
+    "entry": 7,
+    "answer": 17,
+    "id": "c3"
+   }
+  },
+  {
+   "client": {
+    "id": "b1",
+    "type": "detach",
+    "attachment": "att_2"
+   },
+   "conn": "b"
+  },
+  {
+   "close": "duplicate_id",
+   "conn": "b"
+  },
+  {
+   "host": {
+    "type": "ended",
+    "attachment": "att_1",
+    "reason": "host_closed"
+   }
+  }
+ ],
+ "final_value": {
+  "conversation": {
+   "id": 1
+  },
+  "entries": [
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "Wait at the gate",
+      "timestamp": 1767225600024
+     }
+    ],
+    "kind": "pi.user",
+    "id": 7,
+    "conversationId": 1
+   },
+   {
+    "model": [
+     {
+      "role": "system",
+      "content": "",
+      "toolsAdded": [
+       {
+        "name": "echo",
+        "description": "Return the given text.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "text"
+         ],
+         "additionalProperties": false
+        }
+       },
+       {
+        "name": "gate",
+        "description": "Wait until the fixture releases the named gate.",
+        "parameters": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "name"
+         ],
+         "additionalProperties": false
+        }
+       }
+      ],
+      "timestamp": 1767225600041
+     }
+    ],
+    "kind": "pi.system",
+    "id": 10,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "toolCall",
+        "id": "call_gate_1",
+        "name": "gate",
+        "arguments": {
+         "name": "g1"
+        }
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 5,
+       "cacheRead": 0,
+       "cacheWrite": 104,
+       "totalTokens": 109,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 11,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "toolResult",
+      "toolCallId": "call_gate_1",
+      "toolName": "gate",
+      "content": [
+       {
+        "type": "text",
+        "text": "released:g1"
+       }
+      ],
+      "isError": false,
+      "durationMs": 1,
+      "timestamp": 1767225600087
+     }
+    ],
+    "data": {
+     "diagnostics": []
+    },
+    "kind": "pi.tool-result",
+    "id": 14,
+    "conversationId": 1,
+    "byTaskId": 12
+   },
+   {
+    "model": [
+     {
+      "role": "user",
+      "content": "Mention me too",
+      "timestamp": 1767225600108
+     }
+    ],
+    "kind": "pi.user",
+    "id": 15,
+    "conversationId": 1,
+    "byTaskId": 9
+   },
+   {
+    "model": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Done, and I saw the steer."
+       }
+      ],
+      "api": "faux-fixture",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+       "input": 0,
+       "output": 7,
+       "cacheRead": 104,
+       "cacheWrite": 20,
+       "totalTokens": 131,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": 1767225600000,
+      "thinkingLevel": "off"
+     }
+    ],
+    "kind": "pi.assistant",
+    "id": 17,
+    "conversationId": 1,
+    "byTaskId": 16
+   }
+  ],
+  "docs": {
+   "pi.agent": {
+    "model": {
+     "provider": "faux",
+     "modelId": "faux-1"
+    }
+   },
+   "pi.live": {},
+   "pi.inbox": {
+    "items": []
+   },
+   "pi.provider": {
+    "sessionId": "00000000-0000-7000-8000-000000000001"
+   },
+   "pi.usage": {
+    "models": {
+     "faux/faux-1": {
+      "input": 0,
+      "output": 12,
+      "cacheRead": 104,
+      "cacheWrite": 124,
+      "totalTokens": 240,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     }
+    },
+    "tools": {}
+   }
+  }
+ },
+ "full_transcript": [
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Wait at the gate",
+     "timestamp": 1767225600024
+    }
+   ],
+   "kind": "pi.user",
+   "id": 7,
+   "conversationId": 1
+  },
+  {
+   "model": [
+    {
+     "role": "system",
+     "content": "",
+     "toolsAdded": [
+      {
+       "name": "echo",
+       "description": "Return the given text.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "text"
+        ],
+        "additionalProperties": false
+       }
+      },
+      {
+       "name": "gate",
+       "description": "Wait until the fixture releases the named gate.",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "timestamp": 1767225600041
+    }
+   ],
+   "kind": "pi.system",
+   "id": 10,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "toolCall",
+       "id": "call_gate_1",
+       "name": "gate",
+       "arguments": {
+        "name": "g1"
+       }
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 5,
+      "cacheRead": 0,
+      "cacheWrite": 104,
+      "totalTokens": 109,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 11,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "toolResult",
+     "toolCallId": "call_gate_1",
+     "toolName": "gate",
+     "content": [
+      {
+       "type": "text",
+       "text": "released:g1"
+      }
+     ],
+     "isError": false,
+     "durationMs": 1,
+     "timestamp": 1767225600087
+    }
+   ],
+   "data": {
+    "diagnostics": []
+   },
+   "kind": "pi.tool-result",
+   "id": 14,
+   "conversationId": 1,
+   "byTaskId": 12
+  },
+  {
+   "model": [
+    {
+     "role": "user",
+     "content": "Mention me too",
+     "timestamp": 1767225600108
+    }
+   ],
+   "kind": "pi.user",
+   "id": 15,
+   "conversationId": 1,
+   "byTaskId": 9
+  },
+  {
+   "model": [
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "Done, and I saw the steer."
+      }
+     ],
+     "api": "faux-fixture",
+     "provider": "faux",
+     "model": "faux-1",
+     "usage": {
+      "input": 0,
+      "output": 7,
+      "cacheRead": 104,
+      "cacheWrite": 20,
+      "totalTokens": 131,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "stop",
+     "timestamp": 1767225600000,
+     "thinkingLevel": "off"
+    }
+   ],
+   "kind": "pi.assistant",
+   "id": 17,
+   "conversationId": 1,
+   "byTaskId": 16
+  }
+ ]
+}

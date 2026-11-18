@@ -386,7 +386,8 @@ export default defineFacet({
 				? "oqt coding · confined brain and tools · reads allowed, edits and shell ask · /permissions"
 				: "oqt DEMO · synthetic model/history · confined fixture files · no credentials/local tools. Try: own history, global history, read file";
 			const bannerTimer = setTimeout(() => {
-				const uncertain = state()?.interrupted.at(-1);
+				// The demo state carries no interrupted list.
+				const uncertain = state()?.interrupted?.at(-1);
 				ui.showStatus(
 					uncertain
 						? `oqt coding · Interrupted ${uncertain.id}: effects uncertain; grants revoked. Inspect /shell-results or /permissions before retrying.`
@@ -396,6 +397,7 @@ export default defineFacet({
 			}, 1000);
 			env.own(() => clearTimeout(bannerTimer));
 			ui.showStatus(banner, BACKGROUND_CONTEXT);
+			let reportedAttention: string | undefined;
 			const listen = (value: OperatorState, context: Context) => {
 				const interrupted = value.interrupted ?? [];
 				const fresh = interrupted.filter(
@@ -409,6 +411,11 @@ export default defineFacet({
 					);
 				}
 				for (const row of interrupted) reportedInterrupted.add(row.id);
+				const attention = value.attention?.at(-1);
+				if (attention && attention.message !== reportedAttention) {
+					reportedAttention = attention.message;
+					ui.showStatus(`oqt needs attention: ${attention.message}`, context);
+				}
 				chooseNext(context);
 			};
 			env.own(
@@ -537,6 +544,30 @@ export default defineFacet({
 									context,
 								);
 							}
+							return undefined;
+						},
+					}),
+				);
+			// "/hands" is an alias: the owner may think of remote hands or of machines.
+			for (const name of ["machines", "hands"])
+				env.own(
+					commands.replace({
+						name,
+						description:
+							"Named remote machines: connection, workspace, lease/renewal/concurrency limits, attention",
+						async run(_args, context) {
+							const machines = state()?.machines ?? [];
+							ui.showStatus(
+								machines.length
+									? machines
+											.map(
+												(m) =>
+													`${m.machine}: ${m.connected ? "connected" : "not connected"}${m.attention || m.remote_attention ? ` · ATTENTION ${m.attention ?? "destination binding frozen"}` : ""} · lease ${m.lease_ms} ms, renew ${m.renew_ms} ms, ${m.max_concurrent_calls} calls · binding ${m.binding}${m.platform ? ` · ${m.platform}` : ""}${m.cwd ? ` · ${m.cwd}` : ""}`,
+											)
+											.join("\n")
+									: "No named machines configured (~/.config/oqt/hands-link.toml)",
+								context,
+							);
 							return undefined;
 						},
 					}),

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import stat
 import subprocess
@@ -23,7 +24,9 @@ mode = sys.argv[3] if len(sys.argv) > 3 else 'coding'
 if mode not in ['demo','coding']: raise SystemExit('Unsupported runtime mode')
 # Asset generation, digest-cache updates and immutable source publication share
 # one process lock; a second cold launcher cannot observe a partial snapshot.
-preparation_lock = acquire_preparation_lock(repo/'backend/target/oqt-prepared')
+# OQT_TARGET_DIR keeps a developer's build out of a shared checkout's target.
+target_dir = Path(os.environ.get('OQT_TARGET_DIR') or repo/'backend/target')
+preparation_lock = acquire_preparation_lock(target_dir/'oqt-prepared')
 runtime_modules = [p for p in sorted((repo / 'tools/oqt').glob('*.ts')) if not p.name.endswith('.test.ts')]
 runtime_modules.append(repo / 'tools/oqt/hands-proxy.mjs')
 sys.path.insert(0, str(repo / 'tools/oqt'))
@@ -37,14 +40,19 @@ identity = hashlib.sha256(PIN.encode())
 for file in files:
     identity.update(str(file.relative_to(repo)).encode()); identity.update(file.read_bytes())
 assets = {
-    'carrier': repo/'backend/target/debug/examples/permission_carrier',
-    'hands': repo/'backend/target/debug/examples/oqt_hands',
-    'shim': repo/'backend/target/debug/examples/oqt_shim',
-    'brain': repo/'backend/target/debug/examples/oqt_brain',
-    'daemon': repo/'backend/target/oqt-env/debug/pi-env',
-    'bpf': repo/'backend/target/oqt-prepared/bpf/default-x86_64.bpf',
+    'carrier': target_dir/'debug/examples/permission_carrier',
+    'hands': target_dir/'debug/examples/oqt_hands',
+    'shim': target_dir/'debug/examples/oqt_shim',
+    'brain': target_dir/'debug/examples/oqt_brain',
+    'daemon': target_dir/'oqt-env/debug/pi-env',
+    'link': target_dir/'debug/oqt_link',
+    'bpf': target_dir/'oqt-prepared/bpf/default-x86_64.bpf',
 }
-digest_cache = repo/'backend/target/oqt-prepared/runtime-digests.json'
+# There is no seccomp on macOS: no filter is built or staged there.
+darwin = platform.system() == 'Darwin'
+if darwin:
+    del assets['bpf']
+digest_cache = target_dir/'oqt-prepared/runtime-digests.json'
 saved_digests = json.loads(digest_cache.read_text()) if digest_cache.is_file() else {}
 digests = {}
 for name, path in assets.items():
@@ -62,7 +70,8 @@ for name, path in assets.items():
     identity.update(name.encode()); identity.update(digest.encode())
 temporary = digest_cache.with_suffix('.tmp'); temporary.write_text(json.dumps(digests)); temporary.replace(digest_cache)
 artifact = identity.hexdigest()[:20]
-# Keep Linux sockaddr_un paths below 108 bytes, including server UUID/nonces.
+# Keep sockaddr_un paths below the platform limit (Linux 108, macOS 104 bytes),
+# including server UUID/nonces.
 base = Path("/var/tmp") / f"q{os.getuid()}-{artifact[:10]}"
 
 def private(path):
@@ -80,8 +89,9 @@ agent = base / "agent-profile"; private(agent)
 home = base / "home"; private(home)
 profiles = base / "p"; private(profiles)
 profile = profiles / profile_key; private(profile)
-if len(os.fsencode(profile / "control-00000000-0000-0000-0000-000000000000.sock")) >= 108:
-    raise SystemExit("Profile exceeds Linux Unix-socket path limit")
+# The longest upstream socket name is server-<uuid>-<nonce>.sock.
+if len(os.fsencode(profile / "server-00000000-0000-0000-0000-000000000000-000000000000.sock")) >= (104 if darwin else 108):
+    raise SystemExit("Profile exceeds the Unix-socket path limit")
 binding_file = profile / "work-directory.json"
 if binding_file.exists():
     if json.loads(binding_file.read_text()) != {"work_directory":str(workdir)}:

@@ -13,6 +13,12 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Guard } from "./guard.ts";
+import { createMarker, DARWIN } from "./hands-supervisor.ts";
+
+// Seatbelt reports a denied path as EPERM; bwrap leaves it absent (ENOENT)
+// or mounted empty, and Landlock reports EACCES.
+const DENIED = DARWIN ? ["ENOENT", "EACCES", "EPERM"] : ["ENOENT", "EACCES"];
+
 import { OwnerBroker } from "./owner-broker.ts";
 
 // Drives the real Guard.spawnBrain + oqt_brain with a probe entrypoint in
@@ -71,8 +77,11 @@ const result = {
   pi: listing(${JSON.stringify(join(process.env.HOME ?? "/home", ".pi"))}),
   coordinator: await reach(process.env.PI_SESSION_WORKER_CONTROL_ADDRESS),
   tool: await reach(process.env.OQT_GUARD_SOCKET),
+  // macOS name resolution goes through this socket; open network without it
+  // cannot reach any model provider by host name.
+  resolver: process.platform === "darwin" ? await once("/private/var/run/mDNSResponder") : "not-applicable",
   guardDir: listing(process.env.OQT_PROBE_GUARD_DIR ?? "/nonexistent"),
-  env: Object.keys(process.env).filter((k) => !/^(PATH|HOME|LANG|SHELL|PWD|SHLVL|_)$/.test(k)).sort(),
+  env: Object.keys(process.env).filter((k) => !/^(PATH|HOME|TMPDIR|LANG|SHELL|PWD|SHLVL|_|__CF_USER_TEXT_ENCODING)$/.test(k)).sort(),
   session: args.metadata.id,
 };
 writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
@@ -126,11 +135,11 @@ writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
 			assert.equal(code, 0, `brain probe failed: ${log}`);
 			const result = JSON.parse(await readFile(report, "utf8"));
 			assert.ok(
-				["ENOENT", "EACCES"].includes(result.ownerAuth),
+				DENIED.includes(result.ownerAuth),
 				`owner credentials must be unreadable: ${result.ownerAuth}`,
 			);
 			assert.ok(
-				["ENOENT", "EACCES"].includes(result.ownerSettings),
+				DENIED.includes(result.ownerSettings),
 				"unbound owner files are unreadable",
 			);
 			assert.equal(
@@ -140,9 +149,7 @@ writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
 			);
 			// Masked paths may exist as empty mountpoints; their contents never do.
 			const hidden = (value) =>
-				value === "ENOENT" ||
-				value === "EACCES" ||
-				(Array.isArray(value) && value.length === 0);
+				DENIED.includes(value) || (Array.isArray(value) && value.length === 0);
 			assert.ok(
 				hidden(result.authority),
 				`permission ledger invisible: ${JSON.stringify(result.authority)}`,
@@ -152,7 +159,7 @@ writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
 				`guard state invisible: ${JSON.stringify(result.guardDir)}`,
 			);
 			assert.ok(
-				["ENOENT", "EACCES"].includes(result.workspace),
+				DENIED.includes(result.workspace),
 				"the brain never touches workspace files; hands do",
 			);
 			assert.ok(
@@ -165,6 +172,8 @@ writeFileSync(${JSON.stringify(report)}, JSON.stringify(result));
 			);
 			assert.equal(result.coordinator, "connected");
 			assert.equal(result.tool, "connected", "own tool channel reachable");
+			if (DARWIN)
+				assert.equal(result.resolver, "connected", "system resolver reachable for provider host names");
 			assert.equal(result.session, "public-session-a");
 			assert.ok(!result.env.includes("OQTO_SANDBOX_SHIM_BIN"));
 			assert.ok(
@@ -281,10 +290,13 @@ writeFileSync(${JSON.stringify(join(alias, "sessions", "report.json"))}, JSON.st
 				ro: [runtime, join(alias, "catalog")],
 				rw: [join(alias, "sessions")],
 				forbidden: [forbidden],
-				bpf: process.env.OQT_SECCOMP_BPF,
+				...(DARWIN
+					? { marker: specDir }
+					: { bpf: process.env.OQT_SECCOMP_BPF }),
 				env: {},
 				args: [join(runtime, "probe.mjs")],
 			};
+			if (DARWIN) createMarker(specDir);
 			const launch = async (value) => {
 				const path = join(specDir, "brain.json");
 				await writeFile(path, JSON.stringify(value), { mode: 0o600 });
@@ -318,14 +330,11 @@ writeFileSync(${JSON.stringify(join(alias, "sessions", "report.json"))}, JSON.st
 			assert.equal(report.socket, "short-ipc-ok");
 			assert.equal(report.catalog, "public-catalog");
 			assert.ok(
-				["EROFS", "EACCES"].includes(report.catalogWrite),
+				["EROFS", ...DENIED].includes(report.catalogWrite),
 				report.catalogWrite,
 			);
 			for (const key of ["parent", "sibling", "canonicalSibling", "protected"])
-				assert.ok(
-					["ENOENT", "EACCES"].includes(report[key]),
-					`${key}: ${report[key]}`,
-				);
+				assert.ok(DENIED.includes(report[key]), `${key}: ${report[key]}`);
 			for (const kind of ["ro", "rw"]) {
 				const denied = await launch({
 					...spec,

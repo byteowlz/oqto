@@ -5,8 +5,8 @@
 
 import type { Message, Part, Role } from "@/lib/canonical-types";
 import type {
-	AgentAgentMessageWithParts,
 	AgentMessage,
+	AgentMessageWithParts,
 	MessagePart,
 } from "../agent-client";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";

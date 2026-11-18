@@ -1,0 +1,236 @@
+[
+  {
+    "label": "rsync-cold-1",
+    "seconds": 15.792349,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 2003\nTotal file size: 289308672 B\nTotal transferred file size: 289308672 B\nUnmatched data: 289308672 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.046 seconds\nTotal sent: 289515887 B\nTotal received: 44104 B\n\nsent 289515887 bytes  received 44104 bytes  18635482 bytes/sec\ntotal size is 289308672  speedup is 1.00\n"
+  },
+  {
+    "label": "rsync-unchanged-1",
+    "seconds": 0.327502,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289308672 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.065 seconds\nTotal sent: 80255 B\nTotal received: 20 B\n\nsent 80255 bytes  received 20 bytes  1862529 bytes/sec\ntotal size is 289308672  speedup is 3603.97\n"
+  },
+  {
+    "label": "rsync-changed-1",
+    "seconds": 1.52678,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 3\nTotal file size: 289312785 B\nTotal transferred file size: 285216785 B\nUnmatched data: 1058257 B\nMatched data: 284158528 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.075 seconds\nTotal sent: 1247494 B\nTotal received: 186880 B\n\nsent 1247494 bytes  received 186880 bytes  1162283 bytes/sec\ntotal size is 289312785  speedup is 201.70\n"
+  },
+  {
+    "label": "scp-cold-1",
+    "seconds": 58.296414
+  },
+  {
+    "label": "scp-unchanged-1",
+    "seconds": 60.473152
+  },
+  {
+    "label": "scp-changed-1",
+    "seconds": 64.892878
+  },
+  {
+    "label": "tar-cold-1",
+    "seconds": 14.603058
+  },
+  {
+    "label": "tar-unchanged-1",
+    "seconds": 15.718275
+  },
+  {
+    "label": "tar-changed-1",
+    "seconds": 15.167497
+  },
+  {
+    "label": "rsync-cold-2",
+    "seconds": 14.770109,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 2003\nTotal file size: 289308672 B\nTotal transferred file size: 289308672 B\nUnmatched data: 289308672 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.070 seconds\nTotal sent: 289515887 B\nTotal received: 44104 B\n\nsent 289515887 bytes  received 44104 bytes  19990196 bytes/sec\ntotal size is 289308672  speedup is 1.00\n"
+  },
+  {
+    "label": "rsync-unchanged-2",
+    "seconds": 0.327757,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289308672 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.065 seconds\nTotal sent: 80255 B\nTotal received: 20 B\n\nsent 80255 bytes  received 20 bytes  1820294 bytes/sec\ntotal size is 289308672  speedup is 3603.97\n"
+  },
+  {
+    "label": "rsync-changed-2",
+    "seconds": 1.571635,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 3\nTotal file size: 289312785 B\nTotal transferred file size: 285216785 B\nUnmatched data: 1058257 B\nMatched data: 284158528 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.067 seconds\nTotal sent: 1247494 B\nTotal received: 186880 B\n\nsent 1247494 bytes  received 186880 bytes  1105831 bytes/sec\ntotal size is 289312785  speedup is 201.70\n"
+  },
+  {
+    "label": "scp-cold-2",
+    "seconds": 63.289497
+  },
+  {
+    "label": "scp-unchanged-2",
+    "seconds": 84.938893
+  },
+  {
+    "label": "scp-changed-2",
+    "seconds": 60.982515
+  },
+  {
+    "label": "tar-cold-2",
+    "seconds": 13.87017
+  },
+  {
+    "label": "tar-unchanged-2",
+    "seconds": 14.60781
+  },
+  {
+    "label": "tar-changed-2",
+    "seconds": 16.451312
+  },
+  {
+    "label": "rsync-cold-3",
+    "seconds": 18.100834,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 2003\nTotal file size: 289308672 B\nTotal transferred file size: 289308672 B\nUnmatched data: 289308672 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.069 seconds\nTotal sent: 289515887 B\nTotal received: 44104 B\n\nsent 289515887 bytes  received 44104 bytes  16261842 bytes/sec\ntotal size is 289308672  speedup is 1.00\n"
+  },
+  {
+    "label": "rsync-unchanged-3",
+    "seconds": 0.322609,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 0\nTotal file size: 289308672 B\nTotal transferred file size: 0 B\nUnmatched data: 0 B\nMatched data: 0 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.067 seconds\nTotal sent: 80255 B\nTotal received: 20 B\n\nsent 80255 bytes  received 20 bytes  2163746 bytes/sec\ntotal size is 289308672  speedup is 3603.97\n"
+  },
+  {
+    "label": "rsync-changed-3",
+    "seconds": 1.470792,
+    "stdout": "Number of files: 2006\nNumber of files transferred: 3\nTotal file size: 289312785 B\nTotal transferred file size: 285216785 B\nUnmatched data: 1058257 B\nMatched data: 284158528 B\nFile list size: 80239 B\nFile list generation time: 0.004 seconds\nFile list transfer time: 0.066 seconds\nTotal sent: 1247494 B\nTotal received: 186880 B\n\nsent 1247494 bytes  received 186880 bytes  1203232 bytes/sec\ntotal size is 289312785  speedup is 201.70\n"
+  },
+  {
+    "label": "scp-cold-3",
+    "seconds": 65.864849
+  },
+  {
+    "label": "scp-unchanged-3",
+    "seconds": 60.401464
+  },
+  {
+    "label": "scp-changed-3",
+    "seconds": 66.119352
+  },
+  {
+    "label": "tar-cold-3",
+    "seconds": 22.735572
+  },
+  {
+    "label": "tar-unchanged-3",
+    "seconds": 21.021674
+  },
+  {
+    "label": "tar-changed-3",
+    "seconds": 19.398004
+  },
+  {
+    "label": "manifest-v1-fixed",
+    "seconds": 6.81348,
+    "chunks": 3088
+  },
+  {
+    "label": "manifest-v2-fixed",
+    "seconds": 6.527148,
+    "chunks": 3090
+  },
+  {
+    "label": "delta-fixed",
+    "payload_bytes": 135270417,
+    "missing_chunks": 518,
+    "pack_bytes": 136437760
+  },
+  {
+    "label": "manifest-v1-cdc",
+    "seconds": 6.622251,
+    "chunks": 2848
+  },
+  {
+    "label": "manifest-v2-cdc",
+    "seconds": 6.748537,
+    "chunks": 2850
+  },
+  {
+    "label": "delta-cdc",
+    "payload_bytes": 1439296,
+    "missing_chunks": 6,
+    "pack_bytes": 1802240
+  },
+  {
+    "label": "cdc-delta-transfer-reconstruct-1",
+    "seconds": 0.672412,
+    "stdout": "synthetic reconstructed\n"
+  },
+  {
+    "label": "cdc-delta-transfer-reconstruct-2",
+    "seconds": 0.629491,
+    "stdout": "synthetic reconstructed\n"
+  },
+  {
+    "label": "cdc-delta-transfer-reconstruct-3",
+    "seconds": 0.601992,
+    "stdout": "synthetic reconstructed\n"
+  },
+  {
+    "label": "one-stream-256MiB-1",
+    "seconds": 12.167654
+  },
+  {
+    "label": "four-stream-256MiB-1",
+    "seconds": 13.612912
+  },
+  {
+    "label": "one-stream-256MiB-2",
+    "seconds": 13.37542
+  },
+  {
+    "label": "four-stream-256MiB-2",
+    "seconds": 16.07372
+  },
+  {
+    "label": "one-stream-256MiB-3",
+    "seconds": 15.570938
+  },
+  {
+    "label": "four-stream-256MiB-3",
+    "seconds": 15.0542
+  },
+  {
+    "label": "blake3-big/binary0.bin",
+    "seconds": 1.448089,
+    "stdout": "f12989d689cf49529a07e4583b2d4de8805230e951625cff2619cbbc32fd38d0\n"
+  },
+  {
+    "label": "zstd-1-big/binary0.bin",
+    "seconds": 0.093515,
+    "input_bytes": 134217728,
+    "output_bytes": 134220814
+  },
+  {
+    "label": "zstd-3-big/binary0.bin",
+    "seconds": 0.078071,
+    "input_bytes": 134217728,
+    "output_bytes": 134220814
+  },
+  {
+    "label": "zstd-9-big/binary0.bin",
+    "seconds": 0.078368,
+    "input_bytes": 134217728,
+    "output_bytes": 134220814
+  },
+  {
+    "label": "blake3-text.txt",
+    "seconds": 0.191598,
+    "stdout": "b314dd0eead20f3e2235bbe6db0167b5d7ed981787cfb0aa4f0709739578cb7c\n"
+  },
+  {
+    "label": "zstd-1-text.txt",
+    "seconds": 0.00785,
+    "input_bytes": 16777216,
+    "output_bytes": 1611
+  },
+  {
+    "label": "zstd-3-text.txt",
+    "seconds": 0.008499,
+    "input_bytes": 16777216,
+    "output_bytes": 1611
+  },
+  {
+    "label": "zstd-9-text.txt",
+    "seconds": 0.017438,
+    "input_bytes": 16777216,
+    "output_bytes": 1611
+  }
+]

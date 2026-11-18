@@ -139,6 +139,24 @@ describe("wake service", () => {
 		expect(capture.close).toHaveBeenCalledOnce();
 	});
 
+	it("re-arms after a dictation without re-fetching or rebuilding the engine", async () => {
+		const manifest = await release();
+		const { d, capture } = deps(manifest);
+		const service = new WakeService(
+			{ manifestUrl: "/m", filesUrl: "/f" },
+			{},
+			d,
+		);
+		await service.arm();
+		await service.disarm();
+		await service.arm();
+		expect(service.getState()).toBe("listening");
+		expect(d.loadManifest).toHaveBeenCalledOnce();
+		expect(d.createEngine).toHaveBeenCalledOnce();
+		expect(d.openCapture).toHaveBeenCalledTimes(2);
+		expect(capture.close).toHaveBeenCalledOnce();
+	});
+
 	it("reports a detection once per refractory window, not per frame", async () => {
 		const manifest = await release();
 		const { d, engine, feed } = deps(manifest);
@@ -155,6 +173,53 @@ describe("wake service", () => {
 		]);
 		feed(new Float32Array(1280));
 		await vi.waitFor(() => expect(detections).toEqual(["hey_oqto"]));
+	});
+
+	it("judges detections against a local threshold override, and only valid ones", async () => {
+		const manifest = await release();
+		const { d, engine, feed } = deps(manifest);
+		const detections: [string, number][] = [];
+		const service = new WakeService(
+			{ manifestUrl: "/m", filesUrl: "/f" },
+			{ onDetection: (phrase, score) => detections.push([phrase, score]) },
+			d,
+		);
+		await service.arm();
+		expect(service.threshold).toBe(0.5);
+		service.setThreshold(1.2);
+		expect(service.threshold).toBe(0.5);
+		service.setThreshold(0.3);
+		expect(service.threshold).toBe(0.3);
+		// The engine (release threshold 0.5) reports no crossing; the override does.
+		engine.push.mockResolvedValue([
+			{ scores: { hey_oqto: 0.35 }, detections: [] },
+		]);
+		feed(new Float32Array(1280));
+		await vi.waitFor(() => expect(detections).toEqual([["hey_oqto", 0.35]]));
+	});
+
+	it("keeps the engine's own crossings when no override is set", async () => {
+		const manifest = await release();
+		const { d, engine, feed } = deps(manifest);
+		const detections: string[] = [];
+		const scores: number[] = [];
+		const service = new WakeService(
+			{ manifestUrl: "/m", filesUrl: "/f" },
+			{
+				onDetection: (phrase) => detections.push(phrase),
+				onScores: (s) => scores.push(s.hey_oqto ?? 0),
+			},
+			d,
+		);
+		await service.arm();
+		service.setThreshold(0.3);
+		service.setThreshold(null);
+		engine.push.mockResolvedValue([
+			{ scores: { hey_oqto: 0.45 }, detections: [] },
+		]);
+		feed(new Float32Array(1280));
+		await vi.waitFor(() => expect(scores).toEqual([0.45]));
+		expect(detections).toEqual([]);
 	});
 
 	it("mutes the engine while the app speaks and resumes when the gate closes", async () => {

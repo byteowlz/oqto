@@ -1,9 +1,7 @@
 import type { OqtoUiPlatform } from "./contracts";
 import type { FileChange } from "./files-contract";
 interface FlashWorkspace {
-	list(
-		path: string,
-	): Promise<
+	list(path: string): Promise<
 		readonly {
 			path: string;
 			name: string;

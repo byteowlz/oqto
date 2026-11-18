@@ -6,14 +6,22 @@ use oqto_runner::{
 };
 use std::{
     os::unix::fs::PermissionsExt,
-    process::{Command, Stdio},
+    path::Path,
+    process::{Child, Command, Stdio},
     time::Duration,
 };
 
-#[tokio::test]
-async fn slow_owner_client_does_not_block_primary_transport() -> Result<()> {
-    let temp = tempfile::tempdir()?;
-    let home = temp.path().canonicalize()?;
+struct Owned(Child);
+impl Drop for Owned {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn spawn_fixture(home: &Path) -> Result<Owned> {
+    pair_control::validate_socket_path(&pair_control::root(home).join("control.sock"))?;
+    let log = std::fs::File::create(home.join("runner.log"))?;
     let config = home.join("config.toml");
     std::fs::write(
         &config,
@@ -29,24 +37,41 @@ async fn slow_owner_client_does_not_block_primary_transport() -> Result<()> {
         .arg(config)
         .arg("--socket")
         .arg(&socket)
-        .env("HOME", &home)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("HOME", home)
+        .env("USER", "synthetic-fixture")
+        .env("XDG_CONFIG_HOME", home.join("config"))
+        .env("XDG_DATA_HOME", home.join("data"))
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("XDG_CACHE_HOME", home.join("cache"))
         .env("XDG_RUNTIME_DIR", runtime)
+        .env("TMPDIR", home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(log)
         .spawn()?;
-    struct Owned(std::process::Child);
-    impl Drop for Owned {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let mut owned = Owned(child);
+    Ok(Owned(child))
+}
+
+#[tokio::test]
+async fn slow_owner_client_does_not_block_primary_transport() -> Result<()> {
+    // Darwin's default TMPDIR plus pairing/control.sock can exceed sun_path.
+    let temp = tempfile::Builder::new()
+        .prefix("oqtr-")
+        .tempdir_in("/tmp")?;
+    let home = temp.path().canonicalize()?;
     let control = pair_control::root(&home);
+    let socket = home.join("primary.sock");
+    let log_path = home.join("runner.log");
+    let mut owned = spawn_fixture(&home)?;
     let mut ready = false;
     for _ in 0..100 {
-        ensure!(owned.0.try_wait()?.is_none(), "owned fixture exited");
+        ensure!(
+            owned.0.try_wait()?.is_none(),
+            "owned fixture exited: {}",
+            std::fs::read_to_string(&log_path).unwrap_or_default()
+        );
         if pair_control::request(&control, &Request::Status)
             .await
             .is_ok()

@@ -2,6 +2,7 @@ use super::*;
 use std::io::Cursor;
 
 mod benchmark;
+mod errors;
 
 #[test]
 fn indexed_pages_match_native_graph_projection_for_both_branches_and_empty_head() -> Result<()> {

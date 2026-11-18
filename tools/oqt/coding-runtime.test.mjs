@@ -10,6 +10,12 @@ import {
 	toolResults,
 	withGuard,
 } from "./guard-fixture.mjs";
+import { DARWIN } from "./hands-supervisor.ts";
+
+// macOS has no setsid(1); the same new-session escape through POSIX::setsid.
+const SETSID = DARWIN
+	? `/usr/bin/perl -MPOSIX -e "POSIX::setsid(); exec @ARGV"`
+	: "setsid";
 
 test(
 	"guard-composed coding revokes active hands, fences output, retires completed descendants and continues the same turn",
@@ -39,8 +45,7 @@ test(
 					call(
 						"bash",
 						{
-							command:
-								"setsid /bin/sh -c 'while true; do echo tick >> detached; sleep 0.05; done' >/dev/null 2>&1 </dev/null & while test ! -s detached; do sleep 0.01; done; exit 0",
+							command: `${SETSID} /bin/sh -c 'while true; do echo tick >> detached; sleep 0.05; done' >/dev/null 2>&1 </dev/null & while test ! -s detached; do sleep 0.01; done; exit 0`,
 						},
 						"detached-completion",
 					),

@@ -1,0 +1,19 @@
+{
+  "title": "Review of the importer finished",
+  "body": "Three findings, none blocking. Details are in the Session.",
+  "kind": "done",
+  "links": [
+    {
+      "url": "https://oqto.example/sessions/01JEXAMPLE",
+      "label": "Session"
+    },
+    {
+      "url": "https://forge.example/acme/importer/pulls/12"
+    }
+  ],
+  "task": "acme-1b8f.7",
+  "project": "acme/importer",
+  "labels": [
+    "route:cloud"
+  ]
+}

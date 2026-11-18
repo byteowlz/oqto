@@ -284,6 +284,19 @@ async fn main() -> Result<()> {
             || (user_config.single_user && !user_config.linux_users_enabled),
         "persisted native source requires a dedicated host-user Runner"
     );
+    // Version 1 Session pins that still match this mount become version 2 now,
+    // so a later reboot cannot strand them. Background: never delays startup.
+    if let Some(source) = user_config.personal_source.clone() {
+        tokio::spawn(async move {
+            match source.upgrade_current_pins().await {
+                Ok(0) => {}
+                Ok(count) => {
+                    log::info!("upgraded {count} native Session pins to persistent volume identity")
+                }
+                Err(error) => log::warn!("native Session pin upgrade failed: {error:#}"),
+            }
+        });
+    }
 
     // Validate ownership before any worker can touch configured private state.
     // Endpoint bridges fail closed: a granted endpoint that cannot be parsed

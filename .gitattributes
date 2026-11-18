@@ -1,3 +1,6 @@
 .trx/issues.jsonl text eol=lf merge=union
 .trx/events.jsonl text eol=lf merge=union
 .trx/verifications.jsonl text eol=lf merge=union
+
+# Generated bundle preserves LICENSE bytes, including its Markdown hard-break spaces.
+backend/crates/oqto-protocol/contracts/runtime-interactions/v1/LICENSE whitespace=-blank-at-eol

@@ -17,6 +17,21 @@ async fn ownership_marker_uses_persistent_filesystem_identity() -> Result<()> {
 
 #[tokio::test]
 async fn approved_legacy_migration_preserves_database_identity_and_backup() -> Result<()> {
+    // Another parallel test's fork can inherit flock's open description until
+    // exec. Open this authority only in its own exact child, as in pair_wizard.
+    const CHILD: &str = "OQTO_PRIVATE_REPAIR_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "private_tests::approved_legacy_migration_preserves_database_identity_and_backup",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .status()?;
+        assert!(status.success(), "isolated authority repair test failed");
+        return Ok(());
+    }
     use std::os::unix::fs::MetadataExt;
     let (_dir, authority) = tests::fixture().await?;
     let root = authority.root.clone();

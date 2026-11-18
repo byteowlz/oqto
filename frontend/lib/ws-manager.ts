@@ -27,6 +27,11 @@ import type {
 	WsMuxConnectionState,
 } from "./ws-mux-types";
 
+// Preserve each variant, including the agent's indexed extension fields.
+// Omit erases the union's variant fields (and indexed variants' required keys).
+// Only the manager assigns request IDs; no runtime command shape changes.
+type CommandWithoutId = WsCommand & { id?: never };
+
 function isWsMuxDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
 	try {
@@ -587,7 +592,7 @@ class WsConnectionManager {
 	 * @returns Promise that resolves with the response event
 	 */
 	async sendAndWait(
-		command: Omit<WsCommand, "id">,
+		command: CommandWithoutId,
 		timeoutMs = 30000,
 	): Promise<WsEvent> {
 		await this.waitForConnected(Math.min(CONNECT_TIMEOUT_MS, timeoutMs));
@@ -599,7 +604,7 @@ class WsConnectionManager {
 				? command.cmd
 				: "type" in command
 					? (command as { type?: string }).type
-					: command.channel;
+					: (command as Pick<WsCommand, "channel">).channel;
 
 		return new Promise<WsEvent>((resolve, reject) => {
 			const timeout = setTimeout(() => {

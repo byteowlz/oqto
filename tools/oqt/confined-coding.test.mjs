@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { confinedCoding } from "./confined-coding.ts";
+import { createMarker, DARWIN } from "./hands-supervisor.ts";
 
 const require = createRequire(join(process.env.OQT_PI_SOURCE, "package.json"));
 const load = (name) => import(pathToFileURL(require.resolve(name)));
@@ -38,12 +39,20 @@ test(
 		const daemon = join(root, "pi-env");
 		await copyFile(process.env.OQT_ENV_DAEMON, daemon);
 		const spec = join(root, "hands.json");
+		// macOS: a launch marker and a private scratch instead of seccomp.
+		const scratch = join(root, "scratch");
+		if (DARWIN) {
+			createMarker(root);
+			await mkdir(scratch, { mode: 0o700 });
+		}
 		await writeFile(
 			spec,
 			JSON.stringify({
 				workspace,
 				daemon,
-				bpf: process.env.OQT_SECCOMP_BPF,
+				...(DARWIN
+					? { marker: root, scratch }
+					: { bpf: process.env.OQT_SECCOMP_BPF }),
 				protected_roots: [authority],
 			}),
 			{ mode: 0o600 },

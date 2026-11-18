@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 class Terminal:
-    def __init__(self, args=None, cwd=None, env=None):
+    def __init__(self, args=None, cwd=None, env=None, launcher=None):
         self.started = time.monotonic()
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 112, 0, 0))
@@ -32,7 +32,7 @@ class Terminal:
             runtime_env.setdefault('OQT_SANDBOX_CONFIG', str(fixture / 'sandbox.toml'))
         default_work = fixture / 'workspace'
         default_work.mkdir()
-        self.process = subprocess.Popen([str(ROOT / "oqt"), *(args or ["--demo", "--workdir", str(default_work)])], cwd=cwd or ROOT, env=runtime_env,
+        self.process = subprocess.Popen([str(launcher or ROOT / "tools/oqt/dev.sh"), *(args or ["--demo", "--workdir", str(default_work)])], cwd=cwd or ROOT, env=runtime_env,
             stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         self.raw = bytearray()
@@ -59,13 +59,33 @@ class Terminal:
                     os.write(self.master, b"\x1b[1;1R")
         raise AssertionError(f"TUI deadline waiting for {text!r}: {clean[-2500:]}")
 
+    def drain_until_exit(self, timeout):
+        """Wait for exit while reading the PTY: a TUI restoring the terminal
+        blocks on a full PTY buffer (small on macOS) if nobody reads it."""
+        end = time.monotonic() + timeout
+        while self.process.poll() is None and time.monotonic() < end:
+            ready, _, _ = select.select([self.master], [], [], 0.05)
+            if ready:
+                try:
+                    self.raw.extend(os.read(self.master, 65536))
+                except OSError:
+                    pass
+        if self.process.poll() is None:
+            raise subprocess.TimeoutExpired(self.process.args, timeout)
+
     def close(self, label):
-        self.send("\x03"); time.sleep(.15); self.send("\x03")
+        # A process that already exited has closed the PTY: writing to it
+        # fails on macOS (EIO), so only interrupt a live one.
+        if self.process.poll() is None:
+            try:
+                self.send("\x03"); time.sleep(.15); self.send("\x03")
+            except OSError:
+                pass
         try:
-            self.process.wait(timeout=3)
+            self.drain_until_exit(3)
         except subprocess.TimeoutExpired:
             os.killpg(self.process.pid, signal.SIGTERM)
-            self.process.wait(timeout=3)
+            self.drain_until_exit(3)
         finally:
             os.close(self.master)
             Path(f"/tmp/oqt-{label}-pty.log").write_bytes(self.raw)

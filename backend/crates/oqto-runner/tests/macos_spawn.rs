@@ -51,14 +51,39 @@ async fn mac_runner_spawns_generic_and_pi_processes_through_seatbelt() -> Result
     let secret = workspace.join("private");
     std::fs::write(&secret, "PRIVATE")?;
     let harness = workspace.join("fixture-pi");
-    // No model/provider calls or fake history records. The mock merely proves
-    // PiManager supplies RPC argv and inherits the same file policy as spawn.
+    // No model/provider calls or fake history records. PiManager requires a
+    // correlated GetState handshake before admitting a process as started.
+    let state = serde_json::json!({
+        "model": null, "thinkingLevel": "off", "isStreaming": false,
+        "isCompacting": false, "steeringMode": "all", "followUpMode": "all",
+        "sessionId": "mac-native-launch-proof", "autoCompactionEnabled": true,
+        "messageCount": 0, "pendingMessageCount": 0,
+    });
+    let script = r#"#!/bin/sh
+if test "$1" = --version; then printf 'pi 0.85.1\n'; exit 0; fi
+if test "$(pwd -P)" != __CWD__; then exit 1; fi
+printf '%s\n' "$$" > pi-pid
+( printf '%s\n' "$@"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\nDONE\n' ) > pi-proof
+while IFS= read -r request; do
+    case "$request" in
+        *\"type\":\"get_state\"*)
+            id=${request#*\"id\":\"}
+            id=${id%%\"*}
+            printf '%s\n' "$id" >> pi-state-requests
+            printf '{"type":"response","id":"%s","success":true,"data":__STATE__}\n' "$id"
+            ;;
+        *) exit 1 ;;
+    esac
+done
+"#;
     std::fs::write(
         &harness,
-        format!(
-            "#!/bin/sh\nif test \"$1\" = --version; then printf 'pi 0.85.1\\n'; exit 0; fi\nif test \"$(pwd -P)\" != {:?}; then exit 0; fi\nprintf '%s\\n' \"$$\" > pi-pid\n( printf '%s\\n' \"$@\"; pwd -P; if cat private; then printf LEAK; else printf DENIED; fi; printf '\\nDONE\\n' ) > pi-proof\nwhile :; do sleep 1; done\n",
-            workspace.canonicalize()?.to_string_lossy()
-        ),
+        script
+            .replace(
+                "__CWD__",
+                &serde_json::to_string(&workspace.canonicalize()?)?,
+            )
+            .replace("__STATE__", &state.to_string()),
     )?;
     std::fs::set_permissions(&harness, std::fs::Permissions::from_mode(0o700))?;
     let config = format!(
@@ -116,6 +141,10 @@ async fn mac_runner_spawns_generic_and_pi_processes_through_seatbelt() -> Result
             },
         }).await?;
         ensure!(created.session_id == session_id, "public routing identity changed");
+        let state = client.agent_get_state(session_id).await?;
+        ensure!(state.session_id == session_id, "native identity replaced public routing identity");
+        let requests = std::fs::read_to_string(workspace.join("pi-state-requests"))?;
+        ensure!(requests.lines().count() >= 2 && requests.lines().all(|id| id.starts_with("get_state_")), "startup and explicit state probes must reach the mock with correlated IDs");
         let pi = wait_for_file(&workspace.join("pi-proof")).await?;
         ensure!(pi.starts_with("--mode\nrpc\n--approve\n"), "{pi}");
         ensure!(pi.ends_with("DENIED\nDONE\n") && !pi.contains("PRIVATE"), "{pi}");

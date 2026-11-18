@@ -51,8 +51,12 @@ async fn retired_index_sidecars_do_not_poison_global_identity_authority() -> Res
         retire_next(&sidecar)?;
         let mut batch = DiscoveryBatch::open(temp.path()).await?;
         assert_retired(&sidecar);
-        retire_next(&sidecar)?;
         batch.prepare("retained").await?;
+        // prepare answers from the batch snapshot (oqto-6qff); the fresh
+        // all-shard read that commit performs must tolerate the race too.
+        retire_next(&sidecar)?;
+        let public = crate::oqto_log::store::platform_id_for_external_id("retained");
+        assert_eq!(identities(temp.path(), &public, "retained").await?.len(), 1);
         assert_retired(&sidecar);
     }
     assert_eq!(std::fs::read(&db)?, before);

@@ -1,0 +1,14 @@
+[package]
+name = "oqto-openui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "OpenUI Lang parts for native clients (ADR-0074): a bounded parser, the Oqto profile's core components and the native-or-fallback decision. No IO, no rendering."
+
+[dependencies]
+oqto-session-view = { path = "../oqto-session-view" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

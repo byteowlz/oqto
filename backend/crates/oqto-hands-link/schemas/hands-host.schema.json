@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HostConfig",
+  "description": "Destination side: the standalone hands host's explicit configuration.",
+  "type": "object",
+  "required": [
+    "bindings",
+    "launcher",
+    "listen",
+    "origin",
+    "state_dir",
+    "version"
+  ],
+  "properties": {
+    "bindings": {
+      "description": "Owner-installed workspace bindings, keyed by binding id.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/BindingConfig"
+      }
+    },
+    "launcher": {
+      "$ref": "#/definitions/LauncherConfig"
+    },
+    "listen": {
+      "description": "Socket address to listen on: a tailnet or loopback address, never a wildcard.",
+      "type": "string"
+    },
+    "origin": {
+      "description": "Canonical root HTTPS origin printed in pairing QRs.",
+      "type": "string"
+    },
+    "state_dir": {
+      "description": "Private host state (pairing store, claim journal); absolute.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Configuration format version; must be 1.",
+      "type": "integer",
+      "format": "uint8",
+      "minimum": 0.0
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "BindingConfig": {
+      "type": "object",
+      "required": [
+        "max_concurrent_calls",
+        "max_lease_ms",
+        "root"
+      ],
+      "properties": {
+        "max_concurrent_calls": {
+          "description": "Destination ceiling for concurrent leases per paired device.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 8.0,
+          "minimum": 1.0
+        },
+        "max_lease_ms": {
+          "description": "Destination ceiling for the lease an origin may request.",
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 10000.0,
+          "minimum": 2000.0
+        },
+        "root": {
+          "description": "Native workspace root; the hands' only writable tree.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LauncherConfig": {
+      "type": "object",
+      "required": [
+        "daemon",
+        "oqt_hands",
+        "protected_roots"
+      ],
+      "properties": {
+        "bpf": {
+          "description": "Linux: compiled seccomp filter. Must be absent on macOS.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daemon": {
+          "description": "The pi-env daemon run inside the hands.",
+          "type": "string"
+        },
+        "oqt_hands": {
+          "description": "The platform's confined hands launcher (`oqt_hands`).",
+          "type": "string"
+        },
+        "protected_roots": {
+          "description": "Roots the hands may never see (credentials, runtime, authority).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shim": {
+          "description": "Linux: Landlock shim binary. Must be absent on macOS.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

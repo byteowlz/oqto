@@ -53,7 +53,7 @@ with coding_world(lambda request: ('text', 'early-editor-reply'), 'oqt-early-edi
     try:
         exiting.expect('Loading oqt')
         exiting.send('\x04')
-        exiting.process.wait(timeout=3)
+        exiting.drain_until_exit(3)
         assert exiting.process.returncode == 0, 'Early editor exit failed'
         assert not (profile/'host.json').exists(), 'Exit started a host through the held lock'
     finally:

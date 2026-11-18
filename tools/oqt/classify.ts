@@ -7,6 +7,8 @@ export type Category = "read" | "edit" | "shell";
 
 export interface Classified {
 	category: Category;
+	/** Named remote machine, when the call targets one (ADR-0086). */
+	machine?: string;
 	/** Ledger resource id (capability `execute`). */
 	resource: string;
 	/** Simple shell commands only: the remembered/approvable prefix. */
@@ -117,7 +119,33 @@ function editPreview(input: Record<string, unknown>) {
 	return parts.join("\n");
 }
 
+/** Named remote machine of a call (ADR-0086), or undefined for local hands.
+ * Throws for a malformed name: never silently local. */
+export function remoteMachine(input: unknown): string | undefined {
+	if (!input || typeof input !== "object" || !("machine" in input))
+		return undefined;
+	const machine = (input as { machine: unknown }).machine;
+	if (machine === undefined || machine === "local") return undefined;
+	if (typeof machine !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(machine))
+		throw new Error("Invalid machine name; refusing admission");
+	return machine;
+}
+
 export function classify(tool: string, input: unknown): Classified {
+	const machine = remoteMachine(input);
+	const local = classifyLocal(tool, input);
+	if (!machine) return local;
+	// A remote call is its own ledger resource: local grants, remembered rules
+	// and pre-approved prefixes never cover another machine.
+	return {
+		...local,
+		machine,
+		resource: `remote:${machine}:${local.resource}`,
+		preview: `[on ${machine}] ${local.preview}`,
+	};
+}
+
+function classifyLocal(tool: string, input: unknown): Classified {
 	const args = (input && typeof input === "object" ? input : {}) as Record<
 		string,
 		unknown

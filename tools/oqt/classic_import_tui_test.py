@@ -36,7 +36,7 @@ with coding_world(lambda request: ('text', f'classic-resume-reply-{len(provider.
     discovery_source.write_bytes(before)
     discovery_source.chmod(0o400)
     def imported(owner_profile=owner, reject=False):
-        result = subprocess.run([str(ROOT / 'oqt'), '--import-classic', str(source), '--origin', 'fixture-mac', '--owner-profile', str(owner_profile), '--workdir', str(work), '--json'], cwd=work, env=dict(os.environ), capture_output=True, text=True, timeout=180)
+        result = subprocess.run([str(ROOT / 'tools/oqt/dev.sh'), '--import-classic', str(source), '--origin', 'fixture-mac', '--owner-profile', str(owner_profile), '--workdir', str(work), '--json'], cwd=work, env=dict(os.environ), capture_output=True, text=True, timeout=180)
         if reject:
             assert result.returncode != 0 and not result.stdout.strip(), result
             return result.stderr

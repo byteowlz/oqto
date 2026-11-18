@@ -12,7 +12,7 @@ import { editToolSystemPromptContribution } from "../core/tools/edit.ts";
 import { readToolSystemPromptContribution } from "../core/tools/read.ts";
 import { writeToolSystemPromptContribution } from "../core/tools/write.ts";
 import { GuardGate, guardCredentials } from "./brain-client.ts";
-import { OQT_RULES, openCodingHarness } from "./coding-runtime.ts";
+import { openCodingHarness, oqtRules } from "./coding-runtime.ts";
 import { WireClient } from "./guard-wire.ts";
 import { HandsClient } from "./hands-client.ts";
 import { ownerModelsStore } from "./owner-models.ts";
@@ -133,12 +133,15 @@ export async function openBrainComposition(options: {
 				selectedTools,
 				toolSnippets,
 				toolGuidelines,
-				appendSystemPrompt: OQT_RULES,
+				appendSystemPrompt: oqtRules(machines),
 				contextFiles: contextFiles as { path: string; content: string }[],
 				skills: [],
 			}) as Record<string, string>;
 		};
 		const gate = new GuardGate(guard, hands);
+		const machines = await gate.machines();
+		gate.namedMachines = machines.length > 0;
+		debug(`named machines: ${machines.length}`);
 		const runtime = await openCodingHarness({
 			databasePath: options.databasePath,
 			session: options.session,
@@ -151,6 +154,7 @@ export async function openBrainComposition(options: {
 			refresh: () => gate.refresh(),
 			requestAccess: (params, signal) => gate.requestAccess(params, signal),
 			promptSections,
+			machines,
 		});
 		debug("harness open");
 		return {

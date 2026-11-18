@@ -3,6 +3,7 @@
  */
 export {
 	DictationMicButton,
+	DictationSettingsPanel,
 	DictationStatus,
 } from "@/components/voice/ComposerDictation";
 export { useDictation } from "@/features/voice/hooks/useDictation";

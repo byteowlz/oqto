@@ -25,6 +25,8 @@ pub const WORKSPACE_SHELL: &str = "workspace-shell";
 pub const SHELL_PREFIX: &str = "shell:";
 pub const NETWORK_EGRESS: &str = "egress";
 pub const PATH_PREFIX: &str = "path:";
+/// `remote:<machine>:<base>`: a workspace tool call on a named machine.
+pub const REMOTE_PREFIX: &str = "remote:";
 
 /// One ceiling layer in compiler terms, derived from a `GuardConfig`.
 #[derive(Default)]
@@ -150,6 +152,43 @@ pub fn normalize_lexical(path: &Path) -> Result<PathBuf> {
     normalize(path)
 }
 
+/// Deepest existing ancestor canonicalized, the rest kept lexical.
+fn resolve_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let mut existing = path;
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(resolved) = existing.canonicalize() {
+            let mut out = resolved;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return Some(out);
+        }
+        rest.push(existing.file_name()?);
+        existing = existing.parent()?;
+    }
+}
+
+/// Paths as written and as the filesystem resolves them. Requests carry
+/// resolved paths (the guard mounts what a path resolves to), so a rule
+/// written through a symlinked ancestor must also match its resolved
+/// location. On macOS /etc, /var and /tmp live under /private: without this
+/// a deny of /etc/shadow or of a /var/tmp root never matched a request.
+fn with_resolved(paths: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        let resolved = resolve_existing_prefix(Path::new(&path))
+            .map(|resolved| resolved.display().to_string());
+        out.push(path);
+        if let Some(resolved) = resolved
+            && !out.contains(&resolved)
+        {
+            out.push(resolved);
+        }
+    }
+    out
+}
+
 fn expand(raw: &str, home: &Path, base: &Path) -> Result<PathBuf> {
     ensure!(!raw.is_empty() && raw.len() <= 4096, "invalid ceiling path");
     let path = if raw == "~" {
@@ -238,9 +277,9 @@ fn layer(file: &CeilingFile, home: &Path, base: &Path, name: &str) -> Result<Pat
     Ok(PathLayer {
         builtin: false,
         default,
-        deny: render(&file.deny_paths)?,
-        ask: render(&file.ask_paths)?,
-        allow: render(&file.allow_paths)?,
+        deny: with_resolved(render(&file.deny_paths)?),
+        ask: with_resolved(render(&file.ask_paths)?),
+        allow: with_resolved(render(&file.allow_paths)?),
     })
 }
 
@@ -298,7 +337,7 @@ pub fn compile_ceiling(input: &CeilingInput) -> Result<Policy> {
         PathLayer {
             builtin: true,
             default: RuleMode::Allow,
-            deny: hard,
+            deny: with_resolved(hard),
             ask: vec![],
             allow: vec![],
         },

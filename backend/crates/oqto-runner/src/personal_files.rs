@@ -15,6 +15,23 @@ const MAX_FILE: u64 = 8 * 1024 * 1024;
 fn invalid<T>(_: T) -> ActionFailure {
     ActionFailure::Invalid
 }
+/// Opening a grant root: a changed identity needs owner re-approval (never a
+/// malformed request), a vanished root is NotFound, anything else is Denied.
+fn grant_root(error: anyhow::Error) -> ActionFailure {
+    if error
+        .downcast_ref::<oqto_personal::GrantRootChanged>()
+        .is_some()
+    {
+        ActionFailure::GrantReapproval
+    } else if error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    {
+        ActionFailure::NotFound
+    } else {
+        ActionFailure::Denied
+    }
+}
 fn io_error(error: std::io::Error) -> ActionFailure {
     if error.kind() == std::io::ErrorKind::NotFound {
         ActionFailure::NotFound
@@ -99,7 +116,7 @@ fn cwd_context<'a>(
         .max_by_key(|r| r.path().components().count())
         .ok_or(ActionFailure::Denied)?;
     let path = cwd.strip_prefix(root.path()).map_err(invalid)?;
-    let dir = Dir::from_std_file(root.open_root().map_err(invalid)?);
+    let dir = Dir::from_std_file(root.open_root().map_err(grant_root)?);
     let opened = dir
         .open_dir(relative(path.to_str().ok_or(ActionFailure::Invalid)?)?)
         .map_err(io_error)?;
@@ -140,7 +157,7 @@ pub(crate) fn execute(
     if writing && !grant.writable() {
         return Err(ActionFailure::Denied);
     }
-    let dir = Dir::from_std_file(grant.open_root().map_err(invalid)?);
+    let dir = Dir::from_std_file(grant.open_root().map_err(grant_root)?);
     let path = relative(path)?;
     match &action {
         HostAction::FilesList { .. } => {
@@ -292,5 +309,21 @@ mod cwd_tests {
         std::fs::rename(&root, temp.path().join("old-root")).unwrap();
         std::fs::create_dir_all(&cwd).unwrap();
         assert!(cwd_context(&grants, &cwd).is_err());
+    }
+}
+
+#[cfg(test)]
+mod grant_root_tests {
+    use super::*;
+    #[test]
+    fn a_changed_grant_root_asks_for_reapproval_never_a_bad_request() {
+        assert!(matches!(
+            grant_root(oqto_personal::GrantRootChanged.into()),
+            ActionFailure::GrantReapproval
+        ));
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(matches!(grant_root(gone.into()), ActionFailure::NotFound));
+        let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(grant_root(other.into()), ActionFailure::Denied));
     }
 }

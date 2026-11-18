@@ -1,6 +1,10 @@
 import "@testing-library/jest-dom";
+import { initI18n } from "@/lib/i18n";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+
+// Components now read their text from the dictionaries; tests expect English.
+initI18n();
 
 // Cleanup after each test case
 afterEach(() => {

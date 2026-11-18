@@ -1,0 +1,15 @@
+{
+  "automaticReplay": false,
+  "continuityField": "interactionRuntimeGeneration",
+  "hostBindingOnNativeWire": false,
+  "negotiate": {
+    "type": "interaction_negotiate",
+    "versions": [
+      1
+    ]
+  },
+  "negotiatedType": "interaction_negotiated",
+  "sourceCapability": "runtime_interactions_source_v1",
+  "sourceResultIsHostAdmission": false,
+  "version": 1
+}

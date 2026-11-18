@@ -1,0 +1,6 @@
+root = Stack([card])
+card = Card([head, steps, risks, buttons])
+head = CardHeader("Migrate pairing store", "Plan for oqto-8x3p.10.7.8 · needs your approval")
+steps = Steps([StepsItem("Back up", "Hard-link the legacy marker and snapshot the store."), StepsItem("Migrate marker", "Write v2 marker with volume UUID + inode, under the singleton lock."), StepsItem("Restart runner", "One brief restart; native Pi sessions untouched."), StepsItem("Verify", "Listener active, same plan, mTLS health passes.")])
+risks = Accordion([AccordionItem("rollback", "Rollback", [TextContent("restore-owner-marker restores the original marker inode; the database is never written.")]), AccordionItem("scope", "What does not change", [TagBlock(["keys", "grants", "tickets", "native sessions"])])])
+buttons = Buttons([Button("Approve plan", @Answer({approved: true})), Button("Not now", @Answer({approved: false}), "secondary")])

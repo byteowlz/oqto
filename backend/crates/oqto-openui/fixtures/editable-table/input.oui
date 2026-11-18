@@ -1,0 +1,5 @@
+root = Stack([card])
+card = Card([head, grid, buttons])
+head = CardHeader("Release checklist 0.5.12", "Edit owners and dates, then confirm")
+grid = EditableTable("checklist", [{type: "text", key: "task", header: "Task"}, {type: "select", key: "owner", header: "Owner", options: [{value: "tommy", label: "Tommy"}, {value: "agent", label: "Agent"}]}, {type: "date-single", key: "due", header: "Due"}, {type: "number", key: "est", header: "Hours"}], [{id: "1", values: ["Qualify Mac runner", "agent", "2026-10-29", 3]}, {id: "2", values: ["Phone pairing acceptance", "tommy", "2026-10-30", 1]}, {id: "3", values: ["Publish SDK 0.4.0", "agent", "2026-10-31", 2]}])
+buttons = Buttons([Button("Confirm checklist", @Answer({confirmed: true}))])
