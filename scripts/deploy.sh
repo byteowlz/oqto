@@ -586,7 +586,10 @@ sync_extensions_host() {
     local dir
     dir="$(ssh "$ssh_target" 'umask 077; mktemp -d /tmp/oqto-extensions.XXXXXXXX')" || return 1
     [[ "$dir" =~ ^/tmp/oqto-extensions\.[a-zA-Z0-9]{8}$ ]] || return 1
-    scp -- "$sync" "$list" "$DEPENDENCY_POLICY_FILE" "$ssh_target:$dir/" >/dev/null || return 1
+    scp -- "$sync" "$list" "$DEPENDENCY_POLICY_FILE" \
+        "$ROOT_DIR/scripts/dist/managed-pi-extensions.py" \
+        "$ROOT_DIR/scripts/dist/pi-extension-supersessions.json" \
+        "$ssh_target:$dir/" >/dev/null || return 1
     local q
     q="$(printf '%q' "$dir")"
     host_exec_sudo "$is_local" "$ssh_target" "PI_DEFAULT_EXTENSIONS_FILE=$q/pi-default-extensions.txt bash $q/sync-agent-runtime.sh --manifest $q/dependencies.toml --skip-pi --non-interactive; rc=\$?; rm -rf -- $q; exit \$rc"

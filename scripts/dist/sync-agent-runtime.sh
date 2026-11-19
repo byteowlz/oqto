@@ -72,16 +72,17 @@ err() { printf '[agent-sync] error: %s\n' "$*" >&2; }
 read_pin() {
   local key="$1"
   [[ -f "$MANIFEST" ]] || return 0
-  awk -v key="$key" '
-    /^\[external\]/ { inside = 1; next }
-    /^\[/           { inside = 0 }
-    inside && index($0, key " = \"") == 1 {
-      line = substr($0, length(key) + 4)
-      sub(/".*$/, "", line)
-      print line
-      exit
-    }
-  ' "$MANIFEST"
+  python3 - "$MANIFEST" "$key" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as handle:
+    external = tomllib.load(handle).get("external", {})
+if not isinstance(external, dict):
+    raise SystemExit("dependency manifest external section must be a table")
+value = external.get(sys.argv[2], "")
+if not isinstance(value, str):
+    raise SystemExit(f"dependency pin {sys.argv[2]} must be a string")
+print(value)
+PY
 }
 
 [[ -n "$PI_VERSION" ]] || PI_VERSION="$(read_pin pi)"

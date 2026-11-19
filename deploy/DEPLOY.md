@@ -99,6 +99,9 @@ and backfill-only invocations do not create source snapshots.
 5. **Extensions** (unless `--skip-extensions`): the pinned extension set is synced
    preserve-first; changed or retired managed extensions move to
    `~/.pi/agent/extension-backups/<stamp>/`. The Pi runtime itself is never touched here.
+   Remote staging includes the reconciler and its ownership policy, not just the shell
+   entrypoint. Pins are parsed as TOML. A failure in this post-activation phase is
+   reported separately: the verified release remains active; it is not a rollback.
 
 The frontend ships inside the artifact; `oqto-setup` links `/var/www/oqto` to
 `releases/current/immutable/frontend`, so rollback serves the matching bundle. Hosts

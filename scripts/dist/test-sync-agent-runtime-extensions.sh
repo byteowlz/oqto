@@ -9,6 +9,27 @@ export PI_DEFAULT_EXTENSIONS_FILE="$tmp/defaults"
 # shellcheck source=scripts/dist/sync-agent-runtime.sh
 source "$SCRIPT_DIR/sync-agent-runtime.sh"
 
+# Exercise actual manifest-driven defaults, not only explicit CLI overrides.
+printf '%s\n' '[external]' 'pi = "1.4.0" # pinned' \
+  '  pi-extensions = "0123456789abcdef0123456789abcdef01234567"' > "$tmp/pins.toml"
+parsed="$(MANIFEST="$tmp/pins.toml" bash -c \
+  'source "$1" --skip-pi --skip-extensions; printf "%s\\n%s" "$PI_VERSION" "$EXT_REF"' \
+  _ "$SCRIPT_DIR/sync-agent-runtime.sh")"
+[[ "$parsed" == $'1.4.0\n0123456789abcdef0123456789abcdef01234567' ]]
+printf '%s\n' '[external]' > "$tmp/pins.toml"
+missing="$(MANIFEST="$tmp/pins.toml" bash -c \
+  'source "$1" --skip-pi --skip-extensions; printf "%s%s" "$PI_VERSION" "$EXT_REF"' \
+  _ "$SCRIPT_DIR/sync-agent-runtime.sh")"
+[[ -z "$missing" ]]
+for invalid in 'pi = 42' 'pi = "unterminated'; do
+  printf '%s\n' '[external]' "$invalid" > "$tmp/pins.toml"
+  if MANIFEST="$tmp/pins.toml" bash -c \
+    'source "$1" --skip-pi --skip-extensions' _ "$SCRIPT_DIR/sync-agent-runtime.sh" \
+    > "$tmp/pin-error" 2>&1; then
+    echo 'invalid runtime pin was accepted' >&2; exit 1
+  fi
+done
+
 home="$tmp/home"
 src="$tmp/source"
 mkdir -p "$home/.pi/agent/extensions/custom" "$home/.pi/agent/extensions/auto-rename" "$src/pi-history-search"

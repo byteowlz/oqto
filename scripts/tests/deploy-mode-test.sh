@@ -126,4 +126,5 @@ help_output="$("$DEPLOY" --help)"
 grep -q -- '--backfill-only' <<<"$help_output"
 grep -q -- '--allow-downgrade' <<<"$help_output"
 
+bash "$ROOT_DIR/scripts/tests/test-deploy-extension-staging.sh"
 echo "deploy mode tests passed"
