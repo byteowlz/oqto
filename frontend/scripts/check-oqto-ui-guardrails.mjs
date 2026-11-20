@@ -86,6 +86,8 @@ const ALLOWED_PROJECT_ALIASES = {
 		// These contain no legacy chat/session transport or history authority.
 		"@/components/voice/ComposerDictation",
 		"@/features/voice/hooks/useDictation",
+		// The existing bounded capability-document read; no chat/history state.
+		"@/features/voice/hooks/useVoiceFeatures",
 		"@/lib/chat-draft-storage",
 	],
 	dev: [],
@@ -224,7 +226,29 @@ function normalizedRelative(root, file) {
 	return path.relative(root, file).replaceAll(path.sep, "/");
 }
 
+/** Only the canonical layout implies a frontend; arbitrary scan roots stay scoped. */
+function frontendRootFor(sourceRoot) {
+	return path.basename(sourceRoot) === "oqto-ui" &&
+		path.basename(path.dirname(sourceRoot)) === "src"
+		? path.resolve(sourceRoot, "../..")
+		: null;
+}
+
+function sharedOpenUIRoot(sourceRoot) {
+	const frontendRoot = frontendRootFor(sourceRoot);
+	return frontendRoot
+		? path.join(frontendRoot, "lib", "chat-rendering", "openui")
+		: null;
+}
+
+function isSharedOpenUIFile(root, file) {
+	const sharedRoot = sharedOpenUIRoot(root);
+	return sharedRoot !== null && isInside(sharedRoot, file);
+}
+
 function sourceLayer(root, file) {
+	// Shared OpenUI remains a strictly checked Chat view after extraction.
+	if (isSharedOpenUIFile(root, file)) return "chat";
 	const [layer] = normalizedRelative(root, file).split("/");
 	return LAYERS.includes(layer) ? layer : null;
 }
@@ -721,6 +745,12 @@ function inspectFile(
 ) {
 	const relative = normalizedRelative(sourceRoot, absolutePath);
 	const layer = sourceLayer(sourceRoot, absolutePath);
+	const sharedOpenUI = isSharedOpenUIFile(sourceRoot, absolutePath);
+	// This one pure data decoder accepts untrusted values; TSX views do not.
+	// It still has Chat's no-browser/no-state policy and shared import checks.
+	const allowsUnknownInput =
+		layer === "platform" ||
+		(sharedOpenUI && path.basename(absolutePath) === "adapter.ts");
 	const violations = [];
 	const edges = [];
 	const typeContext = {
@@ -812,7 +842,11 @@ function inspectFile(
 					path.dirname(absolutePath),
 					moduleSpecifier,
 				);
-				if (!isInside(sourceRoot, target)) {
+				if (
+					sharedOpenUI
+						? !isSharedOpenUIFile(sourceRoot, target)
+						: !isInside(sourceRoot, target)
+				) {
 					violations.push(
 						violation(
 							"architecture/source-boundary-import",
@@ -1249,7 +1283,7 @@ function inspectFile(
 			);
 		}
 
-		if (node.kind === ts.SyntaxKind.UnknownKeyword && layer !== "platform") {
+		if (node.kind === ts.SyntaxKind.UnknownKeyword && !allowsUnknownInput) {
 			let current = node.parent;
 			while (current && !ts.isSourceFile(current) && !ts.isBlock(current)) {
 				const modifiers = ts.canHaveModifiers(current)
@@ -1399,7 +1433,8 @@ function inspectFile(
 }
 
 async function sharedRendererBoundaryViolations(sourceRoot) {
-	const frontendRoot = path.resolve(sourceRoot, "../..");
+	const frontendRoot = frontendRootFor(sourceRoot);
+	if (!frontendRoot) return [];
 	const sharedRoot = path.join(frontendRoot, "lib", "chat-rendering");
 	const files = await walk(sharedRoot);
 	const violations = [];
@@ -1573,7 +1608,11 @@ function shellWideElements(selectorList) {
  * the utility classes shared components style themselves with.
  */
 async function styleLayerViolations(sourceRoot) {
-	const files = await walkStyles(sourceRoot);
+	const sharedRoot = sharedOpenUIRoot(sourceRoot);
+	const files = [
+		...(await walkStyles(sourceRoot)),
+		...(sharedRoot ? await walkStyles(sharedRoot) : []),
+	];
 	const violations = [];
 	for (const file of files) {
 		const relative = normalizedRelative(sourceRoot, file);
@@ -1621,7 +1660,11 @@ export async function inspectOqtoUI(
 ) {
 	const absoluteRoot = path.resolve(sourceRoot);
 	const exceptions = await readExceptions(exceptionsPath);
-	const files = await walk(absoluteRoot);
+	const sharedRoot = sharedOpenUIRoot(absoluteRoot);
+	const files = [
+		...(await walk(absoluteRoot)),
+		...(sharedRoot ? await walk(sharedRoot) : []),
+	];
 	const allFiles = new Set(files);
 	const sourceFiles = new Map();
 	for (const file of files) {

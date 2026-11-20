@@ -1,4 +1,4 @@
-import { MarkdownRenderer } from "@/components/data-display";
+import { MarkdownRenderer } from "@/components/data-display/markdown-renderer";
 /**
  * OpenUI parts in the web chat (ADR-0074, oqto-8qse.4).
  *
@@ -12,15 +12,65 @@ import { MarkdownRenderer } from "@/components/data-display";
  * schema, unknown components are dropped, no HTML is injected and no action runs.
  */
 import { createOqtoParser } from "@byteowlz/oqto-openui";
-import { useMemo } from "react";
+import { type CSSProperties, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { type OpenUIPartInput, readOpenUIPart } from "./adapter";
 import "./openui-part.css";
 
-type Element = {
-	type: "element";
-	typeName: string;
-	props: Record<string, unknown>;
+/** Read-only fields consumed from the closed profile; not a second schema. */
+type ElementFields = {
+	labels?: unknown;
+	series?: unknown;
+	values?: unknown;
+	category?: unknown;
+	title?: unknown;
+	children?: unknown;
+	direction?: unknown;
+	subtitle?: unknown;
+	heading?: unknown;
+	description?: unknown;
+	size?: unknown;
+	text?: unknown;
+	textMarkdown?: unknown;
+	variant?: unknown;
+	codeString?: unknown;
+	items?: unknown;
+	columns?: unknown;
+	data?: unknown;
+	tags?: unknown;
+	rows?: unknown;
+	header?: unknown;
+	footer?: unknown;
+	top?: unknown;
+	bottom?: unknown;
+	buttons?: unknown;
+	name?: unknown;
+	fields?: unknown;
+	label?: unknown;
+	input?: unknown;
+	hint?: unknown;
+	placeholder?: unknown;
+	src?: unknown;
+	alt?: unknown;
+	value?: unknown;
+	subtext?: unknown;
+	trigger?: unknown;
+	content?: unknown;
+	details?: unknown;
 };
+type TableFields = {
+	type?: unknown;
+	header?: unknown;
+	key?: unknown;
+	label?: unknown;
+	data?: unknown;
+	left?: unknown;
+	right?: unknown;
+};
+type Element = { type: "element"; typeName: string; props: ElementFields };
+type NamedNodeProps = { node: Element };
+type NodeProps = { node: unknown };
+type NotRenderedProps = { name: string };
 
 const isElement = (v: unknown): v is Element =>
 	!!v &&
@@ -34,32 +84,13 @@ const text = (v: unknown): string =>
 		: typeof v === "number" || typeof v === "boolean"
 			? String(v)
 			: "";
-const props = (v: unknown): Record<string, unknown> =>
-	isElement(v) ? v.props : {};
+const props = (v: unknown): ElementFields => (isElement(v) ? v.props : {});
 /** Plain data objects (table columns, rows) are not elements. */
-const record = (v: unknown): Record<string, unknown> =>
-	!!v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+const record = (v: unknown): TableFields =>
+	!!v && typeof v === "object" ? (v as TableFields) : {};
 
 const isBound = (v: unknown) =>
 	!!v && typeof v === "object" && "k" in (v as object);
-
-export interface OpenUIPartInput {
-	program: string;
-	fallback?: string;
-	wait?: boolean;
-}
-
-/** Read the tool input without trusting its shape. */
-export function readOpenUIPart(input: unknown): OpenUIPartInput | null {
-	if (!input || typeof input !== "object") return null;
-	const value = input as Record<string, unknown>;
-	if (typeof value.program !== "string" || !value.program.trim()) return null;
-	return {
-		program: value.program,
-		fallback: typeof value.fallback === "string" ? value.fallback : undefined,
-		wait: value.wait === true,
-	};
-}
 
 /** Positional paths, computed outside JSX, are the stable identity of list items. */
 const slots = <T,>(owner: string, list: readonly T[]) =>
@@ -84,15 +115,20 @@ function toneOf(v: unknown): string {
 }
 
 /** A stable, de-emphasised line for components this host does not draw yet. */
-function NotRendered({ name }: { name: string }) {
+function NotRendered({ name }: NotRenderedProps) {
+	const { t } = useTranslation();
 	return (
 		<div className="wb-openui__unsupported">
-			{name} is not rendered in the web chat yet.
+			{t("openui.notRendered", {
+				name,
+				defaultValue: "{{name}} is not rendered in the web chat yet.",
+			})}
 		</div>
 	);
 }
 
-function Charts({ node }: { node: Element }) {
+function Charts({ node }: NamedNodeProps) {
+	const { t } = useTranslation();
 	const p = node.props;
 	const labels = arr(p.labels).map(text);
 	const series = arr(p.series).filter(isElement);
@@ -115,7 +151,11 @@ function Charts({ node }: { node: Element }) {
 									<span
 										className="wb-openui__bar-fill"
 										key={seriesKey}
-										style={{ width: `${((v[i] ?? 0) / max) * 100}%` }}
+										style={
+											{
+												"--wb-openui-width": `${((v[i] ?? 0) / max) * 100}%`,
+											} as CSSProperties
+										}
 										data-series={k}
 									/>
 								),
@@ -151,9 +191,15 @@ function Charts({ node }: { node: Element }) {
 					className="wb-openui__spark"
 					data-series={k}
 					role="img"
-					aria-label={text(props(series[k] ?? {}).category) || "series"}
+					aria-label={
+						text(props(series[k] ?? {}).category) ||
+						t("openui.series", "series")
+					}
 				>
-					<title>{text(props(series[k] ?? {}).category) || "series"}</title>
+					<title>
+						{text(props(series[k] ?? {}).category) ||
+							t("openui.series", "series")}
+					</title>
 					<polyline
 						points={v
 							.map(
@@ -181,7 +227,8 @@ function Charts({ node }: { node: Element }) {
 	);
 }
 
-function Node({ node }: { node: unknown }) {
+function Node({ node }: NodeProps) {
+	const { t } = useTranslation();
 	if (Array.isArray(node)) {
 		return (
 			<>
@@ -329,7 +376,7 @@ function Node({ node }: { node: unknown }) {
 			return <span className="wb-openui__tags">{text(p.text)}</span>;
 		case "EntityList": {
 			const row = (r: unknown) => {
-				const o = (r ?? {}) as Record<string, unknown>;
+				const o = record(r);
 				return (
 					<div className="wb-openui__kv" key={text(o.left)}>
 						<span>{text(o.left)}</span>
@@ -382,7 +429,10 @@ function Node({ node }: { node: unknown }) {
 							key={key}
 							type="button"
 							disabled
-							title="Answers are given in the terminal"
+							title={t(
+								"openui.answersInTerminal",
+								"Answers are given in the terminal",
+							)}
 						>
 							{text(props(button).label)}
 						</button>
@@ -395,7 +445,10 @@ function Node({ node }: { node: unknown }) {
 					<button
 						type="button"
 						disabled
-						title="Answers are given in the terminal"
+						title={t(
+							"openui.answersInTerminal",
+							"Answers are given in the terminal",
+						)}
 					>
 						{text(p.label)}
 					</button>
@@ -465,7 +518,11 @@ function Node({ node }: { node: unknown }) {
 							<span
 								key={key}
 								data-series={i}
-								style={{ width: `${(v / total) * 100}%` }}
+								style={
+									{
+										"--wb-openui-width": `${(v / total) * 100}%`,
+									} as CSSProperties
+								}
 							/>
 						))}
 					</span>
@@ -491,7 +548,7 @@ function Node({ node }: { node: unknown }) {
 	}
 }
 
-function Tabs({ node }: { node: Element }) {
+function Tabs({ node }: NamedNodeProps) {
 	const items = arr(node.props.items);
 	if (!items.length) return null;
 	return (
@@ -506,7 +563,7 @@ function Tabs({ node }: { node: Element }) {
 	);
 }
 
-function DataTable({ node }: { node: Element }) {
+function DataTable({ node }: NamedNodeProps) {
 	const columns = arr(node.props.columns).map(record);
 	if (!columns.length) return null;
 	const rows = Math.max(0, ...columns.map((c) => arr(c.data).length));
@@ -536,19 +593,19 @@ function DataTable({ node }: { node: Element }) {
 	);
 }
 
-export function OpenUIPart({
-	input,
-	answered,
-}: { input: unknown; answered?: unknown }) {
+export interface OpenUIPartProps {
+	input: OpenUIPartInput;
+	answerText?: string;
+}
+
+export function OpenUIPart({ input, answerText }: OpenUIPartProps) {
 	const { t } = useTranslation();
 	const part = readOpenUIPart(input);
 	const parsed = useMemo(() => {
 		if (!part) return null;
 		try {
 			const result = createOqtoParser().parse(part.program);
-			const errors = result.meta.errors.map(
-				(e: { message?: string }) => e.message ?? "",
-			);
+			const errors = result.meta.errors.map((error) => error.message ?? "");
 			return {
 				root: result.root as unknown,
 				errors,
@@ -566,7 +623,7 @@ export function OpenUIPart({
 				{part.fallback ? <p>{part.fallback}</p> : null}
 				<div className="wb-openui__unsupported">
 					{t(
-						"oqtoUi.openui.invalid",
+						"openui.invalid",
 						"This UI could not be rendered; showing its text fallback.",
 					)}
 				</div>
@@ -576,22 +633,24 @@ export function OpenUIPart({
 	return (
 		<div className="wb-openui" data-openui-profile="oqto">
 			<Node node={parsed.root} />
-			{answered !== undefined ? (
+			{answerText !== undefined ? (
 				<div className="wb-openui__answered">
-					{t("oqtoUi.openui.answered", "Answered in the terminal")}:{" "}
-					{JSON.stringify(answered)}
+					{t("openui.answered", "Answered in the terminal")}: {answerText}
 				</div>
 			) : part.wait ? (
 				<div className="wb-openui__hint">
 					{t(
-						"oqtoUi.openui.answerInTerminal",
+						"openui.answerInTerminal",
 						"This UI answers in the session that asked (the terminal).",
 					)}
 				</div>
 			) : null}
 			{parsed.errors.length ? (
 				<div className="wb-openui__unsupported">
-					{parsed.errors.length} component warning(s)
+					{t("openui.componentWarnings", {
+						count: parsed.errors.length,
+						defaultValue: "{{count}} component warning(s)",
+					})}
 				</div>
 			) : null}
 		</div>

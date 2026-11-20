@@ -24,12 +24,14 @@ import {
 	DictationMicButton,
 	DictationSettingsPanel,
 	DictationStatus,
-	appendCompletedDraft,
-	readChatDraft,
 	useDictation,
 	useVoiceFeatures,
-	writeChatDraft,
 } from "../platform/composer-dictation";
+import {
+	appendCompletedDraft,
+	readChatDraft,
+	writeChatDraft,
+} from "../platform/composer-drafts";
 import type {
 	ChatMessage,
 	OqtoUiPlatform,

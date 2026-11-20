@@ -1,4 +1,13 @@
 {
+	"openui": {
+		"notRendered": "{{name}} is not rendered in the web chat yet.",
+		"series": "series",
+		"answersInTerminal": "Answers are given in the terminal",
+		"invalid": "This UI could not be rendered; showing its text fallback.",
+		"answered": "Answered in the terminal",
+		"answerInTerminal": "This UI answers in the session that asked (the terminal).",
+		"componentWarnings": "{{count}} component warning(s)"
+	},
 	"common": {
 		"loading": "Loading...",
 		"error": "Error",

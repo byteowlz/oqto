@@ -267,6 +267,7 @@
 	overflow: hidden;
 }
 .wb-openui__bar-fill {
+	width: var(--wb-openui-width, auto);
 	background: var(--primary);
 	height: 100%;
 }
@@ -329,6 +330,7 @@
 	overflow: hidden;
 }
 .wb-openui__share-bar span {
+	width: var(--wb-openui-width, auto);
 	background: var(--primary);
 }
 .wb-openui__share-bar span[data-series="1"] {

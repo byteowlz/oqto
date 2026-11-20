@@ -27,6 +27,18 @@ function runFailure(files: Record<string, string>): string {
 	return `${result.stdout}\n${result.stderr}`;
 }
 
+function projectResult(files: Record<string, string>) {
+	const root = fixture({
+		"src/oqto-ui/chat/view.ts": "export const view = 1;\n",
+		...files,
+	});
+	return spawnSync(
+		process.execPath,
+		[SCRIPT, "--source-root", path.join(root, "src", "oqto-ui")],
+		{ encoding: "utf8" },
+	);
+}
+
 afterEach(() => {
 	for (const root of tempRoots.splice(0)) {
 		rmSync(root, { recursive: true, force: true });
@@ -73,6 +85,96 @@ describe("OqtoUI architecture guardrails", () => {
 		);
 		expect(result.status).toBe(1);
 		expect(result.stderr).toContain("architecture/shared-renderer-boundary");
+	});
+
+	it("does not infer an unrelated frontend above an arbitrary scan root", () => {
+		const root = fixture({
+			"lib/chat-rendering/bad.ts":
+				'import { api } from "@/lib/api/chat"; export const bad = api;\n',
+			".tmp/custom/chat/view.ts": "export const view = 1;\n",
+		});
+		const result = spawnSync(
+			process.execPath,
+			[SCRIPT, "--source-root", path.join(root, ".tmp", "custom")],
+			{ encoding: "utf8" },
+		);
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("zero-baseline");
+	});
+
+	it("keeps strict view and pure-decoder checks after shared OpenUI extraction", () => {
+		const result = projectResult({
+			"lib/chat-rendering/openui/adapter.ts":
+				"export function narrow(raw: unknown): string { return typeof raw === 'string' ? raw : ''; }\n",
+			"lib/chat-rendering/openui/View.tsx":
+				"type ViewProps = { text: string }; export const View = ({ text }: ViewProps) => <p>{text}</p>;\n",
+		});
+		expect(result.status, result.stderr).toBe(0);
+	});
+
+	it.each([
+		[
+			"exported unknown",
+			"export const View = (raw: unknown) => null;",
+			"types/exported-unknown",
+		],
+		[
+			"inline visual declaration",
+			'export const View = () => <div style={{ width: "10px" }} />;',
+			"design/inline-style",
+		],
+		[
+			"untranslated copy",
+			"export const View = () => <p>Untranslated content</p>;",
+			"i18n/untranslated-text",
+		],
+		[
+			"erased data keys",
+			"type Data = Record<string, unknown>; export const value = 1;",
+			"types/record-unknown",
+		],
+		[
+			"relative escape",
+			'import { secret } from "../../api"; export const value = secret;',
+			"architecture/source-boundary-import",
+		],
+	])("still rejects shared OpenUI %s", (_name, code, rule) => {
+		const result = projectResult({
+			"lib/chat-rendering/openui/View.tsx": code,
+		});
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain(rule);
+	});
+
+	it("does not grant browser state to the shared raw-input decoder", () => {
+		const result = projectResult({
+			"lib/chat-rendering/openui/adapter.ts":
+				'export const read = () => localStorage.getItem("state");',
+		});
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("browser/adapter-only-api");
+	});
+
+	it("keeps shared OpenUI styles inside the style-layer guard", () => {
+		const result = projectResult({
+			"lib/chat-rendering/openui/view.css": ".wb-shell button { padding: 0; }",
+		});
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("style/unlayered-element-reset");
+	});
+
+	it("admits the existing voice capability hook only through the platform seam", () => {
+		const result = projectResult({
+			"src/oqto-ui/platform/voice.ts":
+				'export { useVoiceFeatures } from "@/features/voice/hooks/useVoiceFeatures";',
+		});
+		expect(result.status, result.stderr).toBe(0);
+		const direct = projectResult({
+			"src/oqto-ui/chat/voice.ts":
+				'export { useVoiceFeatures } from "@/features/voice/hooks/useVoiceFeatures";',
+		});
+		expect(direct.status).toBe(1);
+		expect(direct.stderr).toContain("architecture/project-alias-import");
 	});
 
 	it("accepts internal unknown narrowing and adapter-boundary unknown", () => {

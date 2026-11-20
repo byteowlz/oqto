@@ -121,7 +121,7 @@ describe("normalizeMessages", () => {
 		expect(out[0].id).toMatch(/^legacy-fallback-/);
 	});
 
-	it("drops adjacent duplicate assistant rows from replayed persistence", () => {
+	it("preserves distinct durable assistant IDs even when adjacent text is identical", () => {
 		const raw: RawMessage[] = [
 			{ id: "u1", role: "user", content: "split it" },
 			{ id: "a1", role: "assistant", content: "same response" },
@@ -130,11 +130,23 @@ describe("normalizeMessages", () => {
 			{ id: "a3", role: "assistant", content: "same response" },
 		];
 		const out = normalizeMessages(raw, "history");
-		expect(out.map((m) => m.id)).toEqual(["u1", "a1", "u2", "a3"]);
+		expect(out.map((m) => m.id)).toEqual(["u1", "a1", "a2", "u2", "a3"]);
 	});
 });
 
 describe("mergeServerMessages", () => {
+	it("idempotently upserts genuine replay by ID without collapsing equal-text neighbors", () => {
+		const first = textMsg("a1", "assistant", "same response", {
+			timestamp: 1000,
+		});
+		const second = textMsg("a2", "assistant", "same response", {
+			timestamp: 1000,
+		});
+		const once = mergeServerMessages([first, second], [first], "partial");
+		const twice = mergeServerMessages(once, [first], "partial");
+		expect(once.map((message) => message.id)).toEqual(["a1", "a2"]);
+		expect(twice).toEqual(once);
+	});
 	it("partial mode upserts by ID", () => {
 		const prev = [
 			textMsg("m1", "user", "hello"),

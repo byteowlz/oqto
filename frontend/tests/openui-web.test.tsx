@@ -3,7 +3,11 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { MessageGroupCard } from "@/lib/chat-rendering/CanonicalMessageRenderer";
 import type { MessageGroup } from "@/lib/chat-rendering/group-messages";
-import { OpenUIPart, readOpenUIPart } from "@/src/oqto-ui/chat/OpenUIPart";
+import { OpenUIPart } from "@/lib/chat-rendering/openui/OpenUIPart";
+import {
+	readOpenUIAnswerText,
+	readOpenUIPart,
+} from "@/lib/chat-rendering/openui/adapter";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { initI18n } from "../lib/i18n";
@@ -34,6 +38,33 @@ describe("openui tool input", () => {
 		expect(readOpenUIPart({ program: "   " })).toBeNull();
 		expect(readOpenUIPart({ fallback: "x" })).toBeNull();
 		expect(readOpenUIPart(undefined)).toBeNull();
+	});
+});
+
+describe("native OpenUI answer normalization", () => {
+	it("formats only the answer the tool actually reported, including falsy JSON values", () => {
+		for (const answer of [false, null, 0, "", { approved: true }]) {
+			expect(
+				readOpenUIAnswerText({ details: { outcome: "answered", answer } }),
+			).toBe(JSON.stringify(answer));
+		}
+	});
+	it("does not invent an answer for pending, malformed or unserializable output", () => {
+		for (const output of [
+			undefined,
+			"text",
+			{},
+			{ details: null },
+			{ details: { outcome: "pending", answer: true } },
+		])
+			expect(readOpenUIAnswerText(output)).toBeUndefined();
+		const cyclic: { self?: unknown } = {};
+		cyclic.self = cyclic;
+		expect(
+			readOpenUIAnswerText({
+				details: { outcome: "answered", answer: cyclic },
+			}),
+		).toBeUndefined();
 	});
 });
 
@@ -77,7 +108,9 @@ describe("openui web rendering", () => {
 		render(
 			<OpenUIPart
 				input={{ program: fixture("plan-approve"), wait: true }}
-				answered={{ approved: true }}
+				answerText={readOpenUIAnswerText({
+					details: { outcome: "answered", answer: { approved: true } },
+				})}
 			/>,
 		);
 		expect(screen.getByText(/Answered in the terminal/)).toBeInTheDocument();

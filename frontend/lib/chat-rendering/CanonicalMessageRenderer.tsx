@@ -23,7 +23,6 @@ import {
 import type { StreamingPresentationMode } from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
-import { OpenUIPart, readOpenUIPart } from "@/src/oqto-ui/chat/OpenUIPart";
 import {
 	Check,
 	Copy,
@@ -54,6 +53,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { dedentMarkdown, stripAnsiSequences } from "./chat-render-text";
 import type { MessageGroup } from "./group-messages";
+import { OpenUIPart } from "./openui/OpenUIPart";
+import { readOpenUIAnswerText, readOpenUIPart } from "./openui/adapter";
 
 /** Opt-in host presentation; never a second message or activity authority. */
 export interface ChatPresentation {
@@ -1517,20 +1518,6 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 /**
  * Renders a single part of a Pi message.
  */
-/** The @Answer value from an openui tool result, if the agent's tool reported one. */
-function extractOpenUIAnswer(output: unknown): unknown {
-	if (!output || typeof output !== "object") return undefined;
-	const details = (output as { details?: unknown }).details;
-	if (
-		details &&
-		typeof details === "object" &&
-		(details as { outcome?: unknown }).outcome === "answered"
-	) {
-		return (details as { answer?: unknown }).answer;
-	}
-	return undefined;
-}
-
 function PiPartRenderer({
 	part,
 	toolResult,
@@ -1831,8 +1818,8 @@ function PiPartRenderer({
 			if (openui) {
 				return (
 					<OpenUIPart
-						input={part.input}
-						answered={extractOpenUIAnswer(toolResult?.output)}
+						input={openui}
+						answerText={readOpenUIAnswerText(toolResult?.output)}
 					/>
 				);
 			}

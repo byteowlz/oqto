@@ -54,7 +54,10 @@ public `platform/flash-runtime-contract.ts` in-process interface: the Flash host
 injects its native worker factory. Public builds and synthetic adapter tests do
 not import a private Flash checkout or its SDK. Native history, target identity,
 transport and credential persistence remain host-owned; no server or in-memory
-fallback is introduced.
+fallback is introduced. Shared read-only OpenUI rendering is host-neutral and
+retains the same strict view checks after extraction; its pure decoder accepts
+raw tool data, but no browser state, transport or actions. Draft persistence and
+browser speech are separate platform responsibilities.
 
 Use [the canonical packaging sequence](../docs/reference/build-and-deploy.md) for
 deployments, not an ad-hoc copy of `frontend/dist`. Vendored runtime dependencies

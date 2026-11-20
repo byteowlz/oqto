@@ -1,4 +1,13 @@
 {
+	"openui": {
+		"notRendered": "{{name}} wird im Webchat noch nicht dargestellt.",
+		"series": "Datenreihe",
+		"answersInTerminal": "Antworten werden im Terminal gegeben",
+		"invalid": "Diese Oberfläche konnte nicht dargestellt werden; stattdessen wird die Textfassung angezeigt.",
+		"answered": "Im Terminal beantwortet",
+		"answerInTerminal": "Diese Oberfläche wird in der anfragenden Sitzung beantwortet (im Terminal).",
+		"componentWarnings": "{{count}} Komponentenwarnung(en)"
+	},
 	"common": {
 		"loading": "Laden...",
 		"error": "Fehler",
