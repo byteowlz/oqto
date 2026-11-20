@@ -8,6 +8,10 @@ pub type EavsResult<T> = Result<T, EavsError>;
 /// Errors that can occur during EAVS operations.
 #[derive(Debug, Error)]
 pub enum EavsError {
+    /// Endpoint validation never includes the supplied value, which may contain a secret.
+    #[error("EAVS endpoint must be an absolute HTTP(S) URL without credentials, query or fragment")]
+    InvalidEndpoint,
+
     /// HTTP request failed.
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),

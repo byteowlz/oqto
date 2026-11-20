@@ -1,4 +1,4 @@
-import { Activity, SlidersHorizontal, Users } from "lucide-react";
+import { Activity, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
 	ModelOption,
@@ -6,6 +6,7 @@ import type {
 	SessionOverview,
 	StatusBarData,
 } from "../platform/contracts";
+import { OqtoIcon } from "../platform/icons";
 import { SessionMeta } from "./SessionMeta";
 
 type SessionStatusBarProps = {
@@ -83,7 +84,7 @@ export function SessionStatusBar({
 					aria-label={t("oqtoUi.settings.open")}
 					onClick={onToggleSettings}
 				>
-					<SlidersHorizontal aria-hidden="true" />
+					<OqtoIcon name="sliders" aria-hidden="true" />
 				</button>
 			</div>
 		</footer>

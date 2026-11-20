@@ -1,7 +1,7 @@
 import { ResourcePreviewHost } from "@/components/viewers/resource-preview-host";
 import { useDocumentEvent } from "@/hooks/use-document-event";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { OqtoIcon } from "../platform/icons";
 import { workspaceFilePreviewUrl } from "../platform/workspace-file-url";
 
 export type PreviewSelection = {
@@ -48,7 +48,7 @@ export function ResourcePreviewPane({
 					aria-label={t("oqtoUi.preview.close")}
 					onClick={onClose}
 				>
-					<X aria-hidden="true" />
+					<OqtoIcon name="close" aria-hidden="true" />
 				</button>
 			</header>
 			<div className="wb-resource-preview__body">

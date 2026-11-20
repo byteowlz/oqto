@@ -1,0 +1,14 @@
+/* Arbitrary verification tints, not product theme decisions. */
+body { margin: 0; font-family: monospace; background: white; }
+main { padding: 16px; }
+h1 { font-size: 16px; }
+h2 { margin: 0 0 12px; font-size: 14px; }
+section { padding: 16px; margin: 16px 0; }
+[data-theme="dark"] { background: rgb(16, 18, 23); color: rgb(229, 231, 235); }
+[data-theme="chalk"] { background: rgb(245, 244, 239); color: rgb(40, 45, 50); }
+[data-theme="tint"] { background: white; color: rgb(38, 120, 205); }
+.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 12px; }
+.provider-cell { display: flex; align-items: center; gap: 6px; min-width: 0; height: 24px; }
+.provider-cell > span:last-child { overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+[role="img"] { display: inline-block; flex: none; width: 24px; height: 24px; }
+button { display: flex; align-items: center; gap: 8px; min-height: 44px; }

@@ -4,10 +4,11 @@
  * through the same host contract the Files pane uses.
  */
 
-import { Pencil, RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileHost } from "../platform/files-contract";
+import { OqtoIcon } from "../platform/icons";
 import { useFileDocument } from "./useFileDocument";
 import { FileViewer } from "./viewers/FileViewer";
 import { viewerFor } from "./viewers/registry";
@@ -69,7 +70,7 @@ export function FilePane({
 						title={t("oqtoUi.file.edit")}
 						onClick={() => document.setEditing(true)}
 					>
-						<Pencil aria-hidden="true" />
+						<OqtoIcon name="edit" aria-hidden="true" />
 					</button>
 				) : null}
 				{chrome}

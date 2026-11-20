@@ -1,19 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import {
-	ArrowDown,
-	ChevronDown,
-	ChevronRight,
-	Folder,
-	FolderPlus,
-	LogOut,
-	MessageSquare,
-	PanelLeftClose,
-	Plus,
-	Search,
-	Settings,
-	Shield,
-	Sun,
-} from "lucide-react";
+import { FolderPlus, PanelLeftClose } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +8,7 @@ import type {
 	UiNavigation,
 	WorkDirectory,
 } from "../platform/contracts";
+import { OqtoIcon } from "../platform/icons";
 import { RunnerTargets } from "./RunnerTargets";
 
 type NavigationRailProps = {
@@ -123,8 +110,8 @@ export function NavigationRail({
 					type="button"
 					aria-label={t("oqtoUi.navigation.searchMode")}
 				>
-					<Search aria-hidden="true" />
-					<ChevronDown aria-hidden="true" />
+					<OqtoIcon name="search" aria-hidden="true" />
+					<OqtoIcon name="forward" rotation={90} aria-hidden="true" />
 				</button>
 				<input
 					placeholder={t("oqtoUi.navigation.searchPlaceholder")}
@@ -151,7 +138,7 @@ export function NavigationRail({
 						aria-busy={pending}
 						onClick={() => void createSession()}
 					>
-						<Plus aria-hidden="true" />
+						<OqtoIcon name="plus" aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
@@ -165,7 +152,7 @@ export function NavigationRail({
 						type="button"
 						aria-label={t("oqtoUi.navigation.sortSessions")}
 					>
-						<ArrowDown aria-hidden="true" />
+						<OqtoIcon name="down" aria-hidden="true" />
 					</button>
 				</span>
 			</div>
@@ -196,9 +183,9 @@ export function NavigationRail({
 									onClick={() => toggleDisclosure(directory.id)}
 								>
 									{disclosed ? (
-										<ChevronDown aria-hidden="true" />
+										<OqtoIcon name="forward" rotation={90} aria-hidden="true" />
 									) : (
-										<ChevronRight aria-hidden="true" />
+										<OqtoIcon name="forward" aria-hidden="true" />
 									)}
 								</button>
 								<button
@@ -211,7 +198,7 @@ export function NavigationRail({
 										})
 									}
 								>
-									<Folder aria-hidden="true" />
+									<OqtoIcon name="folder" aria-hidden="true" />
 									<span className="wb-project__name">{directory.name}</span>
 									<span className="wb-project__count">
 										({directory.sessions.length})
@@ -233,7 +220,7 @@ export function NavigationRail({
 												})
 											}
 										>
-											<MessageSquare aria-hidden="true" />
+											<OqtoIcon name="chat" aria-hidden="true" />
 											<span className="wb-session-item__copy">
 												<span className="wb-session-item__title">
 													{session.name}
@@ -271,28 +258,28 @@ export function NavigationRail({
 						type="button"
 						aria-label={t("oqtoUi.navigation.settings")}
 					>
-						<Settings aria-hidden="true" />
+						<OqtoIcon name="settings" aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
 						aria-label={t("oqtoUi.navigation.admin")}
 					>
-						<Shield aria-hidden="true" />
+						<OqtoIcon name="permission" aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
 						aria-label={t("oqtoUi.navigation.toggleTheme")}
 					>
-						<Sun aria-hidden="true" />
+						<OqtoIcon name="theme" aria-hidden="true" />
 					</button>
 					<button
 						className="wb-icon-button"
 						type="button"
 						aria-label={t("oqtoUi.navigation.logout")}
 					>
-						<LogOut aria-hidden="true" />
+						<OqtoIcon name="logout" aria-hidden="true" />
 					</button>
 				</div>
 			</footer>

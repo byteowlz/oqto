@@ -1,0 +1,202 @@
+/* Owner-directed iOS transcript slice, not a shell/navigation replacement.
+ * Match Mobile typography/surfaces; preserve reader size and accessible scaling.
+ * Native spacing basis: transcriptGap 8pt, turnInset 10pt; selected theme ink.
+ */
+@font-face {
+	font-family: "Departure Mono";
+	src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+.wb-shell {
+	--font-display: "Departure Mono", var(--font-mono);
+	--oqto-disclosure-bg: var(--muted);
+}
+.wb-shell[data-scheme$="-dark"] {
+	--oqto-disclosure-bg: var(--base10, var(--background));
+}
+.wb-shell .wb-statusbar {
+	font-family: var(--font-display);
+}
+.wb-shell [data-chat-presentation="compact"] {
+	--chat-prose-family: var(--font-mono);
+	--chat-code-family: var(--font-mono);
+	--chat-turn-gap: 0.5rem;
+	--chat-block-gap: 0.5rem;
+	border: 0;
+	border-radius: 0;
+	padding-block-start: 0;
+	background: transparent;
+}
+.wb-shell [data-chat-presentation="compact"].chat-turn--user {
+	align-items: stretch;
+}
+.wb-shell [data-chat-presentation="compact"] > .chat-byline {
+	align-self: stretch;
+	margin: 0 0 0.5rem;
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-byline__who {
+	text-transform: none;
+	letter-spacing: normal;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-byline__spacer {
+	flex: 1;
+	min-inline-size: 0.5rem;
+	block-size: 1px;
+	background: var(--border);
+}
+.wb-shell [data-chat-presentation="compact"] > .chat-bubble {
+	max-inline-size: 100%;
+	border: 0;
+	padding: 0.625rem;
+	background: color-mix(in oklab, var(--primary), transparent 90%);
+}
+.wb-shell
+	[data-chat-presentation="compact"]
+	> :not(.chat-byline):not(.chat-bubble) {
+	padding: 0;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-action {
+	justify-content: center;
+	inline-size: 1.5rem;
+	block-size: 1.5rem;
+	padding: 0;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-action svg,
+.wb-shell [data-chat-presentation="compact"] .chat-activity__icons svg {
+	inline-size: 1rem;
+	block-size: 1rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity > summary {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-block-size: 44px;
+	padding: 0 0.625rem;
+	background: var(--oqto-disclosure-bg);
+	list-style: none;
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+}
+.wb-shell
+	[data-chat-presentation="compact"]
+	.chat-activity
+	> summary::-webkit-details-marker {
+	display: none;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__chevron {
+	flex: 0 0 0.75rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__chevron svg {
+	inline-size: 0.75rem;
+	block-size: 0.75rem;
+}
+.wb-shell
+	[data-chat-presentation="compact"]
+	.chat-activity[open]
+	> summary
+	.chat-activity__chevron {
+	transform: rotate(90deg);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__count {
+	font-family: var(--font-mono);
+	font-weight: 700;
+	color: var(--foreground);
+	white-space: nowrap;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__kinds {
+	flex: 1;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted-foreground);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__failures,
+.wb-shell [data-chat-presentation="compact"] .chat-activity__status {
+	font-family: var(--font-display);
+	font-size: 0.6875rem;
+	white-space: nowrap;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__failures {
+	color: var(--destructive);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__status--running {
+	color: var(--warning);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-activity__step {
+	padding-block: 0.25rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-tool-call,
+.wb-shell [data-chat-presentation="compact"] .chat-aside {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-tool-call > button,
+.wb-shell [data-chat-presentation="compact"] .chat-aside > summary {
+	min-block-size: 44px;
+	padding: 0 0.625rem;
+	background: var(--oqto-disclosure-bg);
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-tool-call__title {
+	font-size: 0.8125rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-tool-status {
+	font-family: var(--font-display);
+	font-size: 0.6875rem;
+	text-transform: lowercase;
+}
+.wb-shell
+	[data-chat-presentation="compact"]
+	[data-tool-status="error"]
+	.chat-tool-status {
+	color: var(--destructive);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-aside > summary {
+	font-style: italic;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-disclosure-chevron {
+	flex: 0 0 0.75rem;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-disclosure-chevron svg {
+	inline-size: 0.75rem;
+	block-size: 0.75rem;
+}
+.wb-shell
+	[data-chat-presentation="compact"]
+	.chat-aside[open]
+	> summary
+	.chat-disclosure-chevron {
+	transform: rotate(90deg);
+}
+.wb-shell [data-chat-presentation="compact"] .chat-inline-image {
+	display: block;
+	max-inline-size: 100%;
+	max-block-size: 65vh;
+	inline-size: auto;
+	block-size: auto;
+	margin-inline: auto;
+	object-fit: contain;
+}
+.wb-shell [data-chat-presentation="compact"] .chat-action:focus-visible,
+.wb-shell [data-chat-presentation="compact"] summary:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+@media (pointer: coarse) {
+	.wb-shell [data-chat-presentation="compact"] .chat-activity summary,
+	.wb-shell [data-chat-presentation="compact"] .chat-activity button {
+		min-block-size: 44px;
+	}
+	.wb-shell [data-chat-presentation="compact"] .chat-action {
+		min-inline-size: 44px;
+		min-block-size: 44px;
+	}
+}

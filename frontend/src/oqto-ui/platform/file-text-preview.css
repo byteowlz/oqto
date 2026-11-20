@@ -1,0 +1,38 @@
+/* Reuse the active application's code ink, not a hard-coded dark Prism palette. */
+.wb-file-text {
+	min-block-size: 0;
+	min-inline-size: 0;
+	flex: 1;
+	overflow: auto;
+	color: var(--foreground);
+	background: var(--background);
+}
+.wb-file-text__modes {
+	display: flex;
+	gap: 0.25rem;
+	padding: 0.5rem;
+	border-block-end: 1px solid var(--border);
+}
+.wb-file-text__modes button {
+	min-block-size: 1.5rem;
+	padding-inline: 0.5rem;
+	color: var(--muted-foreground);
+}
+.wb-file-text__modes button[aria-pressed="true"] {
+	color: var(--foreground);
+	background: var(--muted);
+}
+.wb-file-text__modes button:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+.wb-file-text__markdown {
+	padding: 0.625rem;
+	color: var(--foreground);
+}
+@media (pointer: coarse) {
+	.wb-file-text button {
+		min-block-size: 44px;
+		min-inline-size: 44px;
+	}
+}

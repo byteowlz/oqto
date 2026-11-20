@@ -121,13 +121,13 @@ pub fn ensure_history_state_owner(home: &Path) -> Result<()> {
     audit_history_state_owner(home, uid)
 }
 
-// A background writer can remove an enumerated temporary shard before lstat.
-// Absence confers no access; all other I/O and ownership failures remain errors.
-fn history_shard_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
+// Missing entries can race enumeration or first initialization. Absence confers no
+// access; all other failures remain errors. Shared by history and private bootstrap.
+pub(crate) fn no_follow_state_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).context("inspect history shard ownership"),
+        Err(error) => Err(error).context("inspect private state metadata"),
     }
 }
 
@@ -146,7 +146,7 @@ pub fn audit_history_state_owner(home: &Path, uid: u32) -> Result<()> {
     );
     for entry in std::fs::read_dir(&root).context("inspect history shard ownership")? {
         let shard = entry?.path();
-        let Some(metadata) = history_shard_metadata(&shard)? else {
+        let Some(metadata) = no_follow_state_metadata(&shard)? else {
             continue;
         };
         anyhow::ensure!(
@@ -234,7 +234,7 @@ mod tests {
         let shard = root.path().join("transient");
         std::fs::create_dir(&shard)?;
         std::fs::remove_dir(&shard)?;
-        assert!(history_shard_metadata(&shard)?.is_none());
+        assert!(no_follow_state_metadata(&shard)?.is_none());
         assert!(!shard.exists());
         Ok(())
     }
@@ -244,7 +244,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let file = root.path().join("not-a-directory");
         std::fs::write(&file, b"unchanged")?;
-        assert!(history_shard_metadata(&file.join("child")).is_err());
+        assert!(no_follow_state_metadata(&file.join("child")).is_err());
         assert_eq!(std::fs::read(file)?, b"unchanged");
         Ok(())
     }

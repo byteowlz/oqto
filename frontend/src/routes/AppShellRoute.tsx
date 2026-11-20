@@ -927,26 +927,6 @@ const AppShell = memo(function AppShell() {
 						</div>
 					)}
 
-					{!sidebarState.sidebarCollapsed && chatHistoryError && (
-						<div className="w-full px-3 mt-2">
-							<div className="bg-destructive/15 border border-destructive/30 rounded-md p-3 text-xs">
-								<div className="font-medium text-destructive mb-1">
-									{t("chat.chatHistoryUnavailable")}
-								</div>
-								<div className="text-muted-foreground mb-2 break-words">
-									{chatHistoryError}
-								</div>
-								<button
-									type="button"
-									onClick={() => refreshChatHistory()}
-									className="text-xs text-primary hover:underline"
-								>
-									{t("chat.retry")}
-								</button>
-							</div>
-						</div>
-					)}
-
 					{!sidebarState.sidebarCollapsed &&
 						(chatHistory.length > 0 ||
 							projectActions.workspaceDirectories.length > 0 ||
@@ -1165,7 +1145,20 @@ const AppShell = memo(function AppShell() {
 							{ActiveComponent ? <ActiveComponent /> : <EmptyState />}
 						</div>
 						<div className="flex-shrink-0">
-							<StatusBar />
+							<StatusBar
+								notice={
+									chatHistoryError
+										? {
+												title: t("chat.chatHistoryUnavailable"),
+												message: chatHistoryError,
+												recovery: {
+													label: t("chat.retry"),
+													onActivate: () => void refreshChatHistory(),
+												},
+											}
+										: null
+								}
+							/>
 						</div>
 					</div>
 				</div>

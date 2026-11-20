@@ -1,0 +1,209 @@
+{
+	"source_repo": "oqto-mobile",
+	"source_commit": "fce71c3",
+	"family": "Material Symbols sharp",
+	"weight": 400,
+	"license": "Apache-2.0",
+	"icons": {
+		"attach": {
+			"path": "Resources/Icons.xcassets/Icons/attach.imageset/attach.svg",
+			"sha256": "8c43f5475afa79170a94156fef10987360e692b9097a1fa86232e5bc7c08c38a"
+		},
+		"back": {
+			"path": "Resources/Icons.xcassets/Icons/back.imageset/back.svg",
+			"sha256": "acfb557c3b13b437597f6c128da7ac39245708ca57d865d29e33cf8161369a47"
+		},
+		"bottom": {
+			"path": "Resources/Icons.xcassets/Icons/bottom.imageset/bottom.svg",
+			"sha256": "f156ff971a7d52ef78a61e5d9dd538a54e6335bf9b8f77897d68f96e80c9c160"
+		},
+		"branch": {
+			"path": "Resources/Icons.xcassets/Icons/branch.imageset/branch.svg",
+			"sha256": "dda634a09d08ac089ecfd533d24a6203ba66160421fc14b3cd80cc8354dcf5fa"
+		},
+		"chat": {
+			"path": "Resources/Icons.xcassets/Icons/chat.imageset/chat.svg",
+			"sha256": "b89b123004fda51db61dfb8b3e1afbbb65a1f6632fb0bb49a861a322a74ac73b"
+		},
+		"check": {
+			"path": "Resources/Icons.xcassets/Icons/check.imageset/check.svg",
+			"sha256": "5311bf25884a2c7350f3a0397f61e0d8f87e124cd66d5a7173cc9708d9e8a6cd"
+		},
+		"close": {
+			"path": "Resources/Icons.xcassets/Icons/close.imageset/close.svg",
+			"sha256": "76ddbe8a061009068f217dec60599112641d218014cd53c010432b25aaf1da19"
+		},
+		"code": {
+			"path": "Resources/Icons.xcassets/Icons/code.imageset/code.svg",
+			"sha256": "801ec50209733411999655a24add83d6b394cc0d962fa778044ede1d74b40014"
+		},
+		"compose": {
+			"path": "Resources/Icons.xcassets/Icons/compose.imageset/compose.svg",
+			"sha256": "5f4df3fb4f0d72a17bf2671c6d6ed5a5f0ba2c68dc41aba7eaa0b98fb2bfdf37"
+		},
+		"copy": {
+			"path": "Resources/Icons.xcassets/Icons/copy.imageset/copy.svg",
+			"sha256": "fcba9ab536a8b710e72d9c396e453f605bc177ece97a8aa333157a872ac92c46"
+		},
+		"doc": {
+			"path": "Resources/Icons.xcassets/Icons/doc.imageset/doc.svg",
+			"sha256": "53ebf42c4b5c06e9b362b242d0dcfe1ba607e411ed742ed1f398dd94ebf620fb"
+		},
+		"down": {
+			"path": "Resources/Icons.xcassets/Icons/down.imageset/down.svg",
+			"sha256": "37038af301242a4dc180f63f28af878b15b35bb15770e24cbb9534894411dbca"
+		},
+		"edit": {
+			"path": "Resources/Icons.xcassets/Icons/edit.imageset/edit.svg",
+			"sha256": "52794267f0e6966f3ea9ce84694d8a0c4b28a16f0b3afd718e42e797795bb14c"
+		},
+		"expand": {
+			"path": "Resources/Icons.xcassets/Icons/expand.imageset/expand.svg",
+			"sha256": "a4d5cec55549189d7c74c02aa98a7cc36bc6ce3d0a20af0954d0949ba425f65c"
+		},
+		"eye": {
+			"path": "Resources/Icons.xcassets/Icons/eye.imageset/eye.svg",
+			"sha256": "dd2c7184ad62b43344d8a28dc27547bc9f946ef9152c6b79669a3783045981fb"
+		},
+		"file": {
+			"path": "Resources/Icons.xcassets/Icons/file.imageset/file.svg",
+			"sha256": "3e1390a36a3f6383cde00f8312c934b8b594868a8f99621641e8d82f125a7a8d"
+		},
+		"filter": {
+			"path": "Resources/Icons.xcassets/Icons/filter.imageset/filter.svg",
+			"sha256": "918a39f68ba1a6c2ddd7dd3b07ca5139e613ceb116f5e1c58ad27758b471679e"
+		},
+		"folder": {
+			"path": "Resources/Icons.xcassets/Icons/folder.imageset/folder.svg",
+			"sha256": "82573462d0ac699a5b4d0bfa795076fcc15de8552d8f3f9dd35208ae77f94c15"
+		},
+		"forward": {
+			"path": "Resources/Icons.xcassets/Icons/forward.imageset/forward.svg",
+			"sha256": "1fbc733491fd8d381e25f7adfb7ae0c40a4086708f171a73d11422d320217475"
+		},
+		"grid": {
+			"path": "Resources/Icons.xcassets/Icons/grid.imageset/grid.svg",
+			"sha256": "3c1f77dc444610b16aa83140a3a7f82ebc6b2128692e08a596dab25fcafee17f"
+		},
+		"home": {
+			"path": "Resources/Icons.xcassets/Icons/home.imageset/home.svg",
+			"sha256": "be5c6dcef3ab780721c3130ae25c596677c55ab52b4f855ec684da21484c735f"
+		},
+		"info": {
+			"path": "Resources/Icons.xcassets/Icons/info.imageset/info.svg",
+			"sha256": "778775d91a078405b8e72371eece43c134e0c41266498e1e2b9b86cd97566aa6"
+		},
+		"link": {
+			"path": "Resources/Icons.xcassets/Icons/link.imageset/link.svg",
+			"sha256": "853465d888b0c0e2d9a9b1803ef1334594fd8a51fb308518d947502ae6c7410e"
+		},
+		"list": {
+			"path": "Resources/Icons.xcassets/Icons/list.imageset/list.svg",
+			"sha256": "f094616069036ff754a954a4ea144e006ba5136f25e3531e7ae0ba55c2734f88"
+		},
+		"logout": {
+			"path": "Resources/Icons.xcassets/Icons/logout.imageset/logout.svg",
+			"sha256": "41b7912446a2fa99c8b7aef1f43b3718cf54a890f29afdb3b0f79b69e92edd6d"
+		},
+		"machine": {
+			"path": "Resources/Icons.xcassets/Icons/machine.imageset/machine.svg",
+			"sha256": "fb64d60455187f99698826bf67b1f44f2b5382d9a2dc1bad1b7296ac6b3bc8ae"
+		},
+		"menu": {
+			"path": "Resources/Icons.xcassets/Icons/menu.imageset/menu.svg",
+			"sha256": "5db737c45ccd13cac13f974d65624fa052910a947d96e743a98eb3d9862bfcc5"
+		},
+		"message": {
+			"path": "Resources/Icons.xcassets/Icons/message.imageset/message.svg",
+			"sha256": "214c436c15406e9674fc59af046af8a4514e907f7179df831903037a7ae783dc"
+		},
+		"mic": {
+			"path": "Resources/Icons.xcassets/Icons/mic.imageset/mic.svg",
+			"sha256": "a003fb2fee0dbfed7d6ea26b970913bacd38197ad5d7f8bac49a3a8b86addd86"
+		},
+		"more": {
+			"path": "Resources/Icons.xcassets/Icons/more.imageset/more.svg",
+			"sha256": "a49efa0727defa3c065f8992f3dfa9e8c65dadebe9c6cc39a02da63ba6ba4d23"
+		},
+		"permission": {
+			"path": "Resources/Icons.xcassets/Icons/permission.imageset/permission.svg",
+			"sha256": "6dd46d277981f105ef643b227f191276225795852eee5000f802ce3a818acfb8"
+		},
+		"photo": {
+			"path": "Resources/Icons.xcassets/Icons/photo.imageset/photo.svg",
+			"sha256": "33e2a3205fbcadb08c862545f2eff94135d366e1784a755b2080e785e3bf5db3"
+		},
+		"plus": {
+			"path": "Resources/Icons.xcassets/Icons/plus.imageset/plus.svg",
+			"sha256": "8ed5a9d611fd35af1247667b9c58332dea622925a2015c2f1f389d335e08707a"
+		},
+		"qr": {
+			"path": "Resources/Icons.xcassets/Icons/qr.imageset/qr.svg",
+			"sha256": "886b6306a1e5893a6996e75a7371ee9cfbd4d97adc19bf37e90fcaccb9d74727"
+		},
+		"queued": {
+			"path": "Resources/Icons.xcassets/Icons/queued.imageset/queued.svg",
+			"sha256": "1b17b70e80d17085c24aae46c8188f2d565653d37c9e5cd7de274b306a580755"
+		},
+		"refresh": {
+			"path": "Resources/Icons.xcassets/Icons/refresh.imageset/refresh.svg",
+			"sha256": "d74a0aa1f5ec47903a0bb37065bfea1a0b67235cc7a22f87b73ccb60fdc5af40"
+		},
+		"search": {
+			"path": "Resources/Icons.xcassets/Icons/search.imageset/search.svg",
+			"sha256": "6b475dc75a36f2a9b3e82ef6b50a96a729a5c6a0d4601f820a7c9509b4234492"
+		},
+		"send": {
+			"path": "Resources/Icons.xcassets/Icons/send.imageset/send.svg",
+			"sha256": "cedb0d5176ffcc4e42d271781dd7e0d5828bd19e242398cea14fa95fae581361"
+		},
+		"sessions": {
+			"path": "Resources/Icons.xcassets/Icons/sessions.imageset/sessions.svg",
+			"sha256": "7346162e009d265195266b7744bf03e311a8bacfc0aea1a65aa48a8ddfeefa8a"
+		},
+		"settings": {
+			"path": "Resources/Icons.xcassets/Icons/settings.imageset/settings.svg",
+			"sha256": "2cf64f880564fe5f3cdb10c2bd416ce31f486752b685ea709f71ee2011a22041"
+		},
+		"sliders": {
+			"path": "Resources/Icons.xcassets/Icons/sliders.imageset/sliders.svg",
+			"sha256": "23e546def3d54cd4def05b011f23cd0bc2608ee8ed5df1c720f51e800745e43f"
+		},
+		"split": {
+			"path": "Resources/Icons.xcassets/Icons/split.imageset/split.svg",
+			"sha256": "2dc1b4278dc00346843ccc6ef76499fbbcfb2afabef58c4ff51a1d489a3d0ef5"
+		},
+		"stop": {
+			"path": "Resources/Icons.xcassets/Icons/stop.imageset/stop.svg",
+			"sha256": "65aae7551b89f1ffc94d2bd1dd9af4429fe0d477f99694808247709138eb98ea"
+		},
+		"swap": {
+			"path": "Resources/Icons.xcassets/Icons/swap.imageset/swap.svg",
+			"sha256": "f9ad05d000a297c6165f43f566e8affa77c9c4569d4622f834bc14d0daaa1e6b"
+		},
+		"terminal": {
+			"path": "Resources/Icons.xcassets/Icons/terminal.imageset/terminal.svg",
+			"sha256": "50d58520a218e3b34404395b8f271b529468147da25e804e30ab2c0a5eccc7ed"
+		},
+		"theme": {
+			"path": "Resources/Icons.xcassets/Icons/theme.imageset/theme.svg",
+			"sha256": "c243bcc5fedbf71ca253c7fc33ec3bb9cfb87225dcf8a9566a01237c48a2ad76"
+		},
+		"trash": {
+			"path": "Resources/Icons.xcassets/Icons/trash.imageset/trash.svg",
+			"sha256": "6cbbbae66865c2b5aedd0c357439ba4012bcd8f66400a0fa127c74f8d2b8be35"
+		},
+		"unpin": {
+			"path": "Resources/Icons.xcassets/Icons/unpin.imageset/unpin.svg",
+			"sha256": "dd37dbda80097fdc4571f204daed52b4ac3521baa8ecb641434cbc821ff7b541"
+		},
+		"up": {
+			"path": "Resources/Icons.xcassets/Icons/up.imageset/up.svg",
+			"sha256": "d88cba50ba5970b10a51daef875c1c8fa066c198e235f634f5379b8db8eeb903"
+		},
+		"warning": {
+			"path": "Resources/Icons.xcassets/Icons/warning.imageset/warning.svg",
+			"sha256": "3d742b2e26cce79ed15aecaaaf72f7604c2ec94aa91ac5753217b58018a324df"
+		}
+	}
+}

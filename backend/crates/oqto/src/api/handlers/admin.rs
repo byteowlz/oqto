@@ -835,7 +835,7 @@ pub(crate) async fn provision_eavs_into_home(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
     let models_json =
-        generate_pi_models_json(&providers, eavs_client.base_url(), Some(&key_resp.key));
+        generate_pi_models_json(&providers, eavs_client.inference_url(), Some(&key_resp.key));
 
     let pi_dir = home.join(".pi").join("agent");
     std::fs::create_dir_all(&pi_dir).with_context(|| format!("creating {}", pi_dir.display()))?;
@@ -897,7 +897,8 @@ pub(crate) async fn sync_eavs_models_json_via_runner(
         .providers_detail()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
-    let models_json = generate_pi_models_json(&providers, eavs_client.base_url(), Some(&api_key));
+    let models_json =
+        generate_pi_models_json(&providers, eavs_client.inference_url(), Some(&api_key));
     runner
         .write_file(
             &models_path,
@@ -956,7 +957,7 @@ async fn sync_eavs_models_json_inner(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
 
-    let eavs_base = eavs_client.base_url();
+    let eavs_base = eavs_client.inference_url();
     let models_json = generate_pi_models_json(&providers, eavs_base, api_key);
     let models_content = serde_json::to_string_pretty(&models_json)?;
 
@@ -1125,7 +1126,7 @@ pub async fn list_eavs_providers(
 
     Ok(Json(EavsProvidersResponse {
         providers: provider_summaries,
-        eavs_url: eavs_client.base_url().to_string(),
+        eavs_url: eavs_client.inference_url().to_string(),
     }))
 }
 
@@ -2064,45 +2065,12 @@ pub async fn catalog_lookup(
     RequireAdmin(_user): RequireAdmin,
     Query(query): Query<CatalogLookupQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let eavs = state
+    state
         .eavs_client
         .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
-
-    let mut url = format!(
-        "{}/catalog/lookup?model_id={}",
-        eavs.base_url(),
-        urlencoding::encode(&query.model_id)
-    );
-    if let Some(ref provider) = query.provider {
-        url.push_str(&format!("&provider={}", urlencoding::encode(provider)));
-    }
-
-    let client = reqwest::Client::new();
-    let mut req = client.get(&url);
-    let key = eavs.master_key();
-    if !key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", key));
-    }
-
-    let resp = req
-        .send()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?
+        .catalog_lookup(&query.model_id, query.provider.as_deref())
         .await
-        .map_err(|e| ApiError::Internal(format!("Failed to query eavs catalog: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(ApiError::Internal(format!(
-            "Eavs catalog lookup failed ({}): {}",
-            status, body
-        )));
-    }
-
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to parse eavs catalog response: {e}")))?;
-
-    Ok(Json(data))
+        .map(Json)
+        .map_err(|error| ApiError::Internal(format!("Failed to query eavs catalog: {error}")))
 }

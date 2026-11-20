@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Monitor } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { OqtoIcon } from "../platform/icons";
 import type {
 	RunnerTarget,
 	RunnerTargetsPort,
@@ -42,7 +42,7 @@ export function RunnerTargets({
 				<ul aria-label={t("oqtoUi.runnerTargets.title")}>
 					{targets.map((target) => (
 						<li key={target.id} data-connection={target.connection}>
-							<Monitor aria-hidden="true" />
+							<OqtoIcon name="machine" aria-hidden="true" />
 							<div className="wb-runner-targets__name">
 								<strong>{target.label}</strong>
 								<span>

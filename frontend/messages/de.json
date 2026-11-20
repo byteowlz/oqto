@@ -70,6 +70,11 @@
 		"selectionActions": "Aktionen für die Auswahl",
 		"activitySteps_one": "{{count}} Schritt",
 		"activitySteps_other": "{{count}} Schritte",
+		"activityFailures": "{{count}} fehlgeschlagen",
+		"activityThought": "Gedanke",
+		"thought": "Gedanke",
+		"activityRunning": "läuft",
+		"activityDone": "fertig",
 		"historyLoadFailed": "Der Verlauf dieses Chats konnte nicht geladen werden."
 	},
 	"sessions": {
@@ -1050,6 +1055,8 @@
 			"preview": "Vorschau",
 			"previewHint": "Leertaste für Vorschau",
 			"previewUnavailable": "Keine Vorschau für diesen Typ",
+			"renderedPreview": "Vorschau",
+			"sourcePreview": "Quelltext",
 			"rename": "Umbenennen",
 			"newFolderPrompt": "Ordnername",
 			"delete": "Löschen",

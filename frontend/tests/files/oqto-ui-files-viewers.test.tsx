@@ -1,7 +1,7 @@
 import { FileViewer } from "@/src/oqto-ui/files/viewers/FileViewer";
 import { mediaElement, viewerFor } from "@/src/oqto-ui/files/viewers/registry";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { initI18n } from "../../lib/i18n";
 
 initI18n();
@@ -40,7 +40,8 @@ describe("file viewer", () => {
 			/>,
 		);
 		const image = screen.getByAltText("logo.png") as HTMLImageElement;
-		expect(image.src).toContain("/api/workspace/files/file");
+		expect(image.src).toContain("/api/workspace/files/thumbnail");
+		expect(image.closest("a")?.href).toContain("/api/workspace/files/file");
 		expect(image.src).toContain("path=docs%2Flogo.png");
 		expect(image.src).toContain("workspace_path=%2Fw");
 	});
@@ -54,7 +55,78 @@ describe("file viewer", () => {
 				text={{ status: "text", text: "# title" }}
 			/>,
 		);
-		expect(screen.getByText("# title")).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "title" })).toBeInTheDocument();
+	});
+
+	it("syntax-highlights host-supplied code and copies the exact source", async () => {
+		const content = 'export const greeting = "hello";\n';
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, "clipboard", {
+			value: { writeText },
+			configurable: true,
+		});
+		const { container } = render(
+			<FileViewer
+				name="example.ts"
+				path="example.ts"
+				workspacePath="/w"
+				text={{ status: "text", text: content }}
+			/>,
+		);
+		expect(container.querySelector(".token.keyword")?.textContent).toBe(
+			"export",
+		);
+		expect(container.querySelector(".token.string")?.textContent).toBe(
+			'"hello"',
+		);
+		await act(async () => {
+			fireEvent.click(
+				screen.getByRole("button", { name: "Copy to clipboard" }),
+			);
+		});
+		expect(writeText).toHaveBeenCalledWith(content);
+	});
+
+	it("offers rendered Markdown and exact highlighted source without losing either", () => {
+		const content = "# A readable document\n\n**Important** details.\n";
+		const { container } = render(
+			<FileViewer
+				name="notes.md"
+				path="notes.md"
+				workspacePath="/w"
+				text={{ status: "text", text: content }}
+			/>,
+		);
+		expect(
+			screen.getByRole("heading", { name: "A readable document" }),
+		).toBeVisible();
+		fireEvent.click(screen.getByRole("button", { name: "Source" }));
+		expect(screen.queryByRole("heading")).toBeNull();
+		expect(container.querySelector("code")?.textContent).toContain(
+			"A readable document",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+		expect(
+			screen.getByRole("heading", { name: "A readable document" }),
+		).toBeVisible();
+	});
+
+	it.each([
+		["song.mp3", "audio"],
+		["clip.mp4", "video"],
+		["paper.pdf", "iframe"],
+	])("retains original-file %s media presentation", (name, tag) => {
+		const { container } = render(
+			<FileViewer
+				name={name}
+				path={`docs/${name}`}
+				workspacePath="/w"
+				text={{ status: "idle" }}
+			/>,
+		);
+		const element = container.querySelector(tag);
+		expect(element?.getAttribute("src")).toContain("workspace_path=%2Fw");
+		expect(element?.getAttribute("src")).toContain("/api/workspace/files/file");
 	});
 
 	it("says a format has no viewer rather than showing an empty pane", () => {

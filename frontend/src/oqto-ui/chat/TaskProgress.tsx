@@ -1,7 +1,7 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
 import { Fragment, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SessionTask } from "../platform/contracts";
+import { OqtoIcon } from "../platform/icons";
 
 type TaskProgressProps = {
 	tasks: SessionTask[];
@@ -78,9 +78,9 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 					onClick={() => setExpanded((current) => !current)}
 				>
 					{expanded ? (
-						<ChevronDown aria-hidden="true" />
+						<OqtoIcon name="forward" rotation={90} aria-hidden="true" />
 					) : (
-						<ChevronUp aria-hidden="true" />
+						<OqtoIcon name="forward" rotation={270} aria-hidden="true" />
 					)}
 				</button>
 			</div>
@@ -99,7 +99,7 @@ export function TaskProgress({ tasks, placement }: TaskProgressProps) {
 							aria-label={t("oqtoUi.taskProgress.closePlan")}
 							onClick={() => setExpanded(false)}
 						>
-							<ChevronDown aria-hidden="true" />
+							<OqtoIcon name="forward" rotation={90} aria-hidden="true" />
 						</button>
 					</header>
 					<ol>

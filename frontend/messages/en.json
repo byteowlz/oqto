@@ -73,6 +73,11 @@
 		"selectionActions": "Selection actions",
 		"activitySteps_one": "{{count}} step",
 		"activitySteps_other": "{{count}} steps",
+		"activityFailures": "{{count}} failed",
+		"activityThought": "thought",
+		"thought": "Thought",
+		"activityRunning": "running",
+		"activityDone": "done",
 		"historyLoadFailed": "This chat's history could not be loaded."
 	},
 	"sessions": {
@@ -1050,6 +1055,8 @@
 			"preview": "Preview",
 			"previewHint": "Press space to preview",
 			"previewUnavailable": "No preview for this kind",
+			"renderedPreview": "Preview",
+			"sourcePreview": "Source",
 			"rename": "Rename",
 			"newFolderPrompt": "Folder name",
 			"delete": "Delete",

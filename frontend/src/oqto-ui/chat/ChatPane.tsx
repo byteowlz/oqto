@@ -13,7 +13,9 @@ import {
 } from "@/lib/chat-rendering/group-messages";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CircleStop, Paperclip, Send } from "lucide-react";
+import { OqtoIcon } from "../platform/icons";
+import { compactChatPresentation } from "./presentation";
+import "./compact-chat.css";
 import type { ReactNode } from "react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -485,6 +487,7 @@ function ScopedChatPane({
 									assistantName={agentName}
 									workspacePath={workspacePath}
 									fileAdapter={OQTO_UI_CHAT_FILE_ADAPTER}
+									presentation={compactChatPresentation}
 									locale={locale}
 									messageId={row.group.messages[0]?.id}
 									showWorkingIndicator={row.working}
@@ -523,7 +526,7 @@ function ScopedChatPane({
 					type="button"
 					aria-label={t("oqtoUi.chat.attach")}
 				>
-					<Paperclip aria-hidden="true" />
+					<OqtoIcon name="attach" />
 				</button>
 				<textarea
 					rows={1}
@@ -551,7 +554,7 @@ function ScopedChatPane({
 						aria-label={t("oqtoUi.chat.abort")}
 						onClick={() => platform.chat.abort(sessionId)}
 					>
-						<CircleStop aria-hidden="true" />
+						<OqtoIcon name="stop" />
 					</button>
 				) : (
 					<button
@@ -563,7 +566,7 @@ function ScopedChatPane({
 							if (prompt.trim()) sendPrompt(prompt.trim());
 						}}
 					>
-						<Send aria-hidden="true" />
+						<OqtoIcon name="send" />
 					</button>
 				)}
 			</footer>

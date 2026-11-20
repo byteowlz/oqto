@@ -43,6 +43,48 @@ impl Request {
     }
 }
 
+/// Local request provenance, not part of the wire contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RequestSource {
+    /// Queued before any store was observed; safe to bind on first attachment.
+    Unsent,
+    /// Intended for this store, even when queued offline.
+    Store {
+        /// Immutable storage incarnation, not the public Session id.
+        store: String,
+    },
+    /// The store changed, or an old cache has no proven source. Never auto-replayed.
+    Uncertain {
+        /// Original store when known. Its outcome is not inferred from a replacement.
+        store: Option<String>,
+    },
+}
+
+impl RequestSource {
+    fn for_store(store: Option<&str>) -> Self {
+        store.map_or(Self::Unsent, |store| Self::Store {
+            store: store.to_owned(),
+        })
+    }
+
+    fn bind(&mut self, current: &str) {
+        match self {
+            Self::Unsent => *self = Self::for_store(Some(current)),
+            Self::Store { store } if store != current => {
+                *self = Self::Uncertain {
+                    store: Some(store.clone()),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    fn matches(&self, current: Option<&str>) -> bool {
+        matches!(self, Self::Store { store } if Some(store.as_str()) == current)
+    }
+}
+
 /// A request this client made and still tracks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tracked {
@@ -53,6 +95,9 @@ pub struct Tracked {
     /// Its receipt is final.
     #[serde(default)]
     pub settled: bool,
+    /// Original store binding. Missing only in older caches; migrated on restore.
+    #[serde(default)]
+    pub source: Option<RequestSource>,
 }
 
 /// One row to render: the transcript's rows, then pending sends.
@@ -261,6 +306,15 @@ impl SessionClient {
         &self.requests
     }
 
+    /// Pending operations whose original outcome cannot be reconciled on this store.
+    /// They remain cached with source and payload, but are never resent or newly settled here.
+    pub fn uncertain_requests(&self) -> Vec<&Tracked> {
+        self.requests
+            .iter()
+            .filter(|t| !t.settled && matches!(t.source, Some(RequestSource::Uncertain { .. })))
+            .collect()
+    }
+
     /// A gap fill or earlier load is running.
     pub fn loading(&self) -> (bool, usize) {
         let earlier = self
@@ -333,6 +387,18 @@ impl SessionClient {
         self.store = record.store;
         let live = std::mem::take(&mut self.requests);
         self.requests = record.requests;
+        for tracked in &mut self.requests {
+            tracked.source = Some(match tracked.source.take() {
+                Some(RequestSource::Unsent) => RequestSource::Uncertain { store: None },
+                Some(source) => source,
+                None => self
+                    .store
+                    .as_deref()
+                    .map_or(RequestSource::Uncertain { store: None }, |store| {
+                        RequestSource::for_store(Some(store))
+                    }),
+            });
+        }
         for tracked in live {
             self.requests.retain(|t| t.request_id != tracked.request_id);
             self.requests.push(tracked);
@@ -366,21 +432,12 @@ impl SessionClient {
 
     // ----- connection -----------------------------------------------------------------
 
-    /// Bind a new authenticated connection: attach after the newest held entry and resend
-    /// every unsettled request unchanged.
+    /// Bind a new authenticated connection. Effects wait for the matching `attached`
+    /// response and its store validation; connecting alone never replays a request.
     pub fn connect(&mut self) {
         self.disconnect();
         self.connected = true;
         self.attach();
-        let unsettled: Vec<String> = self
-            .requests
-            .iter()
-            .filter(|t| !t.settled)
-            .map(|t| t.request_id.clone())
-            .collect();
-        for id in unsettled {
-            self.resend(&id);
-        }
     }
 
     /// The connection ended: its attachment and reads end silently.
@@ -471,10 +528,12 @@ impl SessionClient {
 
     fn effect(&mut self, request: Request) -> String {
         let request_id = format!("req-{}", uuid::Uuid::new_v4());
+        self.error = None;
         self.requests.push(Tracked {
             request_id: request_id.clone(),
             request,
             settled: false,
+            source: Some(RequestSource::for_store(self.store.as_deref())),
         });
         self.resend(&request_id);
         self.dirty = true;
@@ -515,7 +574,13 @@ impl SessionClient {
         else {
             return;
         };
-        if !self.connected {
+        if !self.connected
+            || self.attachment.is_none()
+            || !tracked
+                .source
+                .as_ref()
+                .is_some_and(|s| s.matches(self.store.as_deref()))
+        {
             return;
         }
         let frame = self.frame_for(&tracked);
@@ -525,6 +590,17 @@ impl SessionClient {
     }
 
     fn query(&mut self, request_id: &str) {
+        if self.attachment.is_none()
+            || self.requests.iter().any(|t| {
+                t.request_id == request_id
+                    && !t
+                        .source
+                        .as_ref()
+                        .is_some_and(|s| s.matches(self.store.as_deref()))
+            })
+        {
+            return;
+        }
         let id = self.next_id();
         self.correlation.insert(id.clone(), request_id.to_owned());
         self.send(ClientFrame::ReceiptQuery {
@@ -535,6 +611,11 @@ impl SessionClient {
     }
 
     fn landed(&self, request_id: &str) -> bool {
+        if self.requests.iter().any(|t| {
+            t.request_id == request_id && matches!(t.source, Some(RequestSource::Uncertain { .. }))
+        }) {
+            return false;
+        }
         let Some(entry) = self.receipts.get(request_id).and_then(|r| r.entry) else {
             return false;
         };
@@ -546,7 +627,7 @@ impl SessionClient {
             .requests
             .iter()
             .map(|t| {
-                if !t.settled {
+                if !t.settled || matches!(t.source, Some(RequestSource::Uncertain { .. })) {
                     return true;
                 }
                 let names_entry = self
@@ -787,7 +868,7 @@ impl SessionClient {
     }
 
     fn on_attached(&mut self, id: &str, attachment: String, session: &str, store: String) {
-        if session != self.session || self.attach_id.as_deref().is_some_and(|mine| mine != id) {
+        if session != self.session || self.attach_id.as_deref() != Some(id) {
             return;
         }
         self.attach_id = None;
@@ -799,6 +880,8 @@ impl SessionClient {
                 // Entry ids of another store may name other content: drop the cache.
                 self.transcript = Transcript::new();
                 self.earlier_scan = None;
+                self.correlation.clear();
+                self.reads.clear();
                 let tracked: Vec<String> =
                     self.requests.iter().map(|t| t.request_id.clone()).collect();
                 self.receipts.retain(|id, _| tracked.contains(id));
@@ -806,6 +889,29 @@ impl SessionClient {
             self.store = Some(store);
             self.dirty = true;
         }
+        for tracked in &mut self.requests {
+            if let Some(source) = &mut tracked.source {
+                source.bind(self.store.as_deref().unwrap_or_default());
+            }
+        }
+        if !self.uncertain_requests().is_empty() {
+            self.error = Some("store_changed_outcome_unknown".to_owned());
+            self.notices.push(Notice::Refused {
+                code: "store_changed_outcome_unknown".to_owned(),
+            });
+        }
+        // All retries keep the original id, and only reach the proven original store.
+        let pending: Vec<String> = self
+            .requests
+            .iter()
+            .filter(|t| !t.settled)
+            .map(|t| t.request_id.clone())
+            .collect();
+        for id in pending {
+            self.resend(&id);
+            self.query(&id);
+        }
+        self.dirty = true;
     }
 
     fn on_view(&mut self, attachment: &str, seq: u64, ops: &[Value], retired: Option<bool>) {
@@ -825,7 +931,16 @@ impl SessionClient {
     }
 
     fn on_receipt(&mut self, receipt: Receipt) {
-        if receipt.session != self.session {
+        if receipt.session != self.session
+            || self.store.is_none()
+            || self.requests.iter().any(|t| {
+                t.request_id == receipt.request_id
+                    && !t
+                        .source
+                        .as_ref()
+                        .is_some_and(|s| s.matches(self.store.as_deref()))
+            })
+        {
             return;
         }
         if let Some(old) = self.receipts.get(&receipt.request_id)
@@ -856,16 +971,7 @@ impl SessionClient {
         match reason {
             EndedReason::Denied => self.purge_all(),
             EndedReason::Failed if self.connected => {
-                self.attach();
-                let unsettled: Vec<String> = self
-                    .requests
-                    .iter()
-                    .filter(|t| !t.settled)
-                    .map(|t| t.request_id.clone())
-                    .collect();
-                for id in unsettled {
-                    self.query(&id);
-                }
+                self.attach(); // Receipt queries, like retries, wait for on_attached's store fence.
             }
             _ => {}
         }
@@ -883,6 +989,9 @@ impl SessionClient {
             self.attach_id = None;
         }
         let ours = attach || request_id.is_some() || read.is_some();
+        if !ours {
+            return;
+        }
         self.error = Some(code.as_str());
         if ours && purging(code) {
             self.purge_all();
@@ -937,6 +1046,18 @@ impl SessionClient {
 
     /// Forget everything held for this Session and ask the runtime to delete its cache.
     pub fn purge_all(&mut self) {
+        if self.requests.iter().any(|t| !t.settled) {
+            self.error = Some("access_lost_outcome_unknown".to_owned());
+            self.notices.push(Notice::Refused {
+                code: "access_lost_outcome_unknown".to_owned(),
+            });
+        }
+        self.attachment = None;
+        self.attach_id = None;
+        self.outgoing.clear();
+        self.correlation.clear();
+        self.reads.clear();
+        self.view = View::new();
         self.transcript = Transcript::new();
         self.requests.clear();
         self.receipts.clear();
@@ -977,16 +1098,21 @@ mod tests {
         client.connect();
         let out = client.take_outgoing();
         assert!(matches!(out[0], ClientFrame::Attach { .. }));
-        assert_eq!(out[1].request_id(), Some(id.as_str()));
+        assert_eq!(out.len(), 1);
+        client.receive(&attached(out[0].id(), "st_a"));
+        let resumed = client.take_outgoing();
+        assert_eq!(resumed[0].request_id(), Some(id.as_str()));
     }
 
     #[test]
     fn busy_prompt_is_retried_as_follow_up_with_the_same_request_id() {
         let mut client = SessionClient::new("ses", Options::default());
         client.connect();
+        let attach = client.take_outgoing();
+        client.receive(&attached(attach[0].id(), "st_a"));
         let id = client.submit(InputKind::Prompt, "more");
         let out = client.take_outgoing();
-        let frame_id = out[1].id().to_owned();
+        let frame_id = out[0].id().to_owned();
         client.receive(&json!({"type": "error", "id": frame_id, "code": "busy"}));
         let retry = client.take_outgoing();
         match &retry[..] {

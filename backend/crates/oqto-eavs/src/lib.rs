@@ -5,8 +5,11 @@
 #![allow(dead_code)]
 
 pub mod client;
+mod endpoints;
 pub mod error;
 pub mod types;
+
+pub use endpoints::{deserialize_endpoint, deserialize_optional_endpoint};
 
 use async_trait::async_trait;
 
@@ -40,8 +43,8 @@ impl EavsApi for EavsClient {
 ///
 /// `api_key` is the user's eavs virtual key. It is embedded directly in
 /// models.json so Pi can authenticate against the local eavs proxy without
-/// needing an environment variable. The key is only valid on 127.0.0.1 so
-/// there is no security concern embedding it in the file.
+/// needing an environment variable. This is an unencrypted user-scoped credential:
+/// protect the profile and never pass an operator credential to this function.
 pub fn generate_pi_models_json(
     providers: &[ProviderDetail],
     eavs_base_url: &str,

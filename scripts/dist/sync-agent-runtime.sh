@@ -138,6 +138,18 @@ ext_cache() {
   echo "$cache"
 }
 
+# Shared public source must remain readable even when the root cache was cloned
+# with umask 077. Normalize this managed staging tree, never users' profiles.
+stage_ext_source() {
+  local src="$1" dst="$2"
+  [[ ! -L "$dst" ]] || { err "refusing symlinked shared extension source: $dst"; return 1; }
+  "${SUDO[@]}" mkdir -p "$dst" || return 1
+  "${SUDO[@]}" rsync -a --delete --exclude='.git' --chmod=ugo+rX,go-w "$src/" "$dst/" || return 1
+  # openrsync accepts --chmod but does not apply it. Physical recursive chmod
+  # normalizes only this public staging tree; symlinks encountered are not followed.
+  "${SUDO[@]}" chmod -R a+rX,go-w "$dst"
+}
+
 # Install into a home as its owner; only /etc/skel is installed as root.
 # The source must be the world-readable system staging tree, not the invoking
 # user's private git cache. Args: <home> <src>
@@ -180,8 +192,8 @@ sync_extensions() {
   [[ "$missing" -eq 0 ]] || return 1
 
   log "syncing extensions to /usr/share/oqto/pi-agent-extensions (new-user source)"
-  "${SUDO[@]}" mkdir -p /usr/share/oqto/pi-agent-extensions || return 1
-  "${SUDO[@]}" rsync -a --delete --exclude='.git' "$src/" /usr/share/oqto/pi-agent-extensions/ || return 1
+  "${SUDO[@]}" install -d -m 0755 /usr/share/oqto || return 1
+  stage_ext_source "$src" /usr/share/oqto/pi-agent-extensions || return 1
 
   # Every existing platform user + the invoking user + /etc/skel (new users).
   local home count=0

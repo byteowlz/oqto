@@ -25,9 +25,12 @@ import {
 	oneLight,
 } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
+import "@/lib/syntax-theme.css";
 
 interface MarkdownRendererProps {
 	content: string;
+	/** Opt in to the embedding host\u2019s Base24 syntax ink. */
+	syntaxAppearance?: "theme";
 	className?: string;
 	enableMermaid?: boolean;
 	isStreaming?: boolean;
@@ -47,6 +50,9 @@ export interface MarkdownImage {
 }
 
 const MermaidEnabledContext = createContext(true);
+const SyntaxThemeContext = createContext(false);
+// An empty theme also disables Prism\u2019s default inline text-shadow/code face.
+const TOKEN_THEME_STYLE: Record<string, React.CSSProperties> = {};
 const FileReferenceOpenContext = createContext<
 	((reference: FileReferenceDetail) => void) | undefined
 >(undefined);
@@ -409,6 +415,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const isDarkMode = resolvedTheme === "dark";
 
 	const enableMermaid = useContext(MermaidEnabledContext);
+	const tokenTheme = useContext(SyntaxThemeContext);
 	const onFileReferenceOpen = useContext(FileReferenceOpenContext);
 	const match = /language-(\w+)/.exec(className || "");
 	const codeString = normalizeCodeContent(children);
@@ -488,11 +495,14 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 				>
 					<SyntaxHighlighter
 						style={
-							(isDarkMode ? oneDark : oneLight) as Record<
-								string,
-								React.CSSProperties
-							>
+							tokenTheme
+								? TOKEN_THEME_STYLE
+								: ((isDarkMode ? oneDark : oneLight) as Record<
+										string,
+										React.CSSProperties
+									>)
 						}
+						useInlineStyles={!tokenTheme}
 						language={match ? match[1] : "text"}
 						PreTag="div"
 						wrapLongLines={false}
@@ -718,6 +728,7 @@ function resolveHyphenationLang() {
 
 export const MarkdownRenderer = memo(function MarkdownRenderer({
 	content,
+	syntaxAppearance,
 	className,
 	enableMermaid = true,
 	isStreaming = false,
@@ -734,6 +745,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 		<div
 			className={cn(
 				"markdown-content",
+				syntaxAppearance && "oqto-syntax-theme",
 				isStreaming && "markdown-content--streaming",
 				className,
 			)}
@@ -742,14 +754,16 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
 				<ImageOpenContext.Provider value={onImageOpen}>
 					<ImageSetContext.Provider value={images}>
-						<MermaidEnabledContext.Provider value={enableMermaid}>
-							<ReactMarkdown
-								remarkPlugins={remarkPlugins}
-								components={markdownComponents}
-							>
-								{sanitizedContent}
-							</ReactMarkdown>
-						</MermaidEnabledContext.Provider>
+						<SyntaxThemeContext.Provider value={syntaxAppearance === "theme"}>
+							<MermaidEnabledContext.Provider value={enableMermaid}>
+								<ReactMarkdown
+									remarkPlugins={remarkPlugins}
+									components={markdownComponents}
+								>
+									{sanitizedContent}
+								</ReactMarkdown>
+							</MermaidEnabledContext.Provider>
+						</SyntaxThemeContext.Provider>
 					</ImageSetContext.Provider>
 				</ImageOpenContext.Provider>
 			</FileReferenceOpenContext.Provider>

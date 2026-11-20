@@ -5,6 +5,7 @@
  */
 
 import { useTranslation } from "react-i18next";
+import { FileTextPreview } from "../../platform/file-text-preview";
 import {
 	workspaceFilePreviewUrl,
 	workspaceImagePreviewUrl,
@@ -64,7 +65,7 @@ export function FileViewer({
 		);
 	}
 	if (viewer === "text" && text.status === "text") {
-		return <pre className="wb-files-preview__body">{text.text}</pre>;
+		return <FileTextPreview name={name} content={text.text} />;
 	}
 	return (
 		<p className="wb-files-preview__body">

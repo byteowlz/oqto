@@ -60,6 +60,38 @@ sudo() {
   "$@"
 }
 
+# A private root download cache must not make the shared source unreadable.
+mode_source="$tmp/private-source"
+mode_stage="$tmp/shared-source"
+mkdir -p "$mode_source/module"
+printf 'public module\n' > "$mode_source/module/index.ts"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$mode_source/module/helper"
+chmod 0700 "$mode_source" "$mode_source/module" "$mode_source/module/helper"
+chmod 0600 "$mode_source/module/index.ts"
+printf 'private sentinel\n' > "$tmp/private-target"
+chmod 0600 "$tmp/private-target"
+ln -s "$tmp/private-target" "$mode_source/module/external-link"
+(umask 077; stage_ext_source "$mode_source" "$mode_stage")
+python3 - "$mode_source" "$mode_stage" <<'PY'
+from pathlib import Path
+import stat,sys
+source,stage=map(Path,sys.argv[1:])
+assert stat.S_IMODE(source.stat().st_mode)==0o700
+assert stat.S_IMODE((source/'module/index.ts').stat().st_mode)==0o600
+assert stat.S_IMODE((stage.parent/'private-target').stat().st_mode)==0o600
+for path in (stage,*stage.rglob('*')):
+    if path.is_symlink(): continue
+    mode=stat.S_IMODE(path.stat().st_mode)
+    assert mode & 0o044 == 0o044, (path,oct(mode))
+    assert not mode & 0o022, (path,oct(mode))
+    if path.is_dir(): assert mode & 0o011 == 0o011, (path,oct(mode))
+assert (stage/'module/helper').stat().st_mode & 0o011 == 0o011
+PY
+ln -s "$mode_stage" "$tmp/shared-source-link"
+if stage_ext_source "$mode_source" "$tmp/shared-source-link"; then
+  echo 'symlinked shared destination was accepted' >&2; exit 1
+fi
+
 backups() { find "$home/.pi/agent/extension-backups" -mindepth 2 -maxdepth 2 2>/dev/null | sort; }
 export SYNC_STAMP=20261009T000000Z
 install_ext_for_home "$home" "$src"

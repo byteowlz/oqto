@@ -46,13 +46,13 @@ kokorox = "0.2.3"
 [external]
 # Not byteowlz, but required for Oqto
 # pi + pi-extensions are PINNED (not "latest") so deploys are deterministic; the
-# latest stable candidates are prepared by scripts/release/pi-update.py in an
-# isolated snapshot. Advance accepted pins only after coherent qualification;
+# latest stable source pins are updated daily by scripts/release/pi-update.py
+# after provenance, locked-runtime, RPC and extension smoke checks; deployment is separate;
 # the legacy standalone smoke is not a Node/npm release acceptance gate.
 # Sync accepted sources via scripts/dist/sync-agent-runtime.sh.
-pi = "1.4.0"  # qualified Linux x86_64 candidate; activate through guarded deployment
-pi-linux-x64-sha256 = "f2e4e4329603223d03260cdb8bd5033dbdc1f73ba58ab8939db2e56546e115d2"
-pi-linux-arm64-sha256 = "fa5829c7ef83ffeaebba015715c8306220f89b2aa8a00154efbba98dd5440156"
+pi = "1.5.2"  # exact curated source pin; activation requires separate release qualification
+pi-linux-x64-sha256 = "811c6f2c9e7aaee252b5404252e556fb713aa209c1f7f924226aa77d4ef70cb5"
+pi-linux-arm64-sha256 = "42805cd5615952fcbbfc9c56b04f8feb84395134952e169a6cdc8d7676975666"
 # Official Node/npm runtime; standalone archives remain separate explicit acquisition inputs.
 node = "24.22.2"
 node-linux-x64-sha256 = "48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75"

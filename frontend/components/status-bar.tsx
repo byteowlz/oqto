@@ -2,10 +2,13 @@
 
 import { useSelectedChat } from "@/components/contexts";
 import { ModelQuickSwitcher } from "@/components/model-quick-switcher";
+import {
+	StatusBarLayout,
+	type StatusBarNotice,
+} from "@/components/status-bar-layout";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
-import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Users } from "lucide-react";
 import { useMemo } from "react";
@@ -47,7 +50,7 @@ async function fetchAdminStats(): Promise<AdminStats> {
 	return res.json();
 }
 
-export function StatusBar() {
+export function StatusBar({ notice }: { notice?: StatusBarNotice | null }) {
 	const { data: user } = useCurrentUser();
 	const { workspaceSessions, selectedChatSessionId, runnerSessionCount } =
 		useApp();
@@ -94,71 +97,64 @@ export function StatusBar() {
 	}, [selectedChatFromHistory?.workspace_path, workspaceSessions]);
 
 	return (
-		<div
-			className={cn(
-				"flex items-center justify-between",
-				"px-4 md:px-3",
-				"bg-sidebar/80 border-t border-sidebar-border",
-				"text-[10px] text-muted-foreground",
-				"select-none",
-				"h-10 md:h-6",
-			)}
-		>
-			{/* Left side - user metrics */}
-			<div className="flex items-center gap-2 md:gap-3 min-w-0">
-				{/* Running sessions for current user */}
-				<span
-					className="flex items-center gap-1 shrink-0"
-					title="Your running Pi sessions"
-				>
-					<Activity className="w-3 h-3" />
-					<span className="font-mono">{runningSessionCount}</span>
-				</span>
-
-				{/* Current model - clickable to open quick switcher */}
-				{selectedChatSessionId && (
-					<ModelQuickSwitcherSafe
-						sessionId={selectedChatSessionId}
-						workspacePath={workspacePath}
-						className="text-[10px] min-w-0"
-					/>
-				)}
-			</div>
-
-			{/* Right side - admin metrics + version */}
-			<div className="flex items-center gap-2 md:gap-3 shrink-0">
-				{/* Admin-only metrics */}
-				{isAdmin && adminStats && (
-					<>
-						<span
-							className="flex items-center gap-1"
-							title="Active users / Total users"
-						>
-							<Users className="w-3 h-3" />
-							<span className="font-mono">
-								{adminStats.active_users}/{adminStats.total_users}
-							</span>
-						</span>
-						<span
-							className="flex items-center gap-1"
-							title="Running sessions / Total sessions"
-						>
-							<Activity className="w-3 h-3" />
-							<span className="font-mono">
-								{adminStats.running_sessions}/{adminStats.total_sessions}
-							</span>
-						</span>
-					</>
-				)}
-
-				{/* Version */}
-				{health?.version && (
-					<span className="font-mono opacity-60" title="Oqto version">
-						v{health.version}
+		<StatusBarLayout
+			notice={notice}
+			left={
+				<>
+					{/* Running sessions for current user */}
+					<span
+						className="flex items-center gap-1 shrink-0"
+						title="Your running Pi sessions"
+					>
+						<Activity className="w-3 h-3" />
+						<span className="font-mono">{runningSessionCount}</span>
 					</span>
-				)}
-			</div>
-		</div>
+
+					{/* Current model - clickable to open quick switcher */}
+					{selectedChatSessionId && (
+						<ModelQuickSwitcherSafe
+							sessionId={selectedChatSessionId}
+							workspacePath={workspacePath}
+							className="text-[10px] min-w-0"
+						/>
+					)}
+				</>
+			}
+			right={
+				<>
+					{/* Admin-only metrics */}
+					{isAdmin && adminStats && (
+						<>
+							<span
+								className="flex items-center gap-1"
+								title="Active users / Total users"
+							>
+								<Users className="w-3 h-3" />
+								<span className="font-mono">
+									{adminStats.active_users}/{adminStats.total_users}
+								</span>
+							</span>
+							<span
+								className="flex items-center gap-1"
+								title="Running sessions / Total sessions"
+							>
+								<Activity className="w-3 h-3" />
+								<span className="font-mono">
+									{adminStats.running_sessions}/{adminStats.total_sessions}
+								</span>
+							</span>
+						</>
+					)}
+
+					{/* Version */}
+					{health?.version && (
+						<span className="font-mono opacity-60" title="Oqto version">
+							v{health.version}
+						</span>
+					)}
+				</>
+			}
+		/>
 	);
 }
 

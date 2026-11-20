@@ -734,13 +734,22 @@ struct EavsConfig {
     /// Whether EAVS integration is enabled.
     #[serde(default = "default_true")]
     enabled: bool,
-    /// URL of the EAVS server (e.g., "http://localhost:41800").
-    #[serde(default = "default_eavs_base_url")]
+    /// Operator/control base URL; never publish an operator token to agent profiles.
+    #[serde(
+        default = "default_eavs_base_url",
+        deserialize_with = "eavs::deserialize_endpoint"
+    )]
     base_url: String,
-    /// URL for containers to reach EAVS (e.g., "http://host.docker.internal:41800").
+    /// Ordinary-key inference base; omission preserves unified-listener deployments.
+    #[serde(default, deserialize_with = "eavs::deserialize_optional_endpoint")]
+    inference_url: Option<String>,
+    /// Inference URL reachable from containers; not the operator listener.
+    #[serde(default, deserialize_with = "eavs::deserialize_optional_endpoint")]
     container_url: Option<String>,
     /// Master key for EAVS admin operations.
     master_key: Option<String>,
+    /// Optional separate listener capability (literal, env: or file: reference).
+    listener_token: Option<String>,
     /// Path to the eavs config.toml file.
     /// Used by admin API to add/remove providers.
     /// Defaults to ~/.config/eavs/config.toml (or ~oqto/.config/eavs/config.toml in multi-user).
@@ -755,6 +764,37 @@ struct EavsConfig {
     /// OAuth login configuration for per-user provider sign-in.
     #[serde(default)]
     oauth: EavsOAuthConfig,
+}
+
+impl EavsConfig {
+    fn inference_url(&self) -> &str {
+        self.inference_url.as_deref().unwrap_or(&self.base_url)
+    }
+
+    fn client(&self, master_key: impl Into<String>) -> eavs::EavsResult<eavs::EavsClient> {
+        let listener_token = self
+            .listener_token
+            .as_deref()
+            .map(crate::auth::resolve_secret_value)
+            .transpose()
+            .map_err(|_| {
+                eavs::EavsError::ClientBuild("Failed to resolve eavs.listener_token".into())
+            })?;
+        eavs::EavsClient::with_endpoints_and_listener_token(
+            &self.base_url,
+            self.inference_url(),
+            master_key,
+            listener_token.as_deref(),
+        )
+    }
+
+    fn session_inference_url(&self, local_mode: bool) -> Option<String> {
+        if local_mode {
+            Some(self.inference_url().to_owned())
+        } else {
+            self.container_url.clone()
+        }
+    }
 }
 
 /// EAVS OAuth login configuration.
@@ -2381,14 +2421,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
-    let eavs_url = if local_mode {
-        ctx.config.eavs.as_ref().map(|e| e.base_url.clone())
-    } else {
-        ctx.config
-            .eavs
-            .as_ref()
-            .and_then(|e| e.container_url.clone())
-    };
+    let eavs_url = ctx
+        .config
+        .eavs
+        .as_ref()
+        .and_then(|eavs| eavs.session_inference_url(local_mode));
 
     let resolved_runner_socket_pattern = resolve_runner_socket_pattern(&ctx.config);
 
@@ -2445,7 +2482,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             };
 
             if let Some(master_key) = configured {
-                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                match eavs_config.client(master_key) {
                     Ok(client) => Some(std::sync::Arc::new(client)),
                     Err(err) => {
                         log::error!("Failed to initialize EAVS client: {}", err);
@@ -2453,7 +2490,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     }
                 }
             } else if let Ok(master_key) = std::env::var("EAVS_MASTER_KEY") {
-                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                match eavs_config.client(master_key) {
                     Ok(client) => Some(std::sync::Arc::new(client)),
                     Err(err) => {
                         log::error!("Failed to initialize EAVS client: {}", err);
@@ -2909,7 +2946,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             None => None,
         };
         if let Some(master_key) = resolved_master_key {
-            match eavs::EavsClient::new(&eavs_config.base_url, &master_key) {
+            match eavs_config.client(&master_key) {
                 Ok(client) => {
                     info!("EAVS client initialized at {}", eavs_config.base_url);
                     state = state.with_eavs_client(client);
@@ -3865,6 +3902,9 @@ fn ensure_pi_settings_json(pi_dir: &std::path::Path, models_json: &serde_json::V
         Err(e) => warn!("Failed to serialize settings.json: {}", e),
     }
 }
+
+#[cfg(test)]
+mod eavs_endpoint_tests;
 
 #[cfg(test)]
 mod tests {

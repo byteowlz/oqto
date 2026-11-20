@@ -311,10 +311,10 @@ describe("Quick Look and operations", () => {
 		// Directories sort first, so step onto the file before previewing.
 		fireEvent.keyDown(rows, { key: "j" });
 		fireEvent.keyDown(rows, { key: " " });
-		await screen.findByText(/# notes/);
+		await screen.findByRole("heading", { name: "notes" });
 		expect(ops).toContain("read:notes.md");
 		fireEvent.keyDown(rows, { key: " " });
-		expect(screen.queryByText(/# notes/)).toBeNull();
+		expect(screen.queryByRole("heading", { name: "notes" })).toBeNull();
 	});
 
 	it("says so instead of previewing a directory", async () => {

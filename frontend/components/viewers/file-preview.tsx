@@ -21,6 +21,7 @@ import { ImageViewer } from "./image-viewer";
 import { PDFViewer } from "./pdf-viewer";
 import { TypstViewer } from "./typst-viewer";
 import { VideoViewer } from "./video-viewer";
+import { ViewerHeader } from "./viewer-header";
 
 interface FilePreviewProps {
 	filename: string;
@@ -84,16 +85,10 @@ function PlainTextViewer({
 }: { content: string; filename?: string }) {
 	return (
 		<div className="flex flex-col h-full">
-			<div className="flex items-center justify-between px-3 py-2 bg-muted border-b border-border shrink-0">
-				<div className="flex items-center gap-2">
-					<FileText className="w-4 h-4 text-muted-foreground" />
-					{filename && (
-						<span className="text-sm font-medium truncate max-w-[200px]">
-							{filename}
-						</span>
-					)}
-				</div>
-			</div>
+			<ViewerHeader
+				icon={<FileText className="w-4 h-4 text-muted-foreground" />}
+				filename={filename}
+			/>
 			<ScrollArea className="flex-1">
 				<pre className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
 					{content}

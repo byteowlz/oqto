@@ -55,6 +55,20 @@ import { useTranslation } from "react-i18next";
 import { dedentMarkdown, stripAnsiSequences } from "./chat-render-text";
 import type { MessageGroup } from "./group-messages";
 
+/** Opt-in host presentation; never a second message or activity authority. */
+export interface ChatPresentation {
+	readonly style: "compact";
+	readonly icons: {
+		readonly copy: ReactNode;
+		readonly copied: ReactNode;
+		readonly chevron: ReactNode;
+		readonly operation: (name: string, failed: boolean) => ReactNode;
+	};
+}
+const ChatPresentationContext = createContext<ChatPresentation | undefined>(
+	undefined,
+);
+
 /**
  * The one action people actually reach for, so it is always on screen rather
  * than revealed under the pointer. It carries no size utilities of its own:
@@ -62,6 +76,7 @@ import type { MessageGroup } from "./group-messages";
  * whatever the reader has chosen for the prose.
  */
 function ChatCopyAction({ text, label }: { text: string; label: string }) {
+	const presentation = useContext(ChatPresentationContext);
 	const [copied, setCopied] = useState(false);
 
 	const handleCopy = useCallback(() => {
@@ -90,8 +105,10 @@ function ChatCopyAction({ text, label }: { text: string; label: string }) {
 			className="chat-action"
 			title={label}
 		>
-			{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-			<span>{label}</span>
+			{copied
+				? (presentation?.icons.copied ?? <Check aria-hidden="true" />)
+				: (presentation?.icons.copy ?? <Copy aria-hidden="true" />)}
+			<span className={presentation ? "sr-only" : undefined}>{label}</span>
 		</button>
 	);
 }
@@ -138,41 +155,174 @@ type Segment =
  * what happened without every call in the flow, and nothing becomes unreachable.
  * Presentation only; parts, ids and copy are untouched.
  */
+type ActivityStep = Extract<
+	Segment,
+	{ type: "thinking" | "tool_call" | "tool_result_only" }
+>;
+
+function activityFailed(step: ActivityStep): boolean {
+	return step.type === "tool_call"
+		? step.part.status === "error" || Boolean(step.toolResult?.isError)
+		: step.type === "tool_result_only" && Boolean(step.part.isError);
+}
+
+/** Mobile's disclosure label, derived from existing canonical steps only. */
+function CompactActivitySummary({ steps }: { steps: ActivityStep[] }) {
+	const { t } = useTranslation();
+	const presentation = useContext(ChatPresentationContext);
+	const counts = new Map<string, number>();
+	for (const step of steps) {
+		const name =
+			step.type === "thinking"
+				? t("chat.activityThought")
+				: step.part.name || "result";
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	const kinds = [...counts]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 3)
+		.map(([name, count]) => `${name} ${count}`)
+		.join(" · ");
+	const failures = steps.filter(activityFailed).length;
+	const running = steps.some(
+		(step) =>
+			step.type === "tool_call" &&
+			(step.part.status === "running" || step.part.status === "pending"),
+	);
+	return (
+		<>
+			<span className="chat-activity__chevron" aria-hidden="true">
+				{presentation?.icons.chevron}
+			</span>
+			<span className="chat-activity__count">
+				{t("chat.activitySteps", { count: steps.length })}
+			</span>
+			<span className="chat-activity__kinds" title={kinds}>
+				{kinds}
+			</span>
+			{failures > 0 ? (
+				<span className="chat-activity__failures">
+					{t("chat.activityFailures", { count: failures })}
+				</span>
+			) : null}
+			<span
+				className={cn(
+					"chat-activity__status",
+					running && "chat-activity__status--running",
+				)}
+			>
+				{t(running ? "chat.activityRunning" : "chat.activityDone")}
+			</span>
+		</>
+	);
+}
+
 function CollapsedToolGroup({
 	steps,
 	children,
-}: {
-	steps: Array<
-		| Extract<Segment, { type: "tool_call" }>
-		| Extract<Segment, { type: "tool_result_only" }>
-	>;
-	children: React.ReactNode;
-}) {
+}: { steps: ActivityStep[]; children: React.ReactNode }) {
 	const { t } = useTranslation();
+	const presentation = useContext(ChatPresentationContext);
 	const shown = steps.slice(0, 3);
 	return (
 		<details className="chat-activity chat-activity--collapsed">
 			<summary>
-				<span className="chat-activity__icons">
-					{shown.map((step, index) => (
-						<span key={`${step.key}-${index}`}>
-							{getToolIcon(
-								step.type === "tool_call"
-									? step.part.name
-									: step.part.name || "result",
-								step.type === "tool_call"
-									? (step.part.input as Record<string, unknown> | undefined)
-									: undefined,
-							)}
+				{presentation ? (
+					<CompactActivitySummary steps={steps} />
+				) : (
+					<>
+						<span className="chat-activity__icons">
+							{shown.map((step) => (
+								<span key={step.key}>
+									{getToolIcon(
+										step.type === "thinking"
+											? "thinking"
+											: step.part.name || "result",
+										step.type === "tool_call"
+											? (step.part.input as Record<string, unknown> | undefined)
+											: undefined,
+									)}
+								</span>
+							))}
 						</span>
-					))}
-				</span>
-				<span className="chat-activity__count">
-					{t("chat.activitySteps", { count: steps.length })}
-				</span>
+						<span className="chat-activity__count">
+							{t("chat.activitySteps", { count: steps.length })}
+						</span>
+					</>
+				)}
 			</summary>
 			{children}
 		</details>
+	);
+}
+
+interface CompactActivityRunProps {
+	steps: ActivityStep[];
+	locale: "en" | "de";
+	workspacePath?: string | null;
+	isGroupStreaming: boolean;
+	freezeStreamingUpdates: boolean;
+	streamingPresentationMode: StreamingPresentationMode;
+	recoveredSegmentKeys: ReadonlySet<string>;
+	hideRecoveredErrors: boolean;
+}
+function CompactActivityRun({
+	steps,
+	locale,
+	workspacePath,
+	isGroupStreaming,
+	freezeStreamingUpdates,
+	streamingPresentationMode,
+	recoveredSegmentKeys,
+	hideRecoveredErrors,
+}: CompactActivityRunProps) {
+	const visible = hideRecoveredErrors
+		? steps.filter((step) => !recoveredSegmentKeys.has(step.key))
+		: steps;
+	if (visible.length === 0) return null;
+	return (
+		<div>
+			<CollapsedToolGroup steps={visible}>
+				{visible.map((step) => (
+					<div key={step.key} className="chat-activity__step">
+						<PiPartRenderer
+							part={
+								step.type === "thinking"
+									? ({
+											type: "thinking",
+											id: step.key,
+											text: step.text,
+											__verbosity: 2,
+										} as DisplayPart)
+									: step.part
+							}
+							toolResult={
+								step.type === "tool_call" ? step.toolResult : undefined
+							}
+							locale={locale}
+							workspacePath={workspacePath}
+							isStreaming={isGroupStreaming}
+							freezeStreamingUpdates={freezeStreamingUpdates}
+							streamingPresentationMode={streamingPresentationMode}
+							isRecoveredError={recoveredSegmentKeys.has(step.key)}
+							showToolMedia={false}
+						/>
+					</div>
+				))}
+			</CollapsedToolGroup>
+			{visible.map((step) =>
+				step.type === "thinking" ? null : (
+					<ToolMediaPreview
+						key={step.key}
+						output={
+							step.type === "tool_call"
+								? { input: step.part.input, output: step.toolResult?.output }
+								: step.part.output
+						}
+					/>
+				),
+			)}
+		</div>
 	);
 }
 
@@ -347,7 +497,7 @@ function ZoomableCardImage({
 		<img
 			src={src}
 			alt={alt}
-			className={cn("max-w-full h-auto", hidden && "hidden")}
+			className={cn("chat-inline-image max-w-full h-auto", hidden && "hidden")}
 			onLoad={onLoaded}
 			onError={onFailed}
 		/>
@@ -380,7 +530,12 @@ function OpenableImage({
 	const onImageOpen = useContext(ChatImageOpenContext);
 	const image = { src, alt };
 	const picture = (
-		<img src={src} alt={alt} className={className} loading="lazy" />
+		<img
+			src={src}
+			alt={alt}
+			className={cn("chat-inline-image", className)}
+			loading="lazy"
+		/>
 	);
 	const original = originalSessionMediaUrl(src);
 	if (original)
@@ -448,6 +603,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	freezeStreamingUpdates = false,
 	streamingPresentationMode = "raw",
 	fileAdapter = null,
+	presentation,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -466,6 +622,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	freezeStreamingUpdates?: boolean;
 	streamingPresentationMode?: StreamingPresentationMode;
 	fileAdapter?: ChatFileAdapter | null;
+	presentation?: ChatPresentation;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -742,6 +899,12 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		| Segment
 		| {
 				key: string;
+				type: "activity_group";
+				steps: ActivityStep[];
+				timestamp: number;
+		  }
+		| {
+				key: string;
 				type: "tool_group";
 				segments: Array<
 					| Extract<Segment, { type: "tool_call" }>
@@ -801,6 +964,35 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 			: [];
 
 	const renderSegments: RenderSegment[] = (() => {
+		if (presentation && verbosity === 2) {
+			const flow: RenderSegment[] = [];
+			let steps: ActivityStep[] = [];
+			const flush = () => {
+				if (steps.length === 0) return;
+				flow.push({
+					key: `activity-${steps[0].key}`,
+					type: "activity_group",
+					steps,
+					timestamp: steps[0].timestamp,
+				});
+				steps = [];
+			};
+			for (const segment of displaySegments) {
+				if (
+					(segment.type === "thinking" ||
+						segment.type === "tool_call" ||
+						segment.type === "tool_result_only") &&
+					!isOpenUISegment(segment)
+				) {
+					steps.push(segment);
+				} else {
+					flush();
+					flow.push(segment);
+				}
+			}
+			flush();
+			return flow;
+		}
 		if (verbosity === 1) {
 			const flow = displaySegments.filter(
 				(segment) =>
@@ -898,6 +1090,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 	const messageCard = (
 		<div
 			data-message-id={messageId}
+			data-chat-presentation={presentation?.style}
 			className={cn(
 				"chat-turn group min-w-0",
 				isUser ? "chat-turn--user" : "chat-turn--agent",
@@ -959,6 +1152,21 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 					const needsTopMargin =
 						prevSegment?.type === "text" && segment.type !== "text";
 
+					if (segment.type === "activity_group") {
+						return (
+							<CompactActivityRun
+								key={segment.key}
+								steps={segment.steps}
+								locale={locale}
+								workspacePath={workspacePath}
+								isGroupStreaming={isGroupStreaming}
+								freezeStreamingUpdates={freezeStreamingUpdates}
+								streamingPresentationMode={streamingPresentationMode}
+								recoveredSegmentKeys={recoveredSegmentKeys}
+								hideRecoveredErrors={hideRecoveredErrors}
+							/>
+						);
+					}
 					if (segment.type === "text") {
 						const inner = (
 							<TextWithFileReferences
@@ -1256,13 +1464,18 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 		</div>
 	);
 
+	const presentedMessageCard = (
+		<ChatPresentationContext.Provider value={presentation}>
+			{messageCard}
+		</ChatPresentationContext.Provider>
+	);
 	const isCoarsePointerDevice = useCoarsePointerDevice();
 	if (isCoarsePointerDevice) {
 		return (
 			<FileReferenceOpenContext.Provider value={onFileReferenceOpen}>
 				<ChatFileAdapterContext.Provider value={fileAdapter}>
 					<ChatImageOpenContext.Provider value={onImageOpen}>
-						{messageCard}
+						{presentedMessageCard}
 					</ChatImageOpenContext.Provider>
 				</ChatFileAdapterContext.Provider>
 			</FileReferenceOpenContext.Provider>
@@ -1275,7 +1488,7 @@ export const MessageGroupCard = memo(function MessageGroupCard({
 				<ChatImageOpenContext.Provider value={onImageOpen}>
 					<ContextMenu>
 						<ContextMenuTrigger className="contents">
-							{messageCard}
+							{presentedMessageCard}
 						</ContextMenuTrigger>
 						<ContextMenuContent>
 							{isUser && onForkHere && (
@@ -1329,6 +1542,7 @@ function PiPartRenderer({
 	freezeStreamingUpdates = false,
 	streamingPresentationMode = "raw",
 	isRecoveredError = false,
+	showToolMedia = true,
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -1340,8 +1554,10 @@ function PiPartRenderer({
 	freezeStreamingUpdates?: boolean;
 	streamingPresentationMode?: StreamingPresentationMode;
 	isRecoveredError?: boolean;
+	showToolMedia?: boolean;
 }) {
 	const { t } = useTranslation();
+	const presentation = useContext(ChatPresentationContext);
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
 	const isThinkingPart = part.type === "thinking";
 	const rawThinkingText = isThinkingPart
@@ -1543,7 +1759,9 @@ function PiPartRenderer({
 				const raw = match ? match[0].trim() : thinkingText.split("\n")[0];
 				return raw.length > 140 ? `${raw.slice(0, 140)}...` : raw;
 			})();
-			const summaryLabel = t("chat.thinking");
+			const summaryLabel = t(
+				presentation && !isStreaming ? "chat.thought" : "chat.thinking",
+			);
 
 			return (
 				<details
@@ -1551,20 +1769,26 @@ function PiPartRenderer({
 					className="chat-aside group my-2 overflow-hidden"
 				>
 					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-foreground/70 hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
-						<svg
-							className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
-							viewBox="0 0 24 24"
-							fill="none"
-							aria-hidden="true"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<polyline points="9 18 15 12 9 6" />
-						</svg>
+						{presentation ? (
+							<span className="chat-disclosure-chevron">
+								{presentation.icons.chevron}
+							</span>
+						) : (
+							<svg
+								className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
+								viewBox="0 0 24 24"
+								fill="none"
+								aria-hidden="true"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							>
+								<polyline points="9 18 15 12 9 6" />
+							</svg>
+						)}
 						<span className="font-medium">{summaryLabel}</span>
-						{firstSentence && (
+						{!presentation && firstSentence && (
 							<span className="truncate opacity-60 group-open:hidden">
 								-- {firstSentence}
 							</span>
@@ -1592,6 +1816,7 @@ function PiPartRenderer({
 					>
 						<MarkdownRenderer
 							content={thinkingText}
+							syntaxAppearance={presentation ? "theme" : undefined}
 							className="chat-prose chat-prose--aside overflow-hidden min-w-0 max-w-full"
 							isStreaming={isStreaming}
 						/>
@@ -1612,7 +1837,13 @@ function PiPartRenderer({
 				);
 			}
 			const hasResult = Boolean(toolResult);
-			const toolStatus = hasResult ? "completed" : "running";
+			const toolStatus =
+				hasResult || (presentation && part.status === "success")
+					? "completed"
+					: "running";
+			const hasToolError = Boolean(
+				presentation && (toolResult?.isError || part.status === "error"),
+			);
 			return (
 				<>
 					<ToolCallCard
@@ -1624,7 +1855,7 @@ function PiPartRenderer({
 							tool: part.name,
 							callID: part.toolCallId,
 							state: {
-								status: toolStatus,
+								status: hasToolError ? "error" : toolStatus,
 								input: part.input as Record<string, unknown>,
 								output: toolResult
 									? formatToolResultOutput(toolResult.output)
@@ -1632,15 +1863,29 @@ function PiPartRenderer({
 								title: part.name,
 							},
 						}}
+						icon={presentation?.icons.operation(part.name, hasToolError)}
+						statusLabel={
+							presentation
+								? t(
+										hasToolError
+											? "common.error"
+											: toolStatus === "completed"
+												? "chat.activityDone"
+												: "chat.activityRunning",
+									)
+								: undefined
+						}
 						defaultCollapsed={true}
 						hideTodoTools={true}
 						collapsible={collapsible}
 						hideHeader={hideHeader}
-						isRecoveredError={isRecoveredError}
+						isRecoveredError={presentation ? false : isRecoveredError}
 					/>
-					<ToolMediaPreview
-						output={{ input: part.input, output: toolResult?.output }}
-					/>
+					{showToolMedia ? (
+						<ToolMediaPreview
+							output={{ input: part.input, output: toolResult?.output }}
+						/>
+					) : null}
 				</>
 			);
 		}
@@ -1663,13 +1908,22 @@ function PiPartRenderer({
 								title: part.name || "Tool Result",
 							},
 						}}
+						icon={presentation?.icons.operation(
+							part.name || "result",
+							Boolean(part.isError),
+						)}
+						statusLabel={
+							presentation
+								? t(part.isError ? "common.error" : "chat.activityDone")
+								: undefined
+						}
 						defaultCollapsed={true}
 						hideTodoTools={true}
 						collapsible={collapsible}
 						hideHeader={hideHeader}
-						isRecoveredError={isRecoveredError}
+						isRecoveredError={presentation ? false : isRecoveredError}
 					/>
-					<ToolMediaPreview output={part.output} />
+					{showToolMedia ? <ToolMediaPreview output={part.output} /> : null}
 				</>
 			);
 
@@ -2196,6 +2450,7 @@ function TextWithFileReferences({
 }) {
 	const { t } = useTranslation();
 	const fileAdapter = useContext(ChatFileAdapterContext);
+	const presentation = useContext(ChatPresentationContext);
 	const smoothCrawlRef = useRef<HTMLDivElement>(null);
 	const frozenContent = useFrozenStreamingText(
 		content,
@@ -2314,6 +2569,7 @@ function TextWithFileReferences({
 		>
 			<MarkdownRenderer
 				content={readableContent}
+				syntaxAppearance={presentation ? "theme" : undefined}
 				className="canonical-message-prose chat-prose overflow-hidden min-w-0 max-w-full"
 				enableMermaid={!deferMermaidUntilFinal}
 				isStreaming={isStreaming}

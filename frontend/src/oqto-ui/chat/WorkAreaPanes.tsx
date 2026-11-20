@@ -1,5 +1,6 @@
-import { Download, FileCode2, PanelRightClose, Search } from "lucide-react";
+import { Download, PanelRightClose } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { OqtoIcon } from "../platform/icons";
 
 interface ChatActionsProps {
 	/** Toggles the side panel Container; absent when the host cannot. */
@@ -26,7 +27,7 @@ export function ChatActions({ onTogglePanel }: ChatActionsProps) {
 				type="button"
 				aria-label={t("oqtoUi.chat.search")}
 			>
-				<Search aria-hidden="true" />
+				<OqtoIcon name="search" aria-hidden="true" />
 			</button>
 			<button
 				className="wb-icon-button"
@@ -50,7 +51,7 @@ export function EditorPane({ fileName, lines }: EditorPaneProps) {
 	return (
 		<section className="wb-editor" aria-label={fileName}>
 			<header className="wb-editor__header">
-				<FileCode2 aria-hidden="true" />
+				<OqtoIcon name="code" aria-hidden="true" />
 				<span>{fileName}</span>
 				<span className="wb-editor__scope">
 					{t("oqtoUi.workArea.workDirectoryOwned")}

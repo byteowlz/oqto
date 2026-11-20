@@ -1,0 +1,38 @@
+/* Base16 syntax roles from the active Base24 scheme, not a fixed Prism palette. */
+.oqto-syntax-theme {
+	--code-bg: var(--background);
+	--code-fg: var(--foreground);
+	--code-border: var(--border);
+	--code-muted: var(--muted-foreground);
+}
+.oqto-syntax-theme code[class*="language-"] {
+	display: block;
+	background: transparent;
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: inherit;
+	line-height: inherit;
+	text-shadow: none;
+}
+.oqto-syntax-theme .token.comment,
+.oqto-syntax-theme .token.prolog,
+.oqto-syntax-theme .token.doctype,
+.oqto-syntax-theme .token.cdata {
+	color: var(--muted-foreground);
+}
+.oqto-syntax-theme .token.keyword,
+.oqto-syntax-theme .token.tag,
+.oqto-syntax-theme .token.boolean {
+	color: var(--base0E, var(--foreground));
+}
+.oqto-syntax-theme .token.function,
+.oqto-syntax-theme .token.class-name {
+	color: var(--base0D, var(--primary));
+}
+.oqto-syntax-theme .token.string,
+.oqto-syntax-theme .token.attr-value {
+	color: var(--base0B, var(--primary));
+}
+.oqto-syntax-theme .token.number {
+	color: var(--base09, var(--foreground));
+}

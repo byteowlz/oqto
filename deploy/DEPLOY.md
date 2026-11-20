@@ -102,6 +102,8 @@ and backfill-only invocations do not create source snapshots.
    Remote staging includes the reconciler and its ownership policy, not just the shell
    entrypoint. Pins are parsed as TOML. A failure in this post-activation phase is
    reported separately: the verified release remains active; it is not a rollback.
+   The managed shared extension source is principal-readable regardless of the
+   caller's umask; the private download cache and user profiles are not chmod-repaired.
 
 The frontend ships inside the artifact; `oqto-setup` links `/var/www/oqto` to
 `releases/current/immutable/frontend`, so rollback serves the matching bundle. Hosts

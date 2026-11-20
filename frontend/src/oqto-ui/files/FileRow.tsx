@@ -15,12 +15,11 @@ import {
 	FileType2,
 	Film,
 	Folder,
-	Link2,
 	File as Plain,
 } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo } from "react";
 import type { FileEntry } from "../platform/files-contract";
+import { OqtoIcon } from "../platform/icons";
 import { type EntryKind, entryKind } from "./kinds";
 
 const ICONS: { readonly [kind in EntryKind]: typeof Folder } = {
@@ -90,9 +89,9 @@ export const FileRow = memo(function FileRow({
 						}}
 					>
 						{tree.expanded ? (
-							<ChevronDown aria-hidden="true" />
+							<OqtoIcon name="forward" rotation={90} aria-hidden="true" />
 						) : (
-							<ChevronRight aria-hidden="true" />
+							<OqtoIcon name="forward" aria-hidden="true" />
 						)}
 					</span>
 				) : (
@@ -102,7 +101,7 @@ export const FileRow = memo(function FileRow({
 			<Icon aria-hidden="true" />
 			<span className="wb-tree__name">{entry.name}</span>
 			{entry.symlink ? (
-				<Link2 className="wb-tree__link" aria-hidden="true" />
+				<OqtoIcon name="link" className="wb-tree__link" aria-hidden="true" />
 			) : null}
 			{modified === "" ? null : (
 				<span className="wb-tree__meta">{modified}</span>

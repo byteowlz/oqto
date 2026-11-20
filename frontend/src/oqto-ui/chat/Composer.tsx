@@ -1,5 +1,5 @@
-import { Paperclip, Send } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { OqtoIcon } from "../platform/icons";
 
 export function Composer() {
 	const { t } = useTranslation();
@@ -10,7 +10,7 @@ export function Composer() {
 				type="button"
 				aria-label={t("oqtoUi.chat.attach")}
 			>
-				<Paperclip aria-hidden="true" />
+				<OqtoIcon name="attach" aria-hidden="true" />
 			</button>
 			<textarea
 				rows={1}
@@ -22,7 +22,7 @@ export function Composer() {
 				type="button"
 				aria-label={t("oqtoUi.chat.send")}
 			>
-				<Send aria-hidden="true" />
+				<OqtoIcon name="send" aria-hidden="true" />
 			</button>
 		</footer>
 	);

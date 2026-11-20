@@ -36,6 +36,9 @@ interface ToolCallCardProps {
 	collapsible?: boolean;
 	hideHeader?: boolean;
 	isRecoveredError?: boolean;
+	/** Optional host presentation; canonical tool state remains authoritative. */
+	icon?: React.ReactNode;
+	statusLabel?: string;
 }
 
 // Todo item structure from todowrite tool
@@ -873,6 +876,8 @@ export function ToolCallCard({
 	collapsible = true,
 	hideHeader = false,
 	isRecoveredError = false,
+	icon,
+	statusLabel,
 }: ToolCallCardProps) {
 	const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 	const { tool, state } = part;
@@ -913,8 +918,9 @@ export function ToolCallCard({
 
 	return (
 		<div
+			data-tool-status={status}
 			className={cn(
-				"rounded-lg border transition-all duration-200",
+				"chat-tool-call rounded-lg border transition-all duration-200",
 				getStatusClasses(status, output, isRecoveredError),
 			)}
 		>
@@ -929,9 +935,10 @@ export function ToolCallCard({
 						!hasContent && "cursor-default",
 					)}
 				>
-					{getStatusIcon(status, toolName, input, output, isRecoveredError)}
+					{icon ??
+						getStatusIcon(status, toolName, input, output, isRecoveredError)}
 
-					<span className="flex-1 text-sm font-medium text-foreground truncate">
+					<span className="chat-tool-call__title flex-1 text-sm font-medium text-foreground truncate">
 						{title}
 					</span>
 					{isRecoveredError && status === "error" && (
@@ -940,6 +947,9 @@ export function ToolCallCard({
 						</span>
 					)}
 
+					{statusLabel ? (
+						<span className="chat-tool-status">{statusLabel}</span>
+					) : null}
 					{duration && (
 						<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">
 							{duration}

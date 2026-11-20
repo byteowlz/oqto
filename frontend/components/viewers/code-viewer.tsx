@@ -6,6 +6,23 @@ import { Check, Copy, FileCode } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { ViewerHeader } from "./viewer-header";
+import "@/lib/syntax-theme.css";
+
+const TOKEN_THEME_STYLE: Record<string, React.CSSProperties> = {};
+const CODE_STYLE: React.CSSProperties = {
+	margin: 0,
+	padding: "1rem",
+	background: "var(--background)",
+	fontSize: "0.875rem",
+	minHeight: "100%",
+};
+const LINE_NUMBER_STYLE: React.CSSProperties = {
+	minWidth: "3em",
+	paddingRight: "1em",
+	color: "var(--muted-foreground)",
+	opacity: 0.5,
+};
 
 interface CodeViewerProps {
 	content: string;
@@ -14,6 +31,8 @@ interface CodeViewerProps {
 	showLineNumbers?: boolean;
 	className?: string;
 	maxHeight?: string;
+	/** Token-colored embedding; the default preserves the incumbent viewer. */
+	appearance?: "theme";
 }
 
 function CopyButton({ text, className }: { text: string; className?: string }) {
@@ -35,6 +54,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 				className,
 			)}
 			title="Copy to clipboard"
+			aria-label="Copy to clipboard"
 		>
 			{copied ? (
 				<Check className="w-4 h-4 text-green-500" />
@@ -45,6 +65,47 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 	);
 }
 
+type CodeContentProps = Pick<
+	CodeViewerProps,
+	"content" | "filename" | "appearance" | "showLineNumbers" | "maxHeight"
+> & { language: string };
+
+function CodeContent({
+	content,
+	filename,
+	appearance,
+	showLineNumbers,
+	maxHeight,
+	language,
+}: CodeContentProps) {
+	return (
+		<div
+			className="flex-1 overflow-auto"
+			style={{ maxHeight }}
+			tabIndex={appearance ? 0 : undefined}
+			role={appearance ? "region" : undefined}
+			aria-label={appearance ? (filename ?? language) : undefined}
+		>
+			<SyntaxHighlighter
+				style={
+					appearance
+						? TOKEN_THEME_STYLE
+						: (oneDark as Record<string, React.CSSProperties>)
+				}
+				useInlineStyles={!appearance}
+				language={language}
+				showLineNumbers={showLineNumbers}
+				wrapLines
+				wrapLongLines
+				customStyle={CODE_STYLE}
+				lineNumberStyle={LINE_NUMBER_STYLE}
+			>
+				{content}
+			</SyntaxHighlighter>
+		</div>
+	);
+}
+
 export function CodeViewer({
 	content,
 	filename,
@@ -52,6 +113,7 @@ export function CodeViewer({
 	showLineNumbers = true,
 	className,
 	maxHeight = "100%",
+	appearance,
 }: CodeViewerProps) {
 	// Determine language from filename or use provided
 	const effectiveLanguage =
@@ -61,50 +123,30 @@ export function CodeViewer({
 		<div
 			className={cn(
 				"flex flex-col h-full rounded-lg overflow-hidden border border-border",
+				appearance && "oqto-syntax-theme",
 				className,
 			)}
 		>
-			{/* Header */}
-			<div className="flex items-center justify-between px-3 py-2 bg-muted border-b border-border shrink-0">
-				<div className="flex items-center gap-2">
-					<FileCode className="w-4 h-4 text-muted-foreground" />
-					{filename && (
-						<span className="text-sm font-medium truncate max-w-[200px]">
-							{filename}
-						</span>
-					)}
+			<ViewerHeader
+				icon={<FileCode className="w-4 h-4 text-muted-foreground" />}
+				filename={filename}
+				metadata={
 					<span className="text-xs text-muted-foreground font-mono">
 						{effectiveLanguage}
 					</span>
-				</div>
-				<CopyButton text={content} />
-			</div>
+				}
+				actions={<CopyButton text={content} />}
+			/>
 
 			{/* Code content */}
-			<div className="flex-1 overflow-auto" style={{ maxHeight }}>
-				<SyntaxHighlighter
-					style={oneDark as Record<string, React.CSSProperties>}
-					language={effectiveLanguage}
-					showLineNumbers={showLineNumbers}
-					wrapLines
-					wrapLongLines
-					customStyle={{
-						margin: 0,
-						padding: "1rem",
-						background: "var(--background)",
-						fontSize: "0.875rem",
-						minHeight: "100%",
-					}}
-					lineNumberStyle={{
-						minWidth: "3em",
-						paddingRight: "1em",
-						color: "var(--muted-foreground)",
-						opacity: 0.5,
-					}}
-				>
-					{content}
-				</SyntaxHighlighter>
-			</div>
+			<CodeContent
+				content={content}
+				filename={filename}
+				appearance={appearance}
+				showLineNumbers={showLineNumbers}
+				maxHeight={maxHeight}
+				language={effectiveLanguage}
+			/>
 		</div>
 	);
 }

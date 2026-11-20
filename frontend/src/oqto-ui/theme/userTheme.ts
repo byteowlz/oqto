@@ -17,9 +17,9 @@ export type { ParsedUserTheme, OqtoUiUserTheme, ShadowPresetId };
 export const SHADOW_PRESET_IDS = ["none", "soft", "strong"] as const;
 
 /**
- * Font presets the customizer offers. Only JetBrainsMono Nerd Font is bundled
- * by the app; every other stack must rely on system-available fonts so
- * unresolved entries degrade to the generic family.
+ * Font presets the customizer offers. JetBrainsMono Nerd Font is bundled for
+ * body/code; Departure Mono is separately bundled for accent labels. Other
+ * preset stacks rely on system fonts and degrade to the generic family.
  */
 export type FontPresetId = "system" | "mono" | "humanist" | "serif";
 

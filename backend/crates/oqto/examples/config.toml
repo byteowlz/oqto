@@ -153,15 +153,20 @@ stream_port_range = 10000
 # EAVS (LLM proxy) configuration - runs on host, not in containers
 # Enable EAVS integration for session virtual keys
 enabled = true
-# URL of the EAVS server (accessible from host)
+# Operator/control URL accessible from the backend host.
 base_url = "http://localhost:41800"
-# URL for containers to reach EAVS (via Docker host networking)
+# For separate EAVS listeners, set the ordinary-key inference URL explicitly.
+# Omission retains base_url for existing unified-listener deployments.
+# inference_url = "http://localhost:41801"
+# Inference URL for containers (never the operator listener).
 # For Docker: http://host.docker.internal:41800
 # For Podman (4.1+): http://host.containers.internal:41800
 container_url = "http://host.containers.internal:41800"
 # Master key for EAVS admin operations (create/revoke keys)
 # IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.
 # master_key = "your-master-key-here"
+# If the gateway has a separate operator listener capability, resolve it privately:
+# listener_token = "env:EAVS_LISTENER_TOKEN"
 # Default session budget limit in USD (optional)
 default_session_budget_usd = 10.0
 # Default session rate limit in requests per minute (optional)

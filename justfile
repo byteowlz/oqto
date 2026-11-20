@@ -235,6 +235,21 @@ test-personal-client:
 test-runner:
     cd backend && cargo test --locked -p oqto-runner --all-targets --no-fail-fast
 
+# Source-only stable Durable identity; disposable SQLite, no host/runtime activation.
+test-durable-catalog:
+    cd backend && cargo fmt -p oqto-runner --check
+    cd backend && cargo check --locked --offline -p oqto-runner
+    cd backend && cargo test --locked --offline -p oqto-runner --lib durable_catalog::tests -- --test-threads=1
+    cd backend && cargo clippy --locked --offline -p oqto-runner --all-targets -- -D warnings
+
+# Private bootstrap and kernel store locks only; no brain/provider/runtime startup.
+test-durable-state:
+    cd backend && cargo fmt -p oqto-runner --check
+    cd backend && cargo check --locked --offline -p oqto-runner
+    cd backend && cargo test --locked --offline -p oqto-runner --lib durable_state:: -- --test-threads=1
+    cd backend && cargo test --locked --offline -p oqto-runner --test durable_state -- --test-threads=1
+    cd backend && cargo clippy --locked --offline -p oqto-runner --all-targets -- -D warnings
+
 # Readiness regression: ephemeral header cache, resumable cold scans and idle cost.
 test-personal-discovery:
     cd backend && cargo test --locked -p oqto-runner --lib personal_source::tests -- --nocapture
@@ -371,6 +386,23 @@ test-containment:
 # Test frontend
 test-frontend:
     cd frontend && bun run test
+
+# Design-only actual OqtoUI surface, with one supplied synthetic fixture.
+render-session-comparison FIXTURE OUT:
+    cd frontend && bun tests/render-session-comparison.ts "{{absolute_path(FIXTURE)}}" "{{absolute_path(OUT)}}"
+
+# OqtoUI-only presentation and rich Files regression suite; no live Session.
+test-oqto-ui-compact:
+    cd frontend && bun run test:run tests/chat/oqto-ui-compact-chat.test.tsx tests/chat/chat-message-rendering.test.tsx tests/chat/chat-image-open.test.tsx tests/chat/session-media.test.tsx tests/files
+
+# Actual OqtoUI renderer, synthetic media/Files hosts, narrow/wide and keyboard proof.
+render-oqto-ui-compact FIXTURE OUT:
+    cd frontend && bun tests/render-session-comparison.ts "{{absolute_path(FIXTURE)}}" "{{absolute_path(OUT)}}" --compact-chat
+
+# Isolated production status chrome; headless synthetic data, no live Runner.
+test-web-status-notices:
+    cd frontend && bun run test:run tests/status-bar-notice.test.tsx
+    cd frontend && uv run --no-project --with playwright==1.58.0 python tests/status-bar-notice-browser-proof.py
 
 # Run oqto-sandbox hardening scenarios against the installed binary
 test-sandbox *ARGS:
@@ -577,9 +609,13 @@ install-system:
 # Dependencies
 # =============================================================================
 
-# Discover official stable Pi without changing accepted pins or live state
-check-pi-stable:
-    python3 -B scripts/release/pi-update.py
+# Discover stable Pi; --update/--verify qualify source pins, never live state.
+check-pi-stable *args:
+    uv run --no-project --python 3.12 python -B scripts/release/pi-update.py {{args}}
+
+# Offline contracts for daily source-pin admission and rollback.
+test-pi-updater:
+    uv run --no-project --python 3.12 python -B scripts/tests/test-pi-update.py
 
 # `just deploy --dev` runs this before the build (--no-extension-update skips).
 # Gates: required/ancestry/unit/load; --apply promotes, --commit records it.
@@ -1368,3 +1404,9 @@ sync-skills:
     else
         echo "oqto-setup is already up to date"
     fi
+
+# Verify the pinned, offline provider artwork and deterministic client exporters.
+check-provider-icons:
+    uv run --no-project tools/provider-icons.py verify
+    uv run --no-project tools/provider-icons.py export --platform web --output frontend/components/data-display/provider-icons --check
+    uv run --no-project python -m unittest discover -s tools/tests -p test_provider_icons.py

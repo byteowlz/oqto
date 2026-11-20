@@ -51,9 +51,14 @@ create_home = true
 
 [eavs]
 enabled = {{EAVS_ENABLED}}
+# Backend operator/control URL.
 base_url = "{{EAVS_BASE_URL}}"
+# Set for separate ordinary-key inference; omission retains base_url.
+# inference_url = "http://127.0.0.1:3033"
+# Container-reachable inference URL, not the operator listener.
 container_url = "{{EAVS_CONTAINER_URL}}"
 # master_key = "{{EAVS_MASTER_KEY}}"
+# listener_token = "env:EAVS_LISTENER_TOKEN"
 default_session_budget_usd = 10.0
 default_session_rpm = 60
 

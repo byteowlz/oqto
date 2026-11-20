@@ -78,6 +78,10 @@ const ALLOWED_PROJECT_ALIASES = {
 		"@/src/generated",
 		// Pure image-ref/URL presentation adapter; no fetching, replay, or authority.
 		"@/lib/session-media",
+		// Pure Files text presentation; FileHost still supplies all contents.
+		"@/components/data-display/markdown-renderer",
+		"@/components/viewers/code-viewer",
+		"@/lib/file-types",
 		// Shared browser-speech presentation/capture and disposable draft storage.
 		// These contain no legacy chat/session transport or history authority.
 		"@/components/voice/ComposerDictation",

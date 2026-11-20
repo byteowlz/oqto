@@ -8,6 +8,9 @@ pub mod agent_browser;
 pub mod client;
 pub mod credentials;
 pub mod daemon;
+pub mod durable_catalog;
+#[cfg(unix)]
+pub mod durable_state;
 pub mod endpoint_bridge;
 pub mod history_import;
 pub mod history_read;

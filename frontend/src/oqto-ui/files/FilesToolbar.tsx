@@ -6,16 +6,15 @@
 import {
 	ArrowDownAZ,
 	ArrowDownWideNarrow,
-	ChevronRight,
 	Clock,
 	Columns3,
-	Eye,
 	EyeOff,
 	List,
 	ListTree,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { OqtoIcon } from "../platform/icons";
 import { breadcrumb } from "./entries";
 import { setSort } from "./navigation";
 import type { FilesState } from "./navigator";
@@ -49,7 +48,7 @@ export function FilesToolbar({
 			</button>
 			{breadcrumb(state.cwd).map((crumb) => (
 				<span className="wb-files-crumb-group" key={crumb.path}>
-					<ChevronRight aria-hidden="true" />
+					<OqtoIcon name="forward" aria-hidden="true" />
 					<button
 						className="wb-files-crumb"
 						type="button"
@@ -100,7 +99,7 @@ export function FilesToolbar({
 				}
 			>
 				{state.showHidden ? (
-					<Eye aria-hidden="true" />
+					<OqtoIcon name="eye" aria-hidden="true" />
 				) : (
 					<EyeOff aria-hidden="true" />
 				)}

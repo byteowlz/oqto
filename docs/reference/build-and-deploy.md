@@ -38,6 +38,35 @@ See `.github/workflows/release.yml` for the build-host prerequisites and support
 targets. Build prerequisites belong on the build host, not an installation host.
 Run the relevant tests and validators before treating an artifact as deployable.
 
+## Separate EAVS listeners
+
+For a gateway with separate control and inference listeners, configure both URLs:
+
+```toml
+[eavs]
+base_url = "http://127.0.0.1:3044"      # backend operator/control calls
+inference_url = "http://127.0.0.1:3033" # ordinary scoped-key inference
+# container_url = "http://host.containers.internal:3033"
+```
+
+Omitting `inference_url` retains existing unified-listener behavior. Local Session
+environments, user model definitions and inference URL responses use the inference
+URL. Containers still require an explicitly reachable `container_url`; a host's
+loopback URL is not silently substituted. All configured endpoints must be absolute
+HTTP(S) URLs without embedded credentials, query strings or fragments. Native
+pi-eavs owns its separately consented server/key configuration in Pi.
+
+The backend authenticates control requests (including health/provider metadata and
+OAuth management) with the master credential and refuses redirects. If EAVS has
+a distinct operator listener capability, set `listener_token = "env:EAVS_LISTENER_TOKEN"`
+(or a private `file:` reference); it is sent only as `X-Eavs-Token` on control
+requests. Omission supports EAVS's master-key listener fallback. Never add either
+credential to user model definitions or weaken either gateway listener's
+authorization. Before switching ports, privately back up gateway/backend config,
+credential stores and databases; merge only declared changes. Verify control and
+new-user/model resync as well as existing scoped-key catalog, streamed inference
+and cold reopen. Keep a compatible binary/config/database rollback together.
+
 ## Installation and promotion
 
 Deploy the exact checksummed artifact built from the selected public commit;

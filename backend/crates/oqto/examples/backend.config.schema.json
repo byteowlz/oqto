@@ -349,15 +349,27 @@
         },
         "base_url": {
           "type": "string",
-          "description": "URL of the EAVS server (accessible from host)",
+          "description": "Backend operator/control HTTP(S) base URL, without credentials, query or fragment. Also used for inference only when inference_url is omitted.",
           "format": "uri",
           "default": "http://localhost:41800"
         },
+        "inference_url": {
+          "type": "string",
+          "description": "Ordinary-key inference HTTP(S) base URL, without credentials, query or fragment. Used for generated model definitions and local sessions; omission retains base_url.",
+          "format": "uri",
+          "pattern": "^https?://",
+          "examples": ["http://127.0.0.1:3033"]
+        },
         "container_url": {
           "type": "string",
-          "description": "URL for containers to reach EAVS (via Docker host networking). For Docker: http://host.docker.internal:41800, for Podman: http://host.containers.internal:41800",
+          "description": "Container-reachable inference HTTP(S) base URL, never the operator listener; without credentials, query or fragment. For Docker: http://host.docker.internal:41800, for Podman: http://host.containers.internal:41800",
           "format": "uri",
           "examples": ["http://host.docker.internal:41800", "http://host.containers.internal:41800"]
+        },
+        "listener_token": {
+          "type": "string",
+          "description": "Optional separate operator listener capability (literal, env:VAR or file:PATH). Sent only as X-Eavs-Token on control requests; omitted when the gateway uses its master-key fallback.",
+          "x-sensitive": true
         },
         "master_key": {
           "type": "string",

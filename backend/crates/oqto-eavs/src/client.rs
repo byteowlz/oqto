@@ -1,34 +1,83 @@
 //! EAVS HTTP client.
 
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, header};
 use std::time::Duration;
 
 use super::error::{EavsError, EavsResult};
 use super::types::*;
 
 /// Client for communicating with EAVS API.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EavsClient {
     /// HTTP client.
     client: Client,
-    /// Base URL for EAVS (e.g., "http://localhost:41823").
+    /// Control-plane base URL; the authenticated HTTP client only targets this listener.
     base_url: String,
+    /// Inference URL published to ordinary-key callers, never to the admin HTTP client.
+    inference_url: String,
     /// Master key for admin operations.
     master_key: String,
 }
 
+impl std::fmt::Debug for EavsClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("EavsClient { credentials: [REDACTED], .. }")
+    }
+}
+
 impl EavsClient {
-    /// Create a new EAVS client.
+    /// Use one endpoint for existing unified-listener deployments.
     pub fn new(base_url: impl Into<String>, master_key: impl Into<String>) -> EavsResult<Self> {
+        let base_url = base_url.into();
+        Self::with_endpoints(&base_url, &base_url, master_key)
+    }
+
+    /// Keep operator requests and published ordinary-key inference URLs separate.
+    pub fn with_endpoints(
+        base_url: impl AsRef<str>,
+        inference_url: impl AsRef<str>,
+        master_key: impl Into<String>,
+    ) -> EavsResult<Self> {
+        Self::with_endpoints_and_listener_token(base_url, inference_url, master_key, None)
+    }
+
+    /// Supply a distinct listener capability only to control requests, when configured.
+    pub fn with_endpoints_and_listener_token(
+        base_url: impl AsRef<str>,
+        inference_url: impl AsRef<str>,
+        master_key: impl Into<String>,
+        listener_token: Option<&str>,
+    ) -> EavsResult<Self> {
+        let base_url = crate::endpoints::normalize_endpoint(base_url.as_ref())?;
+        let inference_url = crate::endpoints::normalize_endpoint(inference_url.as_ref())?;
+        let master_key = master_key.into();
+        let mut headers = header::HeaderMap::new();
+        if !master_key.is_empty() {
+            let mut authorization = header::HeaderValue::from_str(&format!("Bearer {master_key}"))
+                .map_err(|_| EavsError::ClientBuild("Invalid operator credential header".into()))?;
+            authorization.set_sensitive(true);
+            headers.insert(header::AUTHORIZATION, authorization);
+        }
+        if let Some(token) = listener_token {
+            if token.trim().is_empty() {
+                return Err(EavsError::ClientBuild("Empty listener credential".into()));
+            }
+            let mut value = header::HeaderValue::from_str(token)
+                .map_err(|_| EavsError::ClientBuild("Invalid listener credential header".into()))?;
+            value.set_sensitive(true);
+            headers.insert("x-eavs-token", value);
+        }
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .default_headers(headers)
             .build()
             .map_err(|e| EavsError::ClientBuild(e.to_string()))?;
-
         Ok(Self {
             client,
-            base_url: base_url.into(),
-            master_key: master_key.into(),
+            base_url,
+            inference_url,
+            master_key,
         })
     }
 
@@ -123,6 +172,22 @@ impl EavsClient {
         let url = format!("{}/providers/detail", self.base_url);
         let response = self.client.get(&url).send().await?;
         self.handle_response(response).await
+    }
+
+    /// Read model metadata on the authenticated control listener without inference.
+    pub async fn catalog_lookup(
+        &self,
+        model_id: &str,
+        provider: Option<&str>,
+    ) -> EavsResult<serde_json::Value> {
+        let mut request = self
+            .client
+            .get(format!("{}/catalog/lookup", self.base_url))
+            .query(&[("model_id", model_id)]);
+        if let Some(provider) = provider {
+            request = request.query(&[("provider", provider)]);
+        }
+        self.handle_response(request.send().await?).await
     }
 
     /// Probe an unsaved provider configuration without activating it.
@@ -249,14 +314,9 @@ impl EavsClient {
         }
     }
 
-    /// Get the base URL (for constructing provider-prefixed URLs).
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
-    /// Get the master key for admin API calls.
-    pub fn master_key(&self) -> &str {
-        &self.master_key
+    /// Inference base for generated model definitions and ordinary scoped-key callers.
+    pub fn inference_url(&self) -> &str {
+        &self.inference_url
     }
 
     /// Get usage history for a key.
@@ -302,6 +362,9 @@ impl EavsClient {
         }
     }
 }
+
+#[cfg(test)]
+mod endpoint_tests;
 
 #[cfg(test)]
 mod tests {
