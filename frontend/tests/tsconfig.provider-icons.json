@@ -1,5 +1,10 @@
 {
 	"extends": "../tsconfig.json",
 	"compilerOptions": { "incremental": false },
-	"include": ["provider-icon.test.tsx", "fixtures/provider-icons.tsx", "provider-icons.vite.config.ts", "../vite-env.d.ts"]
+	"include": [
+		"provider-icon.test.tsx",
+		"fixtures/provider-icons.tsx",
+		"provider-icons.vite.config.ts",
+		"../vite-env.d.ts"
+	]
 }
