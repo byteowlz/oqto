@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
 	mkdirSync,
 	mkdtempSync,
@@ -47,6 +47,30 @@ function invoke(root: string, body: string) {
 }
 
 describe("tracked-source lint inventory", () => {
+	it("preserves canonical provider metadata formatting without skipping JSON validation or other source", () => {
+		const payload = '{\n  "value": 1\n}\n';
+		const root = fixture();
+		file(root, "biome.json", readFileSync("biome.json", "utf8"));
+		const biome = path.resolve("node_modules/.bin/biome");
+		const check = (name: string, input = payload) => {
+			file(root, name, input);
+			// Biome 1.9 stdin checks misreport formatter-disabled files; test real file policy.
+			return spawnSync(biome, ["check", name], {
+				cwd: root,
+				encoding: "utf8",
+			});
+		};
+		for (const name of [
+			"components/data-display/provider-icons/PROVIDER-ICONS-SOURCE.json",
+			"components/data-display/provider-icons/provider-icons-catalog.json",
+		]) {
+			const before = readFileSync(name, "utf8");
+			expect(check(name).status).toBe(0);
+			expect(check(name, "{ invalid JSON").status).not.toBe(0);
+			expect(readFileSync(name, "utf8")).toBe(before);
+		}
+		expect(check("components/data-display/other.json").status).not.toBe(0);
+	});
 	it("includes every tracked path, preserves unusual names, excludes only untracked content, and never writes", () => {
 		const root = fixture();
 		file(root, ".gitignore", ".tmp/\npublic/oqtopus/\n");

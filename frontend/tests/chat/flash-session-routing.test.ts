@@ -1,5 +1,10 @@
-import type { ConversationView } from "@oqto-flash/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+	FlashConversationView as ConversationView,
+	FlashSessionDescriptor,
+	FlashWorkerFactory,
+	FlashWorkerPort,
+} from "../../src/oqto-ui/platform/flash-runtime-contract";
 const state = vi.hoisted(() => ({
 	peers: new Set<{
 		target: string;
@@ -10,6 +15,7 @@ const state = vi.hoisted(() => ({
 	closed: [] as string[],
 	sent: [] as { target: string; text: string; requestId: string }[],
 	filesRevision: 0,
+	created: [] as { source: string; requestId: string }[],
 }));
 const id = (n: number) =>
 	`00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -20,60 +26,88 @@ function publish(target: string, value = state.views.get(target)) {
 	for (const peer of state.peers)
 		if (peer.target === target) peer.publish(value);
 }
-vi.mock("@oqto-flash/worker-client", () => ({
-	FlashWorkerClient: class {
-		peer: { target: string; publish: (view: ConversationView) => void };
-		constructor(callback: (view: ConversationView) => void) {
-			this.peer = { target: "", publish: callback };
-		}
-		get filesRevision() {
-			return state.filesRevision;
-		}
-		async open(
-			_workspace: string,
-			_binding: unknown,
-			_key: string,
-			target = id(1),
-		) {
-			if (!state.views.has(target)) throw new Error("Unknown native target");
-			this.peer.target = target;
-			state.opened.push(target);
-			state.peers.add(this.peer);
-			publish(target);
-			return { publicSessionId: target, workDirectoryId: directory };
-		}
-		async sessions() {
-			return [...state.views.keys()].map((publicSessionId) => ({
-				publicSessionId,
-				workDirectoryId: directory,
-				name: publicSessionId,
-				modelId: "first",
-				status: "idle",
-			}));
-		}
-		async selectModel(modelId: string) {
-			const view = state.views.get(this.peer.target);
-			if (!view) throw new Error("Missing native target");
-			publish(this.peer.target, {
-				...view,
-				docs: {
-					...view.docs,
-					"pi.agent": { model: { provider: "flash", modelId } },
-				},
-			});
-		}
-		async submit(text: string, requestId: string) {
-			state.sent.push({ target: this.peer.target, text, requestId });
-		}
-		async abort() {}
-		async close() {
-			state.closed.push(this.peer.target);
-			state.peers.delete(this.peer);
-		}
-	},
-}));
+class SyntheticWorker implements FlashWorkerPort {
+	peer: { target: string; publish: (view: ConversationView) => void };
+	constructor(callback: (view: ConversationView) => void) {
+		this.peer = { target: "", publish: callback };
+	}
+	get filesRevision() {
+		return state.filesRevision;
+	}
+	async open(
+		_workspace: string,
+		_binding: unknown,
+		_key: string,
+		target = id(1),
+	) {
+		if (!state.views.has(target)) throw new Error("Unknown native target");
+		this.peer.target = target;
+		state.opened.push(target);
+		state.peers.add(this.peer);
+		publish(target);
+		return { publicSessionId: target, workDirectoryId: directory };
+	}
+	async sessions(): Promise<FlashSessionDescriptor[]> {
+		return [...state.views.keys()].map((publicSessionId) => ({
+			publicSessionId,
+			workDirectoryId: directory,
+			name: publicSessionId,
+			modelId: "first",
+			status: "idle",
+		}));
+	}
+	async selectModel(modelId: string) {
+		const view = state.views.get(this.peer.target);
+		if (!view) throw new Error("Missing native target");
+		publish(this.peer.target, {
+			...view,
+			docs: {
+				...view.docs,
+				"pi.agent": { model: { provider: "flash", modelId } },
+			},
+		});
+	}
+	async submit(text: string, requestId: string) {
+		state.sent.push({ target: this.peer.target, text, requestId });
+	}
+	async abort() {}
+	async close() {
+		state.closed.push(this.peer.target);
+		state.peers.delete(this.peer);
+	}
+	async createSession(
+		source: string,
+		requestId: string,
+	): Promise<FlashSessionDescriptor> {
+		const original = state.views.get(source);
+		if (!original) throw new Error("Unknown native source");
+		state.created.push({ source, requestId });
+		const publicSessionId = id(13);
+		state.views.set(publicSessionId, {
+			conversation: { id: 13 },
+			entries: [],
+			docs: original.docs,
+		});
+		return {
+			publicSessionId,
+			workDirectoryId: directory,
+			name: "New native Session",
+			modelId: "first",
+			status: "idle",
+		};
+	}
+	async list() {
+		return [];
+	}
+	async read(): Promise<never> {
+		throw new Error("File reads are not part of this synthetic fixture");
+	}
+}
+const createClient: FlashWorkerFactory = (publish) =>
+	new SyntheticWorker(publish);
 import { createFlashChat } from "../../src/oqto-ui/platform/flash-chat";
 const options = {
+	createClient,
 	binding: {
 		api: "openai-completions",
 		baseUrl: "https://fixture.invalid/v1",
@@ -89,6 +123,7 @@ beforeEach(() => {
 	state.closed = [];
 	state.sent = [];
 	state.filesRevision = 0;
+	state.created = [];
 	for (let n = 1; n <= 12; n++)
 		state.views.set(id(n), {
 			conversation: { id: n },
@@ -101,9 +136,29 @@ beforeEach(() => {
 				},
 			],
 			docs: { "pi.agent": { model: { provider: "flash", modelId: "first" } } },
-		} as unknown as ConversationView);
+		});
 });
 describe("Flash workspace projection routing", () => {
+	it("uses the native creation receipt and original request identity for a new peer", async () => {
+		const runtime = createFlashChat(options);
+		await runtime.open();
+		await runtime.sessions();
+		const requestId = id(20);
+		const created = await runtime.createSession(id(2), requestId);
+		expect(state.created).toEqual([{ source: id(2), requestId }]);
+		expect(created.publicSessionId).toBe(id(13));
+		await runtime.ensureSession(created.publicSessionId);
+		expect(runtime.getIdentity(created.publicSessionId)).toEqual({
+			publicSessionId: id(13),
+			workDirectoryId: directory,
+		});
+		expect(runtime.getIdentity().publicSessionId).toBe(id(1));
+		await expect(runtime.createSession(id(99), id(21))).rejects.toThrow(
+			"Unknown",
+		);
+		expect(state.created).toHaveLength(1);
+		await runtime.dispose();
+	});
 	it("keeps peer history, updates, submissions and model ACKs bound to their original public target", async () => {
 		const runtime = createFlashChat(options);
 		await runtime.open();
@@ -141,13 +196,11 @@ describe("Flash workspace projection routing", () => {
 			{ target: id(2), text: "other request", requestId: otherRequest },
 		]);
 		await runtime.selectModel(id(2), "second");
-		expect(state.views.get(id(1))?.docs["pi.agent"].model).toEqual({
-			provider: "flash",
-			modelId: "first",
+		expect(state.views.get(id(1))?.docs["pi.agent"]).toEqual({
+			model: { provider: "flash", modelId: "first" },
 		});
-		expect(state.views.get(id(2))?.docs["pi.agent"].model).toEqual({
-			provider: "flash",
-			modelId: "second",
+		expect(state.views.get(id(2))?.docs["pi.agent"]).toEqual({
+			model: { provider: "flash", modelId: "second" },
 		});
 		const firstHistory = await runtime.loadMessages(id(1));
 		const otherHistory = await runtime.loadMessages(id(2));

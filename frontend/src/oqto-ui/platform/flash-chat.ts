@@ -263,10 +263,6 @@ export function createFlashChat(options: FlashChatOptions) {
 			use(id, ({ source }) => source.selectModel(id, modelId)),
 		loadMessages: (id: string, before?: string, limit?: number) =>
 			use(id, ({ source }) => source.loadMessages(id, before, limit)),
-		files: () => {
-			assertOpen();
-			return root.files();
-		},
 		list: (path: string) => {
 			assertOpen();
 			return root.list(path);

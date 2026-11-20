@@ -44,13 +44,17 @@ file from the Git index in bounded argument batches, preserving their existing
 tool policies; no new source exclusions are added. Ignored staged runtimes and
 untracked scratch are not directory-walk inputs. Add new source to the index
 before checking it. Missing tracked files and tool failures fail the gate.
+The two provider-icon JSON metadata files retain their canonical, hash-bound
+bytes: Biome still parses/lints them, but does not reformat them. Project `just lint`
+also runs the offline `just check-provider-icons` source/export integrity gate.
 Tracked generated TypeScript is checked, not silently rewritten; the explicit
 maintenance command remains `bun run format:generated-types`. Hook, OqtoUI type
-and architecture checks still run after source lint. The current Flash development
-type aliases also require the adjacent `oqto-flash` checkout's existing locked
-dependencies. Restore those without changing its manifests or running lifecycle
-scripts: `bun install --frozen-lockfile --ignore-scripts --no-save` in that checkout.
-This does not start Flash or change its source/build contract.
+and architecture checks still run after source lint. Flash adapters consume the
+public `platform/flash-runtime-contract.ts` in-process interface: the Flash host
+injects its native worker factory. Public builds and synthetic adapter tests do
+not import a private Flash checkout or its SDK. Native history, target identity,
+transport and credential persistence remain host-owned; no server or in-memory
+fallback is introduced.
 
 Use [the canonical packaging sequence](../docs/reference/build-and-deploy.md) for
 deployments, not an ad-hoc copy of `frontend/dist`. Vendored runtime dependencies

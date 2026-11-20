@@ -1,15 +1,19 @@
-import type { ProviderBinding } from "@oqto-flash/db";
 import { DEFAULT_OQTO_UI_CONFIG, type OqtoUiPlatform } from "./contracts";
 import type { FileChange } from "./files-contract";
 import { createFlashChat } from "./flash-chat";
 import { createFlashHosts } from "./flash-hosts";
+import type {
+	FlashProviderBinding,
+	FlashWorkerFactory,
+} from "./flash-runtime-contract";
 
 /** Browser execution changes the host ports, never the shared Oqto views. */
 export async function createFlashPlatform(
-	binding: ProviderBinding,
+	binding: FlashProviderBinding,
 	apiKey: string,
+	createClient: FlashWorkerFactory,
 ): Promise<OqtoUiPlatform & { dispose(): Promise<void> }> {
-	const runtime = createFlashChat({ binding, apiKey });
+	const runtime = createFlashChat({ binding, apiKey, createClient });
 	try {
 		await runtime.open();
 	} catch (error) {

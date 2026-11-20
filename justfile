@@ -25,7 +25,7 @@ build-frontend:
 # =============================================================================
 
 # Run all linters
-lint: lint-repository-hygiene lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority lint-no-persisted-mount-instance
+lint: check-provider-icons lint-repository-hygiene lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority lint-no-persisted-mount-instance
 
 # Tracked-source layout; ignored local scratch and runtime state are not scanned.
 lint-repository-hygiene:

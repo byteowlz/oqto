@@ -14,6 +14,13 @@
 	},
 	"overrides": [
 		{
+			"include": [
+				"components/data-display/provider-icons/PROVIDER-ICONS-SOURCE.json",
+				"components/data-display/provider-icons/provider-icons-catalog.json"
+			],
+			"formatter": { "enabled": false }
+		},
+		{
 			"include": ["src/generated/**"],
 			"organizeImports": { "enabled": false }
 		}

@@ -1,6 +1,7 @@
 import type { OqtoUiPlatform } from "./contracts";
 import type { FileChange } from "./files-contract";
-interface FlashWorkspace {
+/** Native workspace metadata/bytes, independent of conversation history. */
+export interface FlashFileReader {
 	list(path: string): Promise<
 		readonly {
 			path: string;
@@ -11,6 +12,8 @@ interface FlashWorkspace {
 		}[]
 	>;
 	read(path: string): Promise<string>;
+}
+interface FlashWorkspace extends FlashFileReader {
 	subscribe(listener: (change: FileChange) => void): () => void;
 }
 

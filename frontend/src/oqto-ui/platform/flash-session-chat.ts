@@ -1,5 +1,3 @@
-import type { ConversationView } from "@oqto-flash/types";
-import { FlashWorkerClient } from "@oqto-flash/worker-client";
 import type { JsonValue } from "../engine/projection";
 import type {
 	ChatDraftPart,
@@ -7,6 +5,11 @@ import type {
 	ChatTurnUpdate,
 } from "./chat-contract";
 import type { ChatMessage, ChatMessagePart, MessagePage } from "./contracts";
+import type {
+	FlashConversationView as ConversationView,
+	FlashProviderBinding,
+	FlashWorkerFactory,
+} from "./flash-runtime-contract";
 
 /** Public identities are committed native metadata, not numeric harness IDs. */
 export function flashIdentity(value: unknown): {
@@ -90,9 +93,14 @@ function parts(content: unknown, key: string): ChatMessagePart[] {
 export function flashHistory(view: ConversationView): ChatMessage[] {
 	const results = new Map<string, boolean>();
 	for (const entry of view.entries)
-		for (const message of entry.model ?? [])
-			if (message.role === "toolResult")
+		for (const native of entry.model ?? []) {
+			const message = record(native);
+			if (
+				message.role === "toolResult" &&
+				typeof message.toolCallId === "string"
+			)
 				results.set(message.toolCallId, message.isError === true);
+		}
 	return view.entries.flatMap((entry) =>
 		(entry.model ?? []).flatMap((native, slot): ChatMessage[] => {
 			const message = record(native);
@@ -161,14 +169,17 @@ export function flashHistory(view: ConversationView): ChatMessage[] {
 }
 
 export type FlashChatOptions = {
-	binding: Parameters<FlashWorkerClient["open"]>[1];
+	binding: FlashProviderBinding;
 	apiKey: string;
 	workspace?: string;
+	createClient: FlashWorkerFactory;
 };
 export function createFlashSessionChat(
 	options: FlashChatOptions,
 	publicSessionId?: string,
 ) {
+	if (typeof options.createClient !== "function")
+		throw new Error("A host-owned Flash worker factory is required");
 	let snapshot: ConversationView | undefined;
 	let identity: ReturnType<typeof flashIdentity> | undefined;
 	const getIdentity = () => {
@@ -188,7 +199,7 @@ export function createFlashSessionChat(
 			throw new Error(`Unknown Flash adapter session: ${id}`);
 		if (disposed) throw new Error("Flash chat disposed");
 	};
-	const client = new FlashWorkerClient((view) => {
+	const client = options.createClient((view) => {
 		if (disposed) return;
 		const wasRunning = Boolean(record(snapshot?.docs["pi.live"]).run);
 		snapshot = view;
@@ -409,10 +420,6 @@ export function createFlashSessionChat(
 				hasMore: start > 0,
 				nextBefore: start > 0 ? page[0].id : null,
 			};
-		},
-		async files() {
-			await open();
-			return client.files();
 		},
 		async list(path: string) {
 			await open();
